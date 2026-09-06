@@ -458,7 +458,7 @@ export default {
     algoPlaceholder: "Input algorithm for load balance(e.g. hash:ip)",
     healthCheck: "Health Check",
     healthCheckPlaceholder:
-      "Input upstream health check url, supports http or tcp",
+      "Input upstream health check url, supports http(s), tcp, grpc and ws(s)",
     connectionTimeout: "Connection Timeout",
     connectionTimeoutPlaceholder:
       "Input the connection timeout for upstream(e.g. 30s)",

@@ -44,6 +44,8 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # Upstream http health check, if not set, tcp health check will be used.
 # - http: `http://upstreamname/path?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true`
 # - tcp: `tcp://upstreamname?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true`
+# - websocket: `ws://upstreamname/path?connection_timeout=3s&read_timeout=3s` (or `wss://`),
+#   an upgrade handshake that must be answered with 101 and a valid Sec-WebSocket-Accept
 # - grpc: `grpc://upstreamname/path?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true&tls=true&service=pingap`
 # The default parameters are:
 # - connection_timeout: 3s

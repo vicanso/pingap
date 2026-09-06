@@ -22,6 +22,8 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 - `http://<host>/<path>`：HTTP 健康检查。
 - `https://<host>/<path>`：HTTPS 健康检查。
 - `grpc://<host>`：gRPC 健康检查。
+- `ws://<host>/<path>`：WebSocket 健康检查，发起升级握手，后端必须回 `101 Switching Protocols` 且 `Sec-WebSocket-Accept` 正确。
+- `wss://<host>/<path>`：同上，走 TLS。
 
 可用查询参数：
 
@@ -60,6 +62,14 @@ grpc://my-grpc-service:50051?service=my.service.v1.MyService&tls
 ```
 
 对 `my-grpc-service:50051` 做 gRPC 健康检查，服务名为 `my.service.v1.MyService`，使用 TLS。
+
+#### WebSocket 健康检查
+
+```
+ws://my-chat/ws?connection_timeout=1s&failure=3
+```
+
+向 `/ws` 发送 WebSocket 升级请求（`Connection: Upgrade`、`Upgrade: websocket`、随机 `Sec-WebSocket-Key`），期望 `101 Switching Protocols`、`Upgrade: websocket` 以及由该 key 推导出的 `Sec-WebSocket-Accept`；其他响应，包括 WebSocket 服务对普通 GET 返回的 `400`/`426`，都算失败。握手完成后立即关闭连接。TLS 后端用 `wss://`。
 
 ## 开发
 

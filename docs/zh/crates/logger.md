@@ -114,7 +114,7 @@ let parser = Parser::from(format);
 日志器通过 `LoggerParams` 的 `log` 字段中的类 URI 字符串配置。
 
 - **文件日志：** `"/path/to/file.log?rolling=daily&compression=gzip"`
-  - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`。
+  - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
   - `compression`：`gzip` 或 `zstd`。
   - `level`：压缩级别。
   - `days_ago`：保留已压缩日志的天数。

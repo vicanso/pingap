@@ -25,8 +25,10 @@ static LOG_TARGET: &str = "pingap::health";
 
 mod grpc;
 mod http;
+mod websocket;
 pub use grpc::GrpcHealthCheck;
 pub use http::HealthCheckConf;
+pub use websocket::WebSocketHealthCheck;
 
 /// Creates a new internal error
 fn new_internal_error(status: u16, message: impl ToString) -> pingora::BError {
@@ -150,6 +152,13 @@ pub fn new_health_check(
                 )?;
                 Box::new(check)
             },
+            HealthCheckSchema::Ws | HealthCheckSchema::Wss => {
+                Box::new(WebSocketHealthCheck::new(
+                    name,
+                    &health_check_conf,
+                    health_changed_callback,
+                ))
+            },
             _ => Box::new(new_tcp_health_check(
                 name,
                 &health_check_conf,
@@ -168,6 +177,10 @@ pub enum HealthCheckSchema {
     Http,
     Https,
     Grpc,
+    /// WebSocket upgrade handshake over plain TCP
+    Ws,
+    /// WebSocket upgrade handshake over TLS
+    Wss,
 }
 
 #[cfg(test)]

@@ -16,7 +16,10 @@ path = "src/lib.rs"
 async-trait = { workspace = true }
 humantime = { workspace = true }
 http = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
+rand = { workspace = true }
+sha1 = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
 tracing = { workspace = true }
@@ -26,6 +29,7 @@ url = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+tokio = { workspace = true, features = ["net", "io-util", "rt", "macros"] }
 tempfile = "3.21.0"
 tokio-test = "0.4.4"
 

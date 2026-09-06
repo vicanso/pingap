@@ -419,7 +419,7 @@ export default {
     algo: "负载均衡算法",
     algoPlaceholder: "输入负载均衡算法(如hash:ip)",
     healthCheck: "健康检查",
-    healthCheckPlaceholder: "输入健康检查的url，支持http与tcp",
+    healthCheckPlaceholder: "输入健康检查的url，支持http(s)、tcp、grpc与ws(s)",
     connectionTimeout: "连接超时",
     connectionTimeoutPlaceholder: "输入连接超时限制(如30s)",
     totalConnectionTimeout: "总连接超时",

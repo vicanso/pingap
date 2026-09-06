@@ -126,7 +126,7 @@ The following tags are available for access logging:
 The logger is configured via a URI-like string in the `log` field of `LoggerParams`.
 
 - **File Logging:** `"/path/to/file.log?rolling=daily&compression=gzip"`
-  - `rolling`: `daily` (default), `hourly`, `minutely`, `never`.
+  - `rolling`: `daily` (default), `hourly`, `minutely`, `never`. Rotation boundaries and the file name suffix (`file.log.YYYY-MM-DD[-HH[-MM]]`) use **UTC**, not the machine's local time zone: on a UTC+8 host a daily file switches at 08:00 local time and an entry written at 18:00 local lands in the `-10` hourly file. This comes from `tracing-appender`, which has no time zone option; the timestamps inside the log lines are local time.
   - `compression`: `gzip` or `zstd`.
   - `level`: Compression level.
   - `days_ago`: Number of days to keep compressed logs.

@@ -22,6 +22,8 @@ The health check is configured using a URL-like string. The schema of the URL de
 - `http://<host>/<path>`: HTTP health check.
 - `https://<host>/<path>`: HTTPS health check.
 - `grpc://<host>`: gRPC health check.
+- `ws://<host>/<path>`: WebSocket health check, an upgrade handshake that must be answered with `101 Switching Protocols` and a matching `Sec-WebSocket-Accept`.
+- `wss://<host>/<path>`: the same over TLS.
 
 The following query parameters can be used to configure the health check:
 
@@ -60,6 +62,14 @@ grpc://my-grpc-service:50051?service=my.service.v1.MyService&tls
 ```
 
 This will perform a gRPC health check on `my-grpc-service:50051` using the service name `my.service.v1.MyService`. The connection will use TLS.
+
+#### WebSocket Health Check
+
+```
+ws://my-chat/ws?connection_timeout=1s&failure=3
+```
+
+This sends a WebSocket upgrade request (`Connection: Upgrade`, `Upgrade: websocket`, a random `Sec-WebSocket-Key`) to `/ws` and expects `101 Switching Protocols` with `Upgrade: websocket` and the `Sec-WebSocket-Accept` derived from that key; anything else, including the `400`/`426` a WebSocket server gives a plain GET, counts as a failure. The connection is closed right after the handshake. Use `wss://` for a TLS backend.
 
 ## Development
 
