@@ -87,6 +87,12 @@ locations = ["lo"]
 # Close an HTTP/2 client connection that has been idle this long.
 # Default `none` (never)
 # h2_idle_timeout = "2m"
+#
+# Serve HTTP/1.1 pipelined requests one after another on the same keep-alive
+# connection (RFC 9112 §9.3.2). When off, pingap answers the first request,
+# closes the connection and drops the rest, which compliant clients retry.
+# Default `false`
+# h1_pipelining = true
 
 # TCP Keep-alive idle time:
 # Controls how long a connection must be idle before TCP starts sending keep-alive probes

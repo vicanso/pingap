@@ -18,6 +18,7 @@ IP-restricted `PURGE` method.
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
 | `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
+| `lock_retries` | int | `2` | How many times a request that waited on the lock re-checks the cache before it gives up and fetches from upstream itself. |
 | `eviction` | bool | absent | Presence of the key enables LRU eviction. Memory backend only. |
 | `predictor` | bool | absent | Presence of the key enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |

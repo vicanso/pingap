@@ -29,6 +29,7 @@ use pingap_core::{
     ensure_client_ip, get_cache_key,
 };
 use pingap_util::IpRules;
+use pingora::cache::CacheOptionOverrides;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::key::CacheHashKey;
@@ -72,6 +73,9 @@ pub struct Cache {
     // Optional lock mechanism to prevent cache stampede
     // (multiple identical requests generating the same cache entry)
     lock: Option<&'static (dyn CacheKeyLock + Send + Sync)>,
+    // How many times a request waiting on the cache lock re-checks the
+    // cache before giving up; None keeps pingora's default of 2
+    lock_retries: Option<usize>,
     // Backend storage implementation for the HTTP cache
     http_cache: &'static HttpCache,
     // Maximum size in bytes for individual cached files
@@ -216,6 +220,20 @@ impl TryFrom<&PluginConf> for Cache {
             Duration::from_secs(1)
         };
 
+        let lock_retries = if value.get("lock_retries").is_some() {
+            let retries =
+                usize::try_from(crate::get_int_conf(value, "lock_retries"))
+                    .map_err(|_| Error::Invalid {
+                        category: PluginCategory::Cache.to_string(),
+                        message:
+                            "lock_retries should be a non-negative integer"
+                                .to_string(),
+                    })?;
+            Some(retries)
+        } else {
+            None
+        };
+
         let max_ttl = get_str_conf(value, "max_ttl");
         let max_ttl = if !max_ttl.is_empty() {
             Some(parse_duration(&max_ttl).map_err(|e| Error::Invalid {
@@ -286,6 +304,7 @@ impl TryFrom<&PluginConf> for Cache {
             eviction,
             predictor,
             lock: get_cache_lock(lock),
+            lock_retries,
             max_ttl,
             max_file_size: max_file_size.as_u64() as usize,
             namespace,
@@ -309,6 +328,16 @@ impl Cache {
     ///
     /// # Logging
     /// Logs debug information about the cache plugin creation
+    /// Per-request overrides for pingora's cache lock. Only the retry
+    /// budget is configurable, and only when the plugin sets it; otherwise
+    /// pingora keeps its defaults.
+    fn cache_option_overrides(&self) -> Option<CacheOptionOverrides> {
+        let retries = self.lock_retries?;
+        let mut overrides = CacheOptionOverrides::default();
+        overrides.max_lock_retries = Some(retries);
+        Some(overrides)
+    }
+
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new http cache plugin");
         Self::try_from(params)
@@ -473,8 +502,7 @@ impl Plugin for Cache {
             self.eviction,
             self.predictor,
             self.lock,
-            // TODO: add cache option overrides
-            None,
+            self.cache_option_overrides(),
         );
 
         // Set maximum cached file size if configured
@@ -513,6 +541,7 @@ mod tests {
 eviction = true
 headers = ["Accept-Encoding"]
 lock = "2s"
+lock_retries = 5
 max_file_size = "100kb"
 predictor = true
 max_ttl = "1m"
@@ -521,6 +550,11 @@ max_ttl = "1m"
             .unwrap(),
         )
         .unwrap();
+        assert_eq!(Some(5), params.lock_retries);
+        assert_eq!(
+            Some(5),
+            params.cache_option_overrides().unwrap().max_lock_retries
+        );
         assert_eq!(true, params.eviction.is_some());
         assert_eq!(
             r#"Some(["Accept-Encoding"])"#,
@@ -530,6 +564,21 @@ max_ttl = "1m"
         assert_eq!(100 * 1000, params.max_file_size);
         assert_eq!(60, params.max_ttl.unwrap().as_secs());
         assert_eq!(true, params.predictor.is_some());
+
+        // Unset leaves pingora's defaults alone; negatives are rejected.
+        let params = Cache::try_from(
+            &toml::from_str::<PluginConf>(r###"lock = "1s""###).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(None, params.lock_retries);
+        assert_eq!(true, params.cache_option_overrides().is_none());
+        let err = Cache::try_from(
+            &toml::from_str::<PluginConf>("lock_retries = -1").unwrap(),
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert_eq!(true, err.contains("lock_retries"), "{err}");
     }
 
     /// Regression: only 1, 2 and 3 second locks used to be honoured, every

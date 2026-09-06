@@ -44,6 +44,10 @@
 # Set the number of threads per server. If set to 0, it will match the CPU core count. Default `1`
 # threads = 1
 
+# Upper bound of each worker runtime's blocking thread pool, which serves
+# spawn_blocking work such as file cache I/O. Default `512` (tokio default)
+# max_blocking_threads = 512
+
 # Allow work stealing between threads of the same service. Default `true`.
 # work_stealing = true
 # Downstream TLS handshake offload. Set both to run TLS handshakes on dedicated

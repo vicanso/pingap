@@ -118,6 +118,7 @@ export interface Server {
   h2_initial_window_size?: string;
   h2_initial_connection_window_size?: string;
   h2_idle_timeout?: string;
+  h1_pipelining?: boolean;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
   downstream_read_timeout?: string;
@@ -171,6 +172,7 @@ interface Basic {
   user?: string;
   group?: string;
   threads?: number;
+  max_blocking_threads?: number;
   work_stealing?: boolean;
   listener_tasks_per_fd?: number;
   downstream_tls_offload_threadpools?: number;

@@ -216,6 +216,17 @@ export default function Servers() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "h1_pipelining",
+      section: sec.connection,
+      label: serverI18n("h1Pipelining"),
+      placeholder: "",
+      tips: serverI18n("h1PipeliningTips"),
+      defaultValue: serverConfig.h1_pipelining,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "h2_initial_window_size",
       section: sec.connection,
       label: serverI18n("h2InitialWindowSize"),

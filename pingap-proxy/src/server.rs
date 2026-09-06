@@ -168,6 +168,8 @@ pub struct Server {
     h2_initial_connection_window_size: Option<u32>,
     /// Idle timeout for downstream HTTP/2 connections
     h2_idle_timeout: Option<Duration>,
+    /// Serve HTTP/1.1 pipelined requests sequentially on a keep-alive connection
+    h1_pipelining: bool,
 
     /// Whether Let's Encrypt certificate automation is enabled
     lets_encrypt_enabled: bool,
@@ -307,6 +309,7 @@ impl Server {
             h2_initial_connection_window_size: conf
                 .h2_initial_connection_window_size,
             h2_idle_timeout: conf.h2_idle_timeout,
+            h1_pipelining: conf.h1_pipelining,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
             #[cfg(feature = "tracing")]
@@ -1103,6 +1106,12 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
+        if self.h1_pipelining {
+            // Opt this HTTP/1.1 connection into sequential pipelining
+            // (RFC 9112 §9.3.2). pingora keeps the flag across keep-alive
+            // reuses and ignores it on HTTP/2.
+            session.as_downstream_mut().set_pipelining_enabled(true);
+        }
         #[cfg(feature = "tracing")]
         if self.enabled_otel {
             initialize_telemetry(&self.name, session, ctx);

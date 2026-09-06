@@ -166,6 +166,10 @@ export default {
     threads: "线程数",
     threadsPlaceholder: "输入服务线程数",
     threadsTips: "填 0 表示使用 CPU 核数；留空则使用内置默认值。",
+    maxBlockingThreads: "阻塞线程上限",
+    maxBlockingThreadsPlaceholder: "输入阻塞线程池上限",
+    maxBlockingThreadsTips:
+      "每个工作运行时的阻塞线程池上限（spawn_blocking 任务，如文件缓存 I/O）。留空使用 tokio 默认值 512。",
     workStealing: "线程工作抢占模式",
     workStealingTips: "允许空闲线程从繁忙线程抢任务，提升多核利用率。",
     listenerTasksPerFd: "每个fd的监听任务数",
@@ -289,6 +293,9 @@ export default {
       "接受的HTTP/2请求头列表最大字节数(默认64kib)",
     h2IdleTimeout: "H2空闲超时",
     h2IdleTimeoutPlaceholder: "HTTP/2客户端连接空闲多久后关闭(如2m)",
+    h1Pipelining: "HTTP/1.1 流水线",
+    h1PipeliningTips:
+      "在同一连接上依次应答客户端流水线发送的 HTTP/1.1 请求；关闭时只应答第一个请求就关闭连接，其余由客户端重试。",
     h2InitialWindowSize: "H2初始流窗口",
     h2InitialWindowSizePlaceholder:
       "每个流的HTTP/2流控窗口(如1mib，最大2gib - 1)",
@@ -558,6 +565,9 @@ export default {
     cacheDirectoryPlaceholder: "输入缓存使用的目录",
     cacheLock: "锁等待",
     cacheLockPlaceholder: "输入请求相同资源时的最长锁等待时长(如2s)",
+    cacheLockRetries: "锁重试次数",
+    cacheLockRetriesPlaceholder:
+      "等锁的请求在自行回源前重新查缓存的次数(默认2)",
     cacheMaxFileSize: "最大响应缓存大小",
     cacheMaxFileSizePlaceholder: "输入最大的响应缓存大小(如1mb)",
     cacheNamespace: "命名空间",

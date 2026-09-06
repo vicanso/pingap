@@ -92,6 +92,8 @@ pub struct ServerConf {
     pub h2_initial_connection_window_size: Option<u32>,
     // Idle timeout for downstream HTTP/2 connections; None never closes
     pub h2_idle_timeout: Option<Duration>,
+    // Serve HTTP/1.1 pipelined requests instead of closing after the first
+    pub h1_pipelining: bool,
 
     // Endpoint path for exposing Prometheus metrics
     // None means metrics collection is disabled
@@ -157,6 +159,7 @@ impl fmt::Display for ServerConf {
             format_opt_u32(&self.h2_initial_connection_window_size),
             format_opt_duration(&self.h2_idle_timeout)
         )?;
+        writeln!(f, "    HTTP/1.1 Pipelining: {}", self.h1_pipelining)?;
         writeln!(
             f,
             "    Downstream Read Timeout: {}",
@@ -297,6 +300,7 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
                 .h2_initial_connection_window_size
                 .map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX)),
             h2_idle_timeout: item.h2_idle_timeout,
+            h1_pipelining: item.h1_pipelining.unwrap_or_default(),
             tcp_keepalive,
             tcp_fastopen: item.tcp_fastopen,
             reuse_port: item.reuse_port,
@@ -354,6 +358,7 @@ mod tests {
   - Protocols & Timeouts:
     HTTP/2 Enabled: true
     HTTP/2 Limits: streams=default, header_list=default, window=default, conn_window=default, idle=default
+    HTTP/1.1 Pipelining: false
     Downstream Read Timeout: default
     Downstream Write Timeout: default
   - TLS Settings:
@@ -385,6 +390,7 @@ mod tests {
   - Protocols & Timeouts:
     HTTP/2 Enabled: true
     HTTP/2 Limits: streams=default, header_list=default, window=default, conn_window=default, idle=default
+    HTTP/1.1 Pipelining: false
     Downstream Read Timeout: default
     Downstream Write Timeout: default
   - TLS Settings:

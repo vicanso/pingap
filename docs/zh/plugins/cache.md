@@ -15,7 +15,8 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `headers` | string[] | — | 追加到缓存键的请求头（变体缓存）。 |
 | `max_ttl` | duration | — | 条目寿命上限，封顶上游 `Cache-Control`。 |
 | `max_file_size` | bytesize | `1mb` | 大于此尺寸的响应不缓存。 |
-| `lock` | duration | `1s` | 防惊群的缓存锁窗口。**仅支持 `1s`、`2s`、`3s`**；其他值静默关闭锁定。 |
+| `lock` | duration | `1s` | 防惊群的缓存锁窗口。任意非零时长都有效；`0s` 关闭锁定。 |
+| `lock_retries` | int | `2` | 等锁的请求在放弃、自行回源之前重新查询缓存的次数。 |
 | `eviction` | bool | 缺席 | 键存在即启用 LRU 淘汰。 |
 | `predictor` | bool | 缺席 | 键存在即启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
@@ -82,5 +83,5 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 - **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。
 - **每个进程只有一个内存后端。** 第一个请求内存缓存的 `cache` 插件创建进程级单例；第二个声明不同 `max_size` 或 `mode` 时会静默复用第一个。用 `namespace` 分隔内容，不要再声明第二个 `directory`。
-- 非 1/2/3 秒的 `lock` 会关闭锁定而非报错。请优先 `"1s"`、`"2s"` 或 `"3s"`。
+- 每个不同的 `lock` 时长会在进程生命周期内分配一把共享锁，因此重要的是不同取值的数量，而不是插件实例数。
 - 按 `Accept-Encoding` 缓存时请搭配 [`accept_encoding`](accept_encoding.md)，否则变体数量会爆炸。

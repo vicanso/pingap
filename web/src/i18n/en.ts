@@ -170,6 +170,10 @@ export default {
     threadsPlaceholder: "Input the default thread count",
     threadsTips:
       "0 uses the CPU count. Leave empty to keep the built-in default.",
+    maxBlockingThreads: "Max Blocking Threads",
+    maxBlockingThreadsPlaceholder: "Input the blocking thread pool limit",
+    maxBlockingThreadsTips:
+      "Upper bound of each worker runtime's blocking thread pool (spawn_blocking work such as file cache I/O). Leave empty for tokio's default of 512.",
     workStealing: "Work Stealing",
     workStealingTips:
       "Allow idle workers to steal tasks from busy ones for better multi-core use.",
@@ -312,6 +316,9 @@ export default {
     h2IdleTimeout: "H2 Idle Timeout",
     h2IdleTimeoutPlaceholder:
       "Close an idle HTTP/2 client connection after(e.g. 2m)",
+    h1Pipelining: "HTTP/1.1 Pipelining",
+    h1PipeliningTips:
+      "Answer pipelined HTTP/1.1 requests one after another on the same connection. Off, the connection is closed after the first one and the client retries the rest.",
     h2InitialWindowSize: "H2 Initial Window Size",
     h2InitialWindowSizePlaceholder:
       "HTTP/2 flow-control window per stream(e.g. 1mib, max 2gib - 1)",
@@ -616,6 +623,9 @@ export default {
     cacheLock: "Lock",
     cacheLockPlaceholder:
       "Input the lock duration lookups to the same asset(e.g. 2s)",
+    cacheLockRetries: "Lock Retries",
+    cacheLockRetriesPlaceholder:
+      "How many times a request that waited on the lock re-checks the cache before fetching itself (default 2)",
     cacheMaxFileSize: "Max File Size",
     cacheMaxFileSizePlaceholder:
       "Input the cache max file size of http response(e.g. 1mb)",

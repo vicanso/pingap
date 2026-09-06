@@ -927,6 +927,11 @@ pub struct ServerConf {
     #[serde(with = "humantime_serde")]
     pub h2_idle_timeout: Option<Duration>,
 
+    /// Serve HTTP/1.1 pipelined requests sequentially on one keep-alive
+    /// connection (RFC 9112 §9.3.2). Off by default: pingora then answers
+    /// the first request, closes the connection and drops the rest.
+    pub h1_pipelining: Option<bool>,
+
     /// TCP keepalive idle timeout
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -1102,6 +1107,10 @@ pub struct BasicConf {
     pub group: Option<String>,
     /// Number of worker threads(default: 1)
     pub threads: Option<usize>,
+    /// Upper bound of each worker runtime's blocking thread pool, which
+    /// serves `spawn_blocking` work such as file cache I/O. Unset keeps
+    /// tokio's default of 512.
+    pub max_blocking_threads: Option<usize>,
     /// Enable work stealing between worker threads(default: true)
     pub work_stealing: Option<bool>,
     /// Number of listener tasks to use per fd. This allows for parallel accepts.
@@ -1177,6 +1186,14 @@ impl Validate for BasicConf {
         {
             return Err(Error::Invalid {
                 message: "restart ready timeout should be at least 1s"
+                    .to_string(),
+            });
+        }
+        // pingora rejects a zero-sized blocking pool at startup; fail the
+        // config check instead.
+        if self.max_blocking_threads == Some(0) {
+            return Err(Error::Invalid {
+                message: "max blocking threads should be greater than 0"
                     .to_string(),
             });
         }
@@ -2334,6 +2351,7 @@ h2_max_header_list_size = "128kb"
 h2_initial_window_size = "1mb"
 h2_initial_connection_window_size = "4mb"
 h2_idle_timeout = "2m"
+h1_pipelining = true
 "#,
         )
         .unwrap();
@@ -2345,6 +2363,7 @@ h2_idle_timeout = "2m"
             conf.h2_initial_connection_window_size
         );
         assert_eq!(Some(Duration::from_secs(120)), conf.h2_idle_timeout);
+        assert_eq!(Some(true), conf.h1_pipelining);
         assert_eq!(true, conf.validate().is_ok());
         let restored: ServerConf =
             toml::from_str(&toml::to_string(&conf).unwrap()).unwrap();
@@ -2417,6 +2436,25 @@ restart_ready_timeout = "2m"
             "Invalid error restart ready timeout should be at least 1s",
             result.expect_err("").to_string()
         );
+    }
+
+    #[test]
+    fn test_basic_max_blocking_threads() {
+        let conf: BasicConf =
+            toml::from_str("max_blocking_threads = 64").unwrap();
+        assert_eq!(Some(64), conf.max_blocking_threads);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Unset keeps tokio's default; zero is refused up front.
+        let conf = BasicConf::default();
+        assert_eq!(None, conf.max_blocking_threads);
+        assert_eq!(true, conf.validate().is_ok());
+        let conf = BasicConf {
+            max_blocking_threads: Some(0),
+            ..Default::default()
+        };
+        let err = conf.validate().unwrap_err().to_string();
+        assert_eq!(true, err.contains("max blocking threads"), "{err}");
     }
 
     #[test]

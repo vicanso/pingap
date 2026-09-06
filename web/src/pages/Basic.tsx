@@ -61,6 +61,16 @@ export default function Basic() {
       category: ExFormItemCategory.NUMBER,
     },
     {
+      name: "max_blocking_threads",
+      label: basicI18n("maxBlockingThreads"),
+      placeholder: basicI18n("maxBlockingThreadsPlaceholder"),
+      tips: basicI18n("maxBlockingThreadsTips"),
+      defaultValue: basic.max_blocking_threads,
+      span: 3,
+      section: sec.core,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "work_stealing",
       label: basicI18n("workStealing"),
       placeholder: "",

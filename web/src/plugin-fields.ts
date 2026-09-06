@@ -244,6 +244,14 @@ export const PLUGIN_FIELDS: Partial<
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "lock_retries",
+      label: t("cacheLockRetries"),
+      placeholder: t("cacheLockRetriesPlaceholder"),
+      defaultValue: conf.lock_retries as number,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "max_file_size",
       label: t("cacheMaxFileSize"),
       placeholder: t("cacheMaxFileSizePlaceholder"),

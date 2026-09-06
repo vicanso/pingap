@@ -221,6 +221,9 @@ fn new_server_config(
     if let Some(threads) = args.threads {
         server_conf.threads = threads.max(1);
     }
+    if let Some(max_blocking_threads) = basic_conf.max_blocking_threads {
+        server_conf.max_blocking_threads = Some(max_blocking_threads);
+    }
     if let Some(work_stealing) = basic_conf.work_stealing {
         server_conf.work_stealing = work_stealing
     }
