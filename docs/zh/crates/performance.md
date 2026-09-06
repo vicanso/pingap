@@ -54,6 +54,12 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=15s"
 | `pingap_upstream_tls_handshake_time` | histogram | upstream | 上游 TLS 握手（秒） |
 | `pingap_upstream_processing_time` | histogram | upstream | 上游处理（秒） |
 | `pingap_upstream_response_time` | histogram | upstream | 上游响应（秒） |
+| `pingap_upstream_backend_failure_rate` | gauge | upstream, backend | 滑动窗口失败率百分比（0–100） |
+| `pingap_upstream_backend_requests` | gauge | upstream, backend | 滑动窗口内的请求数 |
+| `pingap_upstream_backend_circuit_state` | gauge | upstream, backend | 熔断状态：0 关闭、1 打开、2 半开 |
+| `pingap_upstream_discovery_time` | gauge | upstream | 最近一次后端刷新的服务发现耗时（秒） |
+| `pingap_upstream_selector_build_time` | gauge | upstream | 最近一次后端刷新的选择器构建耗时（秒） |
+| `pingap_upstream_pool_eviction_idle_time` | histogram | — | 上游连接被 keep-alive 连接池腾位淘汰时的空闲时长（秒）；count 即淘汰次数，持续增长说明 `upstream_keepalive_pool_size` 偏小 |
 | `pingap_cache_lookup_time` | histogram | — | 缓存查找（秒） |
 | `pingap_cache_lock_time` | histogram | — | 等待缓存锁的时间（秒） |
 | `pingap_cache_reading` / `pingap_cache_writing` | gauge | — | 并发缓存读 / 写 |

@@ -56,6 +56,8 @@ use pingora::cache::key::CacheHashKey;
 use pingora::cache::{
     CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
 };
+#[cfg(feature = "tracing")]
+use pingora::connectors::ConnectorOptions;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TcpSocketOptions;
 use pingora::modules::http::HttpModules;
@@ -66,7 +68,7 @@ use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::protocols::Digest;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::http::v2::server::{H2Options, default_h2_options};
-use pingora::proxy::{FailToProxy, HttpProxy, http_proxy_service};
+use pingora::proxy::{FailToProxy, HttpProxy, ProxyServiceBuilder};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
@@ -446,7 +448,24 @@ impl Server {
         let tls_max_version = self.tls_max_version.clone();
         let h2_options = self.new_h2_options();
         let h2_idle_timeout = self.h2_idle_timeout;
-        let mut lb = http_proxy_service(&conf, self);
+        #[cfg(feature = "tracing")]
+        let pool_observer = self.prometheus.clone();
+        let mut builder = ProxyServiceBuilder::new(&conf, self)
+            .name("Pingora HTTP Proxy Service");
+        // With metrics enabled, pingora reports every keep-alive pool
+        // eviction together with how long the evicted upstream connection
+        // had been idle; feed that into this server's registry.
+        #[cfg(feature = "tracing")]
+        {
+            if let Some(prometheus) = pool_observer {
+                let mut options = ConnectorOptions::from_server_conf(&conf);
+                options.keepalive_pool_callback = Some(Arc::new(move |idle| {
+                    prometheus.observe_upstream_pool_eviction(idle)
+                }));
+                builder = builder.client_options(options);
+            }
+        }
+        let mut lb = builder.build();
         if let Some(http_logic) = lb.app_logic_mut() {
             let mut http_server_options = HttpServerOptions::default();
             // use h2c if not tls and enable http2

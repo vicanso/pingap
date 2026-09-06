@@ -153,6 +153,14 @@ pub struct Prometheus {
 
     /// Circuit breaker state per upstream backend: 0 closed, 1 open, 2 half-open
     upstream_backend_circuit_state: Box<IntGaugeVec>,
+    /// Seconds the latest backend refresh spent in service discovery, per upstream
+    upstream_discovery_time: Box<GaugeVec>,
+    /// Seconds the latest backend refresh spent rebuilding the selector, per upstream
+    upstream_selector_build_time: Box<GaugeVec>,
+    /// Histogram of how long upstream connections had been idle when the
+    /// keep-alive pool evicted them to make room, in seconds; the count is
+    /// the number of evictions
+    upstream_pool_eviction_idle_time: Box<Histogram>,
 }
 
 /// Milliseconds to seconds conversion factor
@@ -369,6 +377,7 @@ impl Prometheus {
             return;
         };
         for (upstream_name, stats) in provider.get_all_stats() {
+            self.refresh_upstream_update_timing(&upstream_name, &stats);
             // Union of backends that have window stats and/or a circuit state.
             let mut backends: std::collections::HashSet<&str> =
                 stats.backend_stats.keys().map(|s| s.as_str()).collect();
@@ -390,6 +399,36 @@ impl Prometheus {
                     .set(state as i64);
             }
         }
+    }
+
+    /// Push the discovery/selector-build durations of the latest backend
+    /// refresh into the per-upstream gauges.
+    fn refresh_upstream_update_timing(
+        &self,
+        upstream_name: &str,
+        stats: &pingap_upstream::UpstreamStats,
+    ) {
+        let labels = [upstream_name];
+        if let Some(duration) = stats.discovery_duration {
+            self.upstream_discovery_time
+                .with_label_values(&labels)
+                .set(duration.as_secs_f64());
+        }
+        if let Some(duration) = stats.selector_build_duration {
+            self.upstream_selector_build_time
+                .with_label_values(&labels)
+                .set(duration.as_secs_f64());
+        }
+    }
+
+    /// Records how long an upstream connection had been idle when the
+    /// keep-alive pool evicted it to make room for a newer one (pingora only
+    /// reports evictions, not idle timeouts or peer closes). The proxy server
+    /// wires this into the connector's `keepalive_pool_callback`; a growing
+    /// count means `upstream_keepalive_pool_size` is too small.
+    pub fn observe_upstream_pool_eviction(&self, idle: Duration) {
+        self.upstream_pool_eviction_idle_time
+            .observe(idle.as_secs_f64());
     }
 
     /// Formats all metrics in Prometheus text format for scraping.
@@ -581,6 +620,21 @@ fn new_int_gauge_vec(
     opts = opts.const_label("server", server);
     let gauge =
         IntGaugeVec::new(opts, label_names).map_err(|e| Error::Prometheus {
+            message: e.to_string(),
+        })?;
+    Ok(gauge)
+}
+
+fn new_gauge_vec(
+    server: &str,
+    name: &str,
+    help: &str,
+    label_names: &[&str],
+) -> Result<GaugeVec> {
+    let mut opts = Opts::new(name, help);
+    opts = opts.const_label("server", server);
+    let gauge =
+        GaugeVec::new(opts, label_names).map_err(|e| Error::Prometheus {
             message: e.to_string(),
         })?;
     Ok(gauge)
@@ -899,6 +953,31 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         })?;
     }
 
+    let upstream_discovery_time = register_metric!(
+        r,
+        new_gauge_vec,
+        server,
+        "pingap_upstream_discovery_time",
+        "pingap service discovery time of the latest backend refresh(second)",
+        &["upstream"]
+    )?;
+    let upstream_selector_build_time = register_metric!(
+        r,
+        new_gauge_vec,
+        server,
+        "pingap_upstream_selector_build_time",
+        "pingap selector build time of the latest backend refresh(second)",
+        &["upstream"]
+    )?;
+    let upstream_pool_eviction_idle_time = register_metric!(
+        r,
+        new_histogram,
+        server,
+        "pingap_upstream_pool_eviction_idle_time",
+        "pingap idle time of upstream keepalive connections when evicted from the pool(second)",
+        &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0]
+    )?;
+
     Ok(Prometheus {
         r,
         http_requests_total,
@@ -930,6 +1009,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         upstream_backend_failure_rate,
         upstream_backend_requests,
         upstream_backend_circuit_state,
+        upstream_discovery_time,
+        upstream_selector_build_time,
+        upstream_pool_eviction_idle_time,
     })
 }
 
@@ -944,6 +1026,27 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::time::{Duration, Instant};
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_upstream_pool_eviction_idle_time() {
+        let p = new_prometheus("pingap").unwrap();
+        p.observe_upstream_pool_eviction(Duration::from_secs(3));
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            true,
+            buf.contains(
+                "pingap_upstream_pool_eviction_idle_time_count{server=\"pingap\"} 1"
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            true,
+            buf.contains(
+                "pingap_upstream_pool_eviction_idle_time_sum{server=\"pingap\"} 3"
+            ),
+            "{buf}"
+        );
+    }
 
     #[tokio::test]
     async fn test_new_prometheus() {
@@ -1008,6 +1111,6 @@ mod tests {
             },
         );
         let buf = p.metrics().unwrap();
-        assert_eq!(225, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        assert_eq!(237, std::str::from_utf8(&buf).unwrap().split('\n').count());
     }
 }

@@ -60,6 +60,9 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=15s"
 | `pingap_upstream_backend_failure_rate` | gauge | upstream, backend | Sliding-window failure rate percent (0–100) |
 | `pingap_upstream_backend_requests` | gauge | upstream, backend | Sliding-window request count |
 | `pingap_upstream_backend_circuit_state` | gauge | upstream, backend | Circuit state: 0 closed, 1 open, 2 half-open |
+| `pingap_upstream_discovery_time` | gauge | upstream | Service discovery time of the latest backend refresh (s) |
+| `pingap_upstream_selector_build_time` | gauge | upstream | Selector build time of the latest backend refresh (s) |
+| `pingap_upstream_pool_eviction_idle_time` | histogram | — | Idle time of upstream connections when the keep-alive pool evicted them to make room (s); the count is the eviction count, a sign `upstream_keepalive_pool_size` is too small |
 | `pingap_cache_lookup_time` | histogram | — | Cache lookup (s) |
 | `pingap_cache_lock_time` | histogram | — | Time waiting on a cache lock (s) |
 | `pingap_cache_reading` / `pingap_cache_writing` | gauge | — | Concurrent cache reads / writes |

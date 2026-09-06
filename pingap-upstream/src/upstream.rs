@@ -41,6 +41,7 @@ use pingap_discovery::{
 };
 use pingap_health::new_health_check;
 use pingora::lb::Backend;
+use pingora::lb::UpdateTimings;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
@@ -128,6 +129,14 @@ impl SelectionLb {
             SelectionLb::RoundRobin(lb) => lb.update().await,
             SelectionLb::Consistent { lb, .. } => lb.update().await,
             SelectionLb::Transparent => Ok(()),
+        }
+    }
+    /// Timings of the latest backend refresh, `None` until one completed.
+    fn last_update_timing(&self) -> Option<UpdateTimings> {
+        match self {
+            SelectionLb::RoundRobin(lb) => lb.last_update_timing(),
+            SelectionLb::Consistent { lb, .. } => lb.last_update_timing(),
+            SelectionLb::Transparent => None,
         }
     }
     async fn run_health_check(&self) {
@@ -401,6 +410,11 @@ pub struct UpstreamStats {
     pub backend_stats: HashMap<String, WindowStats>,
     /// Circuit breaker state per backend address: 0 closed, 1 open, 2 half-open.
     pub circuit_states: HashMap<String, u8>,
+    /// Time the latest backend refresh spent in service discovery; `None`
+    /// before the first refresh and for transparent upstreams.
+    pub discovery_duration: Option<Duration>,
+    /// Time the latest backend refresh spent rebuilding the selector.
+    pub selector_build_duration: Option<Duration>,
 }
 
 /// Builds the request-header policy pingora applies to every request sent
@@ -787,6 +801,7 @@ impl Upstream {
                     .or_insert_with(|| states.get_state_code(&addr));
             }
         }
+        let update_timing = self.lb.last_update_timing();
         UpstreamStats {
             processing: self.processing.load(Ordering::Relaxed),
             connected: self
@@ -795,6 +810,8 @@ impl Upstream {
                 .map(|tracer| tracer.connected()),
             backend_stats,
             circuit_states,
+            discovery_duration: update_timing.map(|t| t.discovery_duration),
+            selector_build_duration: update_timing.map(|t| t.build_duration),
         }
     }
 }
@@ -1339,6 +1356,24 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert_eq!(true, err.contains("category: ca"), "{err}");
+    }
+
+    #[test]
+    fn test_upstream_stats_update_timing() {
+        // Static discovery refreshes the backends while the upstream is
+        // built, so pingora's timings are available right away.
+        let up = Upstream::new(
+            "timing",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let stats = up.stats();
+        assert_eq!(true, stats.discovery_duration.is_some());
+        assert_eq!(true, stats.selector_build_duration.is_some());
     }
 
     #[test]
