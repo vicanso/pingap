@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.14.0](https://github.com/vicanso/pingap/compare/v0.13.10..v0.14.0) - 2026-09-06
+
+### ⛰️  Features
+
+- *(cache)* Honour the origin's Vary header through cache_vary_filter - ([9a7a5dc](https://github.com/vicanso/pingap/commit/9a7a5dc0a93442d88ade12d8eef13f60ef4423b1))
+- *(health)* Add ws:// and wss:// WebSocket health checks - ([e07b813](https://github.com/vicanso/pingap/commit/e07b813b5c8603d7497019277e3e152de4733034))
+- *(metrics)* Export backend refresh timings and keep-alive pool evictions - ([bd1915e](https://github.com/vicanso/pingap/commit/bd1915e292d238409bf773d6fac0a2a4487270fa))
+- *(restart)* Hand over on readiness reported by the new process - ([b8dfc5c](https://github.com/vicanso/pingap/commit/b8dfc5c7b95eb219a02fd780e3a11c90ebad1d15))
+- *(server)* Expose pingora's TLS and connect offload thread pools - ([8dfa6d1](https://github.com/vicanso/pingap/commit/8dfa6d1e2e9361caf5987844be0b9190588f1302))
+- *(server)* Expose downstream HTTP/2 SETTINGS per listener - ([5df838d](https://github.com/vicanso/pingap/commit/5df838d5ff2d8b715723701279f6aed5cda6c2e0))
+- *(timing)* Take handshake durations and keepalive reuse from pingora - ([90a41cc](https://github.com/vicanso/pingap/commit/90a41cc9fc43d810a5f2dc7fa0b3ba4b43fdecbc))
+- *(tls)* Make the TLS backend selectable, openssl by default - ([3e4efff](https://github.com/vicanso/pingap/commit/3e4efff0d338478df77d27bb6fbe867662435381))
+- *(upstream)* Per-upstream CA bundle and HTTP/2 flow-control windows - ([aaff14f](https://github.com/vicanso/pingap/commit/aaff14f9e6509e0c019ac75b9b566cf95cc93f6d))
+- *(upstream)* Expose pingora's request-header policy per upstream - ([d1a98cc](https://github.com/vicanso/pingap/commit/d1a98cc72d0525bfc1e1e7d731606cb029bf30c0))
+- Expose blocking thread limit, cache lock retries and h1 pipelining - ([eff206f](https://github.com/vicanso/pingap/commit/eff206f7398b38eb2bc58a9a95f3db8b218d9b3b))
+
+### 🐛 Bug Fixes
+
+- *(deps)* Bump h2 past the empty-DATA-frame advisory - ([1e33b39](https://github.com/vicanso/pingap/commit/1e33b39c3efd2d74de27832bc60c95cec05bc969))
+- *(proxy)* Answer 404 when no location matches - ([8d3774e](https://github.com/vicanso/pingap/commit/8d3774e3e217bc0a9145066a01431b43ee05abe6))
+- *(web)* Make two unreadable states in the console readable - ([4720b1c](https://github.com/vicanso/pingap/commit/4720b1c9494ac75f8f51fd3fe1a0e0fd1e56cc9e))
+
+### 🚜 Refactor
+
+- *(web)* Polish admin console empty states, search, and routing - ([8355f94](https://github.com/vicanso/pingap/commit/8355f94ec7328d1cf89ba7386bc74545664c4c39))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Publish rustls-full Linux builds for x86_64 and aarch64 - ([e10519d](https://github.com/vicanso/pingap/commit/e10519d1dd5322fbf99ad2450ced4c49764b93a8))
+- Run the test gate on pull requests - ([d90c55f](https://github.com/vicanso/pingap/commit/d90c55f944f033422af480eecce96d8d6328e716))
+
+### Build
+
+- *(deps)* Bump docker/build-push-action from 6 to 7 - ([ccb8b24](https://github.com/vicanso/pingap/commit/ccb8b24bebfbe5225a17216b9b21466ffb970638))
+- *(deps)* Bump actions/upload-pages-artifact from 3 to 5 - ([1aa7c34](https://github.com/vicanso/pingap/commit/1aa7c34c9675b1320744443d731c87e8a3b4de78))
+- *(deps)* Bump actions/stale from 9 to 11 - ([3e93986](https://github.com/vicanso/pingap/commit/3e939860cbc2cc831d655c38c113d8ff25500c25))
+- *(deps)* Bump docker/setup-buildx-action from 3 to 4 - ([f9123d9](https://github.com/vicanso/pingap/commit/f9123d9ab97a8f12ce610020276fc8b993d2b055))
+- *(deps)* Bump actions/configure-pages from 5 to 6 - ([cf91c00](https://github.com/vicanso/pingap/commit/cf91c0060bf762f246462b3c3e1edcdda72a9785))
+- Move to pingora main, raise MSRV to 1.96, refresh deps and release toolchain - ([19b1276](https://github.com/vicanso/pingap/commit/19b12768343e99d97a869b104d44bb4afb680164))
+
 ## [0.13.10](https://github.com/vicanso/pingap/compare/v0.13.9..v0.13.10) - 2026-08-29
 
 ### 🐛 Bug Fixes
