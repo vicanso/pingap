@@ -39,6 +39,7 @@ use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -89,6 +90,9 @@ pub struct Cache {
     // Optional list of headers to include when generating cache keys
     // Allows for variant caching (e.g., different versions based on Accept-Encoding)
     headers: Option<Vec<String>>,
+    // Optional allow list for the origin's `Vary` header: only these request
+    // headers may create cache variants. None honours everything it names.
+    vary_headers: Option<Arc<Vec<String>>>,
     // Whether to check the cache-control header, if not exist the response will not be cached.
     check_cache_control: bool,
     // IP-based access control for cache purge operations
@@ -277,6 +281,17 @@ impl TryFrom<&PluginConf> for Cache {
         } else {
             Some(headers)
         };
+        let vary_headers = get_str_slice_conf(value, "vary_headers");
+        let vary_headers = if vary_headers.is_empty() {
+            None
+        } else {
+            Some(Arc::new(
+                vary_headers
+                    .iter()
+                    .map(|name| name.trim().to_ascii_lowercase())
+                    .collect(),
+            ))
+        };
 
         let predictor = if value.contains_key("predictor") {
             Some(get_predictor())
@@ -309,6 +324,7 @@ impl TryFrom<&PluginConf> for Cache {
             max_file_size: max_file_size.as_u64() as usize,
             namespace,
             headers,
+            vary_headers,
             purge_ip_rules,
             check_cache_control: get_bool_conf(value, "check_cache_control"),
             skip,
@@ -494,6 +510,7 @@ impl Plugin for Cache {
         if let Some(cache_info) = &mut ctx.cache {
             cache_info.max_ttl = self.max_ttl;
             cache_info.check_cache_control = self.check_cache_control;
+            cache_info.vary_headers = self.vary_headers.clone();
         }
 
         // Enable caching for this session with configured components
@@ -545,11 +562,16 @@ lock_retries = 5
 max_file_size = "100kb"
 predictor = true
 max_ttl = "1m"
+vary_headers = ["Accept-Encoding", " accept "]
 "###,
             )
             .unwrap(),
         )
         .unwrap();
+        assert_eq!(
+            Some(vec!["accept-encoding".to_string(), "accept".to_string()]),
+            params.vary_headers.as_deref().cloned()
+        );
         assert_eq!(Some(5), params.lock_retries);
         assert_eq!(
             Some(5),

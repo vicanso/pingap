@@ -15,6 +15,7 @@ IP-restricted `PURGE` method.
 | `directory` | string | memory | Empty or `memory://…` selects the memory backend; any other value is a file cache directory. |
 | `namespace` | string | — | Isolates entries; with a file backend it becomes a subdirectory. |
 | `headers` | string[] | — | Request headers appended to the cache key (variant caching). |
+| `vary_headers` | string[] | — | Allow list for the origin's `Vary` response header: only these request headers may create cache variants. Unset honours every header the origin names. |
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
 | `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
@@ -90,6 +91,12 @@ in a multi-instance deployment, issue the request on every node.
   so purging `/x` removes the entries created by either method. If `headers`
   are configured, send them on the `PURGE` request too — they are part of the
   key.
+- The origin's `Vary` response header is honoured: each combination of the
+  request headers it names is stored as its own variant under the same key, and
+  `Vary: *` makes the response uncacheable. `vary_headers` limits which headers
+  may do that, since `Vary: Cookie` or `Vary: User-Agent` would mean a variant
+  per client. `PURGE` removes the primary slot; the variants behind it become
+  unreachable and are reclaimed by eviction or the inactive sweep.
 - `lock` makes concurrent misses for the same key wait for the first one instead
   of all hitting the origin.
 - Cache read/write counts are recorded into the request context and are available

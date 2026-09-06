@@ -592,6 +592,9 @@ export default {
     cacheSkipPlaceholder: "输入略过缓存的正则规则",
     cacheHeaders: "缓存请求头",
     cacheHeadersPlaceholder: "输入要添加至缓存key的请求头",
+    cacheVaryHeaders: "Vary 头白名单",
+    cacheVaryHeadersPlaceholder:
+      "输入允许源站 Vary 产生变体的请求头，留空表示全部",
     cachePurgeIpList: "允许缓存清除ip",
     cachePurgeIpListPlaceholder: "输入允许执行缓存清除的ip",
     requestIdAlgo: "算法",

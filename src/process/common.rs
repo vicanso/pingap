@@ -316,9 +316,15 @@ async fn wait_for_ready(
     let deadline = tokio::time::Instant::now() + ready_timeout;
     let mut poll = tokio::time::interval(READY_POLL_INTERVAL);
     let mut spawned_exited = false;
+    // One accept future for the whole wait. `select!` drops the losing
+    // branch every round, and a fresh `accept()` per iteration could be
+    // dropped by a poll tick between accepting the connection and reading
+    // the pid from it, silently losing the report and timing out.
+    let accept = listener.accept();
+    tokio::pin!(accept);
     loop {
         tokio::select! {
-            accepted = listener.accept() => {
+            accepted = &mut accept => {
                 let daemon_pid = accepted?;
                 info!(
                     target: LOG_TARGET,

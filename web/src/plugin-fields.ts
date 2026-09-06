@@ -319,6 +319,14 @@ export const PLUGIN_FIELDS: Partial<
       category: ExFormItemCategory.TEXTS,
     },
     {
+      name: "vary_headers",
+      label: t("cacheVaryHeaders"),
+      placeholder: t("cacheVaryHeadersPlaceholder"),
+      defaultValue: conf.vary_headers as string[],
+      span: 6,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
       name: "purge_ip_list",
       label: t("cachePurgeIpList"),
       placeholder: t("cachePurgeIpListPlaceholder"),

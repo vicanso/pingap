@@ -52,9 +52,10 @@ use pingap_upstream::{Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
-use pingora::cache::key::CacheHashKey;
+use pingora::cache::key::{CacheHashKey, HashBinary};
 use pingora::cache::{
-    CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
+    CacheKey, CacheMeta, CacheMetaDefaults, NoCacheReason, RespCacheable,
+    VarianceBuilder,
 };
 #[cfg(feature = "tracing")]
 use pingora::connectors::ConnectorOptions;
@@ -233,6 +234,47 @@ pub struct ServerServices {
 
 const META_DEFAULTS: CacheMetaDefaults =
     CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 1, 1);
+
+/// The header names an origin response lists in `Vary`, trimmed and
+/// lowercased.
+fn vary_header_names(
+    headers: &http::HeaderMap,
+) -> impl Iterator<Item = String> + '_ {
+    headers
+        .get_all(http::header::VARY)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|name| name.trim().to_ascii_lowercase())
+        .filter(|name| !name.is_empty())
+}
+
+/// Builds pingora's variance key for `req` from the response's `Vary`
+/// header: one entry per named request header (an absent header counts as
+/// empty), restricted to `allowed` when the cache plugin configured a list.
+/// `None` when nothing varies, which keeps the single-slot behaviour.
+fn cache_variance(
+    headers: &http::HeaderMap,
+    req: &RequestHeader,
+    allowed: Option<&[String]>,
+) -> Option<HashBinary> {
+    let mut names: Vec<String> = vary_header_names(headers)
+        .filter(|name| {
+            allowed.is_none_or(|allowed| allowed.iter().any(|a| a == name))
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    let mut builder = VarianceBuilder::new();
+    for name in names.iter() {
+        let value = req
+            .headers
+            .get(name.as_str())
+            .map_or(&[][..], |value| value.as_bytes());
+        builder.add_value(name, value);
+    }
+    builder.finalize()
+}
 
 static HTTP_500_RESPONSE: LazyLock<ResponseHeader> =
     LazyLock::new(|| error_resp::gen_error_response(500));
@@ -453,21 +495,22 @@ impl Server {
         let h2_idle_timeout = self.h2_idle_timeout;
         #[cfg(feature = "tracing")]
         let pool_observer = self.prometheus.clone();
-        let mut builder = ProxyServiceBuilder::new(&conf, self)
+        let builder = ProxyServiceBuilder::new(&conf, self)
             .name("Pingora HTTP Proxy Service");
         // With metrics enabled, pingora reports every keep-alive pool
         // eviction together with how long the evicted upstream connection
         // had been idle; feed that into this server's registry.
         #[cfg(feature = "tracing")]
-        {
-            if let Some(prometheus) = pool_observer {
+        let builder = match pool_observer {
+            Some(prometheus) => {
                 let mut options = ConnectorOptions::from_server_conf(&conf);
                 options.keepalive_pool_callback = Some(Arc::new(move |idle| {
                     prometheus.observe_upstream_pool_eviction(idle)
                 }));
-                builder = builder.client_options(options);
-            }
-        }
+                builder.client_options(options)
+            },
+            None => builder,
+        };
         let mut lb = builder.build();
         if let Some(http_logic) = lb.app_logic_mut() {
             let mut http_server_options = HttpServerOptions::default();
@@ -1427,6 +1470,14 @@ impl ProxyHttp for Server {
         debug!(target: LOG_TARGET, "--> response cache filter");
         defer!(debug!(target: LOG_TARGET, "<-- response cache filter"););
 
+        // RFC 9111 §4.1: `Vary: *` never matches a later request, so the
+        // response cannot be reused; pingora does not check this itself.
+        if vary_header_names(&resp.headers).any(|name| name == "*") {
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom(
+                "vary *",
+            )));
+        }
+
         let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
             (false, None), // ctx.cache is None
             |c| (c.check_cache_control, c.max_ttl),
@@ -1453,6 +1504,23 @@ impl ProxyHttp for Server {
             false,
             &META_DEFAULTS,
         ))
+    }
+
+    /// Turns the origin's `Vary` header into pingora's variance key, so each
+    /// combination of the named request headers gets its own cache slot.
+    /// pingora calls this both when filling the cache and on every lookup.
+    fn cache_vary_filter(
+        &self,
+        meta: &CacheMeta,
+        ctx: &mut Self::CTX,
+        req: &RequestHeader,
+    ) -> Option<HashBinary> {
+        let allowed = ctx
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.vary_headers.as_deref())
+            .map(Vec::as_slice);
+        cache_variance(meta.headers(), req, allowed)
     }
 
     async fn response_filter(
@@ -2397,6 +2465,119 @@ value = 'proxy_set_headers = ["name:value"]'
             )
             .unwrap();
         assert_eq!(false, result.is_cacheable());
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_filter_vary_star() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Cache-Control", "max-age=60")
+            .unwrap();
+        upstream_response.append_header("Vary", "*").unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut Ctx {
+                    cache: Some(CacheInfo::default()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(false, result.is_cacheable());
+    }
+
+    #[test]
+    fn test_cache_variance() {
+        let request = |accept_encoding: Option<&str>, accept: Option<&str>| {
+            let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+            if let Some(value) = accept_encoding {
+                req.append_header("Accept-Encoding", value).unwrap();
+            }
+            if let Some(value) = accept {
+                req.append_header("Accept", value).unwrap();
+            }
+            req
+        };
+        let response = |vary: &[&str]| {
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            for value in vary {
+                resp.append_header("Vary", *value).unwrap();
+            }
+            resp
+        };
+
+        // No Vary: nothing varies, the single-slot behaviour stays.
+        assert_eq!(
+            None,
+            cache_variance(
+                &response(&[]).headers,
+                &request(Some("gzip"), None),
+                None
+            )
+        );
+
+        // The same headers give the same variance, different values differ,
+        // and a missing header is a value of its own.
+        let vary_resp = response(&["Accept-Encoding, Accept"]);
+        let resp = &vary_resp.headers;
+        let gzip = cache_variance(resp, &request(Some("gzip"), None), None);
+        assert_eq!(true, gzip.is_some());
+        assert_eq!(
+            gzip,
+            cache_variance(resp, &request(Some("gzip"), None), None)
+        );
+        assert_ne!(
+            gzip,
+            cache_variance(resp, &request(Some("br"), None), None)
+        );
+        assert_ne!(gzip, cache_variance(resp, &request(None, None), None));
+        assert_ne!(
+            gzip,
+            cache_variance(
+                resp,
+                &request(Some("gzip"), Some("text/html")),
+                None
+            )
+        );
+
+        // Header names are case-insensitive and may be split over several
+        // Vary headers.
+        assert_eq!(
+            gzip,
+            cache_variance(
+                &response(&["accept-encoding", "ACCEPT"]).headers,
+                &request(Some("gzip"), None),
+                None
+            )
+        );
+
+        // An allow list drops the headers it does not name: Accept no longer
+        // splits the cache, an unlisted-only Vary varies nothing.
+        let allowed = vec!["accept-encoding".to_string()];
+        assert_eq!(
+            cache_variance(resp, &request(Some("gzip"), None), Some(&allowed)),
+            cache_variance(
+                resp,
+                &request(Some("gzip"), Some("text/html")),
+                Some(&allowed)
+            )
+        );
+        assert_eq!(
+            None,
+            cache_variance(
+                &response(&["Cookie"]).headers,
+                &request(Some("gzip"), None),
+                Some(&allowed)
+            )
+        );
     }
 
     fn create_session(path: &str) -> Session {

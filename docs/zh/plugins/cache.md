@@ -13,6 +13,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `directory` | string | 内存 | 空或 `memory://…` 选内存后端；其他值作为文件缓存目录。 |
 | `namespace` | string | — | 隔离条目；文件后端时成为子目录。 |
 | `headers` | string[] | — | 追加到缓存键的请求头（变体缓存）。 |
+| `vary_headers` | string[] | — | 源站 `Vary` 响应头的白名单：只有这些请求头可以产生缓存变体。不设则按源站列出的全部处理。 |
 | `max_ttl` | duration | — | 条目寿命上限，封顶上游 `Cache-Control`。 |
 | `max_file_size` | bytesize | `1mb` | 大于此尺寸的响应不缓存。 |
 | `lock` | duration | `1s` | 防惊群的缓存锁窗口。任意非零时长都有效；`0s` 关闭锁定。 |
@@ -76,6 +77,7 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 - 仅处理 `GET`、`HEAD` 与 `PURGE`；其他方法跳过插件。
 - 缓存键由请求 URI、`namespace` 与所列 `headers` 的值推导。`PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
+- 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
 - 缓存读/写计数写入请求上下文，访问日志中可用 `{:cache_lookup_time}` / `{:cache_lock_time}`。
 

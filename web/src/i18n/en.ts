@@ -651,6 +651,9 @@ export default {
     cacheSkipPlaceholder: "Input the regex for skip",
     cacheHeaders: "Headers",
     cacheHeadersPlaceholder: "Input the header for cache key",
+    cacheVaryHeaders: "Vary Headers",
+    cacheVaryHeadersPlaceholder:
+      "Input the request headers the origin's Vary may create variants for (all when empty)",
     cachePurgeIpList: "Ip Allow Purge",
     cachePurgeIpListPlaceholder: "Input the ip which allow purge",
     requestIdAlgo: "Algorithm",

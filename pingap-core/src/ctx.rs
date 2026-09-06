@@ -294,6 +294,9 @@ pub struct CacheInfo {
     pub check_cache_control: bool,
     /// The maximum time-to-live for cache entries.
     pub max_ttl: Option<Duration>,
+    /// Request headers the origin's `Vary` response header may turn into
+    /// cache variants (lowercased); `None` honours every header it names.
+    pub vary_headers: Option<Arc<Vec<String>>>,
     /// The number of cache read operations performed.
     pub reading_count: Option<u32>,
     /// The number of cache write operations performed.
