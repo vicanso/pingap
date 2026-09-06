@@ -22,6 +22,15 @@ mod backend_stats;
 mod hash_strategy;
 mod peer_tracer;
 mod upstream;
+
+#[cfg(not(any(feature = "openssl", feature = "tls-rustls")))]
+compile_error!(
+    "pingap-upstream needs a TLS backend: enable the `openssl` (default) or `tls-rustls` feature"
+);
+#[cfg(all(feature = "openssl", feature = "tls-rustls"))]
+compile_error!(
+    "the `openssl` and `tls-rustls` features are mutually exclusive; build the rustls variant with `--no-default-features --features tls-rustls`"
+);
 static LOG_TARGET: &str = "pingap::upstream";
 
 #[derive(Debug, Snafu)]

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.96.0` (Rust edition 2024). Pingora is pulled from git (`rev = 09696b51bc59315353d96686355861604d0bb48c`, pingora main as of 2026-08-24, crate version still reads `0.8.0`), not from crates.io; only the `lb`/`openssl`/`cache` features are enabled. The three `pingora*` entries in `[workspace.dependencies]` must always name the same `rev`. Because these are git dependencies the `pingap-*` crates cannot be published to crates.io until pingora cuts a release containing that commit.
+Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.96.0` (Rust edition 2024). Pingora is pulled from git (`rev = 09696b51bc59315353d96686355861604d0bb48c`, pingora main as of 2026-08-24, crate version still reads `0.8.0`), not from crates.io; only the `lb`/`cache` features are enabled there, and the TLS backend feature (pingora's `openssl` or `rustls`) is added by pingap's own top-level `openssl` / `tls-rustls` features. The three `pingora*` entries in `[workspace.dependencies]` must always name the same `rev`. Because these are git dependencies the `pingap-*` crates cannot be published to crates.io until pingora cuts a release containing that commit.
 
 **Build the pingora `Server` with `Server::new_with_opt_and_conf`, never `Server::new` followed by assigning `my_server.configuration`.** Since 0.8.1 the constructor snapshots the configuration into a private `Bootstrap`, and that snapshot — not `Server::configuration` — is what the receiving half of a hot upgrade reads `upgrade_sock` from. A later assignment silently leaves the two halves on different sockets.
 
@@ -28,6 +28,7 @@ make fmt
 
 # Full test suite (requires the `full` feature set)
 make test                # cargo test --workspace --features=full
+make test-rustls         # same suite built with the rustls TLS backend (also: make lint-rustls)
 
 # One package / one test (use cargo directly, not make)
 cargo test -p pingap-proxy
@@ -100,7 +101,8 @@ The same configuration can be expressed in TOML (canonical, see `conf/*.toml`), 
 
 The top-level `[features]` block in `Cargo.toml`:
 
-- `default` — none, lean build.
+- `default` = `openssl`.
+- `openssl` / `tls-rustls` — the TLS backend, exactly one of them. Each forwards pingora's `openssl` or `rustls` feature plus the same-named feature of `pingap-acme`, `pingap-certificate`, `pingap-performance`, `pingap-proxy` and `pingap-upstream`; those five carry `default = ["openssl"]` themselves (so `cargo test -p <crate>` keeps working) and are depended on with `default-features = false` in `[workspace.dependencies]` so the root's choice wins. Only `pingap-certificate` (`LoadedCertificate`, `GlobalCertificate`) and `pingap-upstream` (`new_ca`) contain backend-specific code, and both `compile_error!` when neither or both features are on. Build the rustls variant with `cargo build --no-default-features --features tls-rustls[,full]`; `make lint-rustls` / `make test-rustls` are its CI gates. Under rustls the per-server `tls_min_version`, `tls_max_version`, `tls_cipher_list` and `tls_ciphersuites` are ignored with a warning (pingora's rustls listener fixes TLS 1.2/1.3 and rustls' default suites), `TlsAccept::certificate_callback` is never invoked (certificates come from `GlobalCertificate`'s `ResolvesServerCert` impl), and the rustls crypto provider is aws-lc-rs, installed by `pingap-certificate` on first use. `pingap_certificate::TLS_BACKEND` names the backend at runtime and is logged at startup.
 - `tracing` — turns on `pingap-otel` + `pingap-sentry`, and the `tracing` feature on `pingap-cache`, `pingap-core`, `pingap-performance`, `pingap-proxy`, and pingora's `sentry`. **`pingap-cache/tracing` also pulls in `prometheus`** — needed for any code touching cache metrics.
 - `imageoptim` — `pingap-imageoptim` (png/jpeg/webp/avif).
 - `full` = `tracing` + `imageoptim`. Required by `make test` and `make lint`.
@@ -132,6 +134,7 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 | `make lint` (typos + clippy `--features=full -D warnings`) | `make lint` |
 | `cargo machete` | `cargo install cargo-machete@0.9.1 && cargo machete` — `Cargo.toml` whitelists `humantime-serde`, `include-flate`, `hcl-rs`, `kdl` in `[package.metadata.cargo-machete]` |
 | `make test` (`cargo test --workspace --features=full`) | `make test` |
+| `make lint-rustls` + `make test-rustls` (same gates on the rustls TLS backend, stable toolchain only) | `make lint-rustls && make test-rustls` |
 | `cargo msrv list` | `cargo install cargo-msrv --version 0.18.4 && cargo msrv list` |
 | `cargo llvm-cov` | `make cov` |
 | `make release-all` (builds both `pingap` and `pingap-full`) | `make release-all` |

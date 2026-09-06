@@ -12,6 +12,19 @@
 - **Let's Encrypt 链支持**：捆绑常见 Let's Encrypt 中间证书，确保 Let's Encrypt 签发证书的信任链完整。
 - **灵活配置**：通过 `CertificateConf` 结构体轻松配置，可从多种配置源加载。
 
+## TLS 后端
+
+本 crate 只针对 pingora 的一种 TLS 后端构建，由 workspace 的 `openssl`（默认）或 `tls-rustls` 特性选择。证书选择逻辑（SNI 精确 / 通配 / 默认匹配、CA 即时签发）两者共用，只有交给 pingora 的方式不同：
+
+| | `openssl` | `tls-rustls` |
+| --- | --- | --- |
+| 选择入口 | `TlsAccept::certificate_callback`，握手时装入 `X509`/`PKey` | `ResolvesServerCert`，返回预先构建的 `CertifiedKey` |
+| `tls_min_version` / `tls_max_version` | 生效 | 忽略并打印 warning（固定 TLS 1.2 + 1.3） |
+| `tls_cipher_list` / `tls_ciphersuites` | 生效 | 忽略并打印 warning（rustls 默认套件） |
+| 密码学库 | OpenSSL | aws-lc-rs，首次使用时安装 |
+
+`LoadedCertificate` 以当前后端的形式保存证书，`TLS_BACKEND` 在运行时给出后端名称。
+
 ## 工作原理
 
 crate 核心是实现 `pingora::listeners::TlsAccept` 的 `GlobalCertificate`。TLS 握手时调用其 `certificate_callback`。该方法检查客户端 hello 中的 SNI 主机名，并在全局、线程安全的证书存储中查找对应证书。

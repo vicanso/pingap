@@ -15,6 +15,10 @@ name = "pingap_performance"
 path = "src/lib.rs"
 
 [features]
+# TLS backend, mirrored from the workspace root: exactly one must be on.
+default = ["openssl"]
+openssl = ["pingora/openssl", "pingap-upstream/openssl"]
+tls-rustls = ["pingora/rustls", "pingap-upstream/tls-rustls"]
 tracing = ["prometheus", "pingap-cache/tracing"]
 
 [dependencies]

@@ -43,6 +43,22 @@ tokio-test = "0.4.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }
 
 [features]
+# TLS backend, mirrored from the workspace root: exactly one must be on.
+default = ["openssl"]
+openssl = [
+    "pingora/openssl",
+    "pingap-acme/openssl",
+    "pingap-certificate/openssl",
+    "pingap-performance/openssl",
+    "pingap-upstream/openssl",
+]
+tls-rustls = [
+    "pingora/rustls",
+    "pingap-acme/tls-rustls",
+    "pingap-certificate/tls-rustls",
+    "pingap-performance/tls-rustls",
+    "pingap-upstream/tls-rustls",
+]
 tracing = [
     "pingap-otel",
     "humantime",

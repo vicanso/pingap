@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::parse_leaf_chain_certificates;
-use pingora::tls::x509::X509;
 use std::sync::LazyLock;
 
 // Let's Encrypt chain certificates
@@ -33,7 +32,7 @@ const SECONDS_PER_DAY: u64 = 24 * 3600;
 /// - The certificate cannot be parsed
 /// - The certificate will expire within EXPIRATION_BUFFER_DAYS
 /// - The PEM data is invalid UTF-8
-fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
+fn parse_chain_certificate(data: &[u8]) -> Option<Vec<u8>> {
     let expiration_threshold =
         pingap_core::now_sec() + EXPIRATION_BUFFER_DAYS * SECONDS_PER_DAY;
 
@@ -41,17 +40,17 @@ fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
         .ok()
         .and_then(|pem_str| parse_leaf_chain_certificates(&pem_str, "").ok())
         .filter(|(cert, _)| cert.not_after > expiration_threshold as i64)
-        .and_then(|_| X509::from_pem(data).ok())
+        .map(|_| data.to_vec())
 }
 
 // Initialize static certificates
-static E5_CERTIFICATE: LazyLock<Option<X509>> =
+static E5_CERTIFICATE: LazyLock<Option<Vec<u8>>> =
     LazyLock::new(|| parse_chain_certificate(E5));
-static E6_CERTIFICATE: LazyLock<Option<X509>> =
+static E6_CERTIFICATE: LazyLock<Option<Vec<u8>>> =
     LazyLock::new(|| parse_chain_certificate(E6));
-static R10_CERTIFICATE: LazyLock<Option<X509>> =
+static R10_CERTIFICATE: LazyLock<Option<Vec<u8>>> =
     LazyLock::new(|| parse_chain_certificate(R10));
-static R11_CERTIFICATE: LazyLock<Option<X509>> =
+static R11_CERTIFICATE: LazyLock<Option<Vec<u8>>> =
     LazyLock::new(|| parse_chain_certificate(R11));
 
 /// Returns a Let's Encrypt chain certificate based on the provided certificate name
@@ -64,7 +63,7 @@ static R11_CERTIFICATE: LazyLock<Option<X509>> =
 ///
 /// * `Some(X509)` if a valid certificate is found for the given name
 /// * `None` if the certificate name is invalid or the certificate is expired
-pub fn get_lets_encrypt_chain_certificate(cn: &str) -> Option<X509> {
+pub fn get_lets_encrypt_chain_certificate(cn: &str) -> Option<Vec<u8>> {
     match cn.to_uppercase().as_str() {
         "E5" => E5_CERTIFICATE.clone(),
         "E6" => E6_CERTIFICATE.clone(),
@@ -79,36 +78,29 @@ mod tests {
     use super::get_lets_encrypt_chain_certificate;
     use pretty_assertions::assert_eq;
 
+    /// Subject and not-after of a PEM certificate, read with x509-parser so
+    /// the check is the same on every TLS backend.
+    fn describe(pem: &[u8]) -> (String, i64) {
+        let (_, block) = x509_parser::pem::parse_x509_pem(pem).unwrap();
+        let cert = block.parse_x509().unwrap();
+        (
+            cert.subject().to_string(),
+            cert.validity().not_after.timestamp(),
+        )
+    }
+
     #[test]
     fn test_get_lets_encrypt_chain_certificate() {
-        let e5 = get_lets_encrypt_chain_certificate("E5").unwrap();
-        assert_eq!(
-            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "E5"]"#,
-            format!("{:?}", e5.subject_name())
-        );
-        assert_eq!("Mar 12 23:59:59 2027 GMT", e5.not_after().to_string());
-
-        let e6 = get_lets_encrypt_chain_certificate("E6").unwrap();
-        assert_eq!(
-            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "E6"]"#,
-            format!("{:?}", e6.subject_name())
-        );
-        assert_eq!("Mar 12 23:59:59 2027 GMT", e6.not_after().to_string());
-
-        let r10 = get_lets_encrypt_chain_certificate("R10").unwrap();
-        assert_eq!(
-            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "R10"]"#,
-            format!("{:?}", r10.subject_name())
-        );
-        assert_eq!("Mar 12 23:59:59 2027 GMT", r10.not_after().to_string());
-
-        let r11 = get_lets_encrypt_chain_certificate("R11").unwrap();
-        assert_eq!(
-            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "R11"]"#,
-            format!("{:?}", r11.subject_name())
-        );
-        assert_eq!("Mar 12 23:59:59 2027 GMT", r11.not_after().to_string());
-
+        // All four intermediates expire on Mar 12 23:59:59 2027 GMT.
+        let not_after = 1804895999;
+        for name in ["E5", "E6", "R10", "R11"] {
+            let pem = get_lets_encrypt_chain_certificate(name).unwrap();
+            assert_eq!(
+                (format!("C=US, O=Let's Encrypt, CN={name}"), not_after),
+                describe(&pem),
+                "{name}"
+            );
+        }
         assert_eq!(true, get_lets_encrypt_chain_certificate("A").is_none());
     }
 }

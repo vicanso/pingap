@@ -27,7 +27,7 @@
 -   **Active Health Checking**: Periodically probes backend servers to ensure they are healthy. Unhealthy backends are automatically and temporarily removed from the load balancing pool.
 
 -   **Advanced Configuration**:
-    -   **TLS & SNI**: Secure connections to backends with configurable TLS and Server Name Indication. A private CA bundle (`ca`, as a PEM file path, base64 or raw PEM) can replace the system trust store for one upstream, so self-signed or internal-PKI backends keep `verify_cert` on; pooled connections are keyed by that bundle, so upstreams with different CAs never share one.
+    -   **TLS & SNI**: Secure connections to backends with configurable TLS and Server Name Indication. A private CA bundle (`ca`, as a PEM file path, base64 or raw PEM) can replace the system trust store for one upstream, so self-signed or internal-PKI backends keep `verify_cert` on; pooled connections are keyed by that bundle, so upstreams with different CAs never share one. With the rustls backend the backend's own certificate must be a real leaf (no `CA:TRUE`), which webpki enforces and OpenSSL does not.
     -   **HTTP/2 & ALPN**: Supports ALPN for negotiating HTTP/1.1 or HTTP/2 with backends, with per-upstream flow-control windows (`h2_stream_window_size`, `h2_connection_window_size`) for large responses over high-latency links.
     -   **Connection Timeouts**: Fine-grained control over connection, read, write, and idle timeouts.
     -   **TCP Control**: Advanced options for TCP keepalives, buffer sizes, and TCP Fast Open.

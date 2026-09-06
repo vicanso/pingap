@@ -30,11 +30,19 @@ pingap-health = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }
 pingora-runtime = { workspace = true }
+rustls-pki-types = { workspace = true, optional = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+x509-parser = { workspace = true, optional = true }
 
+
+[features]
+# TLS backend, mirrored from the workspace root: exactly one must be on.
+default = ["openssl"]
+openssl = ["pingora/openssl"]
+tls-rustls = ["pingora/rustls", "dep:rustls-pki-types", "dep:x509-parser"]
 
 [dev-dependencies]
 rcgen = { workspace = true }

@@ -49,11 +49,17 @@ use pingora::lb::selection::{
 use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::ALPN;
 use pingora::protocols::l4::ext::TcpKeepalive;
+use pingora::protocols::tls::CaType;
 use pingora::proxy::Session;
+#[cfg(feature = "openssl")]
 use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{
     H1UpgradePolicy, HttpPeer, HttpUpstreamRequestPolicy, Tracer,
 };
+#[cfg(feature = "tls-rustls")]
+use pingora::utils::tls::{WrappedX509, parse_x509};
+#[cfg(feature = "tls-rustls")]
+use rustls_pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -206,7 +212,7 @@ pub struct Upstream {
 
     /// CA bundle that replaces the system trust store when this upstream's
     /// certificate is verified; `None` keeps the system store.
-    ca: Option<Arc<Box<[X509]>>>,
+    ca: Option<Arc<CaType>>,
 
     /// Connection-pool isolation key derived from `ca`; `0` when no CA is set.
     ca_key: u64,
@@ -447,7 +453,8 @@ fn new_request_policy(conf: &UpstreamConf) -> HttpUpstreamRequestPolicy {
 /// Parses the configured CA bundle (a PEM file path, base64-encoded PEM or
 /// raw PEM holding one or more certificates) into the certificate list that
 /// pingora installs as the peer's verify store.
-fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<Box<[X509]>>>> {
+#[cfg(feature = "openssl")]
+fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<CaType>>> {
     let Some(value) = &conf.ca else {
         return Ok(None);
     };
@@ -467,6 +474,37 @@ fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<Box<[X509]>>>> {
         return Err(ca_error("no certificate found in ca".to_string()));
     }
     Ok(Some(Arc::new(certs.into_boxed_slice())))
+}
+
+/// Parses the configured CA bundle (a PEM file path, base64-encoded PEM or
+/// raw PEM holding one or more certificates) into the certificate list that
+/// pingora installs as the peer's root store.
+#[cfg(feature = "tls-rustls")]
+fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<CaType>>> {
+    let Some(value) = &conf.ca else {
+        return Ok(None);
+    };
+    let ca_error = |message: String| Error::Common {
+        category: "ca".to_string(),
+        message,
+    };
+    let mut certs = vec![];
+    for pem in
+        pingap_util::convert_pem(value).map_err(|e| ca_error(e.to_string()))?
+    {
+        for cert in CertificateDer::pem_slice_iter(&pem) {
+            let der = cert.map_err(|e| ca_error(e.to_string()))?.to_vec();
+            // pingora's wrapper parses eagerly and panics on malformed DER,
+            // so check the certificate here first.
+            x509_parser::parse_x509_certificate(&der)
+                .map_err(|e| ca_error(e.to_string()))?;
+            certs.push(WrappedX509::new(der, parse_x509));
+        }
+    }
+    if certs.is_empty() {
+        return Err(ca_error("no certificate found in ca".to_string()));
+    }
+    Ok(Some(Arc::from(certs.into_boxed_slice())))
 }
 
 /// Derives the pool-isolation key for a CA bundle. pingora's connection reuse

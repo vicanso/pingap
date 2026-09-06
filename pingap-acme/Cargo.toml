@@ -43,6 +43,12 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 
+[features]
+# TLS backend, mirrored from the workspace root: exactly one must be on.
+default = ["openssl"]
+openssl = ["pingora/openssl", "pingap-certificate/openssl"]
+tls-rustls = ["pingora/rustls", "pingap-certificate/tls-rustls"]
+
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 tempfile = "3.21.0"

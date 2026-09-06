@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LoadedCertificate;
 use super::chain::get_lets_encrypt_chain_certificate;
 use super::self_signed::{
     SelfSignedCertificate, add_self_signed_certificate,
@@ -22,16 +23,12 @@ use super::{
 };
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;
-use pingora::tls::pkey::{PKey, Private};
-use pingora::tls::x509::X509;
 use std::sync::Arc;
 use tracing::info;
 
 // Constants for categorizing different types of certificates and errors
 const LETS_ENCRYPT: &str = "lets_encrypt";
 const ERROR_CERTIFICATE: &str = "certificate";
-const ERROR_X509: &str = "x509_from_pem";
-const ERROR_PRIVATE_KEY: &str = "private_key_from_pem";
 const ERROR_CA: &str = "ca";
 
 /// Represents a TLS certificate with its associated data
@@ -39,10 +36,11 @@ const ERROR_CA: &str = "ca";
 pub struct TlsCertificate {
     // Optional name identifier for the certificate
     pub name: Option<String>,
-    // Optional chain certificate (intermediate CA)
-    pub chain_certificates: Option<Vec<X509>>,
-    // Optional tuple containing the certificate and its private key
-    pub certificate: Option<(X509, PKey<Private>)>,
+    // Intermediate certificates as PEM blocks: sent after the leaf and
+    // attached to every certificate a CA entry issues
+    pub chain_certificates: Vec<Vec<u8>>,
+    // Leaf, key and chain in the TLS backend's own form
+    pub certificate: Option<Arc<LoadedCertificate>>,
     // List of domain names this certificate is valid for
     pub domains: Vec<String>,
     // Additional certificate information
@@ -79,29 +77,25 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
                 category: ERROR_CERTIFICATE.to_string(),
             });
         }
-        let cert = x509_certificates[0].clone();
-        let mut chain_certificates = None;
-        if x509_certificates.len() > 1 {
-            chain_certificates = Some(x509_certificates[1..].to_vec());
-        } else if category == LETS_ENCRYPT
+        let mut chain_certificates = x509_certificates[1..].to_vec();
+        if chain_certificates.is_empty()
+            && category == LETS_ENCRYPT
             && let Some(chain_certificate) = get_lets_encrypt_chain_certificate(
                 info.get_issuer_common_name().as_str(),
             )
         {
-            chain_certificates = Some(vec![chain_certificate]);
+            chain_certificates = vec![chain_certificate];
         }
 
-        let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
-            Error::Invalid {
-                category: ERROR_PRIVATE_KEY.to_string(),
-                message: e.to_string(),
-            }
-        })?;
+        let mut pems = Vec::with_capacity(1 + chain_certificates.len());
+        pems.push(x509_certificates[0].clone());
+        pems.extend(chain_certificates.iter().cloned());
+        let certificate = LoadedCertificate::from_pem(&pems, &info.get_key())?;
         Ok(TlsCertificate {
             hash_key,
             chain_certificates,
             domains: info.domains.clone(),
-            certificate: Some((cert, key)),
+            certificate: Some(Arc::new(certificate)),
             info: Some(info),
             is_ca: value.is_ca.unwrap_or_default(),
             buffer_days: value.buffer_days.unwrap_or_default(),
@@ -121,7 +115,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
 fn new_certificate_with_ca(
     root_ca: &TlsCertificate,
     cn: &str,
-) -> Result<(X509, PKey<Private>, i64)> {
+) -> Result<(LoadedCertificate, i64)> {
     let Some(info) = &root_ca.info else {
         return Err(Error::Invalid {
             message: "root ca is invalid".to_string(),
@@ -215,19 +209,16 @@ fn new_certificate_with_ca(
                 category: ERROR_CA.to_string(),
             })?;
 
-    let cert =
-        X509::from_pem(cert.pem().as_bytes()).map_err(|e| Error::Invalid {
-            category: ERROR_X509.to_string(),
-            message: e.to_string(),
-        })?;
+    // The issued leaf travels with the CA's own chain.
+    let mut pems = Vec::with_capacity(1 + root_ca.chain_certificates.len());
+    pems.push(cert.pem().into_bytes());
+    pems.extend(root_ca.chain_certificates.iter().cloned());
+    let certificate = LoadedCertificate::from_pem(
+        &pems,
+        cert_key.serialize_pem().as_bytes(),
+    )?;
 
-    let key = PKey::private_key_from_pem(cert_key.serialize_pem().as_bytes())
-        .map_err(|e| Error::Invalid {
-        category: ERROR_PRIVATE_KEY.to_string(),
-        message: e.to_string(),
-    })?;
-
-    Ok((cert, key, not_after.unix_timestamp()))
+    Ok((certificate, not_after.unix_timestamp()))
 }
 
 impl TlsCertificate {
@@ -255,14 +246,18 @@ impl TlsCertificate {
         }
 
         // Generate new certificate if not found in cache
-        let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
+        let (certificate, not_after) = new_certificate_with_ca(self, &cn)?;
         info!(
             target: LOG_TARGET,
             ca_common_name = self.name,
             common_name = cn,
             "create new self signed certificate"
         );
-        Ok(add_self_signed_certificate(cache_key, cert, key, not_after))
+        Ok(add_self_signed_certificate(
+            cache_key,
+            certificate,
+            not_after,
+        ))
     }
 
     /// Formats a server name into a common name by converting subdomain patterns
@@ -369,9 +364,11 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
 
         let server_name = format!("{}.test.example.com", nanoid::nanoid!(10));
         let cert = cert.get_self_signed_certificate(&server_name).unwrap();
+        let der = cert.certificate.leaf_der().unwrap();
+        let (_, x509) = x509_parser::parse_x509_certificate(&der).unwrap();
         assert_eq!(
-            r#"[commonName = "*.test.example.com", organizationName = "mkcert development certificate", organizationalUnitName = "tree@TreeXies-MacBook-Pro.local (TreeXie)"]"#,
-            format!("{:?}", cert.x509.subject_name())
+            "CN=*.test.example.com, O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
+            x509.subject().to_string()
         );
     }
 }

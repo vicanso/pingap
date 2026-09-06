@@ -90,6 +90,25 @@ vergen-git2 = "10.0.3"
 mimalloc = "0.1.47"
 
 [features]
+default = ["openssl"]
+# TLS backend: exactly one of `openssl` (default) and `tls-rustls`. Build the
+# rustls variant with `--no-default-features --features tls-rustls[,full]`.
+openssl = [
+    "pingora/openssl",
+    "pingap-acme/openssl",
+    "pingap-certificate/openssl",
+    "pingap-performance/openssl",
+    "pingap-proxy/openssl",
+    "pingap-upstream/openssl",
+]
+tls-rustls = [
+    "pingora/rustls",
+    "pingap-acme/tls-rustls",
+    "pingap-certificate/tls-rustls",
+    "pingap-performance/tls-rustls",
+    "pingap-proxy/tls-rustls",
+    "pingap-upstream/tls-rustls",
+]
 pyro = ["pingap-pyroscope"]
 imageoptim = ["pingap-imageoptim"]
 geo = ["pingap-plugin/geo"]
@@ -104,7 +123,6 @@ tracing = [
 ]
 full = ["tracing", "imageoptim"]
 perf = ["pyro", "full"]
-default = []
 
 
 [dev-dependencies]
@@ -275,9 +293,9 @@ opentelemetry_sdk = { version = "0.32.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "4.0.1"
-pingap-acme = { version = "0.13.10", path = "pingap-acme" }
+pingap-acme = { version = "0.13.10", path = "pingap-acme", default-features = false }
 pingap-cache = { version = "0.13.10", path = "pingap-cache" }
-pingap-certificate = { version = "0.13.10", path = "pingap-certificate" }
+pingap-certificate = { version = "0.13.10", path = "pingap-certificate", default-features = false }
 pingap-config = { version = "0.13.10", path = "pingap-config" }
 pingap-core = { version = "0.13.10", path = "pingap-core" }
 pingap-discovery = { version = "0.13.10", path = "pingap-discovery" }
@@ -286,12 +304,12 @@ pingap-imageoptim = { version = "0.13.10", path = "pingap-imageoptim" }
 pingap-location = { version = "0.13.10", path = "pingap-location" }
 pingap-logger = { version = "0.13.10", path = "pingap-logger" }
 pingap-otel = { version = "0.13.10", path = "pingap-otel" }
-pingap-performance = { version = "0.13.10", path = "pingap-performance" }
+pingap-performance = { version = "0.13.10", path = "pingap-performance", default-features = false }
 pingap-plugin = { version = "0.13.10", path = "pingap-plugin" }
-pingap-proxy = { version = "0.13.10", path = "pingap-proxy" }
+pingap-proxy = { version = "0.13.10", path = "pingap-proxy", default-features = false }
 pingap-pyroscope = { version = "0.13.10", path = "pingap-pyroscope" }
 pingap-sentry = { version = "0.13.10", path = "pingap-sentry" }
-pingap-upstream = { version = "0.13.10", path = "pingap-upstream" }
+pingap-upstream = { version = "0.13.10", path = "pingap-upstream", default-features = false }
 pingap-util = { version = "0.13.10", path = "pingap-util" }
 pingap-webhook = { version = "0.13.10", path = "pingap-webhook" }
 # Tracks pingora main rather than a crates.io release. 0.8.1 was cut from a
@@ -299,9 +317,10 @@ pingap-webhook = { version = "0.13.10", path = "pingap-webhook" }
 # defaults, lru 0.18 (RUSTSEC-2026-0253), the borrowed purge API and more.
 # Bump `rev` on all three entries together: they must resolve to one git
 # source or cargo pulls two copies of pingora-core.
+# The TLS backend (`openssl` or `rustls`) is chosen by the top-level
+# `openssl` / `tls-rustls` features, not here.
 pingora = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c", default-features = false, features = [
     "lb",
-    "openssl",
     "cache",
 ] }
 pingora-limits = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }

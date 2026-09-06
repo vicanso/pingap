@@ -789,6 +789,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let server_conf = my_server.configuration.as_ref();
     info!(
         target: LOG_TARGET,
+        tls_backend = pingap_certificate::TLS_BACKEND,
         pid_file = server_conf.pid_file,
         error_log = server_conf.error_log,
         upgrade_sock = server_conf.upgrade_sock,

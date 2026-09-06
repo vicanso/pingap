@@ -23,6 +23,8 @@ pingap-util = { workspace = true }
 pingora = { workspace = true }
 rcgen = { workspace = true }
 regex = { workspace = true }
+rustls = { workspace = true, optional = true }
+rustls-pki-types = { workspace = true, optional = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 time = { workspace = true }
@@ -30,6 +32,12 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 x509-parser = { workspace = true }
 
+
+[features]
+# TLS backend, mirrored from the workspace root: exactly one must be on.
+default = ["openssl"]
+openssl = ["pingora/openssl"]
+tls-rustls = ["pingora/rustls", "dep:rustls", "dep:rustls-pki-types"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

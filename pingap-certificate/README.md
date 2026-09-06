@@ -12,6 +12,19 @@ The `pingap-certificate` crate is a robust TLS certificate management library de
 - **Let's Encrypt Chain Support**: Bundles common Let's Encrypt intermediate certificates to ensure proper chain of trust for certificates issued by Let's Encrypt.
 - **Flexible Configuration**: Easily configured through `CertificateConf` structs, which can be loaded from various configuration sources.
 
+## TLS backends
+
+The crate is built for exactly one of pingora's TLS backends, chosen by the workspace's `openssl` (default) or `tls-rustls` feature. Certificate selection (exact, wildcard and default SNI matches, on-the-fly CA issuance) is shared; only the hand-over to pingora differs:
+
+| | `openssl` | `tls-rustls` |
+| --- | --- | --- |
+| Selection hook | `TlsAccept::certificate_callback`, installing `X509`/`PKey` on the handshake | `ResolvesServerCert`, returning a prepared `CertifiedKey` |
+| `tls_min_version` / `tls_max_version` | honoured | ignored with a warning (always TLS 1.2 + 1.3) |
+| `tls_cipher_list` / `tls_ciphersuites` | honoured | ignored with a warning (rustls defaults) |
+| Crypto provider | OpenSSL | aws-lc-rs, installed on first use |
+
+`LoadedCertificate` holds a certificate in the active backend's form, and `TLS_BACKEND` names the backend at runtime.
+
 ## How it Works
 
 The core of the crate is the `GlobalCertificate` struct, which implements the `pingora::listeners::TlsAccept` trait. During the TLS handshake, its `certificate_callback` method is invoked. This method inspects the SNI hostname from the client hello message and looks up the corresponding certificate in a globally managed, thread-safe certificate store.

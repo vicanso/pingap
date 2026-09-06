@@ -143,6 +143,18 @@ cd ..
 make build-web
 ```
 
+### TLS 后端
+
+默认构建使用 OpenSSL 终止 TLS（由 `openssl` crate 从源码编译）。若想改用 rustls（TLS 部分不再需要 C 工具链）：
+
+```bash
+cargo build --release --no-default-features --features tls-rustls
+# 连同可选特性一起
+cargo build --release --no-default-features --features tls-rustls,full
+```
+
+rustls 构建会忽略 server 级的 `tls_min_version`、`tls_max_version`、`tls_cipher_list` 与 `tls_ciphersuites`，配置了会打印一条 warning：它固定提供 TLS 1.2 与 1.3，使用 rustls 默认密码套件。其余能力，包括按 SNI 动态选证书、自签名 CA 签发、ACME 与上游 `ca`，行为一致。校验上游时有一点差异需要知道：rustls（webpki）会拒绝带 `CA:TRUE` 的服务端证书，而 OpenSSL 接受，所以后端若用 `openssl req -x509` 随手生成的自签名证书，需要换成由 CA 签发的叶子证书（或不带 CA 标记的自签名叶子），上游 `ca` 选项才能信任它。启动日志会标明二进制使用的后端。
+
 ## 📝 应用配置
 
 ```toml

@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LoadedCertificate;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingora::tls::pkey::{PKey, Private};
-use pingora::tls::x509::X509;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -30,10 +29,8 @@ const SECONDS_PER_DAY: u64 = 24 * 3600;
 /// Represents a self-signed certificate with usage tracking
 #[derive(Debug)]
 pub struct SelfSignedCertificate {
-    /// The X509 certificate
-    pub x509: X509,
-    /// The private key associated with the certificate
-    pub key: PKey<Private>,
+    /// The issued certificate in the TLS backend's own form.
+    pub certificate: Arc<LoadedCertificate>,
     /// Indicates whether the certificate is stale (unused for a period)
     stale: AtomicBool,
     /// Tracks the number of times this certificate has been used
@@ -153,8 +150,7 @@ pub fn get_self_signed_certificate(
 /// # Arguments
 ///
 /// * `name` - The name/identifier for the certificate
-/// * `x509` - The X509 certificate
-/// * `key` - The private key associated with the certificate
+/// * `certificate` - The issued certificate in the TLS backend's own form
 /// * `not_after` - The expiration timestamp of the certificate
 ///
 /// # Returns
@@ -165,14 +161,12 @@ pub fn get_self_signed_certificate(
 /// and adds it to the global certificate map.
 pub fn add_self_signed_certificate(
     name: String,
-    x509: X509,
-    key: PKey<Private>,
+    certificate: LoadedCertificate,
     not_after: i64,
 ) -> Arc<SelfSignedCertificate> {
     let mut m = SELF_SIGNED_CERTIFICATE_MAP.load().as_ref().clone();
     let v = Arc::new(SelfSignedCertificate {
-        x509,
-        key,
+        certificate: Arc::new(certificate),
         not_after,
         stale: AtomicBool::new(false),
         count: AtomicU32::new(0),
@@ -184,12 +178,20 @@ pub fn add_self_signed_certificate(
 
 #[cfg(test)]
 mod tests {
+    use super::SelfSignedCertificate;
     use super::{
         add_self_signed_certificate, do_self_signed_certificate_validity,
         get_self_signed_certificate,
     };
-    use pingora::tls::pkey::PKey;
-    use pingora::tls::x509::X509;
+    use crate::LoadedCertificate;
+
+    /// Subject of the issued certificate, read with x509-parser so the
+    /// check is the same on every TLS backend.
+    fn subject(cert: &SelfSignedCertificate) -> String {
+        let der = cert.certificate.leaf_der().unwrap();
+        let (_, x509) = x509_parser::parse_x509_certificate(&der).unwrap();
+        x509.subject().to_string()
+    }
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
@@ -250,29 +252,31 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
 -----END PRIVATE KEY-----"#;
         // spellchecker:on
 
-        let cert = X509::from_pem(pem.as_bytes()).unwrap();
-        let key = PKey::private_key_from_pem(key.as_bytes()).unwrap();
+        let certificate = LoadedCertificate::from_pem(
+            &[pem.as_bytes().to_vec()],
+            key.as_bytes(),
+        )
+        .unwrap();
 
         let name = nanoid::nanoid!(10);
         add_self_signed_certificate(
             name.clone(),
-            cert,
-            key,
+            certificate,
             (pingap_core::now_sec() + 1000000000) as i64,
         );
 
         let cert = get_self_signed_certificate(&name).unwrap();
         assert_eq!(
-            r#"[organizationName = "mkcert development certificate", organizationalUnitName = "tree@TreeXies-MacBook-Pro.local (TreeXie)"]"#,
-            format!("{:?}", cert.x509.subject_name())
+            "O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
+            subject(&cert)
         );
 
         do_self_signed_certificate_validity(0).await.unwrap();
 
         let cert = get_self_signed_certificate(&name).unwrap();
         assert_eq!(
-            r#"[organizationName = "mkcert development certificate", organizationalUnitName = "tree@TreeXies-MacBook-Pro.local (TreeXie)"]"#,
-            format!("{:?}", cert.x509.subject_name())
+            "O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
+            subject(&cert)
         );
     }
 }

@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use ahash::AHashMap;
-use pingora::tls::x509::X509;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -22,9 +21,26 @@ use std::sync::LazyLock;
 
 mod chain;
 mod dynamic_certificate;
+mod loaded_certificate;
 mod self_signed;
 mod tls_certificate;
 mod validity_checker;
+
+#[cfg(not(any(feature = "openssl", feature = "tls-rustls")))]
+compile_error!(
+    "pingap-certificate needs a TLS backend: enable the `openssl` (default) or `tls-rustls` feature"
+);
+#[cfg(all(feature = "openssl", feature = "tls-rustls"))]
+compile_error!(
+    "the `openssl` and `tls-rustls` features are mutually exclusive; build the rustls variant with `--no-default-features --features tls-rustls`"
+);
+
+/// Name of the TLS backend this binary was built with.
+pub const TLS_BACKEND: &str = if cfg!(feature = "tls-rustls") {
+    "rustls"
+} else {
+    "openssl"
+};
 
 pub static LOG_TARGET: &str = "pingap::certificate";
 
@@ -77,11 +93,13 @@ fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
     })
 }
 
-// parse leaf certificate and chain certificates from pem and key
+/// Parses the leaf certificate's details from `pem` and returns them with
+/// every PEM block of the bundle (leaf first, then the chain), each checked
+/// to be a certificate.
 pub fn parse_leaf_chain_certificates(
     pem: &str,
     key: &str,
-) -> Result<(Certificate, Vec<X509>)> {
+) -> Result<(Certificate, Vec<Vec<u8>>)> {
     let pem_data_list = pingap_util::convert_certificate_bytes(Some(pem))
         .ok_or_else(|| Error::Invalid {
             category: "certificate".to_string(),
@@ -123,13 +141,20 @@ pub fn parse_leaf_chain_certificates(
     dns_names.sort();
     let validity = x509.validity();
 
-    let mut x509_certificates = vec![];
+    let mut x509_certificates = Vec::with_capacity(pem_data_list.len());
     for pem in pem_data_list.iter() {
-        let cert = X509::from_pem(pem).map_err(|e| Error::Invalid {
+        let (_, block) =
+            x509_parser::pem::parse_x509_pem(pem).map_err(|e| {
+                Error::Invalid {
+                    category: "x509_from_pem".to_string(),
+                    message: e.to_string(),
+                }
+            })?;
+        block.parse_x509().map_err(|e| Error::Invalid {
             category: "x509_from_pem".to_string(),
             message: e.to_string(),
         })?;
-        x509_certificates.push(cert);
+        x509_certificates.push(pem.clone());
     }
     let key = if key_data_list.is_empty() {
         vec![]
@@ -219,6 +244,7 @@ impl Certificate {
 }
 
 pub use dynamic_certificate::*;
+pub use loaded_certificate::LoadedCertificate;
 pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;

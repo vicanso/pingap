@@ -172,6 +172,17 @@ cd ..
 make build-web
 ```
 
+### TLS backend
+
+The default build terminates TLS with OpenSSL, compiled from source by the `openssl` crate. To build with rustls instead, which needs no C toolchain for TLS:
+
+```bash
+cargo build --release --no-default-features --features tls-rustls
+# with the optional features as well
+cargo build --release --no-default-features --features tls-rustls,full
+```
+
+The rustls build ignores the per-server `tls_min_version`, `tls_max_version`, `tls_cipher_list` and `tls_ciphersuites` settings and logs a warning when they are set: it always offers TLS 1.2 and 1.3 with rustls' default cipher suites. Everything else, including dynamic SNI certificates, self-signed CA issuance, ACME and the upstream `ca` option, behaves the same. One difference to know about when verifying upstreams: rustls (webpki) rejects a server certificate that carries `CA:TRUE`, which OpenSSL accepts, so a backend using a quick `openssl req -x509` self-signed certificate needs a proper leaf signed by a CA (or a self-signed leaf without the CA flag) before the upstream `ca` option can trust it. The startup log reports which backend a binary was built with.
 
 ## 📝 Configuration
 

@@ -52,6 +52,11 @@ locations = ["lo"]
 # Supported values: "tls1.1", "tls1.2", "tls1.3"
 # Default `none`
 # tls_max_version = ""
+#
+# The four TLS settings above only apply to the default OpenSSL build. A
+# binary built with `--features tls-rustls` ignores them and logs a warning:
+# pingora's rustls listener always offers TLS 1.2 and 1.3 with rustls'
+# default cipher suites.
 
 # When enabled, uses globally configured TLS certificates.
 # This allows sharing the same certificates across multiple server instances.

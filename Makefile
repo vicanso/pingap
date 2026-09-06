@@ -12,6 +12,10 @@ VERSION := $(shell awk '/^\[workspace\.package\]/{f=1;next} \
 lint:
 	typos
 	cargo clippy --features=full --all-targets --all -- --deny=warnings
+
+# Same gate for the rustls TLS backend
+lint-rustls:
+	cargo clippy --no-default-features --features=tls-rustls,full --all-targets --all -- --deny=warnings
 	# `geo` is not part of `full`, so it needs its own pass or it silently rots.
 	cargo clippy -p pingap-plugin --features=geo --all-targets -- --deny=warnings
 
@@ -63,6 +67,10 @@ unused-features:
 
 test:
 	cargo test --workspace --features=full
+
+# Same suite on the rustls TLS backend
+test-rustls:
+	cargo test --workspace --no-default-features --features=tls-rustls,full
 
 cov:
 	cargo llvm-cov --workspace --html --open

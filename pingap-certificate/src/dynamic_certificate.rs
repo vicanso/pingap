@@ -14,20 +14,23 @@
 
 use super::CertificateProvider;
 use super::DynamicCertificates;
-use super::{Error, LOG_TARGET, TlsCertificate};
+use super::{Error, LOG_TARGET, LoadedCertificate, TlsCertificate};
 use ahash::AHashMap;
+#[cfg(feature = "openssl")]
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
-use pingora::tls::ext;
-use pingora::tls::pkey::{PKey, Private};
-use pingora::tls::ssl::SslVersion;
-use pingora::tls::ssl::{NameType, SslRef};
-use pingora::tls::x509::X509;
+#[cfg(feature = "openssl")]
+use pingora::tls::ssl::{NameType, SslRef, SslVersion};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
-use tracing::{debug, error, info};
+#[cfg(feature = "openssl")]
+use tracing::info;
+#[cfg(feature = "tls-rustls")]
+use tracing::warn;
+use tracing::{debug, error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -116,31 +119,7 @@ pub struct TlsSettingParams {
 ///
 /// # Side Effects
 /// Logs errors if any operation fails but continues execution
-#[inline]
-fn ssl_certificate(
-    ssl: &mut SslRef,
-    cert: &X509,
-    key: &PKey<Private>,
-    chain_certificates: &Option<Vec<X509>>,
-) {
-    // set tls certificate
-    if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
-        error!(target: LOG_TARGET, error = %e, "ssl use certificate fail");
-    }
-    // set private key
-    if let Err(e) = ext::ssl_use_private_key(ssl, key) {
-        error!(target: LOG_TARGET, error = %e, "ssl use private key fail");
-    }
-    // set chain certificate
-    if let Some(chain_certificates) = chain_certificates {
-        for chain in chain_certificates.iter() {
-            if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
-                error!(target: LOG_TARGET, error = %e, "ssl add chain cert fail");
-            }
-        }
-    }
-}
-
+#[cfg(feature = "openssl")]
 fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     if let Some(version) = &version {
         let version = match version.to_lowercase().as_str() {
@@ -153,24 +132,52 @@ fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     None
 }
 
-/// GlobalCertificate implements SNI-based dynamic certificate selection
-///
-/// Provides runtime certificate selection during TLS handshake based on the
-/// Server Name Indication (SNI). Supports:
-/// - Dynamic certificate updates
-/// - Wildcard certificates
-/// - Default fallback certificates
-/// - Self-signed CA certificates
+/// Serves certificates to pingora's listener: exact, wildcard and default
+/// SNI matches come from the provider, CA entries issue certificates on the
+/// fly. The selection is shared by both TLS backends; only the hand-over
+/// differs (`TlsAccept` for OpenSSL, `ResolvesServerCert` for rustls).
 #[derive(Clone)]
 pub struct GlobalCertificate {
     provider: Arc<dyn CertificateProvider>,
+}
+
+impl fmt::Debug for GlobalCertificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GlobalCertificate").finish_non_exhaustive()
+    }
 }
 
 impl GlobalCertificate {
     pub fn new(provider: Arc<dyn CertificateProvider>) -> Self {
         Self { provider }
     }
-    /// New a dynamic certificate from tls setting parameters
+
+    /// Picks the certificate to present for `sni`.
+    fn select(&self, sni: &str) -> Option<Arc<LoadedCertificate>> {
+        // Certificate selection process:
+        // 1. Try exact domain match (example.com)
+        // 2. Try wildcard domain match (*.example.com)
+        // 3. Fall back to default certificate (DEFAULT_SERVER_NAME)
+        // 4. Handle special case for CA certificates (self-signed)
+        let Some(d) = self.provider.get(sni) else {
+            error!(target: LOG_TARGET, sni, "no match certificate");
+            return None;
+        };
+        if d.is_ca {
+            return match d.get_self_signed_certificate(sni) {
+                Ok(cert) => Some(cert.certificate.clone()),
+                Err(err) => {
+                    error!(target: LOG_TARGET, error = %err, "get self signed cert fail");
+                    None
+                },
+            };
+        }
+        d.certificate.clone()
+    }
+}
+
+#[cfg(feature = "openssl")]
+impl GlobalCertificate {
     pub fn new_tls_settings(
         &self,
         params: &TlsSettingParams,
@@ -233,61 +240,72 @@ impl GlobalCertificate {
     }
 }
 
+#[cfg(feature = "tls-rustls")]
+impl GlobalCertificate {
+    pub fn new_tls_settings(
+        &self,
+        params: &TlsSettingParams,
+    ) -> Result<TlsSettings> {
+        let name = params.server_name.clone();
+        // No certificate files: the resolver below supplies every certificate.
+        let mut tls_settings =
+            TlsSettings::intermediate("", "").map_err(|e| Error::Invalid {
+                category: "new_tls_settings".to_string(),
+                message: e.to_string(),
+            })?;
+        tls_settings.set_cert_resolver(Arc::new(self.clone()));
+        if params.enabled_h2 {
+            tls_settings.enable_h2();
+        }
+        // pingora's rustls listener fixes TLS 1.2 + 1.3 with rustls' default
+        // cipher suites; say so rather than silently dropping the settings.
+        for (setting, value) in [
+            ("tls_cipher_list", &params.cipher_list),
+            ("tls_ciphersuites", &params.cipher_suites),
+            ("tls_min_version", &params.tls_min_version),
+            ("tls_max_version", &params.tls_max_version),
+        ] {
+            if value.is_some() {
+                warn!(
+                    target: LOG_TARGET,
+                    name,
+                    setting,
+                    "ignored with the rustls backend, which fixes TLS 1.2/1.3 and its default cipher suites"
+                );
+            }
+        }
+        Ok(tls_settings)
+    }
+}
+
+#[cfg(feature = "openssl")]
 #[async_trait]
 impl pingora::listeners::TlsAccept for GlobalCertificate {
     async fn certificate_callback(&self, ssl: &mut SslRef) {
-        // Certificate selection process:
-        // 1. Extract SNI from TLS handshake
-        // 2. Try exact domain match (example.com)
-        // 3. Try wildcard domain match (*.example.com)
-        // 4. Fall back to default certificate (DEFAULT_SERVER_NAME)
-        // 5. Handle special case for CA certificates (self-signed)
-        // 6. Apply certificate, private key, and chain to SSL context
-
         let sni = ssl
             .servername(NameType::HOST_NAME)
             .unwrap_or(DEFAULT_SERVER_NAME);
-        // TODO add more debug log
         debug!(
             target: LOG_TARGET,
             ssl = format!("{ssl:?}"),
             server_name = sni
         );
-
-        // Optimized lookup sequence.
-        let dynamic_certificate = self.provider.get(sni);
-
-        let Some(d) = dynamic_certificate else {
-            error!(
-                target: LOG_TARGET,
-                sni,
-                ssl = format!("{ssl:?}"),
-                "no match certificate"
-            );
-            return;
-        };
-
-        // ca
-        if d.is_ca {
-            match d.get_self_signed_certificate(sni) {
-                Ok(result) => {
-                    ssl_certificate(
-                        ssl,
-                        &result.x509,
-                        &result.key,
-                        &d.chain_certificates,
-                    );
-                },
-                Err(err) => {
-                    error!(target: LOG_TARGET, error = %err, "get self signed cert fail");
-                },
-            };
-            return;
+        if let Some(certificate) = self.select(sni) {
+            certificate.apply(ssl);
         }
+    }
+}
 
-        if let Some((cert, key)) = &d.certificate {
-            ssl_certificate(ssl, cert, key, &d.chain_certificates);
-        }
+#[cfg(feature = "tls-rustls")]
+impl pingora::tls::ResolvesServerCert for GlobalCertificate {
+    fn resolve(
+        &self,
+        client_hello: pingora::tls::ClientHello<'_>,
+    ) -> Option<Arc<pingora::tls::sign::CertifiedKey>> {
+        let sni = client_hello.server_name().unwrap_or(DEFAULT_SERVER_NAME);
+        debug!(target: LOG_TARGET, server_name = sni);
+        self.select(sni)
+            .map(|certificate| certificate.certified_key())
     }
 }
 
@@ -358,6 +376,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         // spellchecker:on
     }
 
+    #[cfg(feature = "openssl")]
     #[test]
     fn test_convert_tls_version() {
         assert_eq!(
