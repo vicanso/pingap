@@ -63,6 +63,14 @@ export default {
     reload: "Reload",
     backHome: "Back to dashboard",
   },
+  notFound: {
+    code: "404",
+    title: "Page not found",
+    description:
+      "That URL is not a console page. Entity links use a query, e.g. /locations?name=app.",
+    backHome: "Back to dashboard",
+    openConfig: "Open config",
+  },
   header: {
     live: "LIVE",
     active: "active",
@@ -80,7 +88,7 @@ export default {
     groupPolicy: "Policy",
     groupSystem: "System",
     searchEmpty: "No matches",
-    searchPlaceholder: "Input the keyword",
+    searchPlaceholder: "Search…",
   },
   login: {
     title: "Login",
@@ -129,7 +137,8 @@ export default {
     pluginUnit: "plugins",
     certificateUnit: "certificates",
     storageUnit: "storages",
-    configureHint: "Click to configure →",
+    configureHint: "No items yet — open to add one",
+    threadsUnavailable: "Thread count unavailable on this platform",
     pathTitle: "Traffic path",
     stageListen: "Listen",
     stageRoute: "Route",
@@ -566,6 +575,8 @@ export default {
     summary_one: "{{count}} plugin configured",
     summary_other: "{{count}} plugins configured",
     empty: "No plugin configured yet",
+    sectionBasic: "Basic",
+    sectionOptions: "Options",
     name: "Name",
     namePlaceholder: "Input the name of plugin",
     plugin: "Plugin",

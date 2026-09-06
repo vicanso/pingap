@@ -365,6 +365,10 @@ export default function Home() {
           ? "—"
           : basicInfo.threads.toLocaleString(),
       muted: basicInfo.threads == null || basicInfo.threads < 0,
+      title:
+        basicInfo.threads == null || basicInfo.threads < 0
+          ? homeI18n("threadsUnavailable")
+          : undefined,
     },
   ];
 

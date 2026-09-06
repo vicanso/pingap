@@ -27,7 +27,7 @@ function CodePanel({
   onCopy?: () => void;
 }) {
   return (
-    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border">
+    <Card className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-border">
       {onCopy && content && (
         <Button
           className="absolute top-3 right-3 z-10 cursor-pointer"
@@ -42,7 +42,7 @@ function CodePanel({
         </Button>
       )}
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
-        <pre className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
+        <pre className="h-full min-h-[min(60vh,480px)] overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
           {content || <span className="text-muted-foreground">—</span>}
         </pre>
       </CardContent>

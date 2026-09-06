@@ -84,13 +84,17 @@ export function ConfigEntityList<T>({
       // The route is also the config section this page edits — `/servers` is
       // `[servers.*]` in the TOML — so the eyebrow needs no separate label.
       eyebrow={basePath.replace(/^\//, "")}
+      // One create CTA only: empty state owns it when the list is empty;
+      // the header button appears once there is already something to browse.
       actions={
-        <Button asChild className="cursor-pointer">
-          <Link to={entityUrl(newValue)}>
-            <Plus className="size-4" />
-            {addLabel}
-          </Link>
-        </Button>
+        names.length > 0 ? (
+          <Button asChild className="cursor-pointer">
+            <Link to={entityUrl(newValue)}>
+              <Plus className="size-4" />
+              {addLabel}
+            </Link>
+          </Button>
+        ) : undefined
       }
     >
       {names.length === 0 ? (
@@ -99,12 +103,7 @@ export function ConfigEntityList<T>({
             <Inbox className="size-5" strokeWidth={1.8} />
           </div>
           <p className="max-w-xs text-sm text-muted-foreground">{emptyText}</p>
-          <Button
-            asChild
-            variant="outline"
-            size="sm"
-            className="mt-4 cursor-pointer"
-          >
+          <Button asChild className="mt-4 cursor-pointer">
             <Link to={entityUrl(newValue)}>
               <Plus className="size-4" />
               {addLabel}

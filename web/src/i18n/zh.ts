@@ -60,6 +60,14 @@ export default {
     reload: "重新加载",
     backHome: "回到概览",
   },
+  notFound: {
+    code: "404",
+    title: "页面不存在",
+    description:
+      "这个地址不是控制台页面。实体详情使用查询参数，例如 /locations?name=app。",
+    backHome: "回到概览",
+    openConfig: "打开配置",
+  },
   header: {
     live: "运行中",
     active: "并发",
@@ -77,7 +85,7 @@ export default {
     groupPolicy: "策略",
     groupSystem: "系统",
     searchEmpty: "无匹配项",
-    searchPlaceholder: "输入关键字",
+    searchPlaceholder: "搜索…",
   },
   login: {
     title: "登录",
@@ -126,7 +134,8 @@ export default {
     pluginUnit: "个插件",
     certificateUnit: "张证书",
     storageUnit: "个存储",
-    configureHint: "点击开始配置 →",
+    configureHint: "暂无配置 — 点此添加",
+    threadsUnavailable: "当前平台无法获取线程数",
     pathTitle: "流量链路",
     stageListen: "监听",
     stageRoute: "路由",
@@ -512,6 +521,8 @@ export default {
     summary_one: "已配置 {{count}} 个插件",
     summary_other: "已配置 {{count}} 个插件",
     empty: "还没有配置插件",
+    sectionBasic: "基础",
+    sectionOptions: "选项",
     name: "名称",
     namePlaceholder: "输入插件名称",
     plugin: "插件",

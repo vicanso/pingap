@@ -119,7 +119,7 @@ export function TrafficPath({
   stages: PathStage[];
   /** Attached to the last stage. */
   health: PathHealth;
-  meters: { label: string; value: string; muted?: boolean }[];
+  meters: { label: string; value: string; muted?: boolean; title?: string }[];
 }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
@@ -151,7 +151,11 @@ export function TrafficPath({
 
       <div className="grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-4">
         {meters.map((meter) => (
-          <div key={meter.label} className="bg-card px-4 py-3 sm:px-5">
+          <div
+            key={meter.label}
+            className="bg-card px-4 py-3 sm:px-5"
+            title={meter.title}
+          >
             <p className="eyebrow">{meter.label}</p>
             <p
               className={cn(

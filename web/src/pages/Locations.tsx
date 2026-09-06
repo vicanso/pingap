@@ -309,6 +309,8 @@ export default function Locations() {
     });
   }
 
+  // Matching + upstream are the routing essentials; headers / limits / plugins
+  // stay behind "More Settings".
   const defaultShow = sortIntoSections(
     items,
     [sec.match, sec.upstream, sec.headers, sec.limit, sec.plugins],

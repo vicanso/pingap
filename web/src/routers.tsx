@@ -1,4 +1,8 @@
-import { createHashRouter } from "react-router-dom";
+import {
+  createHashRouter,
+  Navigate,
+  useParams,
+} from "react-router-dom";
 import { lazy, Suspense, type ReactNode } from "react";
 import Root from "@/pages/Root";
 import RouteError from "@/pages/RouteError";
@@ -16,6 +20,7 @@ const Certificates = lazy(() => import("@/pages/Certificates"));
 const Config = lazy(() => import("@/pages/Config"));
 const Storages = lazy(() => import("@/pages/Storages"));
 const Login = lazy(() => import("@/pages/Login"));
+const NotFound = lazy(() => import("@/pages/NotFound"));
 
 export const HOME = "/";
 export const BASIC = "/basic";
@@ -32,6 +37,27 @@ function suspense(element: ReactNode) {
   return <Suspense fallback={<LoadingPage />}>{element}</Suspense>;
 }
 
+/**
+ * Accepts legacy/path-style entity URLs (`/locations/baidu`) and rewrites them
+ * to the canonical query form (`/locations?name=baidu`) the edit pages read.
+ */
+function RedirectNamedEntity({ base }: { base: string }) {
+  const { name } = useParams();
+  const target = name
+    ? `${base}?name=${encodeURIComponent(name)}`
+    : base;
+  return <Navigate to={target} replace />;
+}
+
+const entityBases = [
+  SERVERS,
+  LOCATIONS,
+  UPSTREAMS,
+  PLUGINS,
+  CERTIFICATES,
+  STORAGES,
+] as const;
+
 // Everything inside the app shell. Login is deliberately not here.
 const pages = [
   { path: HOME, element: suspense(<Home />) },
@@ -43,6 +69,13 @@ const pages = [
   { path: CERTIFICATES, element: suspense(<Certificates />) },
   { path: CONFIG, element: suspense(<Config />) },
   { path: STORAGES, element: suspense(<Storages />) },
+  // Path-style aliases so pasted `/locations/foo` links still open the form.
+  ...entityBases.map((base) => ({
+    path: `${base}/:name`,
+    element: <RedirectNamedEntity base={base} />,
+  })),
+  // In-shell 404 — keeps sidebar/header; must stay last among children.
+  { path: "*", element: suspense(<NotFound />) },
 ];
 
 const router = createHashRouter([

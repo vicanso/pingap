@@ -18,8 +18,13 @@ import { omitEmptyArrayString } from "@/helpers/util";
 import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
-import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import {
+  ConfigEntityList,
+  EntityText,
+  type ConfigEntityColumn,
+} from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
+import { sortIntoSections } from "@/components/ex-form-sections";
 import { PLUGINS } from "@/routers";
 
 function getPluginConfig(
@@ -65,6 +70,34 @@ export default function Plugins() {
   }
 
   if (!currentPlugin) {
+    const pluginValues = config.plugins || {};
+    // Only show optional columns when at least one row has a value — otherwise
+    // a cache plugin with no step/remark paints a row of empty dashes.
+    const hasStep = plugins.some((name) => Boolean(pluginValues[name]?.step));
+    const hasRemark = plugins.some((name) =>
+      Boolean(pluginValues[name]?.remark),
+    );
+    const columns: ConfigEntityColumn<Record<string, unknown>>[] = [
+      {
+        key: "category",
+        label: pluginI18n("category"),
+        render: (value) => <EntityText value={value?.category as string} />,
+      },
+    ];
+    if (hasStep) {
+      columns.push({
+        key: "step",
+        label: pluginI18n("step"),
+        render: (value) => <EntityText value={value?.step as string} />,
+      });
+    }
+    if (hasRemark) {
+      columns.push({
+        key: "remark",
+        label: pluginI18n("remark"),
+        render: (value) => <EntityText value={value?.remark as string} />,
+      });
+    }
     return (
       <ConfigEntityList<Record<string, unknown>>
         title={pluginI18n("title")}
@@ -75,24 +108,8 @@ export default function Plugins() {
         basePath={PLUGINS}
         newValue={newPlugin}
         names={plugins}
-        values={config.plugins || {}}
-        columns={[
-          {
-            key: "category",
-            label: pluginI18n("category"),
-            render: (value) => <EntityText value={value?.category as string} />,
-          },
-          {
-            key: "step",
-            label: pluginI18n("step"),
-            render: (value) => <EntityText value={value?.step as string} />,
-          },
-          {
-            key: "remark",
-            label: pluginI18n("remark"),
-            render: (value) => <EntityText value={value?.remark as string} />,
-          },
-        ]}
+        values={pluginValues}
+        columns={columns}
       />
     );
   }
@@ -109,11 +126,16 @@ export default function Plugins() {
     setSearchParams(searchParams);
   };
 
+  const sec = {
+    basic: pluginI18n("sectionBasic"),
+    options: pluginI18n("sectionOptions"),
+  };
   const items: ExFormItem[] = [];
   if (currentPlugin === newPlugin) {
     items.unshift(
       {
         name: "category",
+        section: sec.basic,
         label: pluginI18n("category"),
         placeholder: "",
         defaultValue: currentCategory,
@@ -123,6 +145,7 @@ export default function Plugins() {
       },
       {
         name: "_name_",
+        section: sec.basic,
         label: pluginI18n("name"),
         placeholder: pluginI18n("namePlaceholder"),
         defaultValue: "",
@@ -133,6 +156,7 @@ export default function Plugins() {
   } else {
     items.unshift({
       name: "category",
+      section: sec.basic,
       label: pluginI18n("category"),
       placeholder: "",
       defaultValue: pluginConfig.category as string,
@@ -153,6 +177,7 @@ export default function Plugins() {
     if (options.length > 1) {
       items.push({
         name: "step",
+        section: sec.basic,
         label: pluginI18n("step"),
         placeholder: "",
         defaultValue: (pluginConfig.step as string) || options[0].value,
@@ -166,11 +191,17 @@ export default function Plugins() {
   // the page only needs to look one up and append what it returns.
   const buildFields = PLUGIN_FIELDS[category as PluginCategory];
   if (buildFields) {
-    items.push(...buildFields(pluginConfig, pluginI18n));
+    items.push(
+      ...buildFields(pluginConfig, pluginI18n).map((field) => ({
+        ...field,
+        section: field.section ?? sec.options,
+      })),
+    );
   }
   if (category) {
     items.push({
       name: "remark",
+      section: sec.options,
       label: pluginI18n("remark"),
       placeholder: "",
       defaultValue: pluginConfig.remark as string,
@@ -178,6 +209,12 @@ export default function Plugins() {
       category: ExFormItemCategory.TEXTAREA,
     });
   }
+
+  const defaultShow = sortIntoSections(
+    items,
+    [sec.basic, sec.options],
+    [sec.basic],
+  );
 
   const schema = z.object({
     step: z.string().optional(),
@@ -235,6 +272,7 @@ export default function Plugins() {
         key={key}
         items={items}
         schema={schema}
+        defaultShow={defaultShow}
         onValueChange={(value) => {
           const category = value.category as string;
           if (category && category !== currentCategory) {

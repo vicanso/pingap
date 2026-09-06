@@ -524,7 +524,19 @@ export function MainSidebar({
           </p>
         )}
         {groups.map((group, groupIdx) => {
-          const groupItems = items.filter((item) => item.group === group.key);
+          // While searching, drop parents with no matching children (and bare
+          // leaf items whose own title does not match) so the list stays tight.
+          const groupItems = items.filter((item) => {
+            if (item.group !== group.key) {
+              return false;
+            }
+            if (!activeKeyword) {
+              return true;
+            }
+            const titleHit = item.title.toLowerCase().includes(activeKeyword);
+            const childHit = (item.children?.length ?? 0) > 0;
+            return titleHit || childHit;
+          });
           if (groupItems.length === 0) {
             return null;
           }
@@ -561,7 +573,12 @@ export function MainSidebar({
                               aria-current={isActive ? "page" : undefined}
                             >
                               {item.icon && <item.icon />}
-                              <span>{item.title}</span>
+                              <span>
+                                <HighlightMatch
+                                  text={item.title}
+                                  keyword={activeKeyword}
+                                />
+                              </span>
                               {item.label && (
                                 <span
                                   className={cn(
