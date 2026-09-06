@@ -83,6 +83,11 @@ release-full:
 	cargo build --release --features=full
 	ls -lh target/release
 
+# The full feature set on the rustls TLS backend (no OpenSSL in the binary)
+release-rustls-full:
+	cargo build --release --no-default-features --features=tls-rustls,full
+	ls -lh target/release
+
 
 release-all:
 	cargo build --release --features=full

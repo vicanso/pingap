@@ -43,6 +43,20 @@ fi
 # PINGAP_LIBC=gnu to use glibc build on Linux (default: musl, statically linked)
 LINUX_LIBC="${PINGAP_LIBC:-musl}"
 
+# PINGAP_TLS=rustls to install the rustls TLS backend build. Linux only, and
+# only published with the full feature set, so it implies PINGAP_FULL=1.
+TLS_BACKEND="${PINGAP_TLS:-openssl}"
+case "${TLS_BACKEND}" in
+  openssl|rustls) ;;
+  *)
+    error "PINGAP_TLS must be openssl or rustls (got: ${TLS_BACKEND})"
+    exit 1
+    ;;
+esac
+if [ "${TLS_BACKEND}" = "rustls" ]; then
+  FULL_SUFFIX="-rustls-full"
+fi
+
 get_latest_release() {
   curl --silent "https://api.github.com/repos/${REPO}/releases/latest" |
     grep '"tag_name":' |
@@ -82,6 +96,7 @@ detect_arch() {
 #   pingap-linux-musl-aarch64[-full].tar.gz   -> pingap-linux-musl-aarch64[-full]
 #   pingap-linux-gnu-x86[-full].tar.gz        -> pingap-linux-gnu-x86[-full]
 #   pingap-linux-gnu-aarch64[-full].tar.gz    -> pingap-linux-gnu-aarch64[-full]
+#   pingap-linux-{musl,gnu}-{x86,aarch64}-rustls-full.tar.gz (PINGAP_TLS=rustls)
 #   pingap-darwin-x86[-full].tar.gz           -> pingap-darwin-x86[-full]
 #   pingap-darwin-aarch64[-full].tar.gz       -> pingap-darwin-aarch64[-full]
 #   pingap-windows.exe.zip                    -> pingap-windows.exe
@@ -108,6 +123,10 @@ resolve_filename() {
       binary_name="${basename}"
       ;;
     Darwin)
+      if [ "${TLS_BACKEND}" = "rustls" ]; then
+        error "PINGAP_TLS=rustls is only published for Linux."
+        exit 1
+      fi
       if [ "${arch}" = "x86_64" ]; then
         arch_tag="x86"
       else
@@ -118,6 +137,10 @@ resolve_filename() {
       binary_name="${basename}"
       ;;
     Windows)
+      if [ "${TLS_BACKEND}" = "rustls" ]; then
+        error "PINGAP_TLS=rustls is only published for Linux."
+        exit 1
+      fi
       if [ -n "${FULL_SUFFIX}" ]; then
         warn "Windows release does not have a separate -full variant; PINGAP_FULL ignored."
       fi
@@ -203,7 +226,9 @@ main() {
   if [ "${platform}" = "Linux" ]; then
     info "Linux libc: ${LINUX_LIBC} (override with PINGAP_LIBC=gnu|musl)"
   fi
-  if [ -n "${FULL_SUFFIX}" ]; then
+  if [ "${TLS_BACKEND}" = "rustls" ]; then
+    info "Variant: rustls-full (rustls TLS backend, all features enabled)"
+  elif [ -n "${FULL_SUFFIX}" ]; then
     info "Variant: full (all features enabled)"
   else
     info "Variant: default (set PINGAP_FULL=1 for the full-featured build)"

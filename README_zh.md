@@ -103,6 +103,7 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 
 - `PINGAP_FULL=1` —— 安装 `-full` 构建（启用所有可选特性）
 - `PINGAP_LIBC=gnu` —— Linux 上使用 glibc 构建（默认是静态链接的 musl 构建）
+- `PINGAP_TLS=rustls` —— Linux 上安装 `-rustls-full` 构建（rustls TLS 后端，启用所有可选特性，不含 OpenSSL），见 [TLS 后端](#tls-后端)
 
 ```bash
 # 安装完整特性版本
@@ -145,7 +146,7 @@ make build-web
 
 ### TLS 后端
 
-默认构建使用 OpenSSL 终止 TLS（由 `openssl` crate 从源码编译）。若想改用 rustls（TLS 部分不再需要 C 工具链）：
+默认构建使用 OpenSSL 终止 TLS（由 `openssl` crate 从源码编译）。若想改用 rustls（不再从源码编译 OpenSSL；但仍需要 C 编译器，rustls 的密码学库 ring 与 aws-lc-rs 含 C 和汇编代码）：
 
 ```bash
 cargo build --release --no-default-features --features tls-rustls

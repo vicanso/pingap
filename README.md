@@ -103,6 +103,7 @@ Optional environment variables:
 
 - `PINGAP_FULL=1` — install the `-full` build (all optional features enabled)
 - `PINGAP_LIBC=gnu` — on Linux, use the glibc build instead of the default musl static build
+- `PINGAP_TLS=rustls` — on Linux, install the `-rustls-full` build (rustls TLS backend, all optional features, no OpenSSL); see [TLS backend](#tls-backend)
 
 ```bash
 # Full-featured build
@@ -174,7 +175,7 @@ make build-web
 
 ### TLS backend
 
-The default build terminates TLS with OpenSSL, compiled from source by the `openssl` crate. To build with rustls instead, which needs no C toolchain for TLS:
+The default build terminates TLS with OpenSSL, compiled from source by the `openssl` crate. To build with rustls instead, which drops the OpenSSL source build (a C compiler is still needed: rustls' crypto providers, ring and aws-lc-rs, contain C and assembly):
 
 ```bash
 cargo build --release --no-default-features --features tls-rustls
