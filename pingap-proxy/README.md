@@ -72,7 +72,7 @@ the explicit `weight` in `LocationConf` or derived:
 So `=/api/health` beats `/api` beats `~^/api/.*`, and a host-qualified location
 beats an otherwise identical one without a host.
 
-When nothing matches, the request fails with `No matching location, host:<host>`.
+When nothing matches, the request is answered with `404` and the error `No matching location, host:<host>`.
 
 ## Server configuration
 

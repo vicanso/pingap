@@ -60,7 +60,7 @@
 
 因此 `=/api/health` 胜过 `/api` 胜过 `~^/api/.*`，带主机限定的 location 胜过其他相同但不带主机的。
 
-无匹配时请求失败，信息为 `No matching location, host:<host>`。
+无匹配时请求以 `404` 结束，错误信息为 `No matching location, host:<host>`。
 
 ## Server 配置
 

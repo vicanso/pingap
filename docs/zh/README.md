@@ -58,10 +58,18 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 ### 一条命令启动 HTTPS 代理
 
 ```bash
+# 证书向 Let's Encrypt 申请
 pingap --domain=pingap.io --upstream=192.168.1.1:3000
+
+# 或使用自己的证书
+pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 ```
 
-不带 `--cert` 时，Pingap 通过 HTTP-01 向 Let's Encrypt 申请证书，因此 `pingap.io` 必须解析到本机，且 80 端口可从公网访问。证书保存在 `~/.pingap/acme/<domains>.toml`，重启会复用——申请有速率限制，请勿随意删除。`--upstream` 为逗号分隔的后端列表，`--domain` 为逗号分隔的主机名（省略则用明文 HTTP 服务所有主机）。
+不带 `--cert` 时，Pingap 通过 HTTP-01 质询向 Let's Encrypt 申请证书，因此 `pingap.io` 必须解析到本机，且 80 端口可从公网访问。签发的证书保存在 `~/.pingap/acme/<domains>.toml`，重启时复用——申请有速率限制，请勿删除。其余一切仍来自命令行：改动 `--upstream` 在下次启动时生效，不影响证书。
+
+`--cert` 接受证书文件本身或其所在目录——常见的 `fullchain.pem` / `privkey.pem`、`cert.pem` / `key.pem` 与 `tls.crt` / `tls.key` 布局会自动识别，其他命名用 `--key` 指定。有证书时监听默认为 `0.0.0.0:443`，既无证书也无域名时为 `0.0.0.0:80`，`--addr` 可覆盖。`--upstream` 为逗号分隔的后端列表，`--domain` 为逗号分隔的主机名（省略则以明文 http 服务所有主机），未列出的主机的请求返回 404。
+
+配置在每次启动时生成，因此不能通过管理界面修改：超出单个 server 的需求请使用 `--conf`，它不能与这些参数同时使用。
 
 ## 架构（crates）
 

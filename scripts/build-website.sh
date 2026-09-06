@@ -302,8 +302,15 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 ### One-command HTTPS proxy
 
 ```bash
+# certificate requested from Let's Encrypt (HTTP-01: the domain must resolve here, port 80 reachable)
 pingap --domain=pingap.io --upstream=192.168.1.1:3000
+
+# or bring your own certificate: a file, or a directory holding
+# fullchain.pem/privkey.pem, cert.pem/key.pem or tls.crt/tls.key
+pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 ```
+
+Listens on `0.0.0.0:443` (override with `--addr`); `--upstream` and `--domain` take comma separated lists, and hosts that are not listed get a 404.
 
 ## Browse the docs
 
@@ -517,8 +524,15 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 ### 一条命令 HTTPS 代理
 
 ```bash
+# 证书向 Let's Encrypt 申请（HTTP-01：域名须解析到本机，80 端口可达）
 pingap --domain=pingap.io --upstream=192.168.1.1:3000
+
+# 或使用自己的证书：证书文件，或存放 fullchain.pem/privkey.pem、
+# cert.pem/key.pem、tls.crt/tls.key 的目录
+pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 ```
+
+默认监听 `0.0.0.0:443`（`--addr` 可覆盖）；`--upstream` 与 `--domain` 支持逗号分隔多个值，未列出的主机返回 404。
 
 ## 浏览文档
 

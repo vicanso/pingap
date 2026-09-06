@@ -758,7 +758,10 @@ impl Server {
                 "No matching location, host:{host} path:{}",
                 header.uri.path()
             );
-            return Err(pingap_core::new_internal_error(500, message));
+            // Nothing is configured for this host/path, which is the
+            // client's problem (wrong Host, unknown route), not a server
+            // fault: answer 404 rather than 500.
+            return Err(pingap_core::new_internal_error(404, message));
         };
 
         debug!(
@@ -2210,6 +2213,35 @@ value = 'proxy_set_headers = ["name:value"]'
             2,
             body_calls.load(Ordering::SeqCst),
             "body hooks must not bail out before the handshake completes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_matching_location_is_404() {
+        let server = new_server();
+        let input_header =
+            "GET /nowhere HTTP/1.1\r\nHost: nomatch.example\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // No location matched during the early filter: the request must
+        // fail as a routing miss, not as a server error.
+        let mut ctx = Ctx::default();
+        let err = server
+            .request_filter(&mut session, &mut ctx)
+            .await
+            .expect_err("a request without a location cannot be served");
+        assert_eq!(
+            true,
+            matches!(err.etype(), pingora::ErrorType::HTTPStatus(404)),
+            "{err}"
+        );
+        assert_eq!(
+            true,
+            err.to_string()
+                .contains("No matching location, host:nomatch.example"),
+            "{err}"
         );
     }
 

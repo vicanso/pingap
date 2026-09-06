@@ -139,7 +139,8 @@ layouts are detected automatically, use `--key` for anything else. The listener
 defaults to `0.0.0.0:443` when there is a certificate and `0.0.0.0:80` when there
 is neither a certificate nor a domain, and `--addr` overrides it. `--upstream`
 takes a comma separated list of backends, `--domain` a comma separated list of
-hosts (omit it to serve every host over plain http).
+hosts (omit it to serve every host over plain http). Requests for a host that
+is not listed are answered with 404.
 
 The configuration is generated on every start, so it cannot be edited through
 the admin UI: for anything beyond a single server use `--conf`, which cannot be
