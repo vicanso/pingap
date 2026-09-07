@@ -330,7 +330,7 @@ jobs:
         platform:
           - { arch: "linux/amd64", tag: "amd64", runs-on: "ubuntu-22.04" }
           - { arch: "linux/arm64", tag: "arm64", runs-on: "ubuntu-22.04-arm" }
-        features: ['latest', 'full']
+        features: ['latest', 'full', 'rustls-full']
     steps:
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -381,9 +381,18 @@ jobs:
         shell: bash
         id: build_args
         run: |
-          if [ "${{ matrix.features }}" != "latest" ]; then
-            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
-          fi
+          # `latest` is the plain default build. `rustls-full` is not a cargo
+          # feature name: it swaps the TLS backend, which needs the default
+          # `openssl` feature turned off.
+          case "${{ matrix.features }}" in
+            latest) ;;
+            rustls-full)
+              echo "BUILD_ARGS=--no-default-features --features=tls-rustls,full" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
+              ;;
+          esac
       - name: Build and push
         id: docker_build
         uses: docker/build-push-action@v7
@@ -402,7 +411,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        features: ['latest', 'full']
+        features: ['latest', 'full', 'rustls-full']
     needs: [docker] # 等待所有架构构建完成
     steps:
       - name: Set up Docker Buildx
