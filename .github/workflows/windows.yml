@@ -27,7 +27,7 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web

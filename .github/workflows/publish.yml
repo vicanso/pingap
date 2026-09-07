@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: write # create the release and upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -77,7 +77,7 @@ jobs:
     permissions:
       contents: write # create the release and upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -145,7 +145,7 @@ jobs:
     permissions:
       contents: write # create the release and upload assets
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -219,7 +219,7 @@ jobs:
           - { tag: "x86", runs-on: "ubuntu-22.04" }
           - { tag: "aarch64", runs-on: "ubuntu-22.04-arm" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -276,7 +276,7 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -366,7 +366,7 @@ jobs:
           df -lh
           echo
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v4

@@ -50,7 +50,7 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ilammy/setup-nasm@v1
       - name: setup node
         uses: actions/setup-node@v7
@@ -118,7 +118,7 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -206,7 +206,7 @@ jobs:
           df -lh
           echo
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v4
