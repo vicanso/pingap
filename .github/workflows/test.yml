@@ -50,10 +50,10 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ilammy/setup-nasm@v1
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
       - name: build-web
         run: make build-web
       - name: Install build dependencies
@@ -118,9 +118,9 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
       - name: build-web
         run: make build-web
 
@@ -207,14 +207,14 @@ jobs:
           df -lh
           echo
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v4
       - name: Available platforms
         run: echo ${{ steps.buildx.outputs.platforms }}
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
@@ -261,7 +261,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
