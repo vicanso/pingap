@@ -4,6 +4,7 @@ export interface ExFormOption {
   value: string | number | boolean | null;
 }
 import { pascal } from "radash";
+import i18n from "@/i18n";
 
 export function getPluginSteps(category: string) {
   const defaultPluginSteps = newStringOptions(
@@ -54,17 +55,18 @@ export function getPluginSteps(category: string) {
 export function newBooleanOptions() {
   const options: ExFormOption[] = [
     {
-      label: "Yes",
+      label: i18n.t("optionYes"),
       option: "yes",
       value: true,
     },
     {
-      label: "No",
+      label: i18n.t("optionNo"),
       option: "no",
       value: false,
     },
     {
-      label: "None",
+      // Optional / unset — distinct from an explicit No.
+      label: i18n.t("optionUnset"),
       option: "none",
       value: null,
     },
@@ -90,7 +92,7 @@ export function newStringOptions(
   });
   if (withNone) {
     options.unshift({
-      label: "None",
+      label: i18n.t("optionUnset"),
       option: "none",
       value: "",
     });

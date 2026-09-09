@@ -69,6 +69,14 @@ export default function Upstreams() {
   }
 
   if (!currentUpstream) {
+    const values = config.upstreams || {};
+    const hasDiscovery = upstreams.some((name) =>
+      Boolean(values[name]?.discovery),
+    );
+    const hasAlgo = upstreams.some((name) => Boolean(values[name]?.algo));
+    const hasHealth = upstreams.some(
+      (name) => basicInfo.upstream_healthy_status?.[name],
+    );
     return (
       <ConfigEntityList<Upstream>
         title={upstreamI18n("title")}
@@ -79,7 +87,7 @@ export default function Upstreams() {
         basePath={UPSTREAMS}
         newValue={newUpstream}
         names={upstreams}
-        values={config.upstreams || {}}
+        values={values}
         columns={[
           {
             key: "addrs",
@@ -92,41 +100,56 @@ export default function Upstreams() {
               />
             ),
           },
-          {
-            key: "discovery",
-            label: upstreamI18n("discovery"),
-            render: (value) => <EntityText value={value?.discovery} />,
-          },
-          {
-            key: "algo",
-            label: upstreamI18n("algo"),
-            render: (value) => <EntityText value={value?.algo} />,
-          },
-          {
-            key: "healthyStatus",
-            label: upstreamI18n("healthyStatus"),
-            render: (_value, name) => {
-              // Only upstreams have a real runtime status; it comes from the
-              // health checker via /basic, not from the config.
-              const status = basicInfo.upstream_healthy_status[name];
-              if (!status) {
-                return <EntityText />;
-              }
-              return (
-                <span
-                  className={cn(
-                    "tabular-nums",
-                    status.healthy === 0 && "text-rose-600 dark:text-rose-400",
-                    status.healthy > 0 &&
-                      status.healthy < status.total &&
-                      "text-amber-600 dark:text-amber-400",
-                  )}
-                >
-                  {status.healthy}/{status.total}
-                </span>
-              );
-            },
-          },
+          ...(hasDiscovery
+            ? [
+                {
+                  key: "discovery",
+                  label: upstreamI18n("discovery"),
+                  render: (value: Upstream | undefined) => (
+                    <EntityText value={value?.discovery} />
+                  ),
+                },
+              ]
+            : []),
+          ...(hasAlgo
+            ? [
+                {
+                  key: "algo",
+                  label: upstreamI18n("algo"),
+                  render: (value: Upstream | undefined) => (
+                    <EntityText value={value?.algo} />
+                  ),
+                },
+              ]
+            : []),
+          ...(hasHealth
+            ? [
+                {
+                  key: "healthyStatus",
+                  label: upstreamI18n("healthyStatus"),
+                  render: (_value: Upstream | undefined, name: string) => {
+                    const status = basicInfo.upstream_healthy_status[name];
+                    if (!status) {
+                      return <EntityText />;
+                    }
+                    return (
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          status.healthy === 0 &&
+                            "text-rose-600 dark:text-rose-400",
+                          status.healthy > 0 &&
+                            status.healthy < status.total &&
+                            "text-amber-600 dark:text-amber-400",
+                        )}
+                      >
+                        {status.healthy}/{status.total}
+                      </span>
+                    );
+                  },
+                },
+              ]
+            : []),
         ]}
       />
     );
@@ -609,6 +632,8 @@ export default function Upstreams() {
     });
   }
 
+  // Backends alone on the first screen — balancing / timeouts / TLS sit behind
+  // More Settings so the create/edit form stays scannable.
   const defaultShow = sortIntoSections(
     items,
     [
@@ -619,7 +644,7 @@ export default function Upstreams() {
       sec.resilience,
       sec.tcp,
     ],
-    [sec.backends, sec.balancing],
+    [sec.backends],
   );
 
   const schema = z.object({
@@ -685,7 +710,7 @@ export default function Upstreams() {
             },
             {
               label: upstreamI18n("algo"),
-              value: upstreamConfig.algo || "—",
+              value: upstreamConfig.algo || undefined,
             },
             {
               label: upstreamI18n("sni"),

@@ -213,7 +213,9 @@ export default function Home() {
       certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
-        value: info ? formatDate(info.not_after) : value.domains || "",
+        value: info
+          ? homeI18n("expiresOn", { date: formatDate(info.not_after) })
+          : value.domains || "",
         valueTone: state?.tone,
         valueTitle: state?.message,
       });
@@ -502,11 +504,24 @@ export default function Home() {
     { name: "configHash", value: dash(basicInfo.config_hash) },
   ];
 
-  const colSize = Math.ceil(runtime.length / 3);
+  // Drop empty placeholders and zeroed counters so the grid stays dense.
+  const runtimeVisible = runtime.filter((item) => {
+    if (item.value === "—") {
+      return false;
+    }
+    if (
+      ["tcpCount", "tcp6Count", "fdCount"].includes(item.name) &&
+      item.value === "0"
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const colSize = Math.ceil(runtimeVisible.length / 3) || 1;
   const runtimeColumns = [
-    runtime.slice(0, colSize),
-    runtime.slice(colSize, colSize * 2),
-    runtime.slice(colSize * 2),
+    runtimeVisible.slice(0, colSize),
+    runtimeVisible.slice(colSize, colSize * 2),
+    runtimeVisible.slice(colSize * 2),
   ];
 
   // Uptime is already in the top bar on every page, so this line carries the

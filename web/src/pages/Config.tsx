@@ -105,10 +105,19 @@ export default function Config() {
     if (importing) {
       return;
     }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      toast(t("importFail"), {
+        description: t("importEmpty"),
+      });
+      return;
+    }
     setImporting(true);
     try {
-      await importToml(value);
-      toast(t("importSuccess"));
+      await importToml(trimmed);
+      toast(t("importSuccess"), {
+        description: t("importSuccessDescription"),
+      });
       // An import replaces the whole config, so nothing on this page still
       // describes what is running. Reload it and show the dashboard.
       await fetchConfig();

@@ -68,6 +68,8 @@ export default function Servers() {
   }
 
   if (!currentServer) {
+    const values = config.servers || {};
+    const hasThreads = servers.some((name) => values[name]?.threads != null);
     return (
       <ConfigEntityList<Server>
         title={serverI18n("title")}
@@ -78,7 +80,7 @@ export default function Servers() {
         basePath={SERVERS}
         newValue={newServer}
         names={servers}
-        values={config.servers || {}}
+        values={values}
         columns={[
           {
             key: "addr",
@@ -92,11 +94,17 @@ export default function Servers() {
               <EntityText value={(value?.locations || []).join(", ")} />
             ),
           },
-          {
-            key: "threads",
-            label: serverI18n("threads"),
-            render: (value) => <EntityText value={value?.threads} />,
-          },
+          ...(hasThreads
+            ? [
+                {
+                  key: "threads",
+                  label: serverI18n("threads"),
+                  render: (value: Server | undefined) => (
+                    <EntityText value={value?.threads} />
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     );
@@ -481,18 +489,20 @@ export default function Servers() {
             { label: serverI18n("addr"), value: serverConfig.addr, mono: true },
             {
               label: serverI18n("locations"),
-              value: (serverConfig.locations || []).join(", ") || "—",
+              value: (serverConfig.locations || []).join(", ") || undefined,
             },
             {
               label: serverI18n("threads"),
               value:
                 serverConfig.threads === 0
                   ? "auto"
-                  : (serverConfig.threads ?? "—"),
+                  : serverConfig.threads != null
+                    ? serverConfig.threads
+                    : undefined,
             },
             {
               label: serverI18n("tlsCert"),
-              value: serverConfig.tls_cert || "—",
+              value: serverConfig.tls_cert || undefined,
               mono: true,
             },
           ]}

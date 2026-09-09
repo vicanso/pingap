@@ -128,23 +128,29 @@ export function TrafficPath({
         <p className="machine text-[11.5px] text-muted-foreground">{meta}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-2 gap-y-5 px-3 py-5 sm:px-4 md:flex md:items-center md:gap-0 md:py-6">
+      {/*
+        Phones: horizontal strip with chevrons so the path still reads left→right.
+        Desktop: flex row that fills the card width.
+      */}
+      <div className="flex items-stretch gap-0 overflow-x-auto px-3 py-5 sm:px-4 md:overflow-visible md:py-6">
         {stages.map((stage, index) => (
           <Fragment key={stage.key}>
             {index > 0 && (
               <div
-                className="hidden shrink-0 items-center md:flex"
+                className="flex shrink-0 items-center"
                 aria-hidden="true"
               >
-                <span className="h-px w-4 bg-muted-foreground/25 lg:w-8" />
-                <ChevronRight className="-ml-1.5 size-3.5 text-muted-foreground/55" />
+                <span className="hidden h-px w-4 bg-muted-foreground/25 md:block lg:w-8" />
+                <ChevronRight className="size-3.5 text-muted-foreground/55 md:-ml-1.5" />
               </div>
             )}
-            <Stage
-              stage={stage}
-              index={index}
-              health={index === stages.length - 1 ? health : undefined}
-            />
+            <div className="min-w-[42%] shrink-0 md:min-w-0 md:flex-1">
+              <Stage
+                stage={stage}
+                index={index}
+                health={index === stages.length - 1 ? health : undefined}
+              />
+            </div>
           </Fragment>
         ))}
       </div>

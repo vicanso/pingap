@@ -26,6 +26,10 @@ export function ConfigEntitySummary({
     if (f.value === undefined || f.value === null || f.value === "") {
       return false;
     }
+    // Callers sometimes pass the em dash placeholder — treat it as absent.
+    if (f.value === "—") {
+      return false;
+    }
     return true;
   });
   if (visible.length === 0) {

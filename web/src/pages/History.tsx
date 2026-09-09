@@ -22,6 +22,12 @@ import {
   ItemFooter,
 } from "@/components/ui/item";
 import { History as HistoryIcon, Inbox } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export default function HistoryPage(props: {
   category: string;
@@ -90,20 +96,26 @@ export default function HistoryPage(props: {
   });
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
-          title={historyI18n("title")}
-          aria-label={historyI18n("title")}
-          onClick={() => {
-            fetchHistory();
-          }}
-        >
-          <HistoryIcon className="size-4" />
-        </Button>
-      </SheetTrigger>
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SheetTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
+                aria-label={historyI18n("title")}
+                onClick={() => {
+                  fetchHistory();
+                }}
+              >
+                <HistoryIcon className="size-4" />
+              </Button>
+            </SheetTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{historyI18n("title")}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <SheetContent className="flex flex-col !p-0">
         <div className="shrink-0 border-b border-border px-6 py-5">
           <SheetHeader>

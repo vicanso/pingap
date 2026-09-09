@@ -67,6 +67,11 @@ export default function Locations() {
   }
 
   if (!currentLocation) {
+    const values = config.locations || {};
+    const hasHost = locations.some((name) => Boolean(values[name]?.host));
+    const hasPlugins = locations.some(
+      (name) => (values[name]?.plugins || []).length > 0,
+    );
     return (
       <ConfigEntityList<Location>
         title={locationI18n("title")}
@@ -77,13 +82,19 @@ export default function Locations() {
         basePath={LOCATIONS}
         newValue={newLocation}
         names={locations}
-        values={config.locations || {}}
+        values={values}
         columns={[
-          {
-            key: "host",
-            label: locationI18n("host"),
-            render: (value) => <EntityText value={value?.host} />,
-          },
+          ...(hasHost
+            ? [
+                {
+                  key: "host",
+                  label: locationI18n("host"),
+                  render: (value: Location | undefined) => (
+                    <EntityText value={value?.host} />
+                  ),
+                },
+              ]
+            : []),
           {
             key: "path",
             label: locationI18n("path"),
@@ -103,13 +114,17 @@ export default function Locations() {
               />
             ),
           },
-          {
-            key: "plugins",
-            label: locationI18n("plugins"),
-            render: (value) => (
-              <EntityText value={(value?.plugins || []).join(", ")} />
-            ),
-          },
+          ...(hasPlugins
+            ? [
+                {
+                  key: "plugins",
+                  label: locationI18n("plugins"),
+                  render: (value: Location | undefined) => (
+                    <EntityText value={(value?.plugins || []).join(", ")} />
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     );
@@ -357,7 +372,7 @@ export default function Locations() {
           fields={[
             {
               label: locationI18n("host"),
-              value: locationConfig.host || "—",
+              value: locationConfig.host || undefined,
               mono: true,
             },
             {
@@ -366,12 +381,10 @@ export default function Locations() {
               mono: true,
             },
             {
-              label: locationI18n("upstream"),
-              value: locationConfig.upstream || "—",
-            },
-            {
+              // Upstream is edited in the form below — keep the summary for
+              // host/path/rewrite only so the page does not say it twice.
               label: locationI18n("rewrite"),
-              value: locationConfig.rewrite || "—",
+              value: locationConfig.rewrite || undefined,
               mono: true,
             },
           ]}

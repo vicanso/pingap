@@ -1,6 +1,9 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
-import useConfigState, { Certificate } from "@/states/config";
+import useConfigState, {
+  Certificate,
+  CertificateInfo,
+} from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -14,10 +17,16 @@ import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
-import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import {
+  ConfigEntityList,
+  EntityText,
+  type ConfigEntityColumn,
+} from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
+import { sortIntoSections } from "@/components/ex-form-sections";
 import { CERTIFICATES } from "@/routers";
 import { Check } from "lucide-react";
+import React from "react";
 
 function getCertificateConfig(
   name: string,
@@ -29,20 +38,40 @@ function getCertificateConfig(
   return (certificates[name] || {}) as Certificate;
 }
 
+function formatExpiry(notAfter: number) {
+  const date = new Date(notAfter * 1000);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export default function Certificates() {
   const certificateI18n = useI18n("certificate");
   const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove, version] = useConfigState(
-    useShallow((state) => [
-      state.data,
-      state.initialized,
-      state.update,
-      state.remove,
-      state.version,
-    ]),
+  const [config, initialized, update, remove, version, getCertificateInfos] =
+    useConfigState(
+      useShallow((state) => [
+        state.data,
+        state.initialized,
+        state.update,
+        state.remove,
+        state.version,
+        state.getCertificateInfos,
+      ]),
+    );
+  const [infos, setInfos] = React.useState<Record<string, CertificateInfo>>(
+    {},
   );
+  React.useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+    getCertificateInfos()
+      .then(setInfos)
+      .catch(() => setInfos({}));
+  }, [initialized, getCertificateInfos, version]);
+
   const newCertificate = "*";
   const certificates = Object.keys(config.certificates || {});
   certificates.sort();
@@ -54,6 +83,51 @@ export default function Certificates() {
   }
 
   if (!currentCertificate) {
+    const values = config.certificates || {};
+    const hasDomains = certificates.some((name) =>
+      Boolean(values[name]?.domains),
+    );
+    const hasAcme = certificates.some((name) => Boolean(values[name]?.acme));
+    const hasExpiry = certificates.some((name) => Boolean(infos[name]?.not_after));
+    const columns: ConfigEntityColumn<Certificate>[] = [];
+    if (hasDomains) {
+      columns.push({
+        key: "domains",
+        label: certificateI18n("domains"),
+        render: (value) => <EntityText value={value?.domains} />,
+      });
+    }
+    if (hasExpiry) {
+      columns.push({
+        key: "expires",
+        label: certificateI18n("expires"),
+        render: (_value, name) => {
+          const notAfter = infos[name]?.not_after;
+          return (
+            <EntityText
+              value={notAfter ? formatExpiry(notAfter) : undefined}
+            />
+          );
+        },
+      });
+    }
+    if (hasAcme) {
+      columns.push({
+        key: "acme",
+        label: certificateI18n("acme"),
+        render: (value) => <EntityText value={value?.acme} />,
+      });
+    }
+    columns.push({
+      key: "isDefault",
+      label: certificateI18n("isDefault"),
+      render: (value) =>
+        value?.is_default ? (
+          <Check className="size-4 text-primary" />
+        ) : (
+          <EntityText />
+        ),
+    });
     return (
       <ConfigEntityList<Certificate>
         title={certificateI18n("title")}
@@ -64,29 +138,8 @@ export default function Certificates() {
         basePath={CERTIFICATES}
         newValue={newCertificate}
         names={certificates}
-        values={config.certificates || {}}
-        columns={[
-          {
-            key: "domains",
-            label: certificateI18n("domains"),
-            render: (value) => <EntityText value={value?.domains} />,
-          },
-          {
-            key: "acme",
-            label: certificateI18n("acme"),
-            render: (value) => <EntityText value={value?.acme} />,
-          },
-          {
-            key: "isDefault",
-            label: certificateI18n("isDefault"),
-            render: (value) =>
-              value?.is_default ? (
-                <Check className="size-4 text-primary" />
-              ) : (
-                <EntityText />
-              ),
-          },
-        ]}
+        values={values}
+        columns={columns}
       />
     );
   }
@@ -110,29 +163,15 @@ export default function Certificates() {
     return Math.min(Math.max(3, count), 8);
   };
 
+  const sec = {
+    basic: certificateI18n("sectionBasic"),
+    pem: certificateI18n("sectionPem"),
+  };
+
   const items: ExFormItem[] = [
     {
-      name: "tls_cert",
-      label: certificateI18n("tlsCert"),
-      placeholder: certificateI18n("tlsCertPlaceholder"),
-      defaultValue: certificateConfig.tls_cert,
-      span: 6,
-      category: ExFormItemCategory.TEXTAREA,
-      rows: countLines(certificateConfig.tls_cert || ""),
-      nullAsEmpty: true,
-    },
-    {
-      name: "tls_key",
-      label: certificateI18n("tlsKey"),
-      placeholder: certificateI18n("tlsKeyPlaceholder"),
-      defaultValue: certificateConfig.tls_key,
-      span: 6,
-      category: ExFormItemCategory.TEXTAREA,
-      rows: countLines(certificateConfig.tls_key || ""),
-      nullAsEmpty: true,
-    },
-    {
       name: "domains",
+      section: sec.basic,
       label: certificateI18n("domains"),
       placeholder: certificateI18n("domainsPlaceholder"),
       defaultValue: certificateConfig.domains,
@@ -141,6 +180,7 @@ export default function Certificates() {
     },
     {
       name: "acme",
+      section: sec.basic,
       label: certificateI18n("acme"),
       placeholder: "",
       defaultValue: certificateConfig.acme,
@@ -150,6 +190,7 @@ export default function Certificates() {
     },
     {
       name: "is_default",
+      section: sec.basic,
       label: certificateI18n("isDefault"),
       placeholder: "",
       defaultValue: certificateConfig.is_default,
@@ -159,6 +200,7 @@ export default function Certificates() {
     },
     {
       name: "dns_challenge",
+      section: sec.basic,
       label: certificateI18n("dnsChallenge"),
       placeholder: "",
       defaultValue: certificateConfig.dns_challenge,
@@ -168,6 +210,7 @@ export default function Certificates() {
     },
     {
       name: "dns_provider",
+      section: sec.basic,
       label: certificateI18n("dnsProvider"),
       placeholder: "",
       defaultValue: certificateConfig.dns_provider || "manual",
@@ -181,6 +224,7 @@ export default function Certificates() {
     },
     {
       name: "dns_service_url",
+      section: sec.basic,
       label: certificateI18n("dnsServiceUrl"),
       placeholder: certificateI18n("dnsServiceUrlPlaceholder"),
       defaultValue: certificateConfig.dns_service_url,
@@ -189,6 +233,7 @@ export default function Certificates() {
     },
     {
       name: "is_ca",
+      section: sec.basic,
       label: certificateI18n("isCa"),
       placeholder: "",
       defaultValue: certificateConfig.is_ca,
@@ -198,19 +243,41 @@ export default function Certificates() {
     },
     {
       name: "buffer_days",
+      section: sec.basic,
       label: certificateI18n("bufferDays"),
       placeholder: certificateI18n("bufferDaysPlaceholder"),
       defaultValue: certificateConfig.buffer_days,
       span: 3,
       category: ExFormItemCategory.NUMBER,
     },
+    {
+      name: "tls_cert",
+      section: sec.pem,
+      label: certificateI18n("tlsCert"),
+      placeholder: certificateI18n("tlsCertPlaceholder"),
+      defaultValue: certificateConfig.tls_cert,
+      span: 6,
+      category: ExFormItemCategory.TEXTAREA,
+      rows: countLines(certificateConfig.tls_cert || ""),
+      nullAsEmpty: true,
+    },
+    {
+      name: "tls_key",
+      section: sec.pem,
+      label: certificateI18n("tlsKey"),
+      placeholder: certificateI18n("tlsKeyPlaceholder"),
+      defaultValue: certificateConfig.tls_key,
+      span: 6,
+      category: ExFormItemCategory.TEXTAREA,
+      rows: countLines(certificateConfig.tls_key || ""),
+      nullAsEmpty: true,
+    },
   ];
 
-  let defaultShow = 2;
   if (currentCertificate === newCertificate) {
-    defaultShow++;
     items.unshift({
       name: "name",
+      section: sec.basic,
       label: certificateI18n("name"),
       placeholder: certificateI18n("namePlaceholder"),
       defaultValue: "",
@@ -218,12 +285,21 @@ export default function Certificates() {
       category: ExFormItemCategory.TEXT,
     });
   }
+
+  const defaultShow = sortIntoSections(
+    items,
+    [sec.basic, sec.pem],
+    [sec.basic],
+  );
+
   const schema = z.object({});
   const onRemove = async () => {
     return remove("certificate", currentCertificate).then(() => {
       backToList();
     });
   };
+
+  const info = infos[currentCertificate];
 
   return (
     <PageShell
@@ -256,18 +332,31 @@ export default function Certificates() {
           fields={[
             {
               label: certificateI18n("domains"),
-              value: certificateConfig.domains || "—",
+              value: certificateConfig.domains || undefined,
+              mono: true,
+            },
+            {
+              label: certificateI18n("expires"),
+              value: info?.not_after
+                ? formatExpiry(info.not_after)
+                : undefined,
               mono: true,
             },
             {
               label: certificateI18n("acme"),
-              value: certificateConfig.acme || "—",
+              value: certificateConfig.acme || undefined,
+            },
+            {
+              label: certificateI18n("isDefault"),
+              value: certificateConfig.is_default
+                ? certificateI18n("yes")
+                : undefined,
             },
             {
               label: certificateI18n("tlsCert"),
               value: certificateConfig.tls_cert
-                ? `${certificateConfig.tls_cert.split("\n").length} lines`
-                : "—",
+                ? certificateI18n("pemConfigured")
+                : undefined,
             },
           ]}
         />
@@ -278,7 +367,9 @@ export default function Certificates() {
         items={items}
         schema={schema}
         defaultShow={defaultShow}
-        onRemove={currentCertificate === newCertificate ? undefined : onRemove}
+        onRemove={
+          currentCertificate === newCertificate ? undefined : onRemove
+        }
         onSave={async (value) => {
           let name = currentCertificate;
           if (name === newCertificate) {

@@ -237,6 +237,24 @@ export function MainHeader({
             <span>{t("themeLight")}</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
+        {/* Language joins Settings on small screens to free the top bar. */}
+        <DropdownMenuSeparator className="sm:hidden" />
+        <DropdownMenuGroup className="sm:hidden">
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => i18n.changeLanguage(zhLang)}
+          >
+            {isZh && <Check className={iconClassName} />}
+            <span>中文</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => i18n.changeLanguage(enLang)}
+          >
+            {!isZh && <Check className={iconClassName} />}
+            <span>EN</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
           <AlertDialog>
@@ -431,7 +449,8 @@ export function MainHeader({
       {liveReadout}
       <div className="flex-1" />
       <div className="flex items-center gap-1 sm:gap-2">
-        {languageSwitch}
+        {/* Language pill is wide; on phones it moves into Settings. */}
+        <div className="hidden sm:block">{languageSwitch}</div>
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -443,7 +462,10 @@ export function MainHeader({
               <AudioWaveform className="size-4" strokeWidth={1.8} />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[400px]" align="end">
+          <PopoverContent
+            className="w-[min(400px,calc(100vw-2rem))]"
+            align="end"
+          >
             <Tabs defaultValue="base64" className="w-full">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="base64">Base64</TabsTrigger>

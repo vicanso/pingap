@@ -257,13 +257,34 @@ export default function Plugins() {
           fields={[
             {
               label: pluginI18n("category"),
-              value: (pluginConfig.category as string) || "—",
+              value: (pluginConfig.category as string) || undefined,
             },
             {
               label: pluginI18n("name"),
               value: currentPlugin,
               mono: true,
             },
+            // Surface a few scalar options so More Settings is not a black box.
+            ...Object.entries(pluginConfig)
+              .filter(([key, value]) => {
+                if (["category", "step", "remark"].includes(key)) {
+                  return false;
+                }
+                if (value === undefined || value === null || value === "") {
+                  return false;
+                }
+                return (
+                  typeof value === "string" ||
+                  typeof value === "number" ||
+                  typeof value === "boolean"
+                );
+              })
+              .slice(0, 3)
+              .map(([key, value]) => ({
+                label: key,
+                value: String(value),
+                mono: typeof value === "string",
+              })),
           ]}
         />
       )}

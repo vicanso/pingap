@@ -1,4 +1,4 @@
-import { LoaderCircle, UnfoldVertical, FoldVertical } from "lucide-react";
+import { LoaderCircle, UnfoldVertical, FoldVertical, CircleHelp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -41,6 +41,12 @@ import {
 } from "@/components/ui/popover";
 import { InputSelect } from "./input_select";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useBlocker } from "react-router-dom";
 import {
   AlertDialog,
@@ -97,9 +103,41 @@ export interface ExFormItem {
   nullAsEmpty?: boolean;
   /** Optional group title; rendered as a full-width section header when it changes. */
   section?: string;
-  /** Short help under the control — use for non-obvious defaults and units. */
+  /** Short help shown as a ? tooltip on the label. */
   tips?: string;
   defaultValue: string[] | string | number | boolean | null | undefined;
+}
+
+
+function FieldLabel({ label, tips }: { label: string; tips?: string }) {
+  if (!tips) {
+    return <FormLabel>{label}</FormLabel>;
+  }
+  // Keep the help control outside <FormLabel> so it is not folded into the
+  // input's accessible name ("Threads Help").
+  return (
+    <div className="flex items-center gap-1.5">
+      <FormLabel className="!mt-0">{label}</FormLabel>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex size-4 shrink-0 cursor-help items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Help"
+            onClick={(e) => e.preventDefault()}
+          >
+            <CircleHelp className="size-3.5" strokeWidth={1.8} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          className="max-w-xs border border-border bg-popover text-xs leading-relaxed text-popover-foreground shadow-md"
+        >
+          {tips}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
 }
 
 export type FormContextValue = {
@@ -177,17 +215,19 @@ export function ExForm({
     defaultValues[item.name] = defaultValue;
   });
   const setUpdated = (key: string, value: unknown) => {
-    const values = Object.assign({}, updatedValues);
-    if (originalValues[key] == value) {
-      delete values[key];
-    } else {
-      values[key] = value;
-    }
-    setUpdatedCount(Object.keys(values).length);
-    setUpdatedValues(values);
-    if (onValueChange) {
-      onValueChange(values);
-    }
+    // Functional update: rapid edits (typing) must not race on a stale
+    // `updatedValues` closure or the dirty count / leave-guard goes wrong.
+    setUpdatedValues((prev) => {
+      const values = { ...prev };
+      if (Object.is(originalValues[key], value)) {
+        delete values[key];
+      } else {
+        values[key] = value;
+      }
+      setUpdatedCount(Object.keys(values).length);
+      onValueChange?.(values);
+      return values;
+    });
   };
   const form = useForm({
     // @ts-expect-error - zodResolver has complex type constraints that are difficult to satisfy with dynamic schemas
@@ -323,7 +363,7 @@ export function ExForm({
                 );
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <RadioGroup
                         disabled={item.readOnly || false}
@@ -354,7 +394,7 @@ export function ExForm({
 
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <MultiSelect
                         defaultValue={(item.defaultValue || []) as string[]}
@@ -365,9 +405,6 @@ export function ExForm({
                         placeholder={item.placeholder}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -385,7 +422,7 @@ export function ExForm({
                 });
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Select
                         defaultValue={(item.defaultValue || "") as string}
@@ -401,9 +438,6 @@ export function ExForm({
                         <SelectContent>{options}</SelectContent>
                       </Select>
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -412,7 +446,7 @@ export function ExForm({
                 const placeholders = item.placeholder.split(" : ");
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <InputSelect
                         defaultValue={item.defaultValue as string}
@@ -426,9 +460,6 @@ export function ExForm({
                         options={item.options}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -436,7 +467,7 @@ export function ExForm({
               case ExFormItemCategory.TEXTAREA: {
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Textarea
                         placeholder={item.placeholder}
@@ -455,9 +486,6 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -465,31 +493,27 @@ export function ExForm({
               case ExFormItemCategory.NUMBER: {
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Input
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         type="number"
                         value={field.value as string}
-                        onInput={(e) => {
-                          const value =
-                            (e.target as HTMLInputElement).value || "";
+                        onChange={(e) => {
+                          field.onChange(e);
+                          const value = e.target.value || "";
                           if (!value) {
                             setUpdated(item.name, null);
                           } else {
                             setUpdated(item.name, Number(value));
                           }
                         }}
-                        onChange={field.onChange}
                         onBlur={field.onBlur}
                         name={field.name}
                         ref={field.ref}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -498,7 +522,7 @@ export function ExForm({
                 const placeholders = item.placeholder.split(" : ");
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <KvInputs
                         cols={item.cols}
@@ -512,9 +536,6 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -522,7 +543,7 @@ export function ExForm({
               case ExFormItemCategory.TEXTS: {
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Inputs
                         defaultValue={(item.defaultValue || []) as string[]}
@@ -532,9 +553,6 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -548,7 +566,7 @@ export function ExForm({
                 });
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <SortCheckboxs
                         options={options || []}
@@ -558,9 +576,6 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -577,7 +592,7 @@ export function ExForm({
               case ExFormItemCategory.COMBINED_AUTHS: {
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <CombinedAuths
                         defaultValue={item.defaultValue as []}
@@ -586,9 +601,6 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -596,30 +608,26 @@ export function ExForm({
               default: {
                 return (
                   <FormItem>
-                    <FormLabel>{item.label}</FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Input
                         type={item.category}
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         value={field.value as string}
-                        onInput={(e) => {
-                          let value =
-                            (e.target as HTMLInputElement).value || "";
+                        onChange={(e) => {
+                          field.onChange(e);
+                          let value = e.target.value || "";
                           if (!item.notTrim) {
                             value = value.trim();
                           }
                           setUpdated(item.name, value);
                         }}
-                        onChange={field.onChange}
                         onBlur={field.onBlur}
                         name={field.name}
                         ref={field.ref}
                       />
                     </FormControl>
-                    {item.tips ? (
-                      <FormDescription>{item.tips}</FormDescription>
-                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -666,7 +674,8 @@ export function ExForm({
   }
 
   return (
-    <Form {...form}>
+    <TooltipProvider delayDuration={200}>
+      <Form {...form}>
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
       <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6 col-span-full" />
       <form
@@ -800,5 +809,6 @@ export function ExForm({
         </AlertDialogContent>
       </AlertDialog>
     </Form>
+      </TooltipProvider>
   );
 }

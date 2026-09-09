@@ -46,6 +46,8 @@ export default function Storages() {
   }
 
   if (!currentStorage) {
+    const values = config.storages || {};
+    const hasRemark = storages.some((name) => Boolean(values[name]?.remark));
     return (
       <ConfigEntityList<Storage>
         title={storageI18n("title")}
@@ -56,18 +58,24 @@ export default function Storages() {
         basePath={STORAGES}
         newValue={newStorage}
         names={storages}
-        values={config.storages || {}}
+        values={values}
         columns={[
           {
             key: "category",
             label: storageI18n("category"),
             render: (value) => <EntityText value={value?.category} />,
           },
-          {
-            key: "remark",
-            label: storageI18n("remark"),
-            render: (value) => <EntityText value={value?.remark} />,
-          },
+          ...(hasRemark
+            ? [
+                {
+                  key: "remark",
+                  label: storageI18n("remark"),
+                  render: (value: Storage | undefined) => (
+                    <EntityText value={value?.remark} />
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     );
