@@ -27,11 +27,9 @@
 
 ## 工作原理
 
-crate 核心是实现 `pingora::listeners::TlsAccept` 的 `GlobalCertificate`。TLS 握手时调用其 `certificate_callback`。该方法检查客户端 hello 中的 SNI 主机名，并在全局、线程安全的证书存储中查找对应证书。
+crate 核心是 `GlobalCertificate`：SNI 选择逻辑（精确 → 通配 → 默认，CA 条目即时签发）两边共用，交给 pingora 的方式按后端分支——OpenSSL 实现 `TlsAccept::certificate_callback`，rustls 实现 `ResolvesServerCert`。
 
-存储用 `arc_swap::ArcSwap` 包装哈希表实现，可对整套证书做原子、无锁更新。配置变更时创建新证书映射并与旧映射交换，确保入站请求始终看到一致的证书视图。
-
-查找逻辑优先精确域名匹配，再回退通配符匹配，最后使用已配置的默认证书。
+证书存储用 `arc_swap::ArcSwap` 包装哈希表，可对整套证书做原子、无锁更新。配置变更时创建新映射并与旧映射交换，确保入站请求始终看到一致的证书视图。
 
 ## 模块
 
@@ -39,6 +37,7 @@ crate 按职责分为多个模块：
 
 - `lib.rs`：crate 入口。定义主 `Certificate` 数据结构与解析 PEM 证书/密钥的工具函数。
 - `dynamic_certificate.rs`：动态证书管理与基于 SNI 选择的核心逻辑。定义 `GlobalCertificate` 并管理全局证书存储。
+- `tls_backend.rs`：`TLS_BACKEND`、`install_default_crypto_provider` 与 `validate_servers_tls_for_backend`。
 - `tls_certificate.rs`：定义封装证书、私钥与元数据的 `TlsCertificate`，以及由 CA 签发新证书的逻辑。
 - `self_signed.rs`：管理动态生成自签证书的生命周期，含创建、缓存与陈旧证书清理。
 - `validity_checker.rs`：周期性检查即将过期证书并发送警告的后台任务。

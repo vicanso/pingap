@@ -84,7 +84,7 @@ All routes are relative to `<path>/api`.
 | `POST` | `/configs/import` | Import a whole configuration |
 | `DELETE` | `/configs/{category}/{name}` | Delete one entry |
 | `GET` | `/config-history/{category}/{name}` | Previous versions, when the storage backend supports history |
-| `GET` | `/basic` | Process info, enabled features, supported plugins, upstream health |
+| `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health |
 | `GET` | `/certificates` | Parsed information about the loaded certificates |
 | `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
 | `POST` | `/restart` | Trigger a graceful restart |

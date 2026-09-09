@@ -27,11 +27,14 @@ The crate is built for exactly one of pingora's TLS backends, chosen by the work
 
 ## How it Works
 
-The core of the crate is the `GlobalCertificate` struct, which implements the `pingora::listeners::TlsAccept` trait. During the TLS handshake, its `certificate_callback` method is invoked. This method inspects the SNI hostname from the client hello message and looks up the corresponding certificate in a globally managed, thread-safe certificate store.
+The core of the crate is `GlobalCertificate`: SNI selection (exact → wildcard →
+default, with on-the-fly CA issuance) is shared; only the hand-over to pingora
+branches by backend — OpenSSL implements `TlsAccept::certificate_callback`,
+rustls implements `ResolvesServerCert`.
 
-This store is implemented using an `arc_swap::ArcSwap` containing a hash map, which allows for atomic, lock-free updates to the entire set of certificates. When a configuration change occurs, a new certificate map is created and swapped with the old one, ensuring that incoming requests always see a consistent view of the certificates.
-
-The lookup logic prioritizes exact domain matches, then falls back to wildcard matches, and finally to a default certificate if one is configured.
+The certificate store is an `arc_swap::ArcSwap` around a hash map, so the whole
+set can be updated atomically without locks. A config change builds a new map
+and swaps it in, so inbound requests always see a consistent view.
 
 ## Modules
 
@@ -39,6 +42,7 @@ The crate is organized into several modules, each with a specific responsibility
 
 - `lib.rs`: The main entry point of the crate. It defines the primary `Certificate` data structure and utility functions for parsing PEM-encoded certificates and keys.
 - `dynamic_certificate.rs`: Contains the core logic for dynamic certificate management and SNI-based selection. It defines the `GlobalCertificate` struct and manages the global certificate store.
+- `tls_backend.rs`: `TLS_BACKEND`, `install_default_crypto_provider`, and `validate_servers_tls_for_backend`.
 - `tls_certificate.rs`: Defines the `TlsCertificate` struct, which encapsulates a certificate, private key, and associated metadata. It also contains the logic for generating new certificates signed by a CA.
 - `self_signed.rs`: Manages the lifecycle of dynamically generated self-signed certificates, including their creation, caching, and periodic cleanup of stale certificates.
 - `validity_checker.rs`: Implements the background task that periodically checks for expiring certificates and sends warnings.

@@ -74,7 +74,7 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 | `POST` | `/configs/import` | 导入整份配置 |
 | `DELETE` | `/configs/{category}/{name}` | 删除一条 |
 | `GET` | `/config-history/{category}/{name}` | 历史版本（存储后端支持时） |
-| `GET` | `/basic` | 进程信息、启用特性、支持的插件、上游健康 |
+| `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康 |
 | `GET` | `/certificates` | 已加载证书的解析信息 |
 | `POST` | `/aes` | UI 用于密钥的 AES 加解密辅助 |
 | `POST` | `/restart` | 触发优雅重启 |

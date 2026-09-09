@@ -108,6 +108,12 @@ Notes on a few of these:
   SNI-driven certificate store from
   [pingap-certificate](../pingap-certificate/README.md). Without it the listener
   is plain HTTP, and `enabled_h2` then means h2c.
+- `tls_min_version` / `tls_max_version` / `tls_cipher_list` /
+  `tls_ciphersuites` apply only on an **OpenSSL** build. A `tls-rustls` build
+  always offers TLS 1.2/1.3 with rustls' default cipher suites; setting any of
+  those fields fails config validation at startup / `--test` / auto-restart
+  (see [pingap-certificate](../pingap-certificate/README.md)). The admin UI
+  disables the matching form fields on a rustls binary.
 - `h2_max_concurrent_streams`, `h2_max_header_list_size`,
   `h2_initial_window_size`, `h2_initial_connection_window_size` and
   `h2_idle_timeout` tune the downstream HTTP/2 SETTINGS of a listener. Unset
@@ -133,6 +139,8 @@ compression, and total service time. See
 
 | Feature | Effect |
 | --- | --- |
+| `openssl` (default) | Terminate downstream TLS via pingora OpenSSL; honour per-server version/cipher settings |
+| `tls-rustls` | Terminate downstream TLS via pingora rustls; the `tls_*` fields above are rejected at config validation |
 | `tracing` | Enables the OpenTelemetry span integration in `tracing.rs` and cache metrics |
 
 ## License

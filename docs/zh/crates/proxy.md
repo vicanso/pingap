@@ -93,6 +93,7 @@ modules = ["grpc-web"]
 
 - `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。
 - `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。
+- `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
 - `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。
 - `enable_server_timing` 添加由请求时序分解构建的 `Server-Timing` 响应头——便于诊断延迟来源。
@@ -106,6 +107,8 @@ modules = ["grpc-web"]
 
 | Feature | Effect |
 | --- | --- |
+| `openssl`（默认） | 经 pingora OpenSSL 终止下游 TLS；生效 server 级版本/密码套件 |
+| `tls-rustls` | 经 pingora rustls 终止下游 TLS；上述 `tls_*` 字段在配置校验时拒绝 |
 | `tracing` | 启用 `tracing.rs` 中的 OpenTelemetry span 集成与缓存指标 |
 
 ## 许可证
