@@ -19,11 +19,11 @@ The crate is built for exactly one of pingora's TLS backends, chosen by the work
 | | `openssl` | `tls-rustls` |
 | --- | --- | --- |
 | Selection hook | `TlsAccept::certificate_callback`, installing `X509`/`PKey` on the handshake | `ResolvesServerCert`, returning a prepared `CertifiedKey` |
-| `tls_min_version` / `tls_max_version` | honoured | ignored with a warning (always TLS 1.2 + 1.3) |
-| `tls_cipher_list` / `tls_ciphersuites` | honoured | ignored with a warning (rustls defaults) |
-| Crypto provider | OpenSSL | aws-lc-rs, installed on first use |
+| `tls_min_version` / `tls_max_version` | honoured | rejected at config validation (always TLS 1.2 + 1.3) |
+| `tls_cipher_list` / `tls_ciphersuites` | honoured | rejected at config validation (rustls defaults) |
+| Crypto provider | OpenSSL | aws-lc-rs via `install_default_crypto_provider()` early in `main` |
 
-`LoadedCertificate` holds a certificate in the active backend's form, and `TLS_BACKEND` names the backend at runtime.
+`LoadedCertificate` holds a certificate in the active backend's form, and `TLS_BACKEND` names the backend at runtime (`--version` long form, startup log, admin `/basic` features). Under rustls, `validate_servers_tls_for_backend` fails startup / `--test` / auto-restart when any of the unsupported per-server TLS fields are set.
 
 ## How it Works
 

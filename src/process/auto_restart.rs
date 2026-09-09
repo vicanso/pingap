@@ -21,6 +21,7 @@ use crate::upstreams::try_update_upstreams;
 use crate::webhook::{get_webhook_sender, send_notification};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
     CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
     CATEGORY_UPSTREAM, ConfigManager, PingapConfig,
@@ -62,6 +63,7 @@ async fn diff_and_update_config(
     let new_toml_config = config_manager.load_all().await?;
     let new_config = new_toml_config.to_pingap_config(true)?;
     new_config.validate()?;
+    validate_servers_tls_for_backend(&new_config.servers)?;
     let current_config: PingapConfig =
         config_manager.get_current_config().as_ref().clone();
 

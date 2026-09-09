@@ -19,11 +19,11 @@
 | | `openssl` | `tls-rustls` |
 | --- | --- | --- |
 | 选择入口 | `TlsAccept::certificate_callback`，握手时装入 `X509`/`PKey` | `ResolvesServerCert`，返回预先构建的 `CertifiedKey` |
-| `tls_min_version` / `tls_max_version` | 生效 | 忽略并打印 warning（固定 TLS 1.2 + 1.3） |
-| `tls_cipher_list` / `tls_ciphersuites` | 生效 | 忽略并打印 warning（rustls 默认套件） |
-| 密码学库 | OpenSSL | aws-lc-rs，首次使用时安装 |
+| `tls_min_version` / `tls_max_version` | 生效 | 配置校验拒绝（固定 TLS 1.2 + 1.3） |
+| `tls_cipher_list` / `tls_ciphersuites` | 生效 | 配置校验拒绝（rustls 默认套件） |
+| 密码学库 | OpenSSL | aws-lc-rs，由 `install_default_crypto_provider()` 在 `main` 早期安装 |
 
-`LoadedCertificate` 以当前后端的形式保存证书，`TLS_BACKEND` 在运行时给出后端名称。
+`LoadedCertificate` 以当前后端的形式保存证书，`TLS_BACKEND` 在运行时给出后端名称（`--version` 长格式、启动日志、admin `/basic` features）。rustls 下若任一不支持的 per-server TLS 字段被设置，`validate_servers_tls_for_backend` 会让启动 / `--test` / auto-restart 失败。
 
 ## 工作原理
 

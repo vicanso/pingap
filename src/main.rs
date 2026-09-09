@@ -12,6 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(all(feature = "openssl", feature = "tls-rustls"))]
+compile_error!(
+    "the `openssl` and `tls-rustls` features are mutually exclusive; build rustls with `--no-default-features --features tls-rustls[,full]`"
+);
+#[cfg(not(any(feature = "openssl", feature = "tls-rustls")))]
+compile_error!(
+    "pingap needs a TLS backend: enable `openssl` (default) or build with `--no-default-features --features tls-rustls`"
+);
+
 use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::config_manager::{
     get_config_manager, try_init_config_manager, try_init_memory_config_manager,
@@ -29,8 +38,9 @@ use crossbeam_channel::Receiver;
 use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
-    new_certificate_validity_service,
+    install_default_crypto_provider, new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
+    validate_servers_tls_for_backend,
 };
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
@@ -116,8 +126,14 @@ pub(crate) fn git_hash() -> &'static str {
     }
 }
 
-static LONG_VERSION: LazyLock<String> =
-    LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), git_hash()));
+static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{} ({}, tls={})",
+        env!("CARGO_PKG_VERSION"),
+        git_hash(),
+        pingap_certificate::TLS_BACKEND,
+    )
+});
 
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.
@@ -670,6 +686,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     // so set the current conf first
     // pingap_config::set_current_config(&conf);
     config.validate()?;
+    // Reject per-server TLS version/cipher settings the active backend cannot
+    // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
+    validate_servers_tls_for_backend(&config.servers)?;
+    // Install aws-lc-rs before ACME / any other rustls user can race to install
+    // a different CryptoProvider. No-op for the OpenSSL backend.
+    install_default_crypto_provider();
 
     // sync config to other storage
     if let Some(sync_path) = args.sync {

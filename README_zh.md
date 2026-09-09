@@ -172,7 +172,7 @@ cargo build --release --no-default-features --features tls-rustls
 cargo build --release --no-default-features --features tls-rustls,full
 ```
 
-rustls 构建会忽略 server 级的 `tls_min_version`、`tls_max_version`、`tls_cipher_list` 与 `tls_ciphersuites`，配置了会打印一条 warning：它固定提供 TLS 1.2 与 1.3，使用 rustls 默认密码套件。其余能力，包括按 SNI 动态选证书、自签名 CA 签发、ACME 与上游 `ca`，行为一致。预构建镜像也提供同一变体：`vicanso/pingap:rustls-full`（发布版本为 `:<版本>-rustls-full`），与 `:latest`、`:full` 并列。校验上游时有一点差异需要知道：rustls（webpki）会拒绝带 `CA:TRUE` 的服务端证书，而 OpenSSL 接受，所以后端若用 `openssl req -x509` 随手生成的自签名证书，需要换成由 CA 签发的叶子证书（或不带 CA 标记的自签名叶子），上游 `ca` 选项才能信任它。启动日志会标明二进制使用的后端。
+rustls 构建会在配置校验阶段（启动、`--test`、auto-restart）拒绝 server 级的 `tls_min_version`、`tls_max_version`、`tls_cipher_list` 与 `tls_ciphersuites`：它固定提供 TLS 1.2 与 1.3，使用 rustls 默认密码套件。Admin UI 在当前二进制为 rustls 构建时会禁用这些字段。其余能力，包括按 SNI 动态选证书、自签名 CA 签发、ACME 与上游 `ca`，行为一致。预构建镜像也提供同一变体：`vicanso/pingap:rustls-full`（发布版本为 `:<版本>-rustls-full`），与 `:latest`、`:full` 并列。校验上游时有一点差异需要知道：rustls（webpki）会拒绝带 `CA:TRUE` 的服务端证书，而 OpenSSL 接受，所以后端若用 `openssl req -x509` 随手生成的自签名证书，需要换成由 CA 签发的叶子证书（或不带 CA 标记的自签名叶子），上游 `ca` 选项才能信任它。`--version` 长格式、启动日志与 Admin 首页都会标明二进制使用的后端。
 
 ## 📝 应用配置
 

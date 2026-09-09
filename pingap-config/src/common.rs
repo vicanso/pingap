@@ -884,16 +884,20 @@ pub struct ServerConf {
     /// Number of worker threads for this server instance
     pub threads: Option<usize>,
 
-    /// OpenSSL cipher list string for TLS connections
+    /// OpenSSL cipher list for protocols before TLS 1.3.
+    /// Rejected at config validation under the rustls backend.
     pub tls_cipher_list: Option<String>,
 
-    /// TLS 1.3 ciphersuites string
+    /// TLS 1.3 ciphersuites string (OpenSSL).
+    /// Rejected at config validation under the rustls backend.
     pub tls_ciphersuites: Option<String>,
 
-    /// Minimum TLS version to accept (e.g. "TLSv1.2")
+    /// Minimum TLS version to accept (e.g. "tlsv1.2").
+    /// Rejected at config validation under the rustls backend.
     pub tls_min_version: Option<String>,
 
-    /// Maximum TLS version to use (e.g. "TLSv1.3")
+    /// Maximum TLS version to use (e.g. "tlsv1.3").
+    /// Rejected at config validation under the rustls backend.
     pub tls_max_version: Option<String>,
 
     /// Whether to use global certificates instead of per-server certs

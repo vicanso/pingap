@@ -456,6 +456,9 @@ export default function Upstreams() {
         Math.max(3, (upstreamConfig.ca || "").split("\n").length),
       ),
       nullAsEmpty: true,
+      tips: basicInfo.features.includes("rustls")
+        ? upstreamI18n("caRustlsTips")
+        : undefined,
     },
     {
       name: "ipv4_only",

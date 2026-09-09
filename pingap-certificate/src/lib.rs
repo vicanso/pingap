@@ -23,6 +23,7 @@ mod chain;
 mod dynamic_certificate;
 mod loaded_certificate;
 mod self_signed;
+mod tls_backend;
 mod tls_certificate;
 mod validity_checker;
 
@@ -247,6 +248,9 @@ pub use dynamic_certificate::*;
 pub use loaded_certificate::LoadedCertificate;
 pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
+pub use tls_backend::{
+    install_default_crypto_provider, validate_servers_tls_for_backend,
+};
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
 

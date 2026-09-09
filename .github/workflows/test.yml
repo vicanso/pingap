@@ -79,11 +79,17 @@ jobs:
           cargo machete
       - name: Run cargo test
         run: make test
+      # Full rustls gate on stable; MSRV only needs a compile check so the
+      # rustls feature set does not drift past 1.96.0 unnoticed.
       - name: Run rustls backend
         if: matrix.toolchain == 'stable'
         run: |
           make lint-rustls
           make test-rustls
+      - name: Check rustls backend on MSRV
+        if: matrix.toolchain == '1.96.0'
+        run: |
+          cargo check --workspace --no-default-features --features tls-rustls,full
       - name: Run cargo msrv
         if: matrix.toolchain == 'stable'
         run: |

@@ -47,6 +47,9 @@ export default function Servers() {
       ]),
     );
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+  // rustls fixes TLS 1.2/1.3 + default suites; cipher/version fields are
+  // rejected at config validation, so the form shows them read-only.
+  const rustlsBackend = basicInfo.features.includes("rustls");
 
   const sec = {
     basic: serverI18n("sectionBasic"),
@@ -318,6 +321,8 @@ export default function Servers() {
       defaultValue: serverConfig.tls_cipher_list,
       span: 3,
       category: ExFormItemCategory.TEXT,
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? serverI18n("tlsSettingsRustlsTips") : undefined,
     },
     {
       name: "tls_ciphersuites",
@@ -327,6 +332,8 @@ export default function Servers() {
       defaultValue: serverConfig.tls_ciphersuites,
       span: 3,
       category: ExFormItemCategory.TEXT,
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? serverI18n("tlsSettingsRustlsTips") : undefined,
     },
     {
       name: "tls_min_version",
@@ -337,6 +344,8 @@ export default function Servers() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? serverI18n("tlsSettingsRustlsTips") : undefined,
     },
     {
       name: "tls_max_version",
@@ -347,6 +356,8 @@ export default function Servers() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? serverI18n("tlsSettingsRustlsTips") : undefined,
     },
     {
       name: "tcp_fastopen",

@@ -357,6 +357,8 @@ export default {
     tlsCiphersuitesPlaceholder: "Input the ciphers for protocol tlsv1.3",
     tlsMinVersion: "Min Tls",
     tlsMaxVersion: "Max Tls",
+    tlsSettingsRustlsTips:
+      "Not supported by this rustls build: TLS is fixed to 1.2/1.3 with rustls default cipher suites. Remove the value or use an openssl build.",
     tcpFastOpen: "Tcp Fast Open",
     tcpFastOpenPlaceholder: "Input the backlog size of tcp fast open(e.g. 10)",
     tcpUserTimeout: "Tcp User Timeout",
@@ -493,6 +495,8 @@ export default {
     ca: "Upstream CA",
     caPlaceholder:
       "Input the CA bundle (PEM, base64 or a PEM file path) that verifies the upstream certificate instead of the system trust store",
+    caRustlsTips:
+      "rustls (webpki) rejects a peer certificate that carries CA:TRUE. A quick openssl req -x509 self-signed cert will fail; use a proper leaf signed by this CA (or a self-signed leaf without the CA flag).",
     h2StreamWindowSize: "H2 Stream Window Size",
     h2StreamWindowSizePlaceholder:
       "Input the HTTP/2 per-stream flow-control window, e.g. 8mib (1 to 2GiB - 1)",

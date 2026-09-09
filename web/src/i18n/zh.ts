@@ -331,6 +331,8 @@ export default {
     tlsCiphersuitesPlaceholder: "输入tls密码套件列表，用于tls1.3版本认证使用",
     tlsMinVersion: "最低tls版本",
     tlsMaxVersion: "最高tls版本",
+    tlsSettingsRustlsTips:
+      "当前 rustls 构建不支持这些选项：固定提供 TLS 1.2/1.3 与 rustls 默认密码套件。请清空该值，或改用 openssl 构建。",
     tcpFastOpen: "tcp快速打开",
     tcpFastOpenPlaceholder: "输入tcp快速打开的backlog大小(如10)",
     tcpUserTimeout: "tcp用户超时",
@@ -450,6 +452,8 @@ export default {
     ca: "上游 CA",
     caPlaceholder:
       "输入校验上游证书所用的 CA（PEM、base64 或 PEM 文件路径），替代系统信任库",
+    caRustlsTips:
+      "rustls（webpki）会拒绝带 CA:TRUE 的对端证书。用 openssl req -x509 随手生成的自签名证书会校验失败；请改用由此 CA 签发的叶子证书（或不带 CA 标记的自签名叶子）。",
     h2StreamWindowSize: "H2 流窗口大小",
     h2StreamWindowSizePlaceholder:
       "输入 HTTP/2 每个流的流控窗口，如 8mib（1 至 2GiB - 1）",

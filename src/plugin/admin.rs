@@ -707,6 +707,11 @@ async fn handle_request_admin(
             now: pingap_core::now_sec(),
         };
         basic_info.features.push("default".to_string());
+        // TLS backend name (`openssl` or `rustls`) so the admin UI can disable
+        // settings the active binary cannot honour and show it on the home page.
+        basic_info
+            .features
+            .push(pingap_certificate::TLS_BACKEND.to_string());
 
         cfg_if::cfg_if! {
             if #[cfg(feature = "tracing")] {

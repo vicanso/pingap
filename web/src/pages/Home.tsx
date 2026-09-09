@@ -542,6 +542,15 @@ export default function Home() {
       description={config.basic?.name || undefined}
       actions={
         <>
+          {(basicInfo.features?.includes("openssl") ||
+            basicInfo.features?.includes("rustls")) && (
+            <Badge
+              variant="secondary"
+              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+            >
+              {basicInfo.features.includes("rustls") ? "rustls" : "openssl"}
+            </Badge>
+          )}
           {basicInfo.features?.includes("tracing") && (
             <Badge
               variant="secondary"
