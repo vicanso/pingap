@@ -274,7 +274,14 @@ mod tests {
         addr
     }
 
-    async fn check(addr: &str) -> pingora::Result<()> {
+    /// Runs one probe against `addr` and reports how long the probe alone
+    /// took. Building the check is deliberately outside that window: it
+    /// constructs a `Connector`, and under the rustls backend that loads the
+    /// system root store - well over a second on a cold process, and nothing
+    /// to do with how promptly the handshake is judged.
+    async fn timed_check(
+        addr: &str,
+    ) -> (pingora::Result<()>, std::time::Duration) {
         let (conf, hc) = new_health_check(
             "ws",
             &format!("ws://{addr}/chat?connection_timeout=1s&read_timeout=1s"),
@@ -284,7 +291,13 @@ mod tests {
         assert_eq!(HealthCheckSchema::Ws, conf.schema);
         assert_eq!("/chat", conf.path);
         let backend = Backend::new(addr).unwrap();
-        hc.check(&backend).await
+        let started = std::time::Instant::now();
+        let result = hc.check(&backend).await;
+        (result, started.elapsed())
+    }
+
+    async fn check(addr: &str) -> pingora::Result<()> {
+        timed_check(addr).await.0
     }
 
     #[tokio::test]
@@ -298,11 +311,12 @@ mod tests {
             )
         }))
         .await;
-        let started = std::time::Instant::now();
-        check(&addr).await.unwrap();
+        let (result, elapsed) = timed_check(&addr).await;
+        result.unwrap();
         assert_eq!(
             true,
-            started.elapsed() < std::time::Duration::from_millis(500)
+            elapsed < std::time::Duration::from_millis(500),
+            "probe took {elapsed:?}"
         );
 
         // A server that refuses the upgrade fails the check.

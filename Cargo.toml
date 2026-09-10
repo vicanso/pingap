@@ -312,19 +312,16 @@ pingap-sentry = { version = "0.14.1", path = "pingap-sentry" }
 pingap-upstream = { version = "0.14.1", path = "pingap-upstream", default-features = false }
 pingap-util = { version = "0.14.1", path = "pingap-util" }
 pingap-webhook = { version = "0.14.1", path = "pingap-webhook" }
-# Tracks pingora main rather than a crates.io release. 0.8.1 was cut from a
-# release branch off 0.8.0; main has since gained the bounded HTTP/2 server
-# defaults, lru 0.18 (RUSTSEC-2026-0253), the borrowed purge API and more.
-# Bump `rev` on all three entries together: they must resolve to one git
-# source or cargo pulls two copies of pingora-core.
+# Released crates.io versions; all three must stay on the same version so cargo
+# resolves one copy of pingora-core.
 # The TLS backend (`openssl` or `rustls`) is chosen by the top-level
 # `openssl` / `tls-rustls` features, not here.
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c", default-features = false, features = [
+pingora = { version = "0.9.0", default-features = false, features = [
     "lb",
     "cache",
 ] }
-pingora-limits = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }
-pingora-runtime = { git = "https://github.com/cloudflare/pingora", rev = "09696b51bc59315353d96686355861604d0bb48c" }
+pingora-limits = "0.9.0"
+pingora-runtime = "0.9.0"
 pem = "4.0.0"
 # Replaces tldextract, whose idna 0.2 dependency carries RUSTSEC-2024-0421;
 # the public suffix list is compiled in, no runtime fetching.

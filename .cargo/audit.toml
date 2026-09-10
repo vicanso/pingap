@@ -3,23 +3,9 @@
 [advisories]
 # Every entry here MUST say why it is ignored and what unblocks removing it.
 ignore = [
-    # protobuf 2.28 (uncontrolled recursion on parsing). Pulled in by
-    # prometheus 0.13, which pingora-core 0.8 pins - nothing in this workspace
-    # can upgrade it. pingap's own crates are already on prometheus 0.14
-    # (protobuf 3.7), so this is pingora's copy alone. Exposure is limited to
-    # metrics encoding: neither pingora nor pingap parses untrusted protobuf.
-    # Remove when pingora moves to prometheus >= 0.14.
-    "RUSTSEC-2024-0437",
-
-    # daemonize 0.5 (unmaintained, not a vulnerability). A non-optional unix
-    # dependency of pingora-core 0.8, backing the daemon mode that `-d/--daemon`
-    # ends up in. No crate here references it and no pingora feature drops it.
-    # Remove when pingora replaces or vendors it.
-    "RUSTSEC-2025-0069",
-
     # derivative 2.2 (unmaintained, not a vulnerability). A proc-macro, so it
-    # emits no runtime code and is absent from the shipped binary. Another
-    # non-optional dependency of pingora-core 0.8. Remove when pingora drops it.
+    # emits no runtime code and is absent from the shipped binary. A
+    # non-optional dependency of pingora-core 0.9. Remove when pingora drops it.
     "RUSTSEC-2024-0388",
 
     # paste 1.0 (unmaintained, not a vulnerability). Also a proc-macro, also
