@@ -703,16 +703,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let basic_conf = &config.basic;
 
-    let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
-    webhook::init_webhook_notification_sender(
-        webhook_url,
-        config.basic.webhook_type.clone().unwrap_or_default(),
-        config
-            .basic
-            .webhook_notifications
-            .clone()
-            .unwrap_or_default(),
-    );
+    webhook::set_webhook_notification_sender(basic_conf);
 
     // return if test mode
     if args.test {

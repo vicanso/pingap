@@ -18,7 +18,9 @@ use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
 use crate::upstreams::try_update_upstreams;
-use crate::webhook::{get_webhook_sender, send_notification};
+use crate::webhook::{
+    get_webhook_sender, reload_webhook_notification_sender, send_notification,
+};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
@@ -53,6 +55,7 @@ static LOG_TARGET: &str = "main::auto_restart";
 ///    - Location definitions
 ///    - Plugin configurations
 ///    - Certificates (except ACME/Let's Encrypt)
+///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`)
 /// 4. Sends notifications for successful updates
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart
@@ -90,6 +93,22 @@ async fn diff_and_update_config(
         let mut should_reload_location = false;
         let mut should_reload_plugin = false;
         let mut should_reload_certificate = false;
+
+        // The webhook goes first, so the notifications for everything else
+        // this change reloads already go out with the new settings.
+        if reload_webhook_notification_sender(
+            &mut hot_reload_config.basic,
+            &new_config.basic,
+        ) {
+            info!(target: LOG_TARGET, "reload webhook success");
+            send_notification(NotificationData {
+                category: "reload_config".to_string(),
+                level: NotificationLevel::Info,
+                message: "Webhook is modified".to_string(),
+                ..Default::default()
+            })
+            .await;
+        }
 
         // update the values which can be hot reload
         // set server locations

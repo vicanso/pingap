@@ -75,7 +75,7 @@ export default function Basic() {
       label: basicI18n("workStealing"),
       placeholder: "",
       tips: basicI18n("workStealingTips"),
-      defaultValue: basic.work_stealing || null,
+      defaultValue: basic.work_stealing,
       span: 3,
       section: sec.core,
       category: ExFormItemCategory.RADIOS,
@@ -427,7 +427,13 @@ export default function Basic() {
         items={items}
         schema={schema}
         defaultShow={defaultShow}
-        onSave={async (value) => update("pingap", "basic", value)}
+        // The form only carries the fields it shows, and the server replaces
+        // the whole [basic] table with what it receives. Start from the loaded
+        // config so settings without a form field (error_log, trusted_proxies)
+        // survive a save.
+        onSave={async (value) =>
+          update("pingap", "basic", { ...basic, ...value })
+        }
       />
     </PageShell>
   );
