@@ -275,6 +275,36 @@ export default function Locations() {
       category: ExFormItemCategory.NUMBER,
     },
     {
+      name: "match_headers",
+      section: sec.match,
+      label: locationI18n("matchHeaders"),
+      placeholder: locationI18n("matchHeadersPlaceholder"),
+      tips: locationI18n("matchConditionTips"),
+      defaultValue: locationConfig.match_headers,
+      span: 3,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
+      name: "match_query",
+      section: sec.match,
+      label: locationI18n("matchQuery"),
+      placeholder: locationI18n("matchQueryPlaceholder"),
+      tips: locationI18n("matchConditionTips"),
+      defaultValue: locationConfig.match_query,
+      span: 3,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
+      name: "match_cookies",
+      section: sec.match,
+      label: locationI18n("matchCookies"),
+      placeholder: locationI18n("matchCookiesPlaceholder"),
+      tips: locationI18n("matchConditionTips"),
+      defaultValue: locationConfig.match_cookies,
+      span: 3,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
       name: "client_max_body_size",
       section: sec.limit,
       label: locationI18n("clientMaxBodySize"),
@@ -402,8 +432,17 @@ export default function Locations() {
           if (name === newLocation) {
             name = value["name"] as string;
           }
-          omitEmptyArrayString(value);
-          await update("location", name, value);
+          // The form only carries the fields it shows, and the server replaces
+          // the whole entry with what it receives. Start from the loaded entry
+          // so fields the form has no item for survive a save. Merged before
+          // empty values are dropped, so a field cleared in the form is still
+          // removed.
+          const data = {
+            ...(config.locations || {})[currentLocation],
+            ...value,
+          };
+          omitEmptyArrayString(data);
+          await update("location", name, data);
           handleSelectLocation(name);
         }}
       />

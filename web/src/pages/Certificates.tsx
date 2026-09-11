@@ -213,13 +213,17 @@ export default function Certificates() {
       section: sec.basic,
       label: certificateI18n("dnsProvider"),
       placeholder: "",
-      defaultValue: certificateConfig.dns_provider || "manual",
+      tips: certificateI18n("dnsProviderTips"),
+      // Unset selects the "Unset" option, whose empty value is dropped on
+      // save, instead of writing dns_provider = "manual" into every
+      // certificate that never chose a provider.
+      defaultValue: certificateConfig.dns_provider || "",
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newStringOptions(
         ["manual", "ali", "cf", "huawei", "tencent"],
         true,
-        false,
+        true,
       ),
     },
     {
@@ -249,6 +253,15 @@ export default function Certificates() {
       defaultValue: certificateConfig.buffer_days,
       span: 3,
       category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "remark",
+      section: sec.basic,
+      label: certificateI18n("remark"),
+      placeholder: "",
+      defaultValue: certificateConfig.remark,
+      span: 6,
+      category: ExFormItemCategory.TEXTAREA,
     },
     {
       name: "tls_cert",
@@ -375,8 +388,17 @@ export default function Certificates() {
           if (name === newCertificate) {
             name = value["name"] as string;
           }
-          omitEmptyArrayString(value);
-          await update("certificate", name, value);
+          // The form only carries the fields it shows, and the server replaces
+          // the whole entry with what it receives. Start from the loaded entry
+          // so fields the form has no item for survive a save. Merged before
+          // empty values are dropped, so a field cleared in the form is still
+          // removed.
+          const data = {
+            ...(config.certificates || {})[currentCertificate],
+            ...value,
+          };
+          omitEmptyArrayString(data);
+          await update("certificate", name, data);
           handleSelectCertificate(name);
         }}
       />

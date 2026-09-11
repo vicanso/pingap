@@ -29,11 +29,14 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
     ref,
   ) => {
     const arr = defaultValue.map((item) => {
-      const tmpArr = item.split(separator);
+      // Split at the first separator only. A value may contain the separator
+      // itself (a header value such as http://host), and cutting it there
+      // would drop the rest of the value the next time the list is saved.
+      const index = item.indexOf(separator);
       return {
         id: random(),
-        key: tmpArr[0] || "",
-        value: tmpArr[1] || "",
+        key: index === -1 ? item : item.slice(0, index),
+        value: index === -1 ? "" : item.slice(index + separator.length),
       };
     });
     if (arr.length === 0) {

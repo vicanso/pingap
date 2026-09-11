@@ -69,6 +69,9 @@ export interface Location {
   includes?: string[];
   grpc_web?: boolean;
   remark?: string;
+  match_headers?: string[];
+  match_query?: string[];
+  match_cookies?: string[];
 }
 
 export function getLocationWeight(location: Location) {
@@ -160,12 +163,14 @@ export interface Storage {
   secret?: string;
   value: string;
   remark?: string;
+  created_at?: number;
 }
 
 interface Basic {
   error_template?: string;
   name?: string;
   pid_file?: string;
+  error_log?: string;
   upgrade_sock?: string;
   working_directory?: string;
   restart_ready_timeout?: string;
@@ -197,6 +202,7 @@ interface Basic {
   webhook?: string;
   webhook_type?: string;
   webhook_notifications?: string[];
+  trusted_proxies?: string[];
 }
 
 interface Config {

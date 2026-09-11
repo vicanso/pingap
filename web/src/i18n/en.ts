@@ -260,6 +260,15 @@ export default {
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
     upgradeSockTips: "Unix socket used for zero-downtime hot upgrade.",
+    errorLog: "Error Log",
+    errorLogPlaceholder:
+      "Input error log file path(e.g. /var/log/pingap_error.log)",
+    errorLogTips:
+      "File the daemon redirects its stderr to, only used with --daemon. Keeps panics and startup errors that happen before the logger is initialized.",
+    trustedProxies: "Trusted Proxies",
+    trustedProxiesPlaceholder: "Input IP or CIDR(e.g. 10.0.0.0/8)",
+    trustedProxiesTips:
+      "When set, X-Forwarded-For / X-Real-IP are only honoured for connections from these IPs or CIDR ranges; other connections use the direct peer address as the client IP. Invalid entries are ignored. Leave empty to trust forwarded headers from every connection.",
     restartReadyTimeout: "Restart Ready Timeout",
     restartReadyTimeoutPlaceholder:
       "Input how long an auto restart waits for the new process(e.g. 1m)",
@@ -405,9 +414,18 @@ export default {
       "Select the upstream for location : Input the upstream name",
     rewrite: "Path Rewrite",
     rewritePlaceholder: "Input the rewrite for path(e.g. ^/api/ /)",
+    matchHeaders: "Match Headers",
+    matchHeadersPlaceholder: "Input header condition(e.g. X-Env:prod or X-Env)",
+    matchQuery: "Match Query",
+    matchQueryPlaceholder: "Input query condition(e.g. ver:2 or debug)",
+    matchCookies: "Match Cookies",
+    matchCookiesPlaceholder:
+      "Input cookie condition(e.g. session:abc or session)",
+    matchConditionTips:
+      "One condition per entry: name:value requires that exact value, a bare name only requires it to be present. The location matches only when every condition holds.",
     proxySetHeaders: "Proxy Set Headers",
     proxySetHeadersPlaceholder:
-      "Input the http header name:Input the http header value",
+      "Input the http header name : Input the http header value",
     proxyAddHeaders: "Proxy Add Headers",
     proxyAddHeadersPlaceholder:
       "Input the http header name : Input the http header value",
@@ -582,6 +600,9 @@ export default {
     isCa: "Certificate Authority",
     bufferDays: "Buffer Days",
     bufferDaysPlaceholder: "Input the buffer days for certificate",
+    dnsProviderTips:
+      "Unset works the same as Manual: the TXT record is only logged and has to be added by hand.",
+    remark: "Remark",
   },
   plugin: {
     title: "Plugin",
@@ -854,6 +875,10 @@ export default {
     categoryPlaceholder: "Select the category of storage",
     secret: "Secret",
     secretPlaceholder: "Input the secret for encrypt value",
+    createdAt: "Created At",
+    createdAtPlaceholder: "Input the unix timestamp in seconds",
+    createdAtTips:
+      "Unix timestamp (seconds) of when the entry was written. ACME http-01 tokens use it for age based cleanup, and a token without it is treated as stale. Usually left as is.",
     value: "Value",
     remark: "Remark",
   },

@@ -261,6 +261,16 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "error_log",
+      label: basicI18n("errorLog"),
+      placeholder: basicI18n("errorLogPlaceholder"),
+      tips: basicI18n("errorLogTips"),
+      defaultValue: basic.error_log,
+      span: 3,
+      section: sec.process,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "upgrade_sock",
       label: basicI18n("upgradeSock"),
       placeholder: basicI18n("upgradeSockPlaceholder"),
@@ -381,6 +391,17 @@ export default function Basic() {
   }
 
   items.push({
+    name: "trusted_proxies",
+    label: basicI18n("trustedProxies"),
+    placeholder: basicI18n("trustedProxiesPlaceholder"),
+    tips: basicI18n("trustedProxiesTips"),
+    defaultValue: basic.trusted_proxies,
+    span: 6,
+    section: sec.advanced,
+    category: ExFormItemCategory.TEXTS,
+  });
+
+  items.push({
     name: "error_template",
     label: basicI18n("errorTemplate"),
     placeholder: basicI18n("errorTemplatePlaceholder"),
@@ -429,8 +450,7 @@ export default function Basic() {
         defaultShow={defaultShow}
         // The form only carries the fields it shows, and the server replaces
         // the whole [basic] table with what it receives. Start from the loaded
-        // config so settings without a form field (error_log, trusted_proxies)
-        // survive a save.
+        // config so settings the form has no field for survive a save.
         onSave={async (value) =>
           update("pingap", "basic", { ...basic, ...value })
         }

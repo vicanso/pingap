@@ -122,6 +122,15 @@ export default function Storages() {
       category: ExFormItemCategory.TEXTAREA,
     },
     {
+      name: "created_at",
+      label: storageI18n("createdAt"),
+      placeholder: storageI18n("createdAtPlaceholder"),
+      tips: storageI18n("createdAtTips"),
+      defaultValue: storageConfig.created_at,
+      category: ExFormItemCategory.NUMBER,
+      span: 3,
+    },
+    {
       name: "remark",
       label: storageI18n("remark"),
       placeholder: "",
@@ -202,7 +211,11 @@ export default function Storages() {
           if (name === newStorage) {
             name = value["name"] as string;
           }
-          await update("storage", name, value);
+          // The form only carries the fields it shows, and the server replaces
+          // the whole entry with what it receives. Start from the loaded entry
+          // so fields the form has no item for survive a save.
+          const data = { ...(config.storages || {})[currentStorage], ...value };
+          await update("storage", name, data);
           handleSelectStorage(name);
         }}
       />

@@ -245,6 +245,14 @@ export default {
     upgradeSock: "更新配置使用的sock",
     upgradeSockPlaceholder: "输入后台服务更新配置使用的sock",
     upgradeSockTips: "用于零停机热升级的 Unix socket。",
+    errorLog: "错误日志文件",
+    errorLogPlaceholder: "输入错误日志文件路径(如/var/log/pingap_error.log)",
+    errorLogTips:
+      "守护进程把 stderr 重定向到的文件，仅在 --daemon 模式下生效。用于保留日志初始化之前的 panic 与启动错误。",
+    trustedProxies: "受信任的代理",
+    trustedProxiesPlaceholder: "输入IP或CIDR(如10.0.0.0/8)",
+    trustedProxiesTips:
+      "设置后，只有来自这些 IP 或网段的连接才采信 X-Forwarded-For / X-Real-IP，其他连接使用直连地址作为客户端 IP。无法解析的条目会被忽略。留空则所有连接的转发头都会被采信。",
     restartReadyTimeout: "重启就绪超时",
     restartReadyTimeoutPlaceholder: "输入平滑重启等待新进程就绪的时长(如1m)",
     restartReadyTimeoutTips:
@@ -374,6 +382,14 @@ export default {
     upstreamPlaceholder: "选择location使用的上游服务 : 输入上游服务名称",
     rewrite: "路径重写",
     rewritePlaceholder: "输入路径重写规则(如^/api/ /)",
+    matchHeaders: "匹配请求头",
+    matchHeadersPlaceholder: "输入请求头条件(如X-Env:prod或X-Env)",
+    matchQuery: "匹配查询参数",
+    matchQueryPlaceholder: "输入查询参数条件(如ver:2或debug)",
+    matchCookies: "匹配Cookie",
+    matchCookiesPlaceholder: "输入Cookie条件(如session:abc或session)",
+    matchConditionTips:
+      "每项一个条件：name:value 要求值完全相等，只写 name 表示存在即可。所有条件都满足时才匹配该 location。",
     proxySetHeaders: "转发设置请求头",
     proxySetHeadersPlaceholder: "输入请求头名称 : 输入请求头值",
     proxyAddHeaders: "转发添加请求头",
@@ -528,6 +544,9 @@ export default {
     isCa: "CA证书",
     bufferDays: "证书有效期校验、更新预留时长",
     bufferDaysPlaceholder: "输入证书有效期校验、更新预留时长",
+    dnsProviderTips:
+      "未设置与 Manual 效果相同：TXT 记录只会打印到日志，需要手动添加。",
+    remark: "备注",
   },
   plugin: {
     title: "插件配置",
@@ -786,6 +805,10 @@ export default {
     categoryPlaceholder: "选择存储数据的类型",
     secret: "密钥",
     secretPlaceholder: "输入加密数据的密钥",
+    createdAt: "创建时间",
+    createdAtPlaceholder: "输入Unix时间戳(秒)",
+    createdAtTips:
+      "条目写入时的 Unix 时间戳(秒)。ACME http-01 token 依据它按时间清理，没有该值的 token 会被视为过期。一般无需修改。",
     value: "数据",
     remark: "备注",
   },
