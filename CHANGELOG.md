@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.14.2](https://github.com/vicanso/pingap/compare/v0.14.1..v0.14.2) - 2026-09-12
+
+### ⛰️  Features
+
+- *(webhook)* Hot-reload webhook settings under autoreload/autorestart - ([bb5b222](https://github.com/vicanso/pingap/commit/bb5b222c90fc5a23dc0ca0f9dc6da59b1b744b6e))
+
+### 🐛 Bug Fixes
+
+- *(tls)* Harden openssl/rustls backend split and surface it in admin - ([6d601b9](https://github.com/vicanso/pingap/commit/6d601b93d97455ba053ada4257e9d1c4d6085156))
+- *(web)* Keep admin form saves from dropping or rewriting config - ([f9e5a02](https://github.com/vicanso/pingap/commit/f9e5a022d6047de8889bdced1a8bf6ece0597c4d))
+
+### 🚜 Refactor
+
+- *(web)* Densify admin forms and hide empty certificate noise - ([8d8e7e5](https://github.com/vicanso/pingap/commit/8d8e7e52d0cd7ee373957745d0189d3cd243517d))
+
+### 📚 Documentation
+
+- *(tls)* Sync proxy/certificate/admin docs with rustls validation - ([679f081](https://github.com/vicanso/pingap/commit/679f08150b8fe8a435d8505e9b44014ffe2aecf6))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(docker)* Publish a rustls-full image variant - ([69f4a8a](https://github.com/vicanso/pingap/commit/69f4a8ad7a2a8551d55087ae3a797b064512b540))
+
+### Build
+
+- *(deps)* Move pingora from the main git pin to crates.io 0.9.0 - ([2d5be1d](https://github.com/vicanso/pingap/commit/2d5be1debdf76a7346563bd2c33cf01c120a5f59))
+- *(deps)* Bump docker/login-action from 3 to 4 - ([a693c36](https://github.com/vicanso/pingap/commit/a693c367355b862c37df1f0e2f900e98904c354b))
+- *(deps)* Bump actions/checkout from 4 to 7 - ([b150d47](https://github.com/vicanso/pingap/commit/b150d4723a5cfe2d7cfc43828eb8efbf01a5db0d))
+- *(deps)* Bump actions/setup-node from 4 to 7 - ([fa8a0b9](https://github.com/vicanso/pingap/commit/fa8a0b96aaa8518a72f1718d6d1682bfdb3ce8bc))
+- *(deps)* Bump actions/deploy-pages from 4 to 5 - ([19a016a](https://github.com/vicanso/pingap/commit/19a016a92883b37e174e2db5ee9eb686d8d222fd))
+
 ## [0.14.0](https://github.com/vicanso/pingap/compare/v0.13.10..v0.14.0) - 2026-09-06
 
 ### ⛰️  Features
