@@ -45,12 +45,12 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.18.0", default-features = false }
+procfs = { workspace = true }
 
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
-tokio-test = "0.4.4"
+pretty_assertions = { workspace = true }
+tokio-test = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

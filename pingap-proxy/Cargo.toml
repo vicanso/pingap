@@ -37,10 +37,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
-criterion = { version = "0.7.0", features = ["html_reports"] }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+criterion = { workspace = true }
 
 [features]
 # TLS backend, mirrored from the workspace root: exactly one must be on.

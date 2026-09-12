@@ -39,11 +39,11 @@ tracing = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]
-filetime = "0.2.26"
-pretty_assertions = "1.4.1"
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
-criterion = { version = "0.7.0", features = ["html_reports"] }
+filetime = { workspace = true }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+criterion = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["humantime-serde"]

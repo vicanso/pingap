@@ -18,8 +18,8 @@ path = "src/lib.rs"
 geo = []
 
 [dependencies]
-# Newer versions require 1.89.0
-tor-geoip = { version = "0.39", default-features = false, features = ["embedded-db"] }
+# 0.46's MSRV is 1.91; pingap's floor is 1.96 so this is fine.
+tor-geoip = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
@@ -66,9 +66,9 @@ uuid = { workspace = true }
 
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
-tokio-test = "0.4.4"
+tokio-test = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

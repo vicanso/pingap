@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 async-trait = { workspace = true }
 pingora = { workspace = true }
-pyroscope = { version = "2.0.0", features = ["backend-pprof-rs"] }
+pyroscope = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 tracing = { workspace = true }

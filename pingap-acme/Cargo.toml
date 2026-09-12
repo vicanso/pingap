@@ -50,9 +50,9 @@ openssl = ["pingora/openssl", "pingap-certificate/openssl"]
 tls-rustls = ["pingora/rustls", "pingap-certificate/tls-rustls"]
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

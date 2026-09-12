@@ -40,9 +40,9 @@ openssl = ["pingora/openssl"]
 tls-rustls = ["pingora/rustls", "dep:rustls", "dep:rustls-pki-types"]
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
 nanoid = { workspace = true }
 
 [lints.clippy]

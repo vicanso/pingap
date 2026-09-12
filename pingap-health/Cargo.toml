@@ -28,10 +28,10 @@ tonic-health = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "macros"] }
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

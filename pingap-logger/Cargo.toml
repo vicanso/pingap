@@ -36,17 +36,17 @@ walkdir = { workspace = true }
 zstd = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-syslog = "7.0.0"
+syslog = { workspace = true }
 
 
 [package.metadata.cargo-machete]
 ignored = ["humantime-serde"]
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
-tokio-test = "0.4.4"
-criterion = { version = "0.7.0", features = ["html_reports"] }
+tokio-test = { workspace = true }
+criterion = { workspace = true }
 
 [[bench]]
 name = "bench"

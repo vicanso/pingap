@@ -16,37 +16,31 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-bytemuck = "1.25.0"
+bytemuck = { workspace = true }
 bytes = { workspace = true }
 ctor = { workspace = true }
 http = { workspace = true }
 # Only the four formats this crate actually handles. `image`'s defaults enable
 # sixteen, and the unused `exr` decoder was dragging in pulp -> paste
 # (RUSTSEC-2024-0436) along with ten other codecs nothing here calls.
-image = { version = "0.25.10", default-features = false, features = [
-    "rayon",
-    "png",
-    "jpeg",
-    "webp",
-    "avif",
-] }
-imagequant = { version = "4.4.1", default-features = false }
-lodepng = "3.12.2"
-mozjpeg = "0.10.13"
+image = { workspace = true }
+imagequant = { workspace = true }
+lodepng = { workspace = true }
+mozjpeg = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-plugin = { workspace = true }
 pingora = { workspace = true }
-rgb = { version = "0.8.52", features = ["bytemuck"] }
+rgb = { workspace = true }
 snafu = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-pretty_assertions = "1.4.1"
-tempfile = "3.21.0"
-tokio-test = "0.4.4"
-criterion = { version = "0.7.0", features = ["html_reports"] }
+pretty_assertions = { workspace = true }
+tempfile = { workspace = true }
+tokio-test = { workspace = true }
+criterion = { workspace = true }
 toml = { workspace = true }
 
 [lints.clippy]

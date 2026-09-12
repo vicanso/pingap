@@ -35,7 +35,7 @@ clap = { version = "4.6.6", features = [
     "usage",
 ], default-features = false }
 ctor = { workspace = true }
-crossbeam-channel = "0.5.16"
+crossbeam-channel = "0.5.17"
 flate2 = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
@@ -126,9 +126,9 @@ perf = ["pyro", "full"]
 
 
 [dev-dependencies]
-criterion = { version = "0.7.0", features = ["html_reports"] }
-pretty_assertions = "1.4.1"
-tokio-test = "0.4.4"
+criterion = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio-test = { workspace = true }
 tempfile = { workspace = true }
 
 
@@ -252,15 +252,15 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "debug",
 ] }
 diff = "0.1.13"
-dirs = "6.0.0"
+dirs = "7.0.0"
 etcd-client = "0.20.0"
-fancy-regex = "0.19.0"
+fancy-regex = "0.19.1"
 flate2 = "1.1.10"
 futures = "0.3.34"
 futures-util = "0.3.34"
 glob = "0.3.4"
 hex = "0.4.3"
-hickory-resolver = "0.26.2"
+hickory-resolver = "0.26.3"
 http = "1.5.0"
 hmac = "0.13.0"
 hmac-sha256 = "1.1.14"
@@ -269,7 +269,7 @@ hostname = "0.4.2"
 humantime = "2.4.0"
 humantime-serde = "1.1.1"
 instant-acme = "0.8.5"
-ipnet = "2.12.1"
+ipnet = "2.12.2"
 itoa = "1.0.18"
 # jsonwebtoken >= 10 ships no crypto backend by default and panics at the
 # first verification without one. aws-lc-rs is already in the tree via
@@ -325,12 +325,12 @@ pingora-runtime = "0.9.0"
 pem = "4.0.0"
 # Replaces tldextract, whose idna 0.2 dependency carries RUSTSEC-2024-0421;
 # the public suffix list is compiled in, no runtime fetching.
-psl = "2.1.228"
+psl = "2.1.232"
 prometheus = { version = "0.14.0", default-features = false }
 rand = "0.10.2"
 rcgen = { version = "0.14.10", features = ["pem", "x509-parser"] }
 regex = { version = "1.13.1", default-features = false }
-reqwest = { version = "0.13.4", default-features = false, features = [
+reqwest = { version = "0.13.5", default-features = false, features = [
     "query",
     "json",
     "default-tls",
@@ -354,9 +354,9 @@ sysinfo = { version = "0.39.6", features = [
 ], default-features = false }
 tempfile = "3.27.0"
 time = { version = "0.3.55", features = ["local-offset"] }
-TinyUFO = "0.8.1"
+TinyUFO = "0.9.0"
 tokio = { version = "1.53.1", default-features = false, features = ["fs"] }
-toml = "1.1.5"
+toml = "1.1.6"
 hcl-rs = "0.19"
 kdl = "6.7.1"
 tonic = "0.14.6"
@@ -377,7 +377,7 @@ tracing-subscriber = { version = "0.3.23", features = [
 ], default-features = false }
 url = "2.5.8"
 urlencoding = "2.1.3"
-uuid = { version = "1.26.0", features = [
+uuid = { version = "1.26.1", features = [
     "v7",
     "std",
     "fast-rng",
@@ -385,3 +385,28 @@ uuid = { version = "1.26.0", features = [
 walkdir = "2.5.0"
 x509-parser = "0.18.1"
 zstd = "0.14.0"
+
+# Shared by benches / tests across pingap-* crates.
+bytemuck = "1.25.2"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+filetime = "0.2.29"
+# imageoptim: keep the feature set here so members do not restate versions.
+image = { version = "0.25.10", default-features = false, features = [
+    "rayon",
+    "png",
+    "jpeg",
+    "webp",
+    "avif",
+] }
+imagequant = { version = "4.4.1", default-features = false }
+lodepng = "3.12.2"
+mozjpeg = "0.10.13"
+pretty_assertions = "1.4.1"
+procfs = { version = "0.18.0", default-features = false }
+pyroscope = { version = "2.1.1", features = ["backend-pprof-rs"] }
+rgb = { version = "0.8.52", features = ["bytemuck"] }
+syslog = "7.0.0"
+tokio-test = "0.4.5"
+tor-geoip = { version = "0.46.0", default-features = false, features = [
+    "embedded-db",
+] }

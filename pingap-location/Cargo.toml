@@ -24,10 +24,10 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
-tokio-test = "0.4.4"
+pretty_assertions = { workspace = true }
+tokio-test = { workspace = true }
 bytesize = { workspace = true }
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { workspace = true }
 
 [[bench]]
 name = "bench"
