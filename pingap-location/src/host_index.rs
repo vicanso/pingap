@@ -29,7 +29,7 @@
 
 use super::location::{HostIndexEntry, Location, host_matches_suffix};
 use ahash::AHashMap;
-use std::collections::BTreeSet;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Precomputed host buckets for a weight-ordered location list.
@@ -113,24 +113,35 @@ impl LocationHostIndex {
     /// Indices into [`Self::ordered`] that may match `host`, in weight order.
     ///
     /// Always includes regex-host and any-host locations. Exact and suffix
-    /// buckets contribute only when the request host matches.
+    /// buckets contribute only when the request host matches. One small
+    /// `Vec` per call: the host is lowercased only when it has to be (the
+    /// exact map is keyed lowercase; a suffix compares in place), and the
+    /// buckets are merged by a sort rather than through a tree.
     pub fn candidate_indices(&self, host: &str) -> Vec<usize> {
-        let host_lower = host.to_ascii_lowercase();
-        // BTreeSet keeps indices sorted → weight order of `ordered`.
-        let mut set = BTreeSet::new();
-
-        if let Some(idxs) = self.exact.get(&host_lower) {
-            set.extend(idxs.iter().map(|&i| i as usize));
-        }
-        for (domain, idxs) in &self.suffixes {
-            if host_matches_suffix(&host_lower, domain) {
-                set.extend(idxs.iter().map(|&i| i as usize));
+        let mut candidates: Vec<usize> =
+            Vec::with_capacity(self.regex.len() + self.any.len() + 4);
+        if !self.exact.is_empty() {
+            let host_lower: Cow<str> =
+                if host.bytes().any(|b| b.is_ascii_uppercase()) {
+                    Cow::Owned(host.to_ascii_lowercase())
+                } else {
+                    Cow::Borrowed(host)
+                };
+            if let Some(idxs) = self.exact.get(host_lower.as_ref()) {
+                candidates.extend(idxs.iter().map(|&i| i as usize));
             }
         }
-        set.extend(self.regex.iter().map(|&i| i as usize));
-        set.extend(self.any.iter().map(|&i| i as usize));
-
-        set.into_iter().collect()
+        for (domain, idxs) in &self.suffixes {
+            if host_matches_suffix(host, domain) {
+                candidates.extend(idxs.iter().map(|&i| i as usize));
+            }
+        }
+        candidates.extend(self.regex.iter().map(|&i| i as usize));
+        candidates.extend(self.any.iter().map(|&i| i as usize));
+        // weight order of `ordered`; a location in several buckets once
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
     }
 
     /// Convenience: candidate location names in weight order.
@@ -248,6 +259,28 @@ mod tests {
         let ordered = vec!["any".to_string(), "exact".to_string()];
         let index = LocationHostIndex::build(&ordered, |n| map.get(n).cloned());
         assert_eq!(index.candidate_names("h.com"), vec!["any", "exact"]);
+    }
+
+    /// Case differences in the request host reach the same buckets.
+    #[test]
+    fn test_candidates_ignore_host_case() {
+        let map: HashMap<&str, Arc<Location>> = [
+            ("exact", loc("exact", Some("API.Example.com"), Some("/"))),
+            ("wild", loc("wild", Some("*.Example.com"), Some("/"))),
+        ]
+        .into_iter()
+        .collect();
+        let ordered = vec!["exact".to_string(), "wild".to_string()];
+        let index = LocationHostIndex::build(&ordered, |n| map.get(n).cloned());
+        assert_eq!(
+            index.candidate_names("api.example.com"),
+            vec!["exact", "wild"]
+        );
+        assert_eq!(
+            index.candidate_names("Api.EXAMPLE.com"),
+            vec!["exact", "wild"]
+        );
+        assert_eq!(index.candidate_names("other.example.COM"), vec!["wild"]);
     }
 
     #[test]

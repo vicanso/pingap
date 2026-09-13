@@ -5,13 +5,16 @@
 ## 功能
 
 - **动态主机匹配**：按 `Host` 头匹配请求：
-  - **精确匹配**：如 `example.com`
+  - **精确匹配**：如 `example.com`（不区分大小写）
+  - **通配 / 后缀**：如 `*.example.com`（只匹配子域名，不含根域名本身）
   - **正则匹配**：如 `~(?<subdomain>.+)\.example\.com`，支持命名捕获。
+- **按主机分桶的路由索引**：每个 server 按权重排序的 location 会按精确主机、后缀、正则和"任意主机"建立索引，主机名多样时匹配不必逐个扫描无关 location（见 `LocationHostIndex`）。
 - **灵活路径匹配**：按 URL 路径以不同策略匹配：
   - **精确匹配**：如 `=/api/login`
   - **前缀匹配**：如 `/static`
   - **正则匹配**：如 `~/users/(?<id>\d+)`，支持命名捕获。
 - **URL 改写**：代理前动态修改请求路径，可替换命名捕获变量。
+  - `rewrite = "<正则> <替换>"`；替换里的 `$1`、`$name` 指正则的分组。若 `$name` 是**请求变量**——主机模式的命名捕获，或插件设置的变量——则先替换为该变量的值，例如 `host = "~(?<tenant>.+)\.example\.com"` 配 `rewrite = "^/users/(.*)$ /$tenant/$1"`，`acme.example.com/users/me` 会改写为 `/acme/me`。只写一个带 `$` 的替换（`"/$1"`）表示整段路径替换。正则编译失败或超过两段的规则，在构建 location 时报错，而不再被静默忽略。
 - **请求节流**：限制 location 同时处理的最大并发请求数。
 - **正文大小限制**：限制客户端请求体最大尺寸，防止滥用。
 - **头修改**：转发上游前添加或设置自定义 HTTP 头。
@@ -26,9 +29,21 @@
 
 ### `HostSelector`
 
-该枚举决定如何匹配请求的 `Host` 头。可为精确字符串或正则。使用正则时，命名捕获组（如 `(?<name>...)`）可从主机名提取变量，用于改写或其他逻辑。
+请求 `Host` 头的匹配方式：
 
-例如，模式为 `~(?<name>.+).npmtrend.com` 的 `HostSelector` 会匹配 `charts.npmtrend.com`，并把 `charts` 捕获到 `name` 变量。
+| 模式 | 含义 |
+| --- | --- |
+| `example.com` | 精确匹配（不区分大小写） |
+| `*.example.com` | `example.com` 的任意子域名（不含根域名本身） |
+| `~regex` | 正则，可带命名捕获 |
+
+例如，模式为 `~(?<name>.+)\.npmtrend\.com` 的 `HostSelector` 会匹配 `charts.npmtrend.com`，并把 `charts` 捕获到 `name` 变量。
+
+精确与通配模式以小写存储，与请求主机就地比较，因此 `Host: API.Example.COM` 能匹配 `api.example.com`，且不会为每个模式复制一份小写主机名。
+
+### `LocationHostIndex` / `ServerLocationRoute`
+
+在 server 的 location 列表（重新）加载时构建。对每个请求主机，索引返回**按权重排序**的候选列表（精确 + 匹配的后缀 + 所有正则主机 location + 任意主机 location）。完整的路径/条件匹配只对这些候选执行，因此首个命中与对完整权重排序列表做线性扫描的结果相同。每次查找只分配一个小 `Vec`：主机名只在含大写字母时才转小写，几个桶的下标通过排序合并。
 
 ### `PathSelector`
 

@@ -14,6 +14,7 @@ This module provides an intelligent and flexible request routing system for reve
   - **Prefix Match**: e.g., `/static`
   - **Regex Match**: e.g., `~/users/(?<id>\d+)`, with support for named captures.
 - **URL Rewriting**: Dynamically modify the request path before proxying, including substituting variables from named captures.
+  - `rewrite = "<regex> <replacement>"`; `$1` and `$name` in the replacement refer to the regex's groups. A `$name` that is a **request variable** - a named capture of the host pattern, or a variable a plugin set - is substituted with that variable first, so `host = "~(?<tenant>.+)\.example\.com"` with `rewrite = "^/users/(.*)$ /$tenant/$1"` sends `acme.example.com/users/me` to `/acme/me`. A lone replacement holding `$` (`"/$1"`) rewrites the whole path. A rule whose regex does not compile, or that has more than two parts, is an error when the location is built rather than a silently ignored rule.
 - **Request Throttling**: Limit the maximum number of concurrent requests a location will process.
 - **Body Size Limiting**: Enforce a maximum size for the client request body to prevent abuse.
 - **Header Modification**: Add or set custom HTTP headers before forwarding a request to an upstream service.
@@ -38,9 +39,11 @@ How the request `Host` header is matched:
 
 Example: `~(?<name>.+)\.npmtrend\.com` matches `charts.npmtrend.com` and captures `charts` as `name`.
 
+Exact and wildcard patterns are stored lowercased and compared to the request host in place, so a request with `Host: API.Example.COM` matches `api.example.com` without a lowercased copy being made per pattern.
+
 ### `LocationHostIndex` / `ServerLocationRoute`
 
-Built when server locations are (re)loaded. For each request host the index returns a **weight-ordered** candidate list (exact + matching suffixes + all regex-host locations + any-host locations). Full path/condition matching still runs only on those candidates, so the first hit is the same as a linear scan of the full weight-sorted list.
+Built when server locations are (re)loaded. For each request host the index returns a **weight-ordered** candidate list (exact + matching suffixes + all regex-host locations + any-host locations). Full path/condition matching still runs only on those candidates, so the first hit is the same as a linear scan of the full weight-sorted list. The lookup costs one small `Vec` per request: the host is lowercased only when it contains upper-case letters, and the buckets are merged by sorting the handful of indices.
 
 ### `PathSelector`
 

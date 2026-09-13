@@ -25,6 +25,7 @@ use pingap_core::{LocationInstance, NamedPlugin, PluginProvider};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -158,26 +159,35 @@ impl HostSelector {
             Ok(HostSelector::Equal(host.to_ascii_lowercase()))
         }
     }
+    /// Host matching is case-insensitive (the Host header may vary in
+    /// case) and compares in place: the patterns are stored lowercased, so
+    /// no lowercased copy of the request host is made per selector.
     #[inline]
     fn is_match(&self, host: &str) -> (bool, Option<AHashMap<String, String>>) {
-        // Host matching is case-insensitive (Host header may vary in case).
-        let host_lower = host.to_ascii_lowercase();
         match self {
-            HostSelector::Equal(value) => (value == &host_lower, None),
+            HostSelector::Equal(value) => {
+                (value.eq_ignore_ascii_case(host), None)
+            },
             HostSelector::Suffix(domain) => {
-                (host_matches_suffix(&host_lower, domain), None)
+                (host_matches_suffix(host, domain), None)
             },
             HostSelector::Regex(value) => value.captures(host),
         }
     }
 }
 
-/// `*.example.com` style: host is a subdomain of `domain`, not the apex itself.
+/// `*.example.com` style: `host` is a subdomain of `domain` (lowercase),
+/// not the apex itself. Case-insensitive, byte-wise, so a host that is not
+/// ASCII cannot be split inside a character.
 #[inline]
 pub(crate) fn host_matches_suffix(host: &str, domain: &str) -> bool {
-    host.len() > domain.len() + 1
-        && host.ends_with(domain)
-        && host.as_bytes().get(host.len() - domain.len() - 1) == Some(&b'.')
+    let host = host.as_bytes();
+    let Some(dot) = host.len().checked_sub(domain.len() + 1) else {
+        return false;
+    };
+    dot > 0
+        && host[dot] == b'.'
+        && host[dot + 1..].eq_ignore_ascii_case(domain.as_bytes())
 }
 
 /// Classification of a single host pattern for the routing index.
@@ -222,6 +232,84 @@ struct RegexRewrite {
     match_all: bool,
     /// Regex declares named capture groups worth extracting into `variables`.
     has_named_captures: bool,
+    /// The replacement holds a `$`, so request variables may apply to it.
+    has_variables: bool,
+}
+
+impl RegexRewrite {
+    /// Parses `"<regex> <replacement>"`. A lone replacement holding `$`
+    /// (`"/$1"`) rewrites the whole path; a lone pattern rewrites its
+    /// match to nothing. The pattern must compile: a rewrite that did not
+    /// used to be silently dropped, leaving the location proxying the
+    /// original path.
+    fn new(value: &str) -> Result<Self> {
+        let mut parts = value.split_whitespace();
+        let (pattern, replacement) = match (parts.next(), parts.next()) {
+            (Some(only), None) if only.contains('$') => (".*", only),
+            (Some(pattern), replacement) => {
+                (pattern, replacement.unwrap_or(""))
+            },
+            (None, _) => (".*", ""),
+        };
+        if parts.next().is_some() {
+            return Err(Error::Invalid {
+                message: format!(
+                    "rewrite {value:?} is invalid, expected \"<regex> <replacement>\""
+                ),
+            });
+        }
+        let re = Regex::new(pattern).context(RegexSnafu { value: pattern })?;
+        Ok(Self {
+            match_all: re.as_str() == ".*",
+            has_named_captures: re.capture_names().flatten().next().is_some(),
+            has_variables: replacement.contains('$'),
+            re,
+            value: replacement.to_string(),
+        })
+    }
+}
+
+/// Substitutes `$name` in `template` with the value of request variable
+/// `name`. A `$` naming no variable (`$1`, a regex group) is left for the
+/// regex replacement. Borrowed when nothing applied.
+fn interpolate_variables<'a>(
+    template: &'a str,
+    variables: &AHashMap<String, String>,
+) -> Cow<'a, str> {
+    let bytes = template.as_bytes();
+    let mut out: Option<String> = None;
+    let mut copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let end = start
+            + bytes[start..]
+                .iter()
+                .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_')
+                .count();
+        if end > start
+            && let Some(value) = variables.get(&template[start..end])
+        {
+            let out = out.get_or_insert_with(|| {
+                String::with_capacity(template.len() + 16)
+            });
+            out.push_str(&template[copied..i]);
+            out.push_str(value);
+            copied = end;
+        }
+        i = end.max(start);
+    }
+    match out {
+        Some(mut out) => {
+            out.push_str(&template[copied..]);
+            Cow::Owned(out)
+        },
+        None => Cow::Borrowed(template),
+    }
 }
 
 /// Parses `["name:value", "name", ...]` match conditions into `(name, value)`
@@ -293,10 +381,7 @@ pub struct Location {
     /// Target upstream server where requests will be proxied to
     upstream: String,
 
-    /// Original path pattern string used for matching requests
-    path: String,
-
-    /// Compiled path matching rules (regex, prefix, or exact match)
+    /// Compiled path matching rules (regex, prefix, exact or any)
     path_selector: PathSelector,
 
     /// List of host patterns to match against request Host header
@@ -411,28 +496,14 @@ impl Location {
         }
         let key = conf.hash_key();
         let upstream = conf.upstream.clone().unwrap_or_default();
-        let mut reg_rewrite = None;
         // rewrite: "^/users/(.*)$ /api/users/$1"
-        if let Some(value) = &conf.rewrite {
-            let mut arr: Vec<&str> = value.split(' ').collect();
-            if arr.len() == 1 && arr[0].contains("$") {
-                arr.push(arr[0]);
-                arr[0] = ".*";
-            }
-
-            let value = if arr.len() == 2 { arr[1] } else { "" };
-            if let Ok(re) = Regex::new(arr[0]) {
-                let match_all = re.as_str() == ".*";
-                let has_named_captures =
-                    re.capture_names().flatten().next().is_some();
-                reg_rewrite = Some(RegexRewrite {
-                    re,
-                    value: value.to_string(),
-                    match_all,
-                    has_named_captures,
-                });
-            }
-        }
+        let reg_rewrite = conf
+            .rewrite
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(RegexRewrite::new)
+            .transpose()?;
 
         let hosts = conf
             .host
@@ -443,8 +514,6 @@ impl Location {
             .filter(|s| !s.is_empty())
             .map(HostSelector::new)
             .collect::<Result<Vec<_>>>()?;
-
-        let path = conf.path.clone().unwrap_or_default();
 
         // Parse optional match conditions ("name:value" for an exact value, or
         // "name" for a presence check) on headers, query params and cookies.
@@ -479,8 +548,9 @@ impl Location {
         let location = Location {
             name: name.into(),
             key,
-            path_selector: PathSelector::new(&path)?,
-            path,
+            path_selector: PathSelector::new(
+                conf.path.as_deref().unwrap_or_default(),
+            )?,
             hosts,
             header_conditions,
             query_conditions,
@@ -621,17 +691,11 @@ impl Location {
         host: &str,
         path: &str,
     ) -> (bool, Option<AHashMap<String, String>>) {
-        // Check host matching against configured host patterns
-        // let mut variables: Vec<(String, String)> = vec![];
-
-        // First check path matching if a path pattern is configured
-        let mut capture_values = None;
-        if !self.path.is_empty() {
-            let (matched, captures) = self.path_selector.is_match(path);
-            if !matched {
-                return (false, None);
-            }
-            capture_values = captures;
+        // Path first: it is the cheaper check and the usual reason not to
+        // match.
+        let (matched, mut capture_values) = self.path_selector.is_match(path);
+        if !matched {
+            return (false, None);
         }
 
         // If no host patterns configured, path match is sufficient
@@ -761,24 +825,28 @@ impl LocationInstance for Location {
             return false;
         };
         let re = &rewrite.re;
-
-        let mut replace_value = rewrite.value.to_string();
-
-        if let Some(vars) = variables.as_ref() {
-            for (k, v) in vars.iter() {
-                replace_value = replace_value.replace(k, v);
-            }
-        }
-
         let path = header.uri.path();
 
-        let mut new_path = if rewrite.match_all {
-            replace_value
-        } else {
-            re.replace(path, replace_value).to_string()
+        // `$name` in the replacement is a request variable (a host capture,
+        // a plugin's) before it is a regex group: those are filled in first,
+        // and only when the replacement can hold one at all.
+        let replacement = match variables.as_ref() {
+            Some(vars) if rewrite.has_variables && !vars.is_empty() => {
+                interpolate_variables(&rewrite.value, vars)
+            },
+            _ => Cow::Borrowed(rewrite.value.as_str()),
         };
 
-        if path == new_path {
+        let mut new_path = if rewrite.match_all {
+            replacement.into_owned()
+        } else {
+            match re.replace(path, replacement.as_ref()) {
+                // no match: nothing to rewrite, and nothing was allocated
+                Cow::Borrowed(_) => return false,
+                Cow::Owned(new_path) => new_path,
+            }
+        };
+        if new_path == path {
             return false;
         }
 
@@ -798,9 +866,11 @@ impl LocationInstance for Location {
             }
         }
 
-        // preserve query parameters
+        // preserve query parameters, appended in place
         if let Some(query) = header.uri.query() {
-            new_path = format!("{new_path}?{query}");
+            new_path.reserve(query.len() + 1);
+            new_path.push('?');
+            new_path.push_str(query);
         }
         debug!(category = LOG_CATEGORY, new_path, "rewrite path");
 
@@ -893,8 +963,14 @@ mod tests {
         .unwrap();
         assert_eq!(true, lo.match_host_path("a.example.com", "/").0);
         assert_eq!(true, lo.match_host_path("api.example.com", "/").0);
+        assert_eq!(true, lo.match_host_path("API.Example.COM", "/").0);
         assert_eq!(false, lo.match_host_path("example.com", "/").0);
         assert_eq!(false, lo.match_host_path("evil-example.com", "/").0);
+        assert_eq!(false, lo.match_host_path(".example.com", "/").0);
+        assert_eq!(false, lo.match_host_path("com", "/").0);
+        // a non-ASCII host is compared byte-wise, never split in a char
+        assert_eq!(false, lo.match_host_path("ü.example.co", "/").0);
+        assert_eq!(true, lo.match_host_path("ü.example.com", "/").0);
 
         // regex
         let lo = Location::new(
@@ -1067,6 +1143,95 @@ mod tests {
         )
         .unwrap();
         assert_eq!(true, bare.plugins_for(&provider).is_none());
+    }
+
+    /// `$name` in the replacement takes the request variable of that name
+    /// (a host capture, a plugin's); `$1` and regex groups are untouched.
+    #[test]
+    fn test_rewrite_with_variables() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                host: Some("~(?<tenant>.+)\\.example\\.com".to_string()),
+                rewrite: Some("^/users/(.*)$ /$tenant/$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (matched, mut variables) =
+            lo.match_host_path("acme.example.com", "/users/me");
+        assert_eq!(true, matched);
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/me?x=1", None).unwrap();
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!("/acme/me?x=1", req_header.uri.to_string());
+
+        // Without variables the `$tenant` is left to the regex, which knows
+        // no such group and expands it to nothing.
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/me", None).unwrap();
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut None));
+        assert_eq!("//me", req_header.uri.to_string());
+
+        // A request that does not match the pattern is left alone.
+        let mut req_header =
+            RequestHeader::build("GET", b"/other?x=1", None).unwrap();
+        let mut variables =
+            Some(AHashMap::from([("tenant".to_string(), "acme".to_string())]));
+        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!("/other?x=1", req_header.uri.to_string());
+    }
+
+    #[test]
+    fn test_interpolate_variables() {
+        let vars = AHashMap::from([
+            ("tenant".to_string(), "acme".to_string()),
+            ("v".to_string(), "2".to_string()),
+        ]);
+        let interpolate = |template: &str| {
+            interpolate_variables(template, &vars).into_owned()
+        };
+        assert_eq!("/acme/$1", interpolate("/$tenant/$1"));
+        assert_eq!("/api/v2/2", interpolate("/api/v$v/$v"));
+        // a name that is only a prefix of a longer identifier is not it
+        assert_eq!("/$tenants", interpolate("/$tenants"));
+        assert_eq!("/$1/$$", interpolate("/$1/$$"));
+        assert_eq!("acme", interpolate("$tenant"));
+        assert_eq!("$", interpolate("$"));
+        assert_eq!(
+            true,
+            matches!(interpolate_variables("/plain", &vars), Cow::Borrowed(_))
+        );
+    }
+
+    /// A rewrite that does not parse is an error, not a silently ignored
+    /// rule.
+    #[test]
+    fn test_invalid_rewrite_is_rejected() {
+        let build = |rewrite: &str| {
+            Location::new(
+                "lo",
+                &LocationConf {
+                    upstream: Some("charts".to_string()),
+                    rewrite: Some(rewrite.to_string()),
+                    ..Default::default()
+                },
+            )
+            .err()
+            .map(|e| e.to_string())
+        };
+        assert_eq!(
+            Some("Regex value: ^/users/(, regex parse error:\n    ^/users/(\n            ^\nerror: unclosed group".to_string()),
+            build("^/users/( /")
+        );
+        assert_eq!(
+            Some("Invalid error rewrite \"^/a /b /c\" is invalid, expected \"<regex> <replacement>\"".to_string()),
+            build("^/a /b /c")
+        );
+        // whitespace runs and a blank rule are fine
+        assert_eq!(None, build("^/a   /b"));
+        assert_eq!(None, build("  "));
     }
 
     #[test]
