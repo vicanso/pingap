@@ -34,6 +34,7 @@ use std::borrow::Cow;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use strum::EnumString;
 
 // Constants for time conversions in milliseconds.
 const SECOND: u64 = 1_000;
@@ -107,8 +108,8 @@ pub trait ModifyResponseBody: Sync + Send {
         end_of_stream: bool,
     ) -> pingora::Result<()>;
     /// Returns the name of the modifier.
-    fn name(&self) -> String {
-        "unknown".to_string()
+    fn name(&self) -> &str {
+        "unknown"
     }
 }
 
@@ -207,12 +208,13 @@ pub trait LocationInstance: Send + Sync {
     fn name(&self) -> &str;
     /// Get the upstream of location
     fn upstream(&self) -> &str;
-    /// Rewrite the request url
+    /// Rewrites the request url. Returns whether the path changed; named
+    /// captures of the rewrite pattern are added to `variables`.
     fn rewrite(
         &self,
         header: &mut RequestHeader,
-        variables: Option<AHashMap<String, String>>,
-    ) -> (bool, Option<AHashMap<String, String>>);
+        variables: &mut Option<AHashMap<String, String>>,
+    ) -> bool;
     /// Returns the proxy header to upstream
     fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>>;
     /// Returns the client body size limit
@@ -376,6 +378,52 @@ impl OtelTracer {
 /// A plugin paired with the name it was registered under in the location config.
 pub type NamedPlugin = (Arc<str>, Arc<dyn Plugin>);
 
+/// A `Ctx` value the access log can print. The `{:name}` in a log format
+/// parses into one of these once, when the format is read, so writing a
+/// log line dispatches on an enum instead of comparing the name against
+/// every key on every request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum CtxLogField {
+    ConnectionId,
+    UpstreamReused,
+    UpstreamStatus,
+    UpstreamAddr,
+    Processing,
+    UpstreamConnected,
+    UpstreamConnectTime,
+    UpstreamConnectTimeHuman,
+    UpstreamProcessingTime,
+    UpstreamProcessingTimeHuman,
+    UpstreamResponseTime,
+    UpstreamResponseTimeHuman,
+    UpstreamTcpConnectTime,
+    UpstreamTcpConnectTimeHuman,
+    UpstreamTlsHandshakeTime,
+    UpstreamTlsHandshakeTimeHuman,
+    UpstreamConnectOffloadWaitTime,
+    UpstreamConnectOffloadWaitTimeHuman,
+    UpstreamConnectionTime,
+    UpstreamConnectionTimeHuman,
+    ConnectionTime,
+    ConnectionTimeHuman,
+    Location,
+    ConnectionReused,
+    TlsVersion,
+    TlsCipher,
+    TlsHandshakeTime,
+    TlsHandshakeTimeHuman,
+    CompressionTime,
+    CompressionTimeHuman,
+    CompressionRatio,
+    CacheLookupTime,
+    CacheLookupTimeHuman,
+    CacheLockTime,
+    CacheLockTimeHuman,
+    ServiceTime,
+    ServiceTimeHuman,
+}
+
 /// Represents the state of a request/response cycle, tracking various metrics and properties
 /// including connection details, caching information, and upstream server interactions.
 #[derive(Default)]
@@ -388,12 +436,15 @@ pub struct Ctx {
     pub timing: Timing,
     /// State related to the current request.
     pub state: RequestState,
-    /// Cache-related information. Wrapped in Option to save memory when not in use.
-    pub cache: Option<CacheInfo>,
-    /// Optional features. Wrapped in Option to save memory when not in use.
-    pub features: Option<Features>,
-    /// Plugins for the current location
-    pub plugins: Option<Vec<NamedPlugin>>,
+    /// Cache-related information. Boxed behind an `Option`: most requests
+    /// never touch the cache, and a `None` costs a pointer instead of the
+    /// whole struct on every `Ctx`.
+    pub cache: Option<Box<CacheInfo>>,
+    /// Optional features, boxed for the same reason.
+    pub features: Option<Box<Features>>,
+    /// Plugins for the current location, shared with the location's cache
+    /// of resolved plugins so a request only bumps a reference count.
+    pub plugins: Option<Arc<[NamedPlugin]>>,
 }
 
 /// Helper struct to store connection timing and TLS details
@@ -644,13 +695,23 @@ impl Ctx {
     /// Appends a formatted value to the provided log buffer based on the given key.
     /// Handles various metrics including connection info, timing data, and TLS details.
     ///
+    /// Resolves `key` on every call; a caller that knows the key ahead of
+    /// time (the access log format) should parse it into a [`CtxLogField`]
+    /// once and use [`Ctx::append_log_field`].
+    ///
     /// # Arguments
     /// * `buf` - The BytesMut buffer to append the value to.
     /// * `key` - The key identifying which state value to format and append.
-    ///
-    /// Returns: The modified BytesMut buffer.
     #[inline]
     pub fn append_log_value(&self, buf: &mut BytesMut, key: &str) {
+        // Unknown keys append nothing.
+        if let Ok(field) = key.parse::<CtxLogField>() {
+            self.append_log_field(buf, field);
+        }
+    }
+
+    /// Appends the value of `field` to the log buffer.
+    pub fn append_log_field(&self, buf: &mut BytesMut, field: CtxLogField) {
         // A macro to simplify formatting and appending optional time values.
         macro_rules! append_time {
             // Append raw milliseconds.
@@ -667,127 +728,133 @@ impl Ctx {
             };
         }
 
-        match key {
-            "connection_id" => {
+        match field {
+            CtxLogField::ConnectionId => {
                 buf.extend(itoa::Buffer::new().format(self.conn.id).as_bytes());
             },
-            "upstream_reused" => {
+            CtxLogField::UpstreamReused => {
                 if self.upstream.reused {
                     buf.extend(b"true");
                 } else {
                     buf.extend(b"false");
                 }
             },
-            "upstream_status" => {
+            CtxLogField::UpstreamStatus => {
                 if let Some(status) = &self.upstream.status {
                     buf.extend_from_slice(status.as_str().as_bytes());
                 } else {
                     buf.extend_from_slice(b"-");
                 }
             },
-            "upstream_addr" => buf.extend(self.upstream.address.as_bytes()),
-            "processing" => buf.extend(
+            CtxLogField::UpstreamAddr => {
+                buf.extend(self.upstream.address.as_bytes())
+            },
+            CtxLogField::Processing => buf.extend(
                 itoa::Buffer::new()
                     .format(self.state.processing_count)
                     .as_bytes(),
             ),
-            "upstream_connected" => {
+            CtxLogField::UpstreamConnected => {
                 if let Some(value) = self.upstream.connected_count {
                     buf.extend(itoa::Buffer::new().format(value).as_bytes());
                 }
             },
 
             // Timing fields
-            "upstream_connect_time" => {
+            CtxLogField::UpstreamConnectTime => {
                 append_time!(self.get_upstream_connect_time())
             },
-            "upstream_connect_time_human" => {
+            CtxLogField::UpstreamConnectTimeHuman => {
                 append_time!(self.get_upstream_connect_time(), human)
             },
 
-            "upstream_processing_time" => {
+            CtxLogField::UpstreamProcessingTime => {
                 append_time!(self.get_upstream_processing_time())
             },
-            "upstream_processing_time_human" => {
+            CtxLogField::UpstreamProcessingTimeHuman => {
                 append_time!(self.get_upstream_processing_time(), human)
             },
-            "upstream_response_time" => {
+            CtxLogField::UpstreamResponseTime => {
                 append_time!(self.get_upstream_response_time())
             },
-            "upstream_response_time_human" => {
+            CtxLogField::UpstreamResponseTimeHuman => {
                 append_time!(self.get_upstream_response_time(), human)
             },
-            "upstream_tcp_connect_time" => {
+            CtxLogField::UpstreamTcpConnectTime => {
                 append_time!(self.timing.upstream_tcp_connect)
             },
-            "upstream_tcp_connect_time_human" => {
+            CtxLogField::UpstreamTcpConnectTimeHuman => {
                 append_time!(self.timing.upstream_tcp_connect, human)
             },
-            "upstream_tls_handshake_time" => {
+            CtxLogField::UpstreamTlsHandshakeTime => {
                 append_time!(self.timing.upstream_tls_handshake)
             },
-            "upstream_tls_handshake_time_human" => {
+            CtxLogField::UpstreamTlsHandshakeTimeHuman => {
                 append_time!(self.timing.upstream_tls_handshake, human)
             },
-            "upstream_connect_offload_wait_time" => {
+            CtxLogField::UpstreamConnectOffloadWaitTime => {
                 append_time!(self.timing.upstream_connect_offload_wait)
             },
-            "upstream_connect_offload_wait_time_human" => {
+            CtxLogField::UpstreamConnectOffloadWaitTimeHuman => {
                 append_time!(self.timing.upstream_connect_offload_wait, human)
             },
-            "upstream_connection_time" => {
+            CtxLogField::UpstreamConnectionTime => {
                 append_time!(self.timing.upstream_connection_duration)
             },
-            "upstream_connection_time_human" => {
+            CtxLogField::UpstreamConnectionTimeHuman => {
                 append_time!(self.timing.upstream_connection_duration, human)
             },
-            "connection_time" => {
+            CtxLogField::ConnectionTime => {
                 append_time!(Some(self.timing.connection_duration))
             },
-            "connection_time_human" => {
+            CtxLogField::ConnectionTimeHuman => {
                 append_time!(Some(self.timing.connection_duration), human)
             },
 
             // Other fields
-            "location" if !self.upstream.location.is_empty() => {
-                buf.extend(self.upstream.location.as_bytes())
+            CtxLogField::Location => {
+                if !self.upstream.location.is_empty() {
+                    buf.extend(self.upstream.location.as_bytes())
+                }
             },
-            "connection_reused" => {
+            CtxLogField::ConnectionReused => {
                 if self.conn.reused {
                     buf.extend(b"true");
                 } else {
                     buf.extend(b"false");
                 }
             },
-            "tls_version" => {
+            CtxLogField::TlsVersion => {
                 if let Some(value) = &self.conn.tls_version {
                     buf.extend(value.as_bytes());
                 }
             },
-            "tls_cipher" => {
+            CtxLogField::TlsCipher => {
                 if let Some(value) = &self.conn.tls_cipher {
                     buf.extend(value.as_bytes());
                 }
             },
-            "tls_handshake_time" => append_time!(self.timing.tls_handshake),
-            "tls_handshake_time_human" => {
+            CtxLogField::TlsHandshakeTime => {
+                append_time!(self.timing.tls_handshake)
+            },
+            CtxLogField::TlsHandshakeTimeHuman => {
                 append_time!(self.timing.tls_handshake, human)
             },
-            "compression_time" => {
+            CtxLogField::CompressionTime => {
                 if let Some(feature) = &self.features
                     && let Some(value) = &feature.compression_stat
                 {
                     append_time!(Some(value.duration.as_millis() as u64))
                 }
             },
-            "compression_time_human" => {
+            CtxLogField::CompressionTimeHuman => {
                 if let Some(feature) = &self.features
                     && let Some(value) = &feature.compression_stat
                 {
                     append_time!(Some(value.duration.as_millis() as u64), human)
                 }
             },
-            "compression_ratio" => {
+            CtxLogField::CompressionRatio => {
                 if let Some(feature) = &self.features
                     && let Some(value) = &feature.compression_stat
                 {
@@ -802,29 +869,27 @@ impl Ctx {
                     );
                 }
             },
-            "cache_lookup_time" => {
+            CtxLogField::CacheLookupTime => {
                 append_time!(self.timing.cache_lookup)
             },
-            "cache_lookup_time_human" => {
+            CtxLogField::CacheLookupTimeHuman => {
                 append_time!(self.timing.cache_lookup, human)
             },
-            "cache_lock_time" => {
+            CtxLogField::CacheLockTime => {
                 append_time!(self.timing.cache_lock)
             },
-            "cache_lock_time_human" => {
+            CtxLogField::CacheLockTimeHuman => {
                 append_time!(self.timing.cache_lock, human)
             },
-            "service_time" => {
+            CtxLogField::ServiceTime => {
                 append_time!(Some(self.timing.created_at.elapsed().as_millis()))
             },
-            "service_time_human" => {
+            CtxLogField::ServiceTimeHuman => {
                 append_time!(
                     Some(self.timing.created_at.elapsed().as_millis()),
                     human
                 )
             },
-            // Ignore unknown keys.
-            _ => {},
         }
     }
 
@@ -993,9 +1058,15 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
         return CacheKey::new("", "");
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
-    // Materialize the URI once (Display) and reuse for capacity + write.
+    // Size the buffer from the URI's parts and write the URI straight into
+    // it, rather than rendering it to a String first and copying that.
     // Keep full-URI semantics so existing cache keys stay stable across upgrades.
-    let uri_str = uri.to_string();
+    let uri_len = uri.scheme_str().map_or(0, |scheme| scheme.len() + 3)
+        + uri
+            .authority()
+            .map_or(0, |authority| authority.as_str().len())
+        + uri.path().len()
+        + uri.query().map_or(0, |query| query.len() + 1);
     // pingora's CacheKey used to take the namespace as its own argument and
     // hashed `namespace ++ primary` as one unframed byte string. That argument
     // is gone, so the namespace is written straight in front of the primary
@@ -1008,7 +1079,7 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
         .as_ref()
         .map_or(0, |keys| keys.iter().map(|s| s.len() + 1).sum::<usize>());
     let mut key_buf = String::with_capacity(
-        namespace.len() + keys_len + method.len() + 1 + uri_str.len(),
+        namespace.len() + keys_len + method.len() + 1 + uri_len,
     );
     key_buf.push_str(namespace);
     // Custom key components first, each followed by ':'.
@@ -1021,7 +1092,7 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
     // Then "METHOD:URI".
     key_buf.push_str(method);
     key_buf.push(':');
-    key_buf.push_str(&uri_str);
+    let _ = write!(&mut key_buf, "{uri}");
 
     CacheKey::new(key_buf, namespace)
 }
@@ -1089,6 +1160,39 @@ mod tests {
         assert_eq!(ctx.get_upstream_response_time(), None);
     }
 
+    /// Every log field name round-trips through the enum, and the two
+    /// entry points agree.
+    #[test]
+    fn test_ctx_log_field_names() {
+        for (name, field) in [
+            ("connection_id", CtxLogField::ConnectionId),
+            (
+                "upstream_tcp_connect_time_human",
+                CtxLogField::UpstreamTcpConnectTimeHuman,
+            ),
+            (
+                "upstream_connect_offload_wait_time",
+                CtxLogField::UpstreamConnectOffloadWaitTime,
+            ),
+            ("tls_version", CtxLogField::TlsVersion),
+            ("compression_ratio", CtxLogField::CompressionRatio),
+            ("service_time_human", CtxLogField::ServiceTimeHuman),
+        ] {
+            assert_eq!(Ok(field), name.parse::<CtxLogField>(), "{name}");
+            assert_eq!(name, field.to_string());
+        }
+        assert_eq!(true, "unknown_key".parse::<CtxLogField>().is_err());
+
+        let mut ctx = Ctx::new();
+        ctx.conn.id = 7;
+        let mut by_name = BytesMut::new();
+        ctx.append_log_value(&mut by_name, "connection_id");
+        let mut by_field = BytesMut::new();
+        ctx.append_log_field(&mut by_field, CtxLogField::ConnectionId);
+        assert_eq!(b"7", by_name.as_ref());
+        assert_eq!(by_name, by_field);
+    }
+
     /// Tests the `append_log_value` function with a wider range of keys and edge cases.
     #[test]
     fn test_append_log_value_coverage() {
@@ -1133,10 +1237,10 @@ mod tests {
 
         // Case 2: Cache info with namespace but no keys.
         let mut ctx_with_ns = Ctx::new();
-        ctx_with_ns.cache = Some(CacheInfo {
+        ctx_with_ns.cache = Some(Box::new(CacheInfo {
             namespace: Some("my-ns".to_string()),
             ..Default::default()
-        });
+        }));
         let key2 = get_cache_key(&ctx_with_ns, method, &uri);
         assert_eq!(key2.user_tag, "my-ns");
         assert_eq!(
@@ -1150,11 +1254,11 @@ mod tests {
 
         // Case 3: Cache info with namespace and multiple keys.
         let mut ctx_with_keys = Ctx::new();
-        ctx_with_keys.cache = Some(CacheInfo {
+        ctx_with_keys.cache = Some(Box::new(CacheInfo {
             namespace: Some("my-ns".to_string()),
             keys: Some(vec!["user-123".to_string(), "desktop".to_string()]),
             ..Default::default()
-        });
+        }));
         let key3 = get_cache_key(&ctx_with_keys, method, &uri);
         assert_eq!(key3.user_tag, "my-ns");
         assert_eq!(

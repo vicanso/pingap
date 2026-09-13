@@ -15,6 +15,7 @@
 // Import necessary modules and types from supervisors and external crates.
 use super::{Ctx, get_hostname};
 use ahash::AHashSet;
+use arc_swap::ArcSwapOption;
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
@@ -26,8 +27,8 @@ use std::borrow::Cow;
 use std::fmt::Write;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, RwLock};
 
 // Define string constants for commonly used HTTP header names.
 const HTTP_HEADER_X_FORWARDED_FOR: &str = "x-forwarded-for";
@@ -87,8 +88,20 @@ pub fn get_host(header: &RequestHeader) -> Option<&str> {
         .get(http::header::HOST)
         // Convert the header value to a string slice.
         .and_then(|value| value.to_str().ok())
-        // The host header can include a port (e.g., "example.com:8080"), so we split and take the first part.
-        .and_then(|host| host.split(':').next())
+        .map(strip_port)
+}
+
+/// Drops the `:port` suffix of a `Host` value. An IPv6 literal keeps its
+/// brackets, and the colons inside them are not a port separator:
+/// `[::1]:8080` is `[::1]`, the same form `Uri::host` reports.
+fn strip_port(host: &str) -> &str {
+    if host.starts_with('[') {
+        return match host.find(']') {
+            Some(end) => &host[..=end],
+            None => host,
+        };
+    }
+    host.split(':').next().unwrap_or(host)
 }
 
 /// Converts a single string in "name: value" format into an `HttpHeader` tuple.
@@ -155,6 +168,43 @@ pub static HTTP_HEADER_TRANSFER_CHUNKED: HttpHeader = (
 );
 pub static HTTP_HEADER_NAME_X_REQUEST_ID: HeaderName =
     HeaderName::from_static("x-request-id");
+
+/// Resolves a header value that cannot change for the life of the process -
+/// `$hostname` and `$<ENV_VAR>` - so it can be stored as a plain value when
+/// the configuration is loaded instead of being looked up on every request
+/// (`std::env::var` takes a process-wide lock and allocates each time).
+/// Values that depend on the request (`$host`, `$http_*`, `:key`, ...) and
+/// plain values come back unchanged, as does a `$NAME` whose variable is not
+/// set, so the request path treats it exactly as before.
+pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
+    let buf = value.as_bytes();
+    if buf.first() != Some(&b'$') {
+        return value;
+    }
+    if buf == HOST_NAME_TAG {
+        return HeaderValue::from_str(get_hostname()).unwrap_or(value);
+    }
+    let request_tags: [&[u8]; 8] = [
+        HOST_TAG,
+        SCHEME_TAG,
+        REMOTE_ADDR_TAG,
+        REMOTE_PORT_TAG,
+        SERVER_ADDR_TAG,
+        SERVER_PORT_TAG,
+        PROXY_ADD_FORWARDED_TAG,
+        UPSTREAM_ADDR_TAG,
+    ];
+    if request_tags.contains(&buf) || buf.starts_with(b"$http_") {
+        return value;
+    }
+    let Ok(name) = std::str::from_utf8(&buf[1..]) else {
+        return value;
+    };
+    match std::env::var(name) {
+        Ok(env_value) => HeaderValue::from_str(&env_value).unwrap_or(value),
+        Err(_) => value,
+    }
+}
 
 /// Processes a `HeaderValue` that may contain a special dynamic variable (e.g., `$host`).
 /// It replaces the variable with its corresponding runtime value.
@@ -236,10 +286,13 @@ fn handle_special_headers(
     ctx: &Ctx,
 ) -> Option<HeaderValue> {
     // Handle variables that reference other request headers, like `$http_user_agent`.
-    if buf.starts_with(b"$http_") {
-        // Attempt to parse the header name from the slice after the prefix.
-        let key = std::str::from_utf8(&buf[6..]).ok()?;
-        // Get the corresponding header from the request and clone its value.
+    if let Some(name) = buf.strip_prefix(b"$http_") {
+        let key = std::str::from_utf8(name).ok()?;
+        // nginx spelling: `$http_user_agent` names `User-Agent`. Header names
+        // never contain underscores, so mapping them is unambiguous.
+        if key.contains('_') {
+            return session.get_header(key.replace('_', "-")).cloned();
+        }
         return session.get_header(key).cloned();
     }
     // Handle variables that reference environment variables, like `$PATH`.
@@ -298,13 +351,10 @@ impl TrustedProxies {
         Self { nets, ips }
     }
 
-    /// Returns true if `peer` (an IP string) is one of the trusted proxies.
-    fn contains(&self, peer: &str) -> bool {
-        let Ok(addr) = peer.parse::<IpAddr>() else {
-            return false;
-        };
-        self.ips.contains(&addr)
-            || self.nets.iter().any(|net| net.contains(&addr))
+    /// Returns true if `peer` is one of the trusted proxies.
+    fn contains(&self, peer: IpAddr) -> bool {
+        self.ips.contains(&peer)
+            || self.nets.iter().any(|net| net.contains(&peer))
     }
 }
 
@@ -312,10 +362,12 @@ impl TrustedProxies {
 // (`X-Forwarded-For` / `X-Real-IP`) are only honoured for connections whose
 // direct TCP peer is one of these addresses; a client connecting directly must
 // not be able to spoof its IP for IP-based access control, rate limiting, etc.
-// A cheap atomic flag keeps the common "not configured" path lock-free.
+// A cheap atomic flag keeps the common "not configured" path to one load;
+// the configured path reads the list through an `ArcSwap`, so a reload never
+// makes a request wait on a lock.
 static TRUSTED_PROXIES_ENABLED: AtomicBool = AtomicBool::new(false);
-static TRUSTED_PROXIES: LazyLock<RwLock<Option<TrustedProxies>>> =
-    LazyLock::new(|| RwLock::new(None));
+static TRUSTED_PROXIES: ArcSwapOption<TrustedProxies> =
+    ArcSwapOption::const_empty();
 
 /// Sets the trusted downstream proxy addresses (individual IPs or CIDR ranges).
 ///
@@ -328,19 +380,18 @@ pub fn set_trusted_proxies(proxies: &Option<Vec<String>>) {
         Some(list) if !list.is_empty() => Some(TrustedProxies::parse(list)),
         _ => None,
     };
-    if let Ok(mut guard) = TRUSTED_PROXIES.write() {
-        TRUSTED_PROXIES_ENABLED.store(parsed.is_some(), Ordering::Relaxed);
-        *guard = parsed;
-    }
+    let enabled = parsed.is_some();
+    TRUSTED_PROXIES.store(parsed.map(Arc::new));
+    // Set last: a request that sees the flag also sees the list.
+    TRUSTED_PROXIES_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 /// Returns true if the direct peer address is a configured trusted proxy.
-fn is_trusted_proxy(peer: &str) -> bool {
+fn is_trusted_proxy(peer: IpAddr) -> bool {
     TRUSTED_PROXIES
-        .read()
-        .ok()
-        .and_then(|guard| guard.as_ref().map(|tp| tp.contains(peer)))
-        .unwrap_or(false)
+        .load()
+        .as_ref()
+        .is_some_and(|trusted| trusted.contains(peer))
 }
 
 /// Ensures `ctx.conn.client_ip` is populated and returns a borrowed reference.
@@ -369,10 +420,16 @@ pub fn get_client_ip(session: &Session) -> String {
     // When trusted proxies are configured, a direct (untrusted) peer's
     // forwarded headers must be ignored to prevent client-IP spoofing.
     if TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed) {
-        let peer = get_remote_addr(session).map(|(addr, _)| addr);
-        let trusted = peer.as_deref().map(is_trusted_proxy).unwrap_or(false);
-        if !trusted {
-            return peer.unwrap_or_default();
+        // Compare the address itself; formatting it only to parse it back
+        // would cost an allocation per request.
+        let peer = session
+            .client_addr()
+            .and_then(|addr| addr.as_inet())
+            .map(|addr| addr.ip());
+        match peer {
+            Some(ip) if is_trusted_proxy(ip) => {},
+            Some(ip) => return ip.to_string(),
+            None => return String::new(),
         }
     }
     // 1. Check `X-Forwarded-For`.
@@ -519,9 +576,8 @@ pub fn remove_query_from_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ConnectionInfo, UpstreamInfo};
+    use crate::{ConnectionInfo, UpstreamInfo, new_test_session};
     use pretty_assertions::assert_eq;
-    use tokio_test::io::Builder;
 
     #[test]
     fn test_convert_headers() {
@@ -601,12 +657,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_convert_header_value() {
-        let headers = ["Host: pingap.io"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session =
+            new_test_session(&["Host: pingap.io"], "/vicanso/pingap?size=1")
+                .await;
         let default_state = Ctx {
             upstream: UpstreamInfo {
                 address: "10.1.1.3:4123".to_string(),
@@ -699,12 +752,11 @@ mod tests {
         assert_eq!(true, value.is_some());
         assert_eq!("102", value.unwrap().to_str().unwrap());
 
-        let headers = ["X-Forwarded-For: 1.1.1.1, 2.2.2.2"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Forwarded-For: 1.1.1.1, 2.2.2.2"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         let value = convert_header_value(
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
@@ -722,12 +774,7 @@ mod tests {
             value.unwrap().to_str().unwrap()
         );
 
-        let headers = [""].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(&[""], "/vicanso/pingap?size=1").await;
         let value = convert_header_value(
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
@@ -742,12 +789,7 @@ mod tests {
         assert_eq!(true, value.is_some());
         assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
 
-        let headers = [""].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(&[""], "/vicanso/pingap?size=1").await;
         let value = convert_header_value(
             &HeaderValue::from_str("$upstream_addr").unwrap(),
             &session,
@@ -762,12 +804,11 @@ mod tests {
         assert_eq!(true, value.is_some());
         assert_eq!("10.1.1.1:8001", value.unwrap().to_str().unwrap());
 
-        let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["Origin: https://github.com"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         let value = convert_header_value(
             &HeaderValue::from_str("$http_origin").unwrap(),
             &session,
@@ -776,12 +817,11 @@ mod tests {
         assert_eq!(true, value.is_some());
         assert_eq!("https://github.com", value.unwrap().to_str().unwrap());
 
-        let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["Origin: https://github.com"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         let value = convert_header_value(
             &HeaderValue::from_str("$hostname").unwrap(),
             &session,
@@ -789,12 +829,11 @@ mod tests {
         );
         assert_eq!(true, value.is_some());
 
-        let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["Origin: https://github.com"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         let value = convert_header_value(
             &HeaderValue::from_str("$HOME").unwrap(),
             &session,
@@ -802,12 +841,11 @@ mod tests {
         );
         assert_eq!(true, value.is_some());
 
-        let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["Origin: https://github.com"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         let value = convert_header_value(
             &HeaderValue::from_str("UUID").unwrap(),
             &session,
@@ -818,12 +856,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_host() {
-        let headers = ["Host: pingap.io"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session =
+            new_test_session(&["Host: pingap.io"], "/vicanso/pingap?size=1")
+                .await;
         assert_eq!(get_host(session.req_header()), Some("pingap.io"));
     }
 
@@ -843,53 +878,46 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_client_ip() {
-        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_eq!(get_client_ip(&session), "192.168.1.1");
 
-        let headers = ["X-Real-Ip:192.168.1.2"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Real-Ip:192.168.1.2"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_eq!(get_client_ip(&session), "192.168.1.2");
 
         // With trusted proxies configured, a forwarded header from an untrusted
         // direct peer (the mock session has no trusted peer address) must be
         // ignored instead of being taken at face value.
         set_trusted_proxies(&Some(vec!["10.0.0.0/8".to_string()]));
-        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_ne!(get_client_ip(&session), "192.168.1.1");
 
         // Restoring the default trusts forwarded headers again.
         set_trusted_proxies(&None);
-        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_eq!(get_client_ip(&session), "192.168.1.1");
     }
 
     #[tokio::test]
     async fn test_get_header_value() {
-        let headers = ["Host: pingap.io"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session =
+            new_test_session(&["Host: pingap.io"], "/vicanso/pingap?size=1")
+                .await;
         assert_eq!(
             get_req_header_value(session.req_header(), "Host"),
             Some("pingap.io")
@@ -898,12 +926,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_cookie_value() {
-        let headers = ["Cookie: name=pingap"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["Cookie: name=pingap"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_eq!(
             get_cookie_value(session.req_header(), "name"),
             Some("pingap")
@@ -912,12 +939,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_query_value() {
-        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let session = new_test_session(
+            &["X-Forwarded-For:192.168.1.1"],
+            "/vicanso/pingap?size=1",
+        )
+        .await;
         assert_eq!(get_query_value(session.req_header(), "size"), Some("1"));
     }
 
@@ -959,6 +985,69 @@ mod tests {
         // Case 3: No host information available.
         let req_no_host = RequestHeader::build("GET", b"/path", None).unwrap();
         assert_eq!(get_host(&req_no_host), None);
+
+        // Case 4: IPv6 literals keep their brackets and lose only the port.
+        for (host, expected) in [
+            ("[::1]:8080", "[::1]"),
+            ("[::1]", "[::1]"),
+            ("[2001:db8::1]:443", "[2001:db8::1]"),
+            ("example.com", "example.com"),
+            ("example.com:8080", "example.com"),
+        ] {
+            let mut req = RequestHeader::build("GET", b"/path", None).unwrap();
+            req.insert_header("Host", host).unwrap();
+            assert_eq!(get_host(&req), Some(expected), "{host}");
+        }
+    }
+
+    #[test]
+    fn test_resolve_static_header_value() {
+        let resolve = |value: &str| {
+            resolve_static_header_value(HeaderValue::from_str(value).unwrap())
+        };
+        assert_eq!(get_hostname(), resolve("$hostname").to_str().unwrap());
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(home, resolve("$HOME").to_str().unwrap());
+        // Request-time variables, plain values and unset variables are left
+        // for the request path.
+        for value in [
+            "$host",
+            "$remote_addr",
+            "$proxy_add_x_forwarded_for",
+            "$http_origin",
+            ":connection_id",
+            "plain",
+            "$PINGAP_TEST_UNSET_VARIABLE",
+        ] {
+            assert_eq!(value, resolve(value).to_str().unwrap());
+        }
+    }
+
+    /// `$http_<name>` accepts the nginx spelling with underscores.
+    #[tokio::test]
+    async fn test_http_variable_with_underscores() {
+        let session = new_test_session(
+            &["User-Agent: pingap/1", "X-Env-Name: prod"],
+            "/",
+        )
+        .await;
+        for (variable, expected) in [
+            ("$http_user_agent", Some("pingap/1")),
+            ("$http_user-agent", Some("pingap/1")),
+            ("$http_x_env_name", Some("prod")),
+            ("$http_missing_header", None),
+        ] {
+            let value = convert_header_value(
+                &HeaderValue::from_str(variable).unwrap(),
+                &session,
+                &Ctx::default(),
+            );
+            assert_eq!(
+                expected,
+                value.as_ref().and_then(|v| v.to_str().ok()),
+                "{variable}"
+            );
+        }
     }
 
     /// Tests `get_cookie_value` with multiple cookies and edge cases.

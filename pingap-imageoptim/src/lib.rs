@@ -81,8 +81,8 @@ impl ModifyResponseBody for ImageOptimizer {
         }
         Ok(())
     }
-    fn name(&self) -> String {
-        "image_optimization".to_string()
+    fn name(&self) -> &str {
+        "image_optimization"
     }
 }
 

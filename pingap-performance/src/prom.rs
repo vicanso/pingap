@@ -1092,7 +1092,7 @@ mod tests {
                     reused: true,
                     ..Default::default()
                 },
-                features: Some(Features {
+                features: Some(Box::new(Features {
                     compression_stat: Some(CompressionStat {
                         in_bytes: 1024,
                         out_bytes: 512,
@@ -1100,7 +1100,7 @@ mod tests {
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
+                })),
                 upstream: pingap_core::UpstreamInfo {
                     name: "upstream".into(),
                     location: "lo".into(),

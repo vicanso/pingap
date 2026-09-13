@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
 mod admin;
@@ -209,23 +210,32 @@ remark = "Adjust the accept encoding order and choose one encoding"
 
 struct Provider {
     plugins: ArcSwap<Plugins>,
+    /// Bumped on every `store`, so locations drop the plugin lists they
+    /// resolved against the previous set.
+    version: AtomicU64,
 }
 
 impl Provider {
     fn store(&self, data: Plugins) {
         self.plugins.store(Arc::new(data));
+        self.version.fetch_add(1, Ordering::Release);
     }
 }
 
 static PLUGIN_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         plugins: ArcSwap::from_pointee(AHashMap::new()),
+        version: AtomicU64::new(0),
     })
 });
 
 impl PluginProvider for Provider {
     fn get(&self, name: &str) -> Option<Arc<dyn Plugin>> {
         self.plugins.load().get(name).cloned()
+    }
+
+    fn version(&self) -> u64 {
+        self.version.load(Ordering::Acquire)
     }
 }
 

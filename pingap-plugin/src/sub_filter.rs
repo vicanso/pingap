@@ -183,8 +183,8 @@ impl ModifyResponseBody for SubFilterReplacer {
         *body = Some(Bytes::from(data));
         Ok(())
     }
-    fn name(&self) -> String {
-        "sub_filter".to_string()
+    fn name(&self) -> &str {
+        "sub_filter"
     }
 }
 

@@ -15,7 +15,9 @@
 use bytes::BytesMut;
 use chrono::format::SecondsFormat;
 use chrono::{Local, Utc};
-use pingap_core::{Ctx, HOST_NAME_TAG, format_duration, get_hostname};
+use pingap_core::{
+    Ctx, CtxLogField, HOST_NAME_TAG, format_duration, get_hostname,
+};
 use pingap_util::format_byte_size;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -50,7 +52,7 @@ pub enum TagCategory {
     Cookie,
     RequestHeader,
     ResponseHeader,
-    Context,
+    Context(CtxLogField),
     PayloadSize,
     PayloadSizeHuman,
     RequestId,
@@ -95,9 +97,11 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
             category: TagCategory::ResponseHeader,
             data: Some(value.to_string()),
         }),
-        ":" => Some(Tag {
-            category: TagCategory::Context,
-            data: Some(value.to_string()),
+        // Resolved here, once; an unknown name printed nothing before and
+        // still does.
+        ":" => value.parse::<CtxLogField>().ok().map(|field| Tag {
+            category: TagCategory::Context(field),
+            data: None,
         }),
         "$" => {
             if key.as_bytes() == HOST_NAME_TAG {
@@ -552,12 +556,8 @@ impl Parser {
                         buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
-                TagCategory::Context => {
-                    if let Some(key) = &tag.data {
-                        ctx.append_log_value(&mut buf, key.as_str());
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::Context(field) => {
+                    ctx.append_log_field(&mut buf, field);
                 },
             };
         }

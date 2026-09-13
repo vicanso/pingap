@@ -77,7 +77,7 @@ fn bench_path_rewrite(c: &mut Criterion) {
         b.iter(|| {
             let mut req_header =
                 RequestHeader::build("GET", b"/users/v1/me?a=1", None).unwrap();
-            let _ = lo.rewrite(&mut req_header, None);
+            let _ = lo.rewrite(&mut req_header, &mut None);
             assert_eq!(req_header.uri, "/v1/me?a=1");
         });
     });

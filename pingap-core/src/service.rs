@@ -17,10 +17,10 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-use tokio::time::interval;
-use tracing::{error, info};
+use tokio::time::{MissedTickBehavior, interval};
+use tracing::{debug, error, info, warn};
 
 fn duration_to_string(duration: Duration) -> String {
     let secs = duration.as_secs_f64();
@@ -97,8 +97,8 @@ impl BackgroundTaskService {
     pub fn add_task(&mut self, task_name: &str, task: Box<dyn BackgroundTask>) {
         self.tasks.push((task_name.to_string(), task));
     }
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -119,6 +119,9 @@ impl BackgroundService for BackgroundTaskService {
             tokio::time::sleep(initial_delay).await;
         }
         let mut period = interval(self.interval);
+        // A cycle that overruns must not be followed by a burst of catch-up
+        // ticks; the next one is due one interval after it finished.
+        period.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The first tick fires immediately, which is often not desired. We skip it.
         if !self.immediately {
             period.tick().await;
@@ -138,15 +141,43 @@ impl BackgroundService for BackgroundTaskService {
                     let cycle_start = Instant::now();
                     let count = self.count.fetch_add(1, Ordering::Relaxed);
 
+                    // Every task flags itself done, so a cycle that overruns
+                    // can name the ones still going.
+                    let done: Vec<AtomicBool> =
+                        self.tasks.iter().map(|_| AtomicBool::new(false)).collect();
                     // Create a collection of futures to run all tasks concurrently.
-                    let futures = self.tasks.iter().map(|(task_name, task)| async move {
+                    let futures = self.tasks.iter().zip(done.iter()).map(|((task_name, task), flag)| async move {
                         let task_start = Instant::now();
                         let result = task.execute(count).await;
+                        flag.store(true, Ordering::Relaxed);
                         (task_name, result, task_start.elapsed())
                     });
 
-                    // Await all tasks to complete in parallel.
-                    let results = join_all(futures).await;
+                    // Await all tasks to complete in parallel. Nothing is
+                    // cancelled: a task is not stopped halfway through its
+                    // work, it is only reported.
+                    let mut all = std::pin::pin!(join_all(futures));
+                    let results = loop {
+                        tokio::select! {
+                            results = &mut all => break results,
+                            _ = tokio::time::sleep(self.interval) => {
+                                let running: Vec<&str> = self
+                                    .tasks
+                                    .iter()
+                                    .zip(done.iter())
+                                    .filter(|(_, flag)| !flag.load(Ordering::Relaxed))
+                                    .map(|((task_name, _), _)| task_name.as_str())
+                                    .collect();
+                                warn!(
+                                    target: LOG_TARGET,
+                                    name = self.name,
+                                    tasks = running.join(", "),
+                                    elapsed = duration_to_string(cycle_start.elapsed()),
+                                    "background tasks still running past the interval"
+                                );
+                            }
+                        }
+                    };
 
                     let mut success_tasks = Vec::new();
                     let mut failed_tasks = Vec::new();
@@ -156,7 +187,7 @@ impl BackgroundService for BackgroundTaskService {
                         match result {
                             Ok(true) => {
                                 success_tasks.push(task_name.as_str());
-                                info!(
+                                debug!(
                                     target: LOG_TARGET,
                                     name = self.name,
                                     task = task_name,
@@ -180,8 +211,10 @@ impl BackgroundService for BackgroundTaskService {
                         }
                     }
 
+                    // A routine cycle is debug noise; failures were logged
+                    // above at error level.
                     if !success_tasks.is_empty() || !failed_tasks.is_empty() {
-                         info!(
+                         debug!(
                             target: LOG_TARGET,
                             name = self.name,
                             cycle = count,

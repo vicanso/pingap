@@ -39,7 +39,7 @@ renamed in step 5 sees the result of everything before it.
 | `$remote_port` | Client port |
 | `$upstream_addr` | Selected upstream address |
 | `$proxy_add_x_forwarded_for` | Existing `X-Forwarded-For` plus the client address |
-| `$http_<name>` | Value of request header `<name>` |
+| `$http_<name>` | Value of request header `<name>`; underscores stand for dashes, so `$http_user_agent` reads `User-Agent` |
 | `$<NAME>` | Environment variable `NAME` |
 | `:<key>` | A value from the request context |
 

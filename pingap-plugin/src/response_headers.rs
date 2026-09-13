@@ -18,7 +18,7 @@ use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::ModifiedMode;
 use pingap_core::{
     Ctx, HttpHeader, Plugin, ResponsePluginResult, convert_header,
-    convert_header_value,
+    convert_header_value, resolve_static_header_value,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -106,8 +106,8 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
             })?;
-            if let Some(item) = header {
-                add_headers.push(item);
+            if let Some((name, value)) = header {
+                add_headers.push((name, resolve_static_header_value(value)));
             }
         }
 
@@ -117,8 +117,8 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
             })?;
-            if let Some(item) = header {
-                set_headers.push(item);
+            if let Some((name, value)) = header {
+                set_headers.push((name, resolve_static_header_value(value)));
             }
         }
         let mut remove_headers = vec![];
@@ -154,8 +154,9 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: e.to_string(),
             })?;
-            if let Some(item) = header {
-                set_headers_not_exists.push(item);
+            if let Some((name, value)) = header {
+                set_headers_not_exists
+                    .push((name, resolve_static_header_value(value)));
             }
         }
 

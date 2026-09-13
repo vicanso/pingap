@@ -204,7 +204,7 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
         b.iter(|| {
             let mut req_header =
                 RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
-            let _ = lo.rewrite(&mut req_header, None);
+            let _ = lo.rewrite(&mut req_header, &mut None);
         })
     });
 }
@@ -324,7 +324,7 @@ fn bench_logger_format(c: &mut Criterion) {
                 tls_version: Some("tls1.2".into()),
                 ..Default::default()
             },
-            features: Some(Features{
+            features: Some(Box::new(Features {
                 compression_stat: Some(CompressionStat {
                     in_bytes: 50 * 1024,
                     out_bytes: 12 * 1024,
@@ -332,7 +332,7 @@ fn bench_logger_format(c: &mut Criterion) {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         b.iter(|| {

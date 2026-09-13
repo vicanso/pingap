@@ -4112,6 +4112,7 @@ version = "0.14.2"
 dependencies = [
  "TinyUFO",
  "ahash",
+ "arc-swap",
  "async-trait",
  "bytes",
  "criterion",
@@ -4209,6 +4210,7 @@ name = "pingap-location"
 version = "0.14.2"
 dependencies = [
  "ahash",
+ "arc-swap",
  "bytesize",
  "criterion",
  "http",

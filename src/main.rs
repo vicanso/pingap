@@ -1070,27 +1070,23 @@ fn run() -> Result<(), Box<dyn Error>> {
                 auto_restart_check_interval,
                 only_hot_reload,
             );
-            my_server.add_service(background_service(
-                &auto_restart_task.name(),
-                auto_restart_task,
-            ));
+            let name = auto_restart_task.name().to_string();
+            my_server.add_service(background_service(&name, auto_restart_task));
         }
     }
 
-    my_server.add_service(background_service(
-        &simple_background_service.name(),
-        simple_background_service,
-    ));
+    let name = simple_background_service.name().to_string();
+
+    my_server.add_service(background_service(&name, simple_background_service));
 
     let upstream_health_check_task = new_upstream_health_check_task(
         new_upstream_provider(),
         Duration::from_secs(10),
         webhook::get_webhook_sender(),
     );
-    my_server.add_service(background_service(
-        &upstream_health_check_task.name(),
-        upstream_health_check_task,
-    ));
+    let name = upstream_health_check_task.name().to_string();
+    my_server
+        .add_service(background_service(&name, upstream_health_check_task));
 
     my_server.add_service(background_service(
         "webhook_flush",

@@ -33,13 +33,13 @@ use pingap_core::BackgroundTask;
 use pingap_core::HttpResponse;
 use pingap_core::LocationInstance;
 use pingap_core::PluginProvider;
+use pingap_core::new_internal_error;
 use pingap_core::{
     CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponseBodyPluginResult, ResponsePluginResult, get_cache_key,
 };
 use pingap_core::{HTTP_HEADER_NAME_X_REQUEST_ID, get_digest_detail};
-use pingap_core::{NamedPlugin, new_internal_error};
-use pingap_location::{Location, LocationProvider};
+use pingap_location::LocationProvider;
 use pingap_logger::{Parser, parse_access_log_directive};
 #[cfg(feature = "tracing")]
 use pingap_otel::{KeyValue, trace::Span};
@@ -719,7 +719,7 @@ impl Server {
         }
 
         // initialize plugins and execute
-        ctx.plugins = self.get_context_plugins(location.clone());
+        ctx.plugins = location.plugins_for(self.plugin_provider.as_ref());
         let _ = self
             .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
             .await?;
@@ -814,16 +814,15 @@ impl Server {
             "location is matched"
         );
 
-        let variables = if let Some(features) = &mut ctx.features {
-            features.variables.take()
-        } else {
-            None
-        };
-
-        let (_, capture_variables) =
-            location.rewrite(session.req_header_mut(), variables);
-        if let Some(capture_variables) = capture_variables {
-            ctx.extend_variables(capture_variables);
+        // Taken out so the rewrite can read and extend them without
+        // borrowing `ctx`, then put back with any captures added.
+        let mut variables = ctx
+            .features
+            .as_mut()
+            .and_then(|features| features.variables.take());
+        location.rewrite(session.req_header_mut(), &mut variables);
+        if let Some(variables) = variables {
+            ctx.extend_variables(variables);
         }
 
         if self
@@ -840,26 +839,6 @@ impl Server {
 const MODULE_GRPC_WEB: &str = "grpc-web";
 
 impl Server {
-    #[inline]
-    fn get_context_plugins(
-        &self,
-        location: Arc<Location>,
-    ) -> Option<Vec<NamedPlugin>> {
-        let plugins = location.plugins.as_ref()?;
-
-        let location_plugins: Vec<_> = plugins
-            .iter()
-            .filter_map(|name| {
-                self.plugin_provider
-                    .get(name)
-                    .map(|plugin| (name.clone(), plugin))
-            })
-            .collect();
-
-        // use then_some to handle empty collection
-        (!location_plugins.is_empty()).then_some(location_plugins)
-    }
-
     /// Executes request plugins in the configured chain
     /// Returns true if a plugin handled the request completely
     #[inline]
@@ -1845,6 +1824,7 @@ mod tests {
     use pingap_certificate::{DynamicCertificates, TlsCertificate};
     use pingap_config::{PingapConfig, new_file_config_manager};
     use pingap_core::{CacheInfo, Ctx, Plugin, UpstreamInfo};
+    use pingap_location::Location;
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
@@ -2257,7 +2237,7 @@ value = 'proxy_set_headers = ["name:value"]'
 
         let location = server.location_provider.get("lo").unwrap();
         let mut ctx = Ctx {
-            plugins: server.get_context_plugins(location),
+            plugins: location.plugins_for(server.plugin_provider.as_ref()),
             ..Default::default()
         };
         let mut body = Some(bytes::Bytes::from_static(b"hello"));
@@ -2352,11 +2332,11 @@ value = 'proxy_set_headers = ["name:value"]'
             .cache_key_callback(
                 &session,
                 &mut Ctx {
-                    cache: Some(CacheInfo {
+                    cache: Some(Box::new(CacheInfo {
                         namespace: Some("pingap".to_string()),
                         keys: Some(vec!["ss".to_string()]),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             )
@@ -2396,10 +2376,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache: Some(CacheInfo {
+                    cache: Some(Box::new(CacheInfo {
                         keys: Some(vec!["ss".to_string()]),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             )
@@ -2416,10 +2396,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache: Some(CacheInfo {
+                    cache: Some(Box::new(CacheInfo {
                         keys: Some(vec!["ss".to_string()]),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             )
@@ -2436,10 +2416,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache: Some(CacheInfo {
+                    cache: Some(Box::new(CacheInfo {
                         keys: Some(vec!["ss".to_string()]),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             )
@@ -2456,10 +2436,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache: Some(CacheInfo {
+                    cache: Some(Box::new(CacheInfo {
                         keys: Some(vec!["ss".to_string()]),
                         ..Default::default()
-                    }),
+                    })),
                     ..Default::default()
                 },
             )
@@ -2486,7 +2466,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache: Some(CacheInfo::default()),
+                    cache: Some(Box::default()),
                     ..Default::default()
                 },
             )

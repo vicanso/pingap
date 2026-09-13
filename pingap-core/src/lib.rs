@@ -20,7 +20,7 @@ static LOG_TARGET: &str = "pingap::core";
 pub enum Error {
     #[snafu(display("invalid error, {message}"))]
     Invalid { message: String },
-    #[snafu(display("plugin {category} not found"))]
+    #[snafu(display("{category} not found"))]
     NotFound { category: String },
 }
 
@@ -57,37 +57,24 @@ pub use tinyufo::TinyUfo;
 pub use ttl_lru_limit::*;
 pub use util::*;
 
-#[allow(dead_code)]
+/// Builds an HTTP/1 session that has read `GET <url>` with `headers`, for
+/// tests that need a real `Session` without a socket.
 #[cfg(test)]
-fn new_get_session(
-    headers: Vec<String>,
-    url: String,
-) -> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(0);
-    std::thread::spawn(move || {
-        match tokio::runtime::Runtime::new() {
-            Ok(rt) => {
-                let send = async move {
-                    let headers = headers.join("\r\n");
-                    let input_header =
-                        format!("GET {url} HTTP/1.1\r\n{headers}\r\n\r\n");
-                    let mock_io = tokio_test::io::Builder::new()
-                        .read(input_header.as_bytes())
-                        .build();
-
-                    let mut session =
-                        pingora::proxy::Session::new_h1(Box::new(mock_io));
-                    session.read_request().await.unwrap();
-                    let _ = tx.send(Some(session));
-                };
-                rt.block_on(send);
-            },
-            Err(_e) => {
-                let _ = tx.send(None);
-            },
-        };
-    });
-    rx
+pub(crate) async fn new_test_session(
+    headers: &[&str],
+    url: &str,
+) -> pingora::proxy::Session {
+    let headers = headers.join("\r\n");
+    let input_header = format!("GET {url} HTTP/1.1\r\n{headers}\r\n\r\n");
+    let mock_io = tokio_test::io::Builder::new()
+        .read(input_header.as_bytes())
+        .build();
+    let mut session = pingora::proxy::Session::new_h1(Box::new(mock_io));
+    session
+        .read_request()
+        .await
+        .expect("the test request must parse");
+    session
 }
 
 #[cfg(test)]
@@ -103,21 +90,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_new_get_session() {
-        let session = new_get_session(
-            vec![
-                "Host: github.com".to_string(),
-                "user-agent: pingap/0.1.1".to_string(),
-            ],
-            "/".to_string(),
+    #[tokio::test]
+    async fn test_new_test_session() {
+        let session = new_test_session(
+            &["Host: github.com", "user-agent: pingap/0.1.1"],
+            "/",
         )
-        .recv()
-        .unwrap()
-        .unwrap();
+        .await;
         assert_eq!(
             b"pingap/0.1.1",
             session.get_header("user-agent").unwrap().as_bytes()
         );
+        assert_eq!("/", session.req_header().uri.path());
     }
 }

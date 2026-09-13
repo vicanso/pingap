@@ -14,13 +14,14 @@
 
 use super::regex::RegexCapture;
 use ahash::AHashMap;
+use arc_swap::ArcSwapOption;
 use http::HeaderName;
 use http::HeaderValue;
 use pingap_config::Hashable;
 use pingap_config::LocationConf;
-use pingap_core::LocationInstance;
 use pingap_core::new_internal_error;
-use pingap_core::{HttpHeader, convert_headers};
+use pingap_core::{HttpHeader, convert_headers, resolve_static_header_value};
+use pingap_core::{LocationInstance, NamedPlugin, PluginProvider};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
@@ -260,6 +261,24 @@ fn condition_met(actual: Option<&str>, expected: &Option<String>) -> bool {
     }
 }
 
+/// The plugin instances a location's names resolved to, stamped with the
+/// provider version they came from.
+struct ResolvedPlugins {
+    version: u64,
+    plugins: Arc<[NamedPlugin]>,
+}
+
+impl std::fmt::Debug for ResolvedPlugins {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<&str> =
+            self.plugins.iter().map(|(name, _)| name.as_ref()).collect();
+        f.debug_struct("ResolvedPlugins")
+            .field("version", &self.version)
+            .field("plugins", &names)
+            .finish()
+    }
+}
+
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies
 /// how these requests should be processed and proxied.
@@ -311,6 +330,11 @@ pub struct Location {
 
     /// Ordered list of plugin names to execute during request/response processing
     pub plugins: Option<Vec<Arc<str>>>,
+
+    /// `plugins` resolved to instances, kept until the plugin provider
+    /// reports a new version. Requests share the list instead of looking
+    /// every name up again.
+    resolved_plugins: ArcSwapOption<ResolvedPlugins>,
 
     /// Total number of requests accepted by this location
     /// Used for metrics and monitoring
@@ -434,18 +458,21 @@ impl Location {
                 headers.push((name.clone(), value.clone(), false));
             }
         }
+        // `$hostname` and `$ENV_VAR` values are fixed for the life of the
+        // process: resolve them here so the request path only sees the
+        // variables that really change per request.
         if let Some(proxy_set_headers) =
             format_headers(&conf.proxy_set_headers)?
         {
-            for (name, value) in proxy_set_headers.iter() {
-                headers.push((name.clone(), value.clone(), false));
+            for (name, value) in proxy_set_headers {
+                headers.push((name, resolve_static_header_value(value), false));
             }
         }
         if let Some(proxy_add_headers) =
             format_headers(&conf.proxy_add_headers)?
         {
-            for (name, value) in proxy_add_headers.iter() {
-                headers.push((name.clone(), value.clone(), true));
+            for (name, value) in proxy_add_headers {
+                headers.push((name, resolve_static_header_value(value), true));
             }
         }
 
@@ -463,6 +490,7 @@ impl Location {
             plugins: conf.plugins.as_ref().map(|list| {
                 list.iter().map(|name| Arc::from(name.as_str())).collect()
             }),
+            resolved_plugins: ArcSwapOption::const_empty(),
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
             max_processing: conf.max_processing.unwrap_or_default(),
@@ -494,6 +522,37 @@ impl Location {
     }
 
     /// Returns whether gRPC-Web protocol support is enabled for this location
+    /// The location's plugins, resolved through `provider`. The list is
+    /// built on the first request after the location or the plugins were
+    /// loaded and shared by every request after that, so the per-request
+    /// cost is one atomic load and one reference count. `None` when the
+    /// location names no plugins or none of them exist.
+    #[inline]
+    pub fn plugins_for(
+        &self,
+        provider: &dyn PluginProvider,
+    ) -> Option<Arc<[NamedPlugin]>> {
+        let names = self.plugins.as_ref()?;
+        let version = provider.version();
+        if let Some(resolved) = self.resolved_plugins.load().as_ref()
+            && resolved.version == version
+        {
+            return (!resolved.plugins.is_empty())
+                .then(|| resolved.plugins.clone());
+        }
+        let plugins: Arc<[NamedPlugin]> = names
+            .iter()
+            .filter_map(|name| {
+                provider.get(name).map(|plugin| (name.clone(), plugin))
+            })
+            .collect();
+        self.resolved_plugins.store(Some(Arc::new(ResolvedPlugins {
+            version,
+            plugins: plugins.clone(),
+        })));
+        (!plugins.is_empty()).then_some(plugins)
+    }
+
     /// When enabled, the proxy will handle gRPC-Web requests and convert them to regular gRPC
     #[inline]
     pub fn support_grpc_web(&self) -> bool {
@@ -696,16 +755,16 @@ impl LocationInstance for Location {
     fn rewrite(
         &self,
         header: &mut RequestHeader,
-        mut variables: Option<AHashMap<String, String>>,
-    ) -> (bool, Option<AHashMap<String, String>>) {
+        variables: &mut Option<AHashMap<String, String>>,
+    ) -> bool {
         let Some(rewrite) = &self.reg_rewrite else {
-            return (false, variables);
+            return false;
         };
         let re = &rewrite.re;
 
         let mut replace_value = rewrite.value.to_string();
 
-        if let Some(vars) = &variables {
+        if let Some(vars) = variables.as_ref() {
             for (k, v) in vars.iter() {
                 replace_value = replace_value.replace(k, v);
             }
@@ -720,7 +779,7 @@ impl LocationInstance for Location {
         };
 
         if path == new_path {
-            return (false, variables);
+            return false;
         }
 
         // Only run the regex a second time to harvest named captures when the
@@ -752,7 +811,7 @@ impl LocationInstance for Location {
             error!(category = LOG_CATEGORY, error = %e, location = self.name.as_ref(), "new path parse fail");
         }
 
-        (true, variables)
+        true
     }
 }
 
@@ -929,17 +988,85 @@ mod tests {
         .unwrap();
         let mut req_header =
             RequestHeader::build("GET", b"/users/rest/me?abc=1", None).unwrap();
-        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        let mut variables = None;
+        let matched = lo.rewrite(&mut req_header, &mut variables);
         assert_eq!(true, matched);
         assert_eq!(r#"Some({"upstream": "rest"})"#, format!("{:?}", variables));
         assert_eq!("/me?abc=1", req_header.uri.to_string());
 
         let mut req_header =
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
-        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        let mut variables = None;
+        let matched = lo.rewrite(&mut req_header, &mut variables);
         assert_eq!(false, matched);
         assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
+    }
+
+    /// The resolved plugin list is shared until the provider reports a new
+    /// version, then rebuilt.
+    #[test]
+    fn test_plugins_for_follows_provider_version() {
+        use pingap_core::Plugin;
+        use std::sync::atomic::AtomicBool;
+
+        struct NoopPlugin;
+        impl Plugin for NoopPlugin {}
+
+        struct Provider {
+            version: AtomicU64,
+            present: AtomicBool,
+        }
+        impl PluginProvider for Provider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                self.present
+                    .load(Ordering::Relaxed)
+                    .then(|| Arc::new(NoopPlugin) as Arc<dyn Plugin>)
+            }
+            fn version(&self) -> u64 {
+                self.version.load(Ordering::Relaxed)
+            }
+        }
+
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("up".to_string()),
+                plugins: Some(vec!["a".to_string(), "b".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let provider = Provider {
+            version: AtomicU64::new(1),
+            present: AtomicBool::new(true),
+        };
+        let first = lo.plugins_for(&provider).expect("resolved");
+        assert_eq!(2, first.len());
+        assert_eq!("a", first[0].0.as_ref());
+
+        // Same version: the very same list is handed out again.
+        let again = lo.plugins_for(&provider).expect("cached");
+        assert_eq!(true, Arc::ptr_eq(&first, &again));
+
+        // The provider changed without saying so: the cache is trusted.
+        provider.present.store(false, Ordering::Relaxed);
+        assert_eq!(true, lo.plugins_for(&provider).is_some());
+
+        // A new version rebuilds the list, and nothing resolves now.
+        provider.version.store(2, Ordering::Relaxed);
+        assert_eq!(true, lo.plugins_for(&provider).is_none());
+
+        // No plugin names at all: nothing to resolve, nothing cached.
+        let bare = Location::new(
+            "bare",
+            &LocationConf {
+                upstream: Some("up".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(true, bare.plugins_for(&provider).is_none());
     }
 
     #[test]
@@ -955,7 +1082,8 @@ mod tests {
         .unwrap();
         let mut req_header =
             RequestHeader::build("GET", b"/old/thing?x=1", None).unwrap();
-        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        let mut variables = None;
+        let matched = lo.rewrite(&mut req_header, &mut variables);
         assert_eq!(true, matched);
         // No named groups -> the second regex pass is skipped, no variables.
         assert_eq!(None, variables);

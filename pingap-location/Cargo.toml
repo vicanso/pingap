@@ -13,6 +13,7 @@ name = "pingap_location"
 path = "src/lib.rs"
 
 [dependencies]
+arc-swap = { workspace = true }
 ahash = { workspace = true }
 http = { workspace = true }
 pingap-config = { workspace = true }

@@ -709,8 +709,8 @@ impl ModifyResponseBody for Sign {
         *body = Some(Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token)));
         Ok(())
     }
-    fn name(&self) -> String {
-        "jwt_sign".to_string()
+    fn name(&self) -> &str {
+        "jwt_sign"
     }
 }
 

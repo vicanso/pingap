@@ -21,12 +21,12 @@ Pingap Core 是 Pingap 项目的基础库，提供一组核心组件与工具，
 
 ## 模块
 
-- `ctx`：请求生命周期状态管理的核心 `Ctx`。
-- `http_header`：HTTP 请求头解析与操作辅助。
+- `ctx`：请求生命周期状态管理的核心 `Ctx`。 `CtxLogField` 枚举了访问日志可打印的上下文值；日志格式解析时把名字解析一次，每个请求只调用 `Ctx::append_log_field`。
+- `http_header`：HTTP 请求头解析与操作辅助。 `resolve_static_header_value` 在加载配置时就把 `$hostname`、`$ENV_VAR` 折算成固定值；`$http_user_agent` 读取的是 `User-Agent`（下划线代表横线）；`get_host` 会完整保留 IPv6 字面量。
 - `http_response`：创建 HTTP 响应的构建器与结构体。
 - `plugin`：定义 `Plugin` trait 与 `PluginStep` 枚举。
-- `service`：运行后台任务的 `BackgroundTaskService`。
-- `ttl_lru_limit`：基于 TTL 的 LRU 限流器。
+- `service`：运行后台任务的 `BackgroundTaskService`。 常规周期只记 debug 日志；一个周期超过间隔仍未结束时，会带着未完成任务的名字打 warn。
+- `ttl_lru_limit`：基于 TTL 的 LRU 限流器。 计数器是原子的，同一键的并发递增不会丢失。
 - `notification`：发送通知的 trait。
 - `util`：杂项工具，含时间缓存与主机名获取。
 

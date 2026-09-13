@@ -36,6 +36,7 @@ pub enum PluginStep {
 
 /// A more expressive return type for `handle_request`.
 /// It clearly states the plugin's decision.
+#[derive(Debug)]
 pub enum RequestPluginResult {
     /// The plugin did not run or took no action.
     Skipped,
@@ -242,6 +243,14 @@ pub trait PluginProvider: Send + Sync {
     /// # Returns
     /// * `Option<Arc<dyn Plugin>>` - The plugin if found, None otherwise
     fn get(&self, name: &str) -> Option<Arc<dyn Plugin>>;
+
+    /// A number that changes whenever `get` could start returning different
+    /// plugins - after a plugin reload. Locations cache the plugins they
+    /// resolved through `get` and rebuild the list when this moves, so a
+    /// provider whose plugins can change must implement it.
+    fn version(&self) -> u64 {
+        0
+    }
 }
 
 pub type Plugins = AHashMap<String, Arc<dyn Plugin>>;

@@ -90,7 +90,7 @@ fn bench_logger_format(c: &mut Criterion) {
                 tls_version: Some("tls1.2".into()),
                 ..Default::default()
             },
-            features: Some(Features{
+            features: Some(Box::new(Features {
                 compression_stat: Some(CompressionStat {
                     in_bytes: 50 * 1024,
                     out_bytes: 12 * 1024,
@@ -98,7 +98,7 @@ fn bench_logger_format(c: &mut Criterion) {
                     ..Default::default()
                 }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         };
         b.iter(|| {

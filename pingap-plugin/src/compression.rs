@@ -85,8 +85,8 @@ impl ModifyResponseBody for Compressor {
         *body = Some(data);
         Ok(())
     }
-    fn name(&self) -> String {
-        "compression".to_string()
+    fn name(&self) -> &str {
+        "compression"
     }
 }
 

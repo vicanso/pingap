@@ -95,6 +95,8 @@ This is why `now_sec()`/`now_ms()` read the system clock directly (`SystemTime::
 
 `PluginStep` is matched to the pingora callback by `pingap-proxy/src/server.rs`. Plugins return `RequestPluginResult` (`Skipped` / `Continue` / `Respond(HttpResponse)`) or `ResponsePluginResult`. Respect the configured `step` value — running a request plugin at `Response` is silently a no-op.
 
+A location resolves its plugin names once and caches the `Arc<[NamedPlugin]>` (`Location::plugins_for`), keyed on `PluginProvider::version()`; a request only bumps the reference count. Any `PluginProvider` whose plugins can change must return a new version after every replacement (the binary's provider bumps it in `store`), or locations keep serving the old instances.
+
 ### Config formats
 
 The same configuration can be expressed in TOML (canonical, see `conf/*.toml`), HCL (`conf/test.hcl`), or KDL (`conf/test.kdl`). `--to-hcl` and `--to-kdl` round-trip the loaded config. The `--sync <url>` flag pushes the loaded config to a different backend (e.g. file -> etcd). `--template` prints a starter TOML and exits.

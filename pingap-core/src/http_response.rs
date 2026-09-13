@@ -264,8 +264,11 @@ impl HttpResponse {
 
     /// Builds a `pingora::http::ResponseHeader` from the `HttpResponse`'s properties.
     pub fn new_response_header(&self) -> pingora::Result<ResponseHeader> {
-        // Build the response header with the status code.
-        let mut resp = ResponseHeader::build(self.status, None)?;
+        // Build the response header with the status code, sized for the
+        // headers added below: Content-Length, Cache-Control, Age, plus
+        // the custom ones.
+        let custom = self.headers.as_ref().map_or(0, |headers| headers.len());
+        let mut resp = ResponseHeader::build(self.status, Some(3 + custom))?;
 
         // A local helper closure to simplify adding headers and handling potential errors.
         let mut add_header =
@@ -376,6 +379,29 @@ where
         Ok(resp)
     }
 
+    /// Reads the next chunk of the body. `None` only at the end of the
+    /// stream: a read that comes back short is a chunk like any other, not a
+    /// sign that the reader is done - `AsyncRead` never promised to fill the
+    /// buffer.
+    ///
+    /// The chunk is split off `buffer` rather than copied out of it; once
+    /// the session has written it and dropped it, `reserve` gets the
+    /// allocation back for the next read.
+    async fn next_chunk(
+        &mut self,
+        buffer: &mut BytesMut,
+    ) -> pingora::Result<Option<Bytes>> {
+        buffer.reserve(self.chunk_size.max(512));
+        let size = self.reader.read_buf(buffer).await.map_err(|e| {
+            error!(error = e.to_string(), "read data fail");
+            new_internal_error(400, e)
+        })?;
+        if size == 0 {
+            return Ok(None);
+        }
+        Ok(Some(buffer.split().freeze()))
+    }
+
     /// Streams the data from the reader to the client as a chunked response.
     ///
     /// Reads data from the `reader` in chunks and sends each chunk to the client until
@@ -391,31 +417,16 @@ where
             .await?;
 
         let mut sent = 0;
-        // Ensure the chunk size is not too small.
-        let chunk_size = self.chunk_size.max(512);
-        // Create a reusable buffer for reading data into.
-        let mut buffer = vec![0; chunk_size];
-        loop {
-            // Read a chunk of data from the source reader.
-            let size = self.reader.read(&mut buffer).await.map_err(|e| {
-                error!(error = e.to_string(), "read data fail");
-                new_internal_error(400, e)
-            })?;
-            // Determine if this is the final chunk.
-            let end = size < chunk_size;
-            // Write the chunk to the response body.
+        let mut buffer = BytesMut::with_capacity(self.chunk_size.max(512));
+        // One chunk of lookahead, so the last one goes out flagged as the end
+        // of the stream.
+        let mut pending = self.next_chunk(&mut buffer).await?;
+        while let Some(chunk) = pending {
+            sent += chunk.len();
+            pending = self.next_chunk(&mut buffer).await?;
             session
-                .write_response_body(
-                    // `copy_from_slice` is necessary because `write_response_body` takes an `Option<Bytes>`.
-                    Some(Bytes::copy_from_slice(&buffer[..size])),
-                    end,
-                )
+                .write_response_body(Some(chunk), pending.is_none())
                 .await?;
-            sent += size;
-            // If it was the last chunk, exit the loop.
-            if end {
-                break;
-            }
         }
         // Finalize the response stream.
         session.finish_body().await?;
@@ -558,6 +569,28 @@ mod tests {
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"contont-type": "text/html", "transfer-encoding": "chunked", "cache-control": "public, max-age=3600"} }, header_name_map: Some({"contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding"), "cache-control": CaseHeaderName(b"Cache-Control")}), reason_phrase: None }"###,
             format!("{header:?}")
         );
+    }
+
+    #[tokio::test]
+    async fn test_http_chunk_response_short_reads() {
+        // A reader that hands out less than a chunk at a time. Only an empty
+        // read ends the body; a short one used to, truncating the file.
+        let mut reader = tokio_test::io::Builder::new()
+            .read(b"abc")
+            .read(b"defgh")
+            .build();
+        let mut resp = HttpChunkResponse::new(&mut reader);
+        resp.chunk_size = 1024;
+        let mut buffer = BytesMut::new();
+        assert_eq!(
+            Some(Bytes::from_static(b"abc")),
+            resp.next_chunk(&mut buffer).await.unwrap()
+        );
+        assert_eq!(
+            Some(Bytes::from_static(b"defgh")),
+            resp.next_chunk(&mut buffer).await.unwrap()
+        );
+        assert_eq!(None, resp.next_chunk(&mut buffer).await.unwrap());
     }
 
     #[test]
