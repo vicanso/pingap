@@ -4473,8 +4473,10 @@ dependencies = [
  "async-trait",
  "local-ip-address",
  "pingap-core",
+ "pretty_assertions",
  "reqwest 0.13.5",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 

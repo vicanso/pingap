@@ -203,6 +203,8 @@ interface Basic {
   webhook_type?: string;
   webhook_notifications?: string[];
   trusted_proxies?: string[];
+  webhook_batch_window?: string;
+  webhook_batch_max_events?: number;
 }
 
 interface Config {

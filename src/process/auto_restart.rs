@@ -55,7 +55,8 @@ static LOG_TARGET: &str = "main::auto_restart";
 ///    - Location definitions
 ///    - Plugin configurations
 ///    - Certificates (except ACME/Let's Encrypt)
-///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`)
+///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`,
+///      `webhook_batch_window`, `webhook_batch_max_events`)
 /// 4. Sends notifications for successful updates
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart

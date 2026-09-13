@@ -271,6 +271,14 @@ export default {
     webhookNotificationsPlaceholder: "选择webhook通知类型",
     webhook: "Webhook通知的Http链接",
     webhookPlaceholder: "输入webhook通知的http链接",
+    webhookBatchWindow: "Webhook合并窗口",
+    webhookBatchWindowPlaceholder: "输入合并窗口(如10s)",
+    webhookBatchWindowTips:
+      "间隔不超过该时长的通知合并为一条发送，每来一条重新计时。默认 10s，0s 表示逐条发送。",
+    webhookBatchMaxEvents: "Webhook单次合并上限",
+    webhookBatchMaxEventsPlaceholder: "输入每条消息最多合并的通知数(如5)",
+    webhookBatchMaxEventsTips:
+      "一批凑满该数量立即发出。默认 5，1 表示逐条发送。",
     sentry: "Sentry的连接串",
     sentryPlaceholder: "输入sentry的连接串",
     pyroscope: "Pyroscope的连接串",

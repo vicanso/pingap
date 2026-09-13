@@ -365,6 +365,26 @@ export default function Basic() {
       section: sec.notify,
       category: ExFormItemCategory.TEXT,
     },
+    {
+      name: "webhook_batch_window",
+      label: basicI18n("webhookBatchWindow"),
+      placeholder: basicI18n("webhookBatchWindowPlaceholder"),
+      tips: basicI18n("webhookBatchWindowTips"),
+      defaultValue: basic.webhook_batch_window,
+      span: 3,
+      section: sec.notify,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "webhook_batch_max_events",
+      label: basicI18n("webhookBatchMaxEvents"),
+      placeholder: basicI18n("webhookBatchMaxEventsPlaceholder"),
+      tips: basicI18n("webhookBatchMaxEventsTips"),
+      defaultValue: basic.webhook_batch_max_events,
+      span: 3,
+      section: sec.notify,
+      category: ExFormItemCategory.NUMBER,
+    },
   ];
 
   if (basicInfo.features.includes("tracing")) {
@@ -425,6 +445,7 @@ export default function Basic() {
     graceful_shutdown_timeout: newZodDuration().optional(),
     auto_restart_check_interval: newZodDuration().optional(),
     restart_ready_timeout: newZodDuration().optional(),
+    webhook_batch_window: newZodDuration().optional(),
     cache_max_size: newZodBytes().optional(),
   });
 

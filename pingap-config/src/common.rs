@@ -1156,6 +1156,15 @@ pub struct BasicConf {
     pub webhook_type: Option<String>,
     /// List of events to send webhook notifications for
     pub webhook_notifications: Option<Vec<String>>,
+    /// Notifications no more than this far apart are merged into one webhook
+    /// post; each one extends the wait (default: 10s, 0s posts every
+    /// notification on its own)
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub webhook_batch_window: Option<Duration>,
+    /// A batch is posted as soon as it holds this many notifications
+    /// (default: 5, 1 posts every notification on its own)
+    pub webhook_batch_max_events: Option<usize>,
     /// Log level (debug, info, warn, error)
     pub log_level: Option<String>,
     /// Size of log buffer before flushing

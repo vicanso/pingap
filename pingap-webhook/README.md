@@ -31,6 +31,8 @@ webhook_notifications = [
 | `webhook` | Destination URL. Empty disables notifications. |
 | `webhook_type` | `wecom`, `dingtalk`, or anything else for a generic JSON POST. |
 | `webhook_notifications` | Categories to deliver. **A category not listed here is dropped.** |
+| `webhook_batch_window` | Notifications no more than this far apart are merged into one post (default `10s`, `0s` disables merging). |
+| `webhook_batch_max_events` | Notifications per post at most (default `5`, `1` disables merging). |
 
 ## Categories
 
@@ -49,6 +51,39 @@ webhook_notifications = [
 Each notification carries a category, a level (`Info`, `Warn`, `Error`), a title
 and a message. The payload also includes the hostname and the local IP list, so
 in a multi-instance deployment you can tell which node reported.
+
+## Batching
+
+Bursts are merged so a flapping upstream or a reload that touches several
+entries produces one message instead of five:
+
+- notifications no more than `webhook_batch_window` (default **10 seconds**)
+  apart go into the same post, and each one extends the wait, so a batch goes
+  out once it has been quiet for that long;
+- a batch holds at most `webhook_batch_max_events` (default **5**)
+  notifications and goes out as soon as it is full.
+
+A notification that arrives on its own is posted exactly as before, after the
+10 second wait. A merged post carries the highest level in the batch, the
+categories it contains (`backend_status,upstream_status`), the shared title or
+`N notifications` when the titles differ, and one numbered line per
+notification:
+
+```
+1. [error] backend_status: upstream api(10.0.0.1:8080) becomes unhealthy
+2. [error] backend_status: upstream api(10.0.0.2:8080) becomes unhealthy
+3. [info] reload_config: Upstream(api) is modified
+```
+
+The allow-list is applied per notification before batching, so a dropped
+category never takes up a slot. Batched posts are sent from a background task,
+so `notify` returns before delivery. A batch still collecting when pingap is
+stopped is posted on the way out: at the start of a graceful shutdown
+(SIGTERM, SIGQUIT), or right before exit on a fast one (SIGINT), the latter
+giving the post at most 5 seconds. Both settings are hot reloaded like the other `webhook*`
+keys; `webhook_batch_window = "0s"` (or `webhook_batch_max_events = 1`) posts
+every notification immediately. Embedders set the same policy with
+`WebhookNotificationSender::with_batch(window, max_events)`.
 
 ## Formats
 
@@ -79,7 +114,8 @@ let sender = WebhookNotificationSender::new(
 - `webhook`, `webhook_type` and `webhook_notifications` are hot reloaded under
   `--autoreload` / `--autorestart`: a change applies without a restart, also to
   notifications from upstreams, discovery and certificate checks that were
-  already running.
+  already running. A batch still collecting at that moment goes out with the
+  settings it was collected under.
 - Certificate expiry warnings pair with `certificates.<name>.buffer_days`, which
   controls how far ahead ACME renews; see
   [pingap-acme](../pingap-acme/README.md).

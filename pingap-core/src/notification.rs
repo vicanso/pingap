@@ -15,7 +15,9 @@
 use async_trait::async_trait;
 use std::fmt::Display;
 
-#[derive(Default)]
+/// Variants are declared from least to most severe so the derived `Ord`
+/// ranks them: a merged batch reports the highest level in it.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NotificationLevel {
     #[default]
     Info,
@@ -34,7 +36,7 @@ impl Display for NotificationLevel {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct NotificationData {
     /// The category of the notification, used for grouping or filtering notifications
     pub category: String,

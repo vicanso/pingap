@@ -85,9 +85,11 @@ The restart hand-over (`src/process/common.rs::restart_now`) is readiness-driven
 
 ### Daemonization and background threads
 
-Pingora forks inside `Server::run_forever()` for daemon mode, **after** `bootstrap()` and **before** the service runtimes start. `fork()` only carries the calling thread, so **any `std::thread` started before that point does not exist in the daemon**, and any handle to it is a handle to nothing — joining one gives `EINVAL`. Long-lived threads must be started from a pingora `BackgroundService`, which runs post-fork, not from a `#[ctor]` or from `run()`.
+Pingora forks inside `Server::run()` (what `run_forever()` wraps) for daemon mode, **after** `bootstrap()` and **before** the service runtimes start. `fork()` only carries the calling thread, so **any `std::thread` started before that point does not exist in the daemon**, and any handle to it is a handle to nothing — joining one gives `EINVAL`. Long-lived threads must be started from a pingora `BackgroundService`, which runs post-fork, not from a `#[ctor]` or from `run()`.
 
 This is why `now_sec()`/`now_ms()` read the system clock directly (`SystemTime::now()`, ~18ns) instead of caching it in a background-updated global. The coarse clock that used to back them saved ~17ns per call but needed a thread, and the only per-request caller left was `ttl_lru_limit`; the fork-safety machinery it required had already caused one real bug (admin auth reading an hours-stale timestamp in daemon mode).
+
+`main.rs` runs the server with `Server::run(RunArgs::default())` rather than `run_forever()`: `run` returns once every runtime has exited, which is where `webhook::flush_pending_before_exit()` posts the webhook batch a fast shutdown (SIGINT, no shutdown broadcast) would otherwise drop, before `process::exit(0)`. Graceful shutdowns are covered earlier by `WebhookFlushService`, which flushes when the shutdown watch flips.
 
 ### Plugin step contract
 

@@ -289,6 +289,15 @@ export default {
     webhookNotificationsPlaceholder: "Select webhook notifications",
     webhook: "Webhook Http Url",
     webhookPlaceholder: "Input the url for webhook notification",
+    webhookBatchWindow: "Webhook Batch Window",
+    webhookBatchWindowPlaceholder: "Input the batch window(e.g. 10s)",
+    webhookBatchWindowTips:
+      "Notifications no more than this far apart are merged into one post; each one extends the wait. Default 10s, 0s posts every notification on its own.",
+    webhookBatchMaxEvents: "Webhook Batch Max Events",
+    webhookBatchMaxEventsPlaceholder:
+      "Input the max notifications per post(e.g. 5)",
+    webhookBatchMaxEventsTips:
+      "A batch is posted as soon as it holds this many notifications. Default 5, 1 posts every notification on its own.",
     sentry: "Sentry Connect Url",
     sentryPlaceholder: "Input the connect url of sentry",
     pyroscope: "Pyroscope Connect Url",

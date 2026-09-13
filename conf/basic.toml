@@ -89,6 +89,14 @@
 # "service_discover_fail" (service discovery failures). Default `none`
 # webhook_notifications = ["backend_status"]
 
+# Notifications no more than this far apart are merged into one webhook post;
+# each one extends the wait. `0s` posts every notification on its own. Default `10s`
+# webhook_batch_window = "10s"
+
+# A batch is posted as soon as it holds this many notifications. `1` posts every
+# notification on its own. Default `5`
+# webhook_batch_max_events = 5
+
 # Set log level for application. 
 # Available levels: "debug", "info", "warn", "error"
 # Default `None`

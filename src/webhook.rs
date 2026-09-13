@@ -16,19 +16,47 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingap_config::BasicConf;
 use pingap_core::{Notification, NotificationData, NotificationSender};
-use pingap_webhook::WebhookNotificationSender;
+use pingap_webhook::{
+    DEFAULT_BATCH_MAX_EVENTS, DEFAULT_BATCH_WINDOW, WebhookNotificationSender,
+};
+use pingora::server::ShutdownWatch;
+use pingora::services::background::BackgroundService;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
+use tracing::{info, warn};
 
-/// The webhook in effect. Replaced as a whole when `webhook`, `webhook_type`
-/// or `webhook_notifications` change, so a hot reload applies them.
+static LOG_TARGET: &str = "main::webhook";
+
+/// How long the exit path waits for the last post; an unreachable endpoint
+/// must not hold the process up for the whole HTTP timeout.
+const EXIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The webhook in effect. Replaced as a whole when any `webhook*` setting
+/// changes, so a hot reload applies them. A batch
+/// the replaced webhook was still collecting goes out with the settings it
+/// was collected under.
 static WEBHOOK: LazyLock<ArcSwap<WebhookNotificationSender>> =
-    LazyLock::new(|| {
-        ArcSwap::from_pointee(WebhookNotificationSender::new(
-            String::new(),
-            String::new(),
-            vec![],
-        ))
-    });
+    LazyLock::new(|| ArcSwap::from_pointee(new_sender(&BasicConf::default())));
+
+fn new_sender(basic: &BasicConf) -> WebhookNotificationSender {
+    let sender = WebhookNotificationSender::new(
+        basic.webhook.clone().unwrap_or_default(),
+        basic.webhook_type.clone().unwrap_or_default(),
+        basic.webhook_notifications.clone().unwrap_or_default(),
+    )
+    .with_batch(
+        basic.webhook_batch_window.unwrap_or(DEFAULT_BATCH_WINDOW),
+        basic
+            .webhook_batch_max_events
+            .unwrap_or(DEFAULT_BATCH_MAX_EVENTS),
+    );
+    // The tests below read the endpoint right after `notify` returns; the
+    // batching they would otherwise wait on is covered by pingap-webhook's
+    // own tests.
+    #[cfg(test)]
+    let sender = sender.with_batch(std::time::Duration::ZERO, 1);
+    sender
+}
 
 /// What `get_webhook_sender` hands out. Upstreams, discovery and the
 /// certificate checkers keep that `Arc` for as long as they live, so it cannot
@@ -48,11 +76,7 @@ static CURRENT_WEBHOOK: LazyLock<Arc<NotificationSender>> =
 
 /// Puts the webhook configured in `basic` into effect.
 pub fn set_webhook_notification_sender(basic: &BasicConf) {
-    WEBHOOK.store(Arc::new(WebhookNotificationSender::new(
-        basic.webhook.clone().unwrap_or_default(),
-        basic.webhook_type.clone().unwrap_or_default(),
-        basic.webhook_notifications.clone().unwrap_or_default(),
-    )));
+    WEBHOOK.store(Arc::new(new_sender(basic)));
 }
 
 /// Brings the webhook settings in `current` up to those in `new` and puts
@@ -64,6 +88,8 @@ pub fn reload_webhook_notification_sender(
     if current.webhook == new.webhook
         && current.webhook_type == new.webhook_type
         && current.webhook_notifications == new.webhook_notifications
+        && current.webhook_batch_window == new.webhook_batch_window
+        && current.webhook_batch_max_events == new.webhook_batch_max_events
     {
         return false;
     }
@@ -72,6 +98,8 @@ pub fn reload_webhook_notification_sender(
     current
         .webhook_notifications
         .clone_from(&new.webhook_notifications);
+    current.webhook_batch_window = new.webhook_batch_window;
+    current.webhook_batch_max_events = new.webhook_batch_max_events;
     set_webhook_notification_sender(current);
     true
 }
@@ -84,6 +112,58 @@ pub fn get_webhook_sender() -> Option<Arc<NotificationSender>> {
 pub async fn send_notification(data: NotificationData) {
     // `load_full`, not `load`: a guard must not be held across the HTTP send.
     WEBHOOK.load_full().send_notification(data).await;
+}
+
+/// Posts what the webhook is still collecting, without waiting for the batch
+/// window.
+pub async fn flush_pending() {
+    WEBHOOK.load_full().flush().await;
+}
+
+/// Flushes the webhook the moment the server starts shutting down (SIGTERM,
+/// SIGQUIT), while the runtimes are still up, so a batch collected in the
+/// last seconds is posted instead of lost. A fast shutdown (SIGINT) never
+/// broadcasts, so that case is left to `flush_pending_before_exit`.
+pub struct WebhookFlushService;
+
+#[async_trait]
+impl BackgroundService for WebhookFlushService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        // `changed` only fails once the sender is gone, which is a shutdown
+        // as well.
+        let _ = shutdown.changed().await;
+        info!(target: LOG_TARGET, "flushing webhook before shutdown");
+        flush_pending().await;
+    }
+}
+
+/// Posts what the webhook is still collecting once the server runtimes have
+/// exited, on a runtime of its own: a fast shutdown drops the task waiting on
+/// the batch window without running anything. Bounded by
+/// `EXIT_FLUSH_TIMEOUT`.
+pub fn flush_pending_before_exit() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            warn!(target: LOG_TARGET, error = %e, "webhook exit flush skipped");
+            return;
+        },
+    };
+    runtime.block_on(async {
+        if tokio::time::timeout(EXIT_FLUSH_TIMEOUT, flush_pending())
+            .await
+            .is_err()
+        {
+            warn!(
+                target: LOG_TARGET,
+                timeout = ?EXIT_FLUSH_TIMEOUT,
+                "webhook exit flush timed out"
+            );
+        }
+    });
 }
 
 #[cfg(test)]
@@ -184,6 +264,19 @@ mod tests {
         assert_eq!(
             false,
             reload_webhook_notification_sender(&mut current, &new)
+        );
+
+        // The batching settings are part of the comparison too.
+        new.webhook_batch_window = Some(std::time::Duration::from_secs(2));
+        new.webhook_batch_max_events = Some(3);
+        assert_eq!(
+            true,
+            reload_webhook_notification_sender(&mut current, &new)
+        );
+        assert_eq!(new.webhook_batch_window, current.webhook_batch_window);
+        assert_eq!(
+            new.webhook_batch_max_events,
+            current.webhook_batch_max_events
         );
     }
 }

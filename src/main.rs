@@ -1092,6 +1092,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         upstream_health_check_task,
     ));
 
+    my_server.add_service(background_service(
+        "webhook_flush",
+        webhook::WebhookFlushService,
+    ));
+
     info!(
         target: LOG_TARGET,
         daemon = args.daemon,
@@ -1103,8 +1108,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
     let _ = get_start_time();
 
-    // TODO not process exit until pingora supports
-    my_server.run_forever();
+    // `run`, not `run_forever`: it returns once the runtimes have exited, and
+    // a fast shutdown (SIGINT) takes them down without running the flush
+    // service, so the webhook gets one more chance to post its last batch
+    // before the process goes.
+    my_server.run(server::RunArgs::default());
+    webhook::flush_pending_before_exit();
+    std::process::exit(0);
 }
 
 fn main() {
