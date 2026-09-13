@@ -4016,6 +4016,7 @@ dependencies = [
 name = "pingap-cache"
 version = "0.14.2"
 dependencies = [
+ "ahash",
  "async-trait",
  "bytes",
  "bytesize",

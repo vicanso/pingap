@@ -31,9 +31,11 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
-use tracing::info;
+use tracing::{error, info};
 
-type BinaryMeta = (Vec<u8>, Vec<u8>);
+/// The two halves of a serialized `CacheMeta`. `Bytes` so that parsing a
+/// cache file and cloning an object out of the memory layer copy nothing.
+type BinaryMeta = (Bytes, Bytes);
 
 /// Represents a cached object containing metadata and body content
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -101,8 +103,8 @@ impl TryFrom<Bytes> for CacheObject {
             });
         }
 
-        let meta0 = data.split_to(meta0_size).to_vec();
-        let meta1 = data.split_to(meta1_size).to_vec();
+        let meta0 = data.split_to(meta0_size);
+        let meta1 = data.split_to(meta1_size);
 
         Ok(Self {
             meta: (meta0, meta1),
@@ -121,13 +123,13 @@ impl From<CacheObject> for Bytes {
         let meta_size =
             value.meta.0.len() + value.meta.1.len() + META_SIZE_LENGTH;
         let mut buf = BytesMut::with_capacity(value.body.len() + meta_size);
-        let meta0_size = value.meta.0.len() as u32;
-        let meta1_size = value.meta.1.len() as u32;
-        buf.put_u32(meta0_size);
-        buf.put_u32(meta1_size);
-        buf.extend(value.meta.0);
-        buf.extend(value.meta.1);
-        buf.extend_from_slice(&value.body);
+        buf.put_u32(value.meta.0.len() as u32);
+        buf.put_u32(value.meta.1.len() as u32);
+        // `put_slice`, not `extend`: `Extend` goes through the byte
+        // iterator and copies one byte at a time.
+        buf.put_slice(&value.meta.0);
+        buf.put_slice(&value.meta.1);
+        buf.put_slice(&value.body);
 
         buf.into()
     }
@@ -235,37 +237,37 @@ pub trait HttpCacheStorage: Sync + Send {
     }
 }
 
-async fn do_file_storage_clear(count: u32) -> Result<bool, ServiceError> {
-    // Add 1 every loop
-    let offset = 60;
-    if !count.is_multiple_of(offset) {
-        return Ok(false);
+/// Sweeps every file backend's inactive files, once every 60 ticks. A
+/// backend whose sweep fails is logged and the others still get theirs.
+async fn do_file_storage_clear(count: u32) -> bool {
+    if !count.is_multiple_of(60) {
+        return false;
     }
-
-    let backends = get_file_backends();
-    for backend in backends {
+    for backend in get_file_backends() {
         let cache = &backend.cache;
-        let Some(inactive_duration) = cache.inactive() else {
+        let Some(inactive) = cache.inactive() else {
             continue;
         };
-
-        let Some(access_before) =
-            SystemTime::now().checked_sub(inactive_duration)
+        let Some(access_before) = SystemTime::now().checked_sub(inactive)
         else {
-            return Ok(false);
+            continue;
         };
-
-        let Ok(stats) = cache.clear(access_before).await else {
-            return Ok(true);
-        };
-        info!(
-            target: LOG_TARGET,
-            success = stats.success,
-            fail = stats.fail,
-            description = stats.description,
-        );
+        match cache.clear(access_before).await {
+            Ok(stats) => info!(
+                target: LOG_TARGET,
+                success = stats.success,
+                fail = stats.fail,
+                description = stats.description,
+            ),
+            Err(e) => error!(
+                target: LOG_TARGET,
+                error = %e,
+                directory = backend.directory.as_deref(),
+                "clear cache file fail"
+            ),
+        }
     }
-    Ok(true)
+    true
 }
 
 struct StorageClearTask {}
@@ -273,8 +275,7 @@ struct StorageClearTask {}
 #[async_trait]
 impl BackgroundTask for StorageClearTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-        do_file_storage_clear(count).await?;
-        Ok(true)
+        Ok(do_file_storage_clear(count).await)
     }
 }
 
@@ -399,7 +400,7 @@ impl HandleMiss for ObjectMissHandler {
         data: bytes::Bytes,
         _eof: bool,
     ) -> pingora::Result<()> {
-        self.body.extend(&data);
+        self.body.extend_from_slice(&data);
         Ok(())
     }
 
@@ -459,28 +460,24 @@ impl Storage for HttpCache {
         meta: &CacheMeta,
         _trace: &SpanHandle,
     ) -> pingora::Result<MissHandler> {
-        // TODO: support multiple concurrent writes or panic if the is already a writer
-        let capacity = 5 * 1024;
-        let size = if let Some(content_length) =
-            meta.headers().get(http::header::CONTENT_LENGTH)
-        {
-            content_length
-                .to_str()
-                .unwrap_or_default()
-                .parse::<usize>()
-                .unwrap_or(capacity)
-        } else {
-            capacity
-        };
+        // Size the body buffer from Content-Length when there is one, capped
+        // at the largest object worth caching: the header is the origin's
+        // word, not a reason to reserve gigabytes up front.
+        let capacity = meta
+            .headers()
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok()?.parse::<usize>().ok())
+            .unwrap_or(5 * 1024)
+            .min(MAX_OBJECT_CACHE_SIZE);
         let hash = key.combined();
-        let meta = meta.serialize()?;
+        let (meta0, meta1) = meta.serialize()?;
         let miss_handler = ObjectMissHandler {
-            meta,
+            meta: (meta0.into(), meta1.into()),
             key: hash,
             primary_key: key.primary_key_str().unwrap_or_default().to_string(),
             namespace: key.user_tag().as_bytes().to_vec(),
             cache: self.cache.clone(),
-            body: BytesMut::with_capacity(size),
+            body: BytesMut::with_capacity(capacity),
         };
         Ok(Box::new(miss_handler))
     }
@@ -520,7 +517,8 @@ impl Storage for HttpCache {
         let namespace = key.user_tag().as_bytes();
         let hash = key.combined();
         if let Some(mut obj) = self.cache.get(&hash, namespace).await? {
-            obj.meta = meta.serialize()?;
+            let (meta0, meta1) = meta.serialize()?;
+            obj.meta = (meta0.into(), meta1.into());
             let _ = self.cache.put(&hash, namespace, obj).await?;
             Ok(true)
         } else {
@@ -552,7 +550,7 @@ mod tests {
     #[test]
     fn test_cache_object_round_trip() {
         let obj = CacheObject {
-            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            meta: (Bytes::from_static(b"meta0"), Bytes::from_static(b"meta1")),
             body: Bytes::from_static(b"cache body"),
         };
         let buf: Bytes = obj.clone().into();
@@ -565,7 +563,7 @@ mod tests {
         // a valid encoding. None of them may panic - with `panic = "abort"`
         // that would abort the process on every hit of the poisoned key.
         let full: Bytes = CacheObject {
-            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            meta: (Bytes::from_static(b"meta0"), Bytes::from_static(b"meta1")),
             body: Bytes::from_static(b"cache body"),
         }
         .into();
@@ -613,9 +611,9 @@ mod tests {
     async fn test_object_miss_handler() {
         let key = "key";
 
-        let cache = Arc::new(TinyUfoCache::new(CacheMode::Normal, 10, 10));
+        let cache = Arc::new(TinyUfoCache::new(CacheMode::Normal, 10));
         let obj = ObjectMissHandler {
-            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: BytesMut::new(),
             key: key.to_string(),
             primary_key: "".to_string(),
@@ -638,20 +636,20 @@ mod tests {
     fn test_cache_object_get_weight() {
         // data less than one page
         let obj = CacheObject {
-            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: Bytes::from_static(b"Hello World!"),
         };
         assert_eq!(1, obj.get_weight());
 
         let obj = CacheObject {
-            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: vec![0; PAGE_SIZE * 2].into(),
         };
         assert_eq!(2, obj.get_weight());
 
         // data larger than max size
         let obj = CacheObject {
-            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: vec![0; MAX_OBJECT_CACHE_SIZE + 1].into(),
         };
         assert_eq!(u16::MAX, obj.get_weight());

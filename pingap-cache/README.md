@@ -34,7 +34,7 @@ which makes it a better fit than an LRU for proxy workloads.
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `max_size` | 1/4 of available memory, else 256 MB, capped at 1 GB | Cache budget |
-| `mode` | `default` | TinyUFO cache mode |
+| `mode` | `normal` | TinyUFO variant: `normal` (also `default`), or `compact` for a smaller index at some speed cost |
 
 `max_size` accepts either form:
 
@@ -47,6 +47,12 @@ which makes it a better fit than an LRU for proxy workloads.
 default budget tracks the machine (or the container limit) rather than a
 hard-coded number.
 
+Entries are weighed in 4 KB pages, so the budget in pages is also the most
+entries the cache can hold, and that is the size estimate TinyUFO gets for its
+index and frequency sketch: a few MB for a 256 MB cache, about 16 MB for the
+1 GB cap. A parameter that does not parse (`max_size=lots`, `mode=tiny`) is an
+error from `new_cache_backend`, not silently the default.
+
 ### File backend
 
 | Parameter | Default | Description |
@@ -54,10 +60,17 @@ hard-coded number.
 | `inactive` | none | Remove files untouched for this long, regardless of freshness |
 | `reading_max` | `10000` | Maximum concurrent reads; over quota is a **miss** (origin fetch), not 5xx |
 | `writing_max` | — | Maximum concurrent writes; over quota **skips** the disk write |
-| `cache_max` | `0` | Size of an in-front TinyUFO layer for hot entries |
-| `cache_file_max_weight` | 256 pages (1 MB) | Largest entry admitted to that layer |
-| `levels` | — | Directory nesting levels, e.g. `levels=1:2`, to avoid huge flat directories |
+| `cache_max` | `0` | Size, in 4 KB pages, of an in-front TinyUFO layer for hot entries |
+| `cache_file_max_weight` | 256 pages (1 MB) | Largest entry admitted to that layer, whether it arrives by a write or by a read from disk |
+| `levels` | — | Directory nesting, up to two levels of 1 to 3 key characters each, e.g. `levels=1:2`, to avoid huge flat directories; anything else is rejected |
 | `max_size` | unlimited | Total on-disk budget (e.g. `max_size=10gb`); least-recently-accessed files are evicted to stay under it |
+
+Staying under `max_size` costs one directory walk per write that finds the
+budget exceeded (on the blocking pool, so no worker thread stalls), after which
+files are deleted in access order until the new object fits. Writes that arrive
+while that eviction runs go ahead without waiting. An object larger than the
+whole budget is not written at all; evicting everything for it would only empty
+the cache.
 
 `new_storage_clear_service()` returns a background service that periodically
 sweeps inactive files.
@@ -79,8 +92,8 @@ With the `tracing` feature the crate exports Prometheus histograms:
 
 | Metric | Meaning |
 | --- | --- |
-| `pingap_cache_reading_time` | Time spent reading an entry |
-| `pingap_cache_writing_time` | Time spent writing an entry |
+| `pingap_cache_storage_read_time` | Time spent reading an entry from disk |
+| `pingap_cache_storage_write_time` | Time spent writing an entry to disk |
 
 Cache read/write counts are also surfaced per request through `Ctx`, which makes
 them available to access logs as `{:cache_lookup_time}` and `{:cache_lock_time}`.

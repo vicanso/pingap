@@ -27,22 +27,32 @@ TinyUFO 是 S3-FIFO 风格缓存，扫描抵抗好且无全局锁，比 LRU 更�
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `max_size` | 可用内存的 1/4，否则 256 MB，上限 1 GB | 缓存预算 |
-| `mode` | `default` | TinyUFO 缓存模式 |
+| `mode` | `normal` | TinyUFO 变体：`normal`（也可写 `default`），或 `compact`——索引更小、速度略低 |
 
-`max_size` **低于 10 MB 时解释为预算百分比**而非绝对大小——`max_size=20` 表示 20%。因检查的是字节值，`max_size=5mb` 也会进入百分比分支并钳到 100%，得到全部预算而非 5 MB。表示绝对大小时请用 10 MB 及以上。
+`max_size` 两种写法：
+
+| 值 | 含义 |
+| --- | --- |
+| `max_size=20` | 预算的 20%——纯数字是百分比，超过 100 按 100 算 |
+| `max_size=100mb` | 绝对大小——带单位的值按字面取，再小也是 |
 
 `update_available_memory()` 由进程指标收集器调用，使默认预算跟踪机器（或容器限制）而非硬编码数。
+
+条目按 4 KB 页计重，因此按页算的预算也是缓存最多能容纳的条目数，TinyUFO 的索引与频率草图就按这个数字预估：256 MB 缓存只需几 MB，1 GB 上限约 16 MB。无法解析的参数（`max_size=lots`、`mode=tiny`）会让 `new_cache_backend` 报错，而不是静默使用默认值。
 
 ### 文件后端
 
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `inactive` | 无 | 移除超过该时长未触碰的文件，无论是否仍新鲜 |
-| `reading_max` | `10000` | 最大并发读 |
-| `writing_max` | — | 最大并发写 |
-| `cache_max` | `0` | 前置 TinyUFO 热层大小 |
-| `cache_file_max_weight` | 256 页（1 MB） | 该层允许的最大条目 |
-| `levels` | — | 目录嵌套层级，如 `levels=1:2`，避免巨大扁平目录 |
+| `reading_max` | `10000` | 最大并发读；超限按**未命中**处理（回源），不返回 5xx |
+| `writing_max` | — | 最大并发写；超限**跳过**磁盘写入 |
+| `cache_max` | `0` | 前置 TinyUFO 热层大小，单位 4 KB 页 |
+| `cache_file_max_weight` | 256 页（1 MB） | 该层允许的最大条目，写入和从磁盘读出时都受此限制 |
+| `levels` | — | 目录嵌套，最多两级、每级取键的 1 到 3 个字符，如 `levels=1:2`，避免巨大扁平目录；其他写法会被拒绝 |
+| `max_size` | 无限制 | 磁盘总预算（如 `max_size=10gb`）；超出时按最久未访问优先淘汰文件 |
+
+维持 `max_size` 的开销是：发现超预算的那次写入做一次目录遍历（在阻塞线程池上进行，不会卡住 worker 线程），然后按访问时间顺序删文件直到新对象放得下。淘汰进行期间到达的写入直接写，不等待。比整个预算还大的对象不会写入——为它清空整个缓存没有意义。
 
 `new_storage_clear_service()` 返回周期性清扫 inactive 文件的后台服务。
 
@@ -56,8 +66,8 @@ TinyUFO 是 S3-FIFO 风格缓存，扫描抵抗好且无全局锁，比 LRU 更�
 
 | Metric | Meaning |
 | --- | --- |
-| `pingap_cache_reading_time` | 读取条目耗时 |
-| `pingap_cache_writing_time` | 写入条目耗时 |
+| `pingap_cache_storage_read_time` | 从磁盘读取条目耗时 |
+| `pingap_cache_storage_write_time` | 写入条目到磁盘耗时 |
 
 缓存读/写计数也通过 `Ctx` 按请求暴露，访问日志中可用 `{:cache_lookup_time}` 与 `{:cache_lock_time}`。
 

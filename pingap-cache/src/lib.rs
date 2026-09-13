@@ -53,11 +53,10 @@ impl From<Error> for pingora::BError {
     }
 }
 
-fn new_tiny_ufo_cache(mode: &str, size: usize) -> HttpCache {
-    let mode = CacheMode::from_str(mode).unwrap_or_default();
+fn new_tiny_ufo_cache(mode: CacheMode, size: usize) -> HttpCache {
     HttpCache {
         directory: None,
-        cache: Arc::new(tiny::TinyUfoCache::new(mode, size / PAGE_SIZE, size)),
+        cache: Arc::new(tiny::TinyUfoCache::new(mode, size / PAGE_SIZE)),
         max_size: size as u64,
     }
 }
@@ -70,25 +69,19 @@ fn new_file_cache(dir: &str) -> Result<HttpCache> {
     })
 }
 
-struct CacheBackendProvider {
-    cache_backends: Mutex<HashMap<String, &'static HttpCache>>,
-}
-
-static BACKENDS: LazyLock<CacheBackendProvider> =
-    LazyLock::new(|| CacheBackendProvider {
-        cache_backends: Mutex::new(HashMap::new()),
-    });
+/// File backends by directory string; each is leaked once and shared.
+static BACKENDS: LazyLock<Mutex<HashMap<String, &'static HttpCache>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static MEMORY_BACKEND: OnceLock<HttpCache> = OnceLock::new();
 
 const MAX_MEMORY_SIZE: usize = 1024 * 1024 * 1024;
 
 pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
-    if let Ok(backends) = BACKENDS.cache_backends.lock() {
-        backends.values().copied().collect()
-    } else {
-        Vec::new()
-    }
+    BACKENDS
+        .lock()
+        .map(|backends| backends.values().copied().collect())
+        .unwrap_or_default()
 }
 
 static AVAILABLE_MEMORY: AtomicU64 = AtomicU64::new(0);
@@ -147,7 +140,7 @@ impl TryFrom<&str> for MemoryCacheParams {
     fn try_from(value: &str) -> Result<Self> {
         let params = if let Some((_, query)) = value.split_once('?') {
             serde_qs::from_str(query).map_err(|e| Error::Invalid {
-                message: e.to_string(),
+                message: format!("memory cache params {value} is invalid: {e}"),
             })?
         } else {
             MemoryCacheParams::default()
@@ -156,9 +149,24 @@ impl TryFrom<&str> for MemoryCacheParams {
     }
 }
 
-fn try_init_memory_backend(value: &str) -> &'static HttpCache {
+impl MemoryCacheParams {
+    fn cache_mode(&self) -> Result<CacheMode> {
+        let Some(mode) = self.mode.as_deref() else {
+            return Ok(CacheMode::default());
+        };
+        CacheMode::from_str(mode).map_err(|_| Error::Invalid {
+            message: format!(
+                "memory cache mode {mode} is invalid, expected normal or compact"
+            ),
+        })
+    }
+}
+
+fn try_init_memory_backend(
+    params: MemoryCacheParams,
+    cache_mode: CacheMode,
+) -> &'static HttpCache {
     MEMORY_BACKEND.get_or_init(|| {
-        let params = MemoryCacheParams::try_from(value).unwrap_or_default();
         let available_memory =
             AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
         let max_memory = if available_memory > 0 {
@@ -173,27 +181,32 @@ fn try_init_memory_backend(value: &str) -> &'static HttpCache {
             .map(|max_size| max_size.resolve(max_memory))
             .unwrap_or(max_memory);
 
-        let cache_mode = params.mode.unwrap_or_default();
-
         size = size.min(MAX_MEMORY_SIZE);
         info!(
             target: LOG_TARGET,
             size = ByteSize(size as u64).to_string(),
-            cache_mode,
+            cache_mode = ?cache_mode,
             "init memory cache backend success"
         );
-        new_tiny_ufo_cache(&cache_mode, size)
+        new_tiny_ufo_cache(cache_mode, size)
     })
 }
 
+/// Returns the backend for `directory`: the process-wide memory backend for
+/// an empty value or `memory://...`, otherwise the file backend rooted at
+/// that path, created on first use and shared afterwards. Invalid
+/// parameters are an error here rather than silently the defaults, so a
+/// typo in `max_size` or `mode` fails the plugin instead of the cache
+/// quietly running with another size.
 pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     if directory.is_empty() || directory.starts_with("memory://") {
-        return Ok(try_init_memory_backend(directory));
+        let params = MemoryCacheParams::try_from(directory)?;
+        let cache_mode = params.cache_mode()?;
+        return Ok(try_init_memory_backend(params, cache_mode));
     }
-    let mut cache_backends =
-        BACKENDS.cache_backends.lock().map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })?;
+    let mut cache_backends = BACKENDS.lock().map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
     if let Some(backend) = cache_backends.get(directory) {
         return Ok(backend);
     }
@@ -246,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_cache() {
-        let _ = new_tiny_ufo_cache("compact", 1024);
+        let _ = new_tiny_ufo_cache(CacheMode::Compact, 1024);
 
         let dir = TempDir::new().unwrap();
         let result = new_file_cache(&dir.keep().to_string_lossy());
@@ -279,5 +292,34 @@ mod tests {
         // Percentages above 100 are clamped rather than overshooting.
         assert_eq!(budget, MaxSize::Percent(500).resolve(budget));
         assert_eq!(5_000_000, MaxSize::Bytes(5_000_000).resolve(budget));
+    }
+
+    /// A typo used to fall back to the defaults without a word.
+    #[test]
+    fn test_memory_cache_invalid_params() {
+        assert_eq!(
+            "memory cache mode tiny is invalid, expected normal or compact",
+            new_cache_backend("memory://?mode=tiny")
+                .err()
+                .expect("error")
+                .to_string()
+        );
+        assert_eq!(
+            true,
+            new_cache_backend("memory://?max_size=lots")
+                .err()
+                .expect("error")
+                .to_string()
+                .starts_with(
+                    "memory cache params memory://?max_size=lots is invalid: "
+                )
+        );
+        assert_eq!(
+            true,
+            MemoryCacheParams::try_from("memory://?mode=Compact")
+                .unwrap()
+                .cache_mode()
+                .is_ok()
+        );
     }
 }

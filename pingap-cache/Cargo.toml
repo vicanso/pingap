@@ -18,6 +18,7 @@ path = "src/lib.rs"
 tracing = ["prometheus"]
 
 [dependencies]
+ahash = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }

@@ -725,7 +725,7 @@ purge_ip_list = ["127.0.0.1"]
 
         // Seed one object in the plugin's namespace and one outside it.
         let obj = pingap_cache::CacheObject {
-            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            meta: (Bytes::from_static(b"meta0"), Bytes::from_static(b"meta1")),
             body: Bytes::from_static(b"cached body"),
         };
         cache

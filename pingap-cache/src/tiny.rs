@@ -14,69 +14,89 @@
 
 use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{LOG_TARGET, Result};
+use ahash::RandomState;
 use async_trait::async_trait;
 use pingap_core::TinyUfo;
 use strum::EnumString;
 use tracing::debug;
 
-/// Type alias for cache key
-type CacheKey = String;
-
-/// A cache implementation using TinyUfo algorithm for HTTP responses
+/// TinyUFO keyed by the hash of the cache key.
 ///
-/// TinyUfoCache provides an in-memory cache with a fixed memory limit and
-/// automatic eviction of less frequently used items.
-pub struct TinyUfoCache {
-    cache: TinyUfo<CacheKey, CacheObject>,
+/// TinyUFO only ever stores `hash_one(key)` - a `String` key is hashed on
+/// every call and then dropped - so hashing here first loses nothing and
+/// saves the `String` that `&str` -> `&String` used to allocate on every
+/// `get`, `put` and `remove`.
+///
+/// Weights are 4 KB pages (`CacheObject::get_weight`), so the weight limit
+/// is also the most entries the cache can ever hold, which is what TinyUFO
+/// wants as its size estimate: it sizes its frequency sketch and its index
+/// from that number. An estimate in bytes made both hundreds of MB for a
+/// cache that could never hold that many entries.
+pub(crate) struct MemoryCache {
+    ufo: TinyUfo<u64, CacheObject>,
+    hasher: RandomState,
 }
 
-/// 定义缓存模式，使其类型安全
+/// TinyUFO variant. `normal` (also `default`) is the lock-free index,
+/// `compact` trades some speed for a smaller footprint.
 #[derive(Debug, Clone, Copy, Default, EnumString)]
+#[strum(ascii_case_insensitive)]
 pub enum CacheMode {
     #[default]
+    #[strum(serialize = "normal", serialize = "default")]
     Normal,
     Compact,
 }
 
-impl TinyUfoCache {
-    /// Creates a new TinyUfoCache instance
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - The mode of the cache
-    /// * `total_weight_limit` - The maximum total weight of items in the cache
-    /// * `estimated_size` - Estimated number of items for internal capacity planning
-    pub fn new(
-        mode: CacheMode,
-        total_weight_limit: usize,
-        estimated_size: usize,
-    ) -> Self {
-        const SAMPLES_DIVISOR: usize = 32;
-        let samples = estimated_size / SAMPLES_DIVISOR;
+impl MemoryCache {
+    pub(crate) fn new(mode: CacheMode, total_weight_limit: usize) -> Self {
+        // TinyUFO's sketch is sized from a `1/items` error bound; zero items
+        // makes that infinite.
+        let limit = total_weight_limit.max(1);
+        let ufo = match mode {
+            CacheMode::Compact => TinyUfo::new_compact(limit, limit),
+            CacheMode::Normal => TinyUfo::new(limit, limit),
+        };
+        Self {
+            ufo,
+            hasher: RandomState::new(),
+        }
+    }
 
-        match mode {
-            CacheMode::Compact => Self {
-                cache: TinyUfo::new_compact(total_weight_limit, samples),
-            },
-            CacheMode::Normal => Self {
-                cache: TinyUfo::new(total_weight_limit, samples),
-            },
+    #[inline]
+    fn hash(&self, key: &str) -> u64 {
+        self.hasher.hash_one(key)
+    }
+
+    pub(crate) fn get(&self, key: &str) -> Option<CacheObject> {
+        self.ufo.get(&self.hash(key))
+    }
+
+    pub(crate) fn put(&self, key: &str, data: CacheObject, weight: u16) {
+        self.ufo.put(self.hash(key), data, weight);
+    }
+
+    pub(crate) fn remove(&self, key: &str) -> Option<CacheObject> {
+        self.ufo.remove(&self.hash(key))
+    }
+}
+
+/// The in-memory backend: a `MemoryCache` behind `HttpCacheStorage`.
+pub struct TinyUfoCache {
+    cache: MemoryCache,
+}
+
+impl TinyUfoCache {
+    /// `total_weight_limit` is in 4 KB pages.
+    pub fn new(mode: CacheMode, total_weight_limit: usize) -> Self {
+        Self {
+            cache: MemoryCache::new(mode, total_weight_limit),
         }
     }
 }
 
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
-    /// Retrieves a cache entry by key and namespace
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The unique identifier for the cache entry
-    /// * `namespace` - The namespace for the cache entry (currently unused)
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Option<CacheObject>>` - Returns Ok(Some(object)) if found, Ok(None) if not found
     async fn get(
         &self,
         key: &str,
@@ -86,20 +106,9 @@ impl HttpCacheStorage for TinyUfoCache {
             target: LOG_TARGET,
             key, namespace, "getting cache entry from TinyUfo storage"
         );
-        Ok(self.cache.get(&key.to_string()))
+        Ok(self.cache.get(key))
     }
 
-    /// Stores a cache entry with the given key, namespace, and weight
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The unique identifier for the cache entry
-    /// * `namespace` - The namespace for the cache entry (currently unused)
-    /// * `data` - The cache object to store
-    ///
-    /// # Returns
-    ///
-    /// * `Result<()>` - Returns Ok(()) on successful storage
     async fn put(
         &self,
         key: &str,
@@ -111,23 +120,13 @@ impl HttpCacheStorage for TinyUfoCache {
             target: LOG_TARGET,
             key,
             namespace,
-            weight = weight,
+            weight,
             "storing cache entry in TinyUfo storage"
         );
-        self.cache.put(key.to_string(), data, weight);
+        self.cache.put(key, data, weight);
         Ok(())
     }
 
-    /// Removes a cache entry by key and namespace
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The unique identifier for the cache entry to remove
-    /// * `namespace` - The namespace for the cache entry (currently unused)
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Option<CacheObject>>` - Returns Ok(Some(object)) if found and removed, Ok(None) if not found
     async fn remove(
         &self,
         key: &str,
@@ -137,7 +136,7 @@ impl HttpCacheStorage for TinyUfoCache {
             target: LOG_TARGET,
             key, namespace, "removing cache entry from TinyUfo storage"
         );
-        Ok(self.cache.remove(&key.to_string()))
+        Ok(self.cache.remove(key))
     }
 }
 
@@ -146,22 +145,51 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_cache_mode() {
+        for (value, compact) in [
+            ("normal", false),
+            ("default", false),
+            ("Normal", false),
+            ("compact", true),
+            ("Compact", true),
+        ] {
+            let mode = CacheMode::from_str(value).expect(value);
+            assert_eq!(compact, matches!(mode, CacheMode::Compact), "{value}");
+        }
+        assert_eq!(true, CacheMode::from_str("tiny").is_err());
+    }
+
     #[tokio::test]
     async fn test_tiny_ufo_cache() {
-        let cache = TinyUfoCache::new(CacheMode::Normal, 10, 10);
-        let key = "key";
-        let obj = CacheObject {
-            meta: (b"Hello".to_vec(), b"World".to_vec()),
-            body: Bytes::from_static(b"Hello World!"),
-        };
-        let result = cache.get(key, b"").await.unwrap();
-        assert_eq!(true, result.is_none());
-        cache.put(key, b"", obj.clone()).await.unwrap();
-        let result = cache.get(key, b"").await.unwrap().unwrap();
-        assert_eq!(obj, result);
+        for mode in [CacheMode::Normal, CacheMode::Compact] {
+            let cache = TinyUfoCache::new(mode, 10);
+            let key = "key";
+            let obj = CacheObject {
+                meta: (
+                    Bytes::from_static(b"Hello"),
+                    Bytes::from_static(b"World"),
+                ),
+                body: Bytes::from_static(b"Hello World!"),
+            };
+            let result = cache.get(key, b"").await.unwrap();
+            assert_eq!(true, result.is_none());
+            cache.put(key, b"", obj.clone()).await.unwrap();
+            let result = cache.get(key, b"").await.unwrap().unwrap();
+            assert_eq!(obj, result);
 
-        cache.remove(key, b"").await.unwrap().unwrap();
-        let result = cache.get(key, b"").await.unwrap();
-        assert_eq!(true, result.is_none());
+            cache.remove(key, b"").await.unwrap().unwrap();
+            let result = cache.get(key, b"").await.unwrap();
+            assert_eq!(true, result.is_none());
+        }
+    }
+
+    /// A zero weight limit must not blow up TinyUFO's sketch sizing.
+    #[test]
+    fn test_zero_limit() {
+        let _ = TinyUfoCache::new(CacheMode::Normal, 0);
+        let _ = TinyUfoCache::new(CacheMode::Compact, 0);
     }
 }
