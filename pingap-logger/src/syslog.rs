@@ -36,7 +36,9 @@ where
 
     fn make_writer(&'a self) -> Self::Writer {
         SyslogWriterGuard {
-            guard: self.logger.lock().expect("Failed to lock syslog writer"),
+            // A panic while holding the lock poisons it; the logger inside
+            // is still usable.
+            guard: self.logger.lock().unwrap_or_else(|e| e.into_inner()),
         }
     }
 }
@@ -96,49 +98,79 @@ struct SyslogWriterParams {
     facility: Option<String>,
 }
 
+/// `syslog://?format=3164|5424&process=pingap&facility=LOG_USER`. A
+/// parameter that does not parse is an error, not silently the default.
 pub fn new_syslog_writer(value: &str) -> Result<BoxMakeWriter> {
     let (_, query) = value.split_once('?').unwrap_or((value, ""));
     let params: SyslogWriterParams =
-        serde_qs::from_str(query).unwrap_or_default();
+        serde_qs::from_str(query).map_err(|e| Error::Invalid {
+            message: format!("syslog params {value} is invalid: {e}"),
+        })?;
 
-    let format_type = params.format.unwrap_or_default();
     let process = params.process.unwrap_or("pingap".to_string());
+    let facility = match params.facility.as_deref() {
+        None | Some("") => Facility::default(),
+        Some(facility) => {
+            Facility::from_str(facility).map_err(|_| Error::Invalid {
+                message: format!("syslog facility {facility} is invalid"),
+            })?
+        },
+    };
+    let hostname = Some(get_hostname().to_string());
+    let connect = |e: syslog::Error| Error::Invalid {
+        message: e.to_string(),
+    };
 
-    let facility =
-        Facility::from_str(params.facility.unwrap_or_default().as_str())
-            .unwrap_or_default();
+    match params.format.as_deref() {
+        Some("5424") => {
+            let logger = syslog::unix(Formatter5424 {
+                process,
+                facility,
+                hostname,
+                ..Default::default()
+            })
+            .map_err(connect)?;
+            Ok(BoxMakeWriter::new(SyslogWriter {
+                logger: Mutex::new(logger),
+            }))
+        },
+        None | Some("") | Some("3164") => {
+            let logger = syslog::unix(Formatter3164 {
+                process,
+                facility,
+                hostname,
+                ..Default::default()
+            })
+            .map_err(connect)?;
+            Ok(BoxMakeWriter::new(SyslogWriter {
+                logger: Mutex::new(logger),
+            }))
+        },
+        Some(format) => Err(Error::Invalid {
+            message: format!(
+                "syslog format {format} is invalid, expected 3164 or 5424"
+            ),
+        }),
+    }
+}
 
-    if format_type == "5424" {
-        let formatter = syslog::Formatter5424 {
-            process,
-            facility,
-            hostname: Some(get_hostname().to_string()),
-            ..Default::default()
-        };
-        let logger = syslog::unix(formatter).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })?;
+#[cfg(test)]
+mod tests {
+    use super::new_syslog_writer;
+    use pretty_assertions::assert_eq;
 
-        let syslog_writer = SyslogWriter {
-            logger: Mutex::new(logger),
-        };
-
-        Ok(BoxMakeWriter::new(syslog_writer))
-    } else {
-        let formatter = syslog::Formatter3164 {
-            process,
-            facility,
-            hostname: Some(get_hostname().to_string()),
-            ..Default::default()
-        };
-        let logger = syslog::unix(formatter).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })?;
-
-        let syslog_writer = SyslogWriter {
-            logger: Mutex::new(logger),
-        };
-
-        Ok(BoxMakeWriter::new(syslog_writer))
+    #[test]
+    fn test_invalid_params_are_rejected() {
+        let err = new_syslog_writer("syslog://?format=9999")
+            .expect_err("error")
+            .to_string();
+        assert_eq!(
+            "Invalid syslog format 9999 is invalid, expected 3164 or 5424",
+            err
+        );
+        let err = new_syslog_writer("syslog://?facility=LOG_NOPE")
+            .expect_err("error")
+            .to_string();
+        assert_eq!("Invalid syslog facility LOG_NOPE is invalid", err);
     }
 }

@@ -21,11 +21,9 @@ itoa = { workspace = true }
 pingap-core = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }
-regex = { workspace = true }
 serde = { workspace = true }
 serde_qs = { workspace = true }
 snafu = { workspace = true }
-substring = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

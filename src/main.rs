@@ -1050,6 +1050,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_background_service
             .add_task("log_compress", new_log_compress_service(params));
     }
+    // A buffered application log is otherwise only written when the buffer
+    // fills; this bounds the delay to one tick.
+    if let Some(task) = pingap_logger::new_log_flush_service() {
+        simple_background_service.add_task("log_flush", task);
+    }
 
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
@@ -1110,6 +1115,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     // before the process goes.
     my_server.run(server::RunArgs::default());
     webhook::flush_pending_before_exit();
+    // `exit` runs no destructors, so a buffered application log would keep
+    // its last lines.
+    pingap_logger::flush_application_log();
     std::process::exit(0);
 }
 

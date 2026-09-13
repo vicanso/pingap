@@ -42,7 +42,7 @@ impl TryFrom<&str> for RollingFileWriterParams {
 
         let mut params: Self = if !query.is_empty() {
             serde_qs::from_str(query).map_err(|e| Error::Invalid {
-                message: e.to_string(),
+                message: format!("log params {value} is invalid: {e}"),
             })?
         } else {
             Self::default()
@@ -80,11 +80,19 @@ pub(crate) fn new_rolling_file_writer(
             .to_string_lossy()
             .to_string()
     };
+    // An unknown rolling used to mean daily without a word.
     let writer = match params.rolling.as_str() {
         "minutely" => tracing_appender::rolling::minutely(dir, filename),
         "hourly" => tracing_appender::rolling::hourly(dir, filename),
         "never" => tracing_appender::rolling::never(dir, filename),
-        _ => tracing_appender::rolling::daily(dir, filename),
+        "" | "daily" => tracing_appender::rolling::daily(dir, filename),
+        rolling => {
+            return Err(Error::Invalid {
+                message: format!(
+                    "rolling {rolling} is invalid, expected daily, hourly, minutely or never"
+                ),
+            });
+        },
     };
     Ok(RollingFileWriter {
         dir: dir.to_string_lossy().to_string(),
@@ -94,7 +102,28 @@ pub(crate) fn new_rolling_file_writer(
 
 #[cfg(test)]
 mod tests {
-    use super::RollingFileWriterParams;
+    use super::{RollingFileWriterParams, new_rolling_file_writer};
+
+    #[test]
+    fn test_rolling_is_validated() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("app.log").display().to_string();
+        for rolling in ["", "daily", "hourly", "minutely", "never"] {
+            assert!(
+                new_rolling_file_writer(&format!("{file}?rolling={rolling}"))
+                    .is_ok(),
+                "{rolling}"
+            );
+        }
+        let err = new_rolling_file_writer(&format!("{file}?rolling=monthly"))
+            .err()
+            .expect("error")
+            .to_string();
+        assert_eq!(
+            "Invalid rolling monthly is invalid, expected daily, hourly, minutely or never",
+            err
+        );
+    }
 
     #[test]
     fn test_try_from_path_only() {

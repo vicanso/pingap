@@ -121,16 +121,28 @@ The following tags are available for access logging:
 | `{<<header_name>}`     | Value of a response header.                            |
 | `{:<context_key>}`     | Value from the context.                                |
 
+A placeholder is `{`, a name made of letters, digits and `_ - < > ~ : $`, and
+`}`; a `{` not followed by that is literal text. A missing value - an absent
+header, cookie or context field, no status yet - is rendered as `-`. A
+placeholder that names no tag is dropped.
+
+`format` writes straight into one pre-sized buffer: the timestamps are
+rendered digit by digit rather than through an intermediate `String`, and the
+per-line cost is the fields themselves.
+
 ## Configuration
 
 The logger is configured via a URI-like string in the `log` field of `LoggerParams`.
 
 - **File Logging:** `"/path/to/file.log?rolling=daily&compression=gzip"`
-  - `rolling`: `daily` (default), `hourly`, `minutely`, `never`. Rotation boundaries and the file name suffix (`file.log.YYYY-MM-DD[-HH[-MM]]`) use **UTC**, not the machine's local time zone: on a UTC+8 host a daily file switches at 08:00 local time and an entry written at 18:00 local lands in the `-10` hourly file. This comes from `tracing-appender`, which has no time zone option; the timestamps inside the log lines are local time.
+  - `rolling`: `daily` (default), `hourly`, `minutely`, `never`; any other value is rejected. Rotation boundaries and the file name suffix (`file.log.YYYY-MM-DD[-HH[-MM]]`) use **UTC**, not the machine's local time zone: on a UTC+8 host a daily file switches at 08:00 local time and an entry written at 18:00 local lands in the `-10` hourly file. This comes from `tracing-appender`, which has no time zone option; the timestamps inside the log lines are local time.
   - `compression`: `gzip` or `zstd`.
   - `level`: Compression level.
-  - `days_ago`: Number of days to keep compressed logs.
-  - `time_point_hour`: The hour of the day to run the compression job.
+  - `days_ago`: Compress a rotated file once it has not been **modified** for this many days (default 7); the original is removed afterwards.
+  - `time_point_hour`: The hour of the day to run the compression job. The job runs on the blocking thread pool, so compressing a large file does not hold up the other background tasks.
+  - `capacity` (`LoggerParams`, `basic.log_buffered_size` in pingap): with 4096 bytes or more the file is written through a buffer of that size. A buffered log is flushed by the task from `new_log_flush_service()` (once a minute in pingap) and by `flush_application_log()`, which pingap calls right before it exits; without those a quiet server's last lines would sit in the buffer, and the lines before an exit would be lost.
+
+  Parameters that do not parse (`rolling=monthly`, `flush_timeout=soon` on the access log, an unknown syslog `facility`) are errors at startup rather than silently the defaults.
 
 - **Syslog (Unix-only):** `"syslog:///?format=3164"`
   - `format`: `3164` (default) or `5424`.

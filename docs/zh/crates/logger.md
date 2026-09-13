@@ -109,16 +109,23 @@ let parser = Parser::from(format);
 | `{<<header_name>}`     | 响应头值。                            |
 | `{:<context_key>}`     | 上下文中的值。                                |
 
+占位符由 `{`、名字（字母、数字和 `_ - < > ~ : $`）和 `}` 组成；后面不是这种形式的 `{` 是普通文本。缺失的值——不存在的请求头、cookie 或上下文字段、尚无状态码——输出为 `-`。名字不对应任何标签的占位符会被丢弃。
+
+`format` 直接写入一个预估大小的缓冲区：时间戳逐位写出而不经过中间 `String`，每行的开销只剩字段本身。
+
 ## 配置
 
 日志器通过 `LoggerParams` 的 `log` 字段中的类 URI 字符串配置。
 
 - **文件日志：** `"/path/to/file.log?rolling=daily&compression=gzip"`
-  - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
+  - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`，其他值会被拒绝。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
   - `compression`：`gzip` 或 `zstd`。
   - `level`：压缩级别。
-  - `days_ago`：保留已压缩日志的天数。
-  - `time_point_hour`：运行压缩任务的小时。
+  - `days_ago`：已轮转文件超过这么多天未被**修改**后压缩（默认 7 天），压缩后删除原文件。
+  - `time_point_hour`：运行压缩任务的小时。压缩在阻塞线程池上执行，压大文件不会拖住其他后台任务。
+  - `capacity`（`LoggerParams`，pingap 里对应 `basic.log_buffered_size`）：不小于 4096 字节时文件经该大小的缓冲区写入。缓冲日志由 `new_log_flush_service()` 返回的任务（pingap 中每分钟一次）和 `flush_application_log()` 刷盘，后者 pingap 在退出前调用；否则安静的服务器上最后几行会一直留在缓冲区，退出前的几行则会丢失。
+
+  无法解析的参数（`rolling=monthly`、访问日志的 `flush_timeout=soon`、未知的 syslog `facility`）在启动时报错，而不是静默使用默认值。
 
 - **Syslog（仅 Unix）：** `"syslog:///?format=3164"`
   - `format`：`3164`（默认）或 `5424`。

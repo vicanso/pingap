@@ -36,7 +36,7 @@ pub enum Error {
 
 pub fn new_env_filter(level: &str) -> EnvFilter {
     let mut initial_filter = EnvFilter::from_default_env();
-    for item in level.split(",") {
+    for item in level.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         match item.parse::<Directive>() {
             Ok(directive) => {
                 initial_filter = initial_filter.add_directive(directive);

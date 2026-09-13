@@ -57,7 +57,11 @@ pub async fn new_async_logger(
     let original_path = path.to_string();
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let params: AsyncLoggerWriterParams =
-        serde_qs::from_str(query).unwrap_or_default();
+        serde_qs::from_str(query).map_err(|e| Error::Invalid {
+            message: format!(
+                "access log params {original_path} is invalid: {e}"
+            ),
+        })?;
 
     let rolling_file_writer =
         new_rolling_file_writer(&original_path).map_err(|e| {
@@ -122,6 +126,22 @@ impl BackgroundService for AsyncLoggerTask {
                 );
             }
         };
+        // Straight into the `BufWriter`, line then newline: no growing the
+        // message to append the newline and no batch `Vec` in between.
+        // `write_all`, not `write`: a short write would silently truncate
+        // the line.
+        let write_line = |writer: &mut BufWriter<RollingFileAppender>,
+                          msg: BytesMut| {
+            if let Err(e) =
+                writer.write_all(&msg).and_then(|_| writer.write_all(b"\n"))
+            {
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    "write fail",
+                );
+            }
+        };
         loop {
             tokio::select! {
                 _ = shutdown.changed(), if !shutting_down => {
@@ -133,27 +153,15 @@ impl BackgroundService for AsyncLoggerTask {
                         // all senders are gone
                         break;
                     };
-                    let mut messages = Vec::with_capacity(MAX_BATCH_SIZE);
-                    messages.push(msg);
-                    while messages.len() < MAX_BATCH_SIZE {
-                        match receiver.try_recv() {
-                            Ok(msg) => {
-                                messages.push(msg);
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    for mut msg in messages {
-                        msg.extend_from_slice(b"\n");
-                        // `write_all`, not `write`: a short write would
-                        // silently truncate the line
-                        if let Err(e) = writer.write_all(&msg) {
-                            error!(
-                                target: LOG_TARGET,
-                                error = %e,
-                                "write fail",
-                            );
-                        }
+                    write_line(&mut writer, msg);
+                    // Drain what has queued up meanwhile, bounded so a
+                    // flood cannot starve the flush timer.
+                    let mut batched = 1;
+                    while batched < MAX_BATCH_SIZE
+                        && let Ok(msg) = receiver.try_recv()
+                    {
+                        write_line(&mut writer, msg);
+                        batched += 1;
                     }
                     if shutting_down {
                         flush(&mut writer);
@@ -165,15 +173,8 @@ impl BackgroundService for AsyncLoggerTask {
             }
         }
         // All senders are gone; drain what is left and flush.
-        while let Ok(mut msg) = receiver.try_recv() {
-            msg.extend_from_slice(b"\n");
-            if let Err(e) = writer.write_all(&msg) {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    "write fail",
-                );
-            }
+        while let Ok(msg) = receiver.try_recv() {
+            write_line(&mut writer, msg);
         }
         flush(&mut writer);
     }
@@ -245,5 +246,20 @@ mod tests {
             .await
             .expect("task must end when all senders are gone")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_invalid_params_are_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("access.log");
+        let err = new_async_logger(&format!(
+            "{}?flush_timeout=soon",
+            path.to_string_lossy()
+        ))
+        .await
+        .err()
+        .expect("error")
+        .to_string();
+        assert_eq!(true, err.contains("access log params"), "{err}");
     }
 }

@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use bytes::BytesMut;
-use chrono::format::SecondsFormat;
-use chrono::{Local, Utc};
+use bytes::{BufMut, BytesMut};
+use chrono::{DateTime, Datelike, Local, Offset, TimeZone, Timelike, Utc};
 use pingap_core::{
     Ctx, CtxLogField, HOST_NAME_TAG, format_duration, get_hostname,
 };
 use pingap_util::format_byte_size;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use regex::Regex;
 use std::sync::LazyLock;
 use std::time::Instant;
-use substring::Substring;
 
 // Enum representing different types of log tags that can be used in the logging format
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +62,21 @@ pub struct Tag {
     pub data: Option<String>, // Optional data associated with the tag
 }
 
+impl Tag {
+    fn simple(category: TagCategory) -> Self {
+        Self {
+            category,
+            data: None,
+        }
+    }
+    fn fill(text: &str) -> Self {
+        Self {
+            category: TagCategory::Fill,
+            data: Some(text.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Parser {
     pub needs_timestamp: bool,
@@ -74,14 +86,9 @@ pub struct Parser {
 
 // Parses special tags with prefixes like ~, >, <, :, $
 fn format_extra_tag(key: &str) -> Option<Tag> {
-    // Requires at least 2 chars (prefix + content)
-    if key.len() < 2 {
-        return None;
-    }
-    let key = key.substring(1, key.len() - 1);
-    let ch = key.substring(0, 1);
-    let value = key.substring(1, key.len());
-    match ch {
+    let key = key.strip_prefix('{')?.strip_suffix('}')?;
+    let (prefix, value) = key.split_at_checked(1)?;
+    match prefix {
         "~" => Some(Tag {
             // Cookie values
             category: TagCategory::Cookie,
@@ -99,25 +106,93 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
         }),
         // Resolved here, once; an unknown name printed nothing before and
         // still does.
-        ":" => value.parse::<CtxLogField>().ok().map(|field| Tag {
-            category: TagCategory::Context(field),
-            data: None,
-        }),
+        ":" => value
+            .parse::<CtxLogField>()
+            .ok()
+            .map(|field| Tag::simple(TagCategory::Context(field))),
         "$" => {
             if key.as_bytes() == HOST_NAME_TAG {
-                Some(Tag {
-                    category: TagCategory::Fill,
-                    data: Some(get_hostname().to_string()),
-                })
+                Some(Tag::fill(get_hostname()))
             } else {
-                Some(Tag {
-                    category: TagCategory::Fill,
-                    data: Some(std::env::var(value).unwrap_or_default()),
-                })
+                Some(Tag::fill(&std::env::var(value).unwrap_or_default()))
             }
         },
         _ => None,
     }
+}
+
+/// The tag for one `{...}` placeholder, braces included; `None` for a name
+/// that is not a tag.
+fn parse_tag(key: &str) -> Option<Tag> {
+    let category = match key {
+        "{host}" => TagCategory::Host,
+        "{method}" => TagCategory::Method,
+        "{path}" => TagCategory::Path,
+        "{proto}" => TagCategory::Proto,
+        "{query}" => TagCategory::Query,
+        "{remote}" => TagCategory::Remote,
+        "{client_ip}" => TagCategory::ClientIp,
+        "{scheme}" => TagCategory::Scheme,
+        "{uri}" => TagCategory::Uri,
+        "{referer}" => TagCategory::Referrer,
+        "{user_agent}" => TagCategory::UserAgent,
+        "{when}" => TagCategory::When,
+        "{when_utc_iso}" => TagCategory::WhenUtcIso,
+        "{when_unix}" => TagCategory::WhenUnix,
+        "{size}" => TagCategory::Size,
+        "{size_human}" => TagCategory::SizeHuman,
+        "{status}" => TagCategory::Status,
+        "{latency}" => TagCategory::Latency,
+        "{latency_human}" => TagCategory::LatencyHuman,
+        "{payload_size}" => TagCategory::PayloadSize,
+        "{payload_size_human}" => TagCategory::PayloadSizeHuman,
+        "{request_id}" => TagCategory::RequestId,
+        _ => return format_extra_tag(key),
+    };
+    Some(Tag::simple(category))
+}
+
+/// Characters a placeholder name is made of: letters, digits and the
+/// prefixes and separators of header, cookie, context and env tags.
+#[inline]
+fn is_tag_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+        || matches!(b, b'_' | b'-' | b'<' | b'>' | b'~' | b':' | b'$')
+}
+
+/// Splits a format string into literal text and `{tag}` placeholders. A
+/// placeholder is `{`, one or more tag characters and `}`; a `{` that is
+/// not followed by that is literal text, as is everything outside
+/// placeholders. A well-formed placeholder that names no tag is dropped.
+fn parse_tags(value: &str) -> Vec<Tag> {
+    let mut tags = vec![];
+    let bytes = value.as_bytes();
+    let mut fill_start = 0;
+    let mut pos = 0;
+    while let Some(offset) = value[pos..].find('{') {
+        let start = pos + offset;
+        let name_len = bytes[start + 1..]
+            .iter()
+            .take_while(|b| is_tag_byte(**b))
+            .count();
+        let end = start + 1 + name_len + 1;
+        if name_len == 0 || bytes.get(end - 1) != Some(&b'}') {
+            pos = start + 1;
+            continue;
+        }
+        if fill_start < start {
+            tags.push(Tag::fill(&value[fill_start..start]));
+        }
+        if let Some(tag) = parse_tag(&value[start..end]) {
+            tags.push(tag);
+        }
+        fill_start = end;
+        pos = end;
+    }
+    if fill_start < value.len() {
+        tags.push(Tag::fill(&value[fill_start..]));
+    }
+    tags
 }
 
 // Predefined log formats
@@ -136,136 +211,7 @@ impl From<&str> for Parser {
             "tiny" => TINY,
             _ => value,
         };
-        let Ok(reg) = Regex::new(r"(\{[a-zA-Z_<>\-~:$]+*\})") else {
-            return Parser {
-                needs_timestamp: false,
-                capacity: 0,
-                tags: vec![Tag {
-                    category: TagCategory::Fill,
-                    data: Some(value.to_string()),
-                }],
-            };
-        };
-        let mut current = 0;
-        let mut end = 0;
-        let mut tags = vec![];
-
-        while let Some(result) = reg.find_at(value, current) {
-            if end < result.start() {
-                tags.push(Tag {
-                    category: TagCategory::Fill,
-                    data: Some(
-                        value.substring(end, result.start()).to_string(),
-                    ),
-                });
-            }
-            let key = result.as_str();
-
-            match key {
-                "{host}" => tags.push(Tag {
-                    category: TagCategory::Host,
-                    data: None,
-                }),
-                "{method}" => tags.push(Tag {
-                    category: TagCategory::Method,
-                    data: None,
-                }),
-                "{path}" => tags.push(Tag {
-                    category: TagCategory::Path,
-                    data: None,
-                }),
-                "{proto}" => tags.push(Tag {
-                    category: TagCategory::Proto,
-                    data: None,
-                }),
-                "{query}" => tags.push(Tag {
-                    category: TagCategory::Query,
-                    data: None,
-                }),
-                "{remote}" => tags.push(Tag {
-                    category: TagCategory::Remote,
-                    data: None,
-                }),
-                "{client_ip}" => tags.push(Tag {
-                    category: TagCategory::ClientIp,
-                    data: None,
-                }),
-                "{scheme}" => tags.push(Tag {
-                    category: TagCategory::Scheme,
-                    data: None,
-                }),
-                "{uri}" => tags.push(Tag {
-                    category: TagCategory::Uri,
-                    data: None,
-                }),
-                "{referer}" => tags.push(Tag {
-                    category: TagCategory::Referrer,
-                    data: None,
-                }),
-                "{user_agent}" => tags.push(Tag {
-                    category: TagCategory::UserAgent,
-                    data: None,
-                }),
-                "{when}" => tags.push(Tag {
-                    category: TagCategory::When,
-                    data: None,
-                }),
-                "{when_utc_iso}" => tags.push(Tag {
-                    category: TagCategory::WhenUtcIso,
-                    data: None,
-                }),
-                "{when_unix}" => tags.push(Tag {
-                    category: TagCategory::WhenUnix,
-                    data: None,
-                }),
-                "{size}" => tags.push(Tag {
-                    category: TagCategory::Size,
-                    data: None,
-                }),
-                "{size_human}" => tags.push(Tag {
-                    category: TagCategory::SizeHuman,
-                    data: None,
-                }),
-                "{status}" => tags.push(Tag {
-                    category: TagCategory::Status,
-                    data: None,
-                }),
-                "{latency}" => tags.push(Tag {
-                    category: TagCategory::Latency,
-                    data: None,
-                }),
-                "{latency_human}" => tags.push(Tag {
-                    category: TagCategory::LatencyHuman,
-                    data: None,
-                }),
-                "{payload_size}" => tags.push(Tag {
-                    category: TagCategory::PayloadSize,
-                    data: None,
-                }),
-                "{payload_size_human}" => tags.push(Tag {
-                    category: TagCategory::PayloadSizeHuman,
-                    data: None,
-                }),
-                "{request_id}" => tags.push(Tag {
-                    category: TagCategory::RequestId,
-                    data: None,
-                }),
-                _ => {
-                    if let Some(tag) = format_extra_tag(key) {
-                        tags.push(tag);
-                    }
-                },
-            }
-
-            end = result.end();
-            current = result.start() + 1;
-        }
-        if end < value.len() {
-            tags.push(Tag {
-                category: TagCategory::Fill,
-                data: Some(value.substring(end, value.len()).to_string()),
-            });
-        }
+        let tags = parse_tags(value);
         let needs_timestamp = tags.iter().any(|t| {
             matches!(
                 t.category,
@@ -303,6 +249,71 @@ static LOG_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
         .unwrap_or_default()
 });
 
+const EMPTY_FIELD: &[u8] = b"-";
+
+/// Appends `value` as exactly `width` decimal digits (zero padded).
+#[inline]
+fn put_digits(buf: &mut BytesMut, mut value: u32, width: usize) {
+    let mut digits = [b'0'; 10];
+    let mut i = digits.len();
+    while i > digits.len() - width {
+        i -= 1;
+        digits[i] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    buf.put_slice(&digits[digits.len() - width..]);
+}
+
+/// RFC 3339 with millisecond precision - `2024-01-02T03:04:05.006+08:00`,
+/// or `Z` for an offset of zero when `use_z` - appended without an
+/// intermediate `String`. Matches chrono's
+/// `to_rfc3339_opts(SecondsFormat::Millis, use_z)`.
+fn put_rfc3339_millis<Tz: TimeZone>(
+    buf: &mut BytesMut,
+    time: &DateTime<Tz>,
+    use_z: bool,
+) {
+    let local = time.naive_local();
+    let year = local.year();
+    if (0..=9999).contains(&year) {
+        put_digits(buf, year as u32, 4);
+    } else {
+        buf.put_slice(itoa::Buffer::new().format(year).as_bytes());
+    }
+    buf.put_u8(b'-');
+    put_digits(buf, local.month(), 2);
+    buf.put_u8(b'-');
+    put_digits(buf, local.day(), 2);
+    buf.put_u8(b'T');
+    put_digits(buf, local.hour(), 2);
+    buf.put_u8(b':');
+    put_digits(buf, local.minute(), 2);
+    buf.put_u8(b':');
+    put_digits(buf, local.second(), 2);
+    buf.put_u8(b'.');
+    put_digits(buf, local.nanosecond() / 1_000_000, 3);
+    let offset = time.offset().fix().local_minus_utc();
+    if offset == 0 && use_z {
+        buf.put_u8(b'Z');
+        return;
+    }
+    buf.put_u8(if offset < 0 { b'-' } else { b'+' });
+    let offset = offset.unsigned_abs();
+    put_digits(buf, offset / 3600, 2);
+    buf.put_u8(b':');
+    put_digits(buf, (offset % 3600) / 60, 2);
+}
+
+/// Appends `value`, or `-` when it is empty.
+#[inline]
+fn put_or_empty(buf: &mut BytesMut, value: &[u8]) {
+    if value.is_empty() {
+        buf.put_slice(EMPTY_FIELD);
+    } else {
+        buf.put_slice(value);
+    }
+}
+
 impl Parser {
     // Add a method to estimate capacity based on tag types
     fn estimate_capacity(tags: &[Tag]) -> usize {
@@ -327,146 +338,110 @@ impl Parser {
 
         // Then only calculate if needed
         let (now, instant) = if self.needs_timestamp {
-            let n = Utc::now();
-            (Some(n), Some(Instant::now()))
+            (Some(Utc::now()), Some(Instant::now()))
         } else {
             (None, None)
         };
-
-        const EMPTY_FIELD: &[u8] = b"-";
+        let latency_ms = || {
+            instant.map(|instant| {
+                instant.saturating_duration_since(ctx.timing.created_at)
+            })
+        };
 
         // Process each tag in the format string
         for tag in self.tags.iter() {
-            match tag.category {
+            match &tag.category {
                 TagCategory::Fill => {
                     // Static text, just append it
                     if let Some(data) = &tag.data {
-                        buf.extend_from_slice(data.as_bytes());
+                        buf.put_slice(data.as_bytes());
                     }
                 },
                 TagCategory::Host => {
                     // Add the host from request headers
-                    match pingap_core::get_host(req_header) {
-                        Some(host) if !host.is_empty() => {
-                            buf.extend_from_slice(host.as_bytes())
-                        },
-                        _ => buf.extend_from_slice(EMPTY_FIELD),
-                    }
+                    let host = pingap_core::get_host(req_header);
+                    put_or_empty(&mut buf, host.unwrap_or_default().as_bytes());
                 },
                 TagCategory::Method => {
-                    let method = req_header.method.as_str();
-                    if method.is_empty() {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    } else {
-                        buf.extend_from_slice(method.as_bytes());
-                    }
+                    put_or_empty(
+                        &mut buf,
+                        req_header.method.as_str().as_bytes(),
+                    );
                 },
                 TagCategory::Path => {
-                    let path = req_header.uri.path();
-                    if path.is_empty() {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    } else {
-                        buf.extend_from_slice(path.as_bytes());
-                    }
+                    put_or_empty(&mut buf, req_header.uri.path().as_bytes());
                 },
                 TagCategory::Proto => {
                     if session.is_http2() {
-                        buf.extend_from_slice(b"HTTP/2.0");
+                        buf.put_slice(b"HTTP/2.0");
                     } else {
-                        buf.extend_from_slice(b"HTTP/1.1");
+                        buf.put_slice(b"HTTP/1.1");
                     }
                 },
-                TagCategory::Query => match req_header.uri.query() {
-                    Some(query) if !query.is_empty() => {
-                        buf.extend_from_slice(query.as_bytes())
-                    },
-                    _ => buf.extend_from_slice(EMPTY_FIELD),
+                TagCategory::Query => {
+                    let query = req_header.uri.query().unwrap_or_default();
+                    put_or_empty(&mut buf, query.as_bytes());
                 },
-                TagCategory::Remote => match &ctx.conn.remote_addr {
-                    Some(addr) if !addr.is_empty() => {
-                        buf.extend_from_slice(addr.as_bytes())
-                    },
-                    _ => buf.extend_from_slice(EMPTY_FIELD),
+                TagCategory::Remote => {
+                    let addr =
+                        ctx.conn.remote_addr.as_deref().unwrap_or_default();
+                    put_or_empty(&mut buf, addr.as_bytes());
                 },
-                TagCategory::ClientIp => {
-                    if let Some(client_ip) = &ctx.conn.client_ip {
-                        if client_ip.is_empty() {
-                            buf.extend_from_slice(EMPTY_FIELD);
-                        } else {
-                            buf.extend_from_slice(client_ip.as_bytes());
-                        }
-                    } else {
+                TagCategory::ClientIp => match &ctx.conn.client_ip {
+                    Some(client_ip) => {
+                        put_or_empty(&mut buf, client_ip.as_bytes());
+                    },
+                    None => {
                         let client_ip = pingap_core::get_client_ip(session);
-                        if client_ip.is_empty() {
-                            buf.extend_from_slice(EMPTY_FIELD);
-                        } else {
-                            buf.extend_from_slice(client_ip.as_bytes());
-                        }
-                    }
+                        put_or_empty(&mut buf, client_ip.as_bytes());
+                    },
                 },
                 TagCategory::Scheme => {
                     if ctx.conn.tls_version.is_some() {
-                        buf.extend_from_slice(b"https");
+                        buf.put_slice(b"https");
                     } else {
-                        buf.extend_from_slice(b"http");
+                        buf.put_slice(b"http");
                     }
                 },
-                TagCategory::Uri => match req_header.uri.path_and_query() {
-                    Some(value) if !value.as_str().is_empty() => {
-                        buf.extend_from_slice(value.as_str().as_bytes())
-                    },
-                    _ => buf.extend_from_slice(EMPTY_FIELD),
+                TagCategory::Uri => {
+                    let uri = req_header
+                        .uri
+                        .path_and_query()
+                        .map(|value| value.as_str())
+                        .unwrap_or_default();
+                    put_or_empty(&mut buf, uri.as_bytes());
                 },
                 TagCategory::Referrer => {
-                    let value = session.get_header_bytes("referer");
-                    if value.is_empty() {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    } else {
-                        buf.extend_from_slice(value);
-                    }
+                    put_or_empty(&mut buf, session.get_header_bytes("referer"));
                 },
                 TagCategory::UserAgent => {
-                    let value = session.get_header_bytes("user-agent");
-                    if value.is_empty() {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    } else {
-                        buf.extend_from_slice(value);
-                    }
+                    put_or_empty(
+                        &mut buf,
+                        session.get_header_bytes("user-agent"),
+                    );
                 },
-                TagCategory::When => {
-                    if let Some(now) = &now {
-                        buf.extend_from_slice(
-                            now.with_timezone(&Local)
-                                .to_rfc3339_opts(SecondsFormat::Millis, false)
-                                .as_bytes(),
-                        );
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::When => match &now {
+                    Some(now) => put_rfc3339_millis(
+                        &mut buf,
+                        &now.with_timezone(&Local),
+                        false,
+                    ),
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
-                TagCategory::WhenUtcIso => {
-                    if let Some(now) = &now {
-                        buf.extend_from_slice(
-                            now.to_rfc3339_opts(SecondsFormat::Millis, true)
-                                .as_bytes(),
-                        );
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::WhenUtcIso => match &now {
+                    Some(now) => put_rfc3339_millis(&mut buf, now, true),
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
-                TagCategory::WhenUnix => {
-                    if let Some(now) = &now {
-                        buf.extend_from_slice(
-                            itoa::Buffer::new()
-                                .format(now.timestamp_millis())
-                                .as_bytes(),
-                        );
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::WhenUnix => match &now {
+                    Some(now) => buf.put_slice(
+                        itoa::Buffer::new()
+                            .format(now.timestamp_millis())
+                            .as_bytes(),
+                    ),
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
                 TagCategory::Size => {
-                    buf.extend_from_slice(
+                    buf.put_slice(
                         itoa::Buffer::new()
                             .format(session.body_bytes_sent())
                             .as_bytes(),
@@ -475,72 +450,56 @@ impl Parser {
                 TagCategory::SizeHuman => {
                     format_byte_size(&mut buf, session.body_bytes_sent());
                 },
-                TagCategory::Status => {
-                    if let Some(status) = &ctx.state.status {
-                        buf.extend_from_slice(status.as_str().as_bytes());
-                    } else {
-                        buf.extend_from_slice(b"-");
-                    }
+                TagCategory::Status => match &ctx.state.status {
+                    Some(status) => buf.put_slice(status.as_str().as_bytes()),
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
-                TagCategory::Latency => {
-                    if let Some(instant) = instant {
-                        let ms = (instant - ctx.timing.created_at).as_millis();
-                        buf.extend_from_slice(
-                            itoa::Buffer::new().format(ms).as_bytes(),
-                        );
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::Latency => match latency_ms() {
+                    Some(latency) => buf.put_slice(
+                        itoa::Buffer::new()
+                            .format(latency.as_millis())
+                            .as_bytes(),
+                    ),
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
-                TagCategory::LatencyHuman => {
-                    if let Some(instant) = instant {
-                        let ms = (instant - ctx.timing.created_at).as_millis();
-                        format_duration(&mut buf, ms as u64);
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                TagCategory::LatencyHuman => match latency_ms() {
+                    Some(latency) => {
+                        format_duration(&mut buf, latency.as_millis() as u64)
+                    },
+                    None => buf.put_slice(EMPTY_FIELD),
                 },
+                // A missing cookie is `-` like every other missing value;
+                // it used to leave the field empty.
                 TagCategory::Cookie => {
-                    if let Some(cookie) = &tag.data {
-                        if let Some(value) =
-                            pingap_core::get_cookie_value(req_header, cookie)
-                        {
-                            buf.extend_from_slice(value.as_bytes());
-                        }
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                    let value = tag.data.as_deref().and_then(|cookie| {
+                        pingap_core::get_cookie_value(req_header, cookie)
+                    });
+                    put_or_empty(
+                        &mut buf,
+                        value.unwrap_or_default().as_bytes(),
+                    );
                 },
                 TagCategory::RequestHeader => {
-                    if let Some(key) = &tag.data {
-                        match req_header.headers.get(key) {
-                            Some(value) if !value.is_empty() => {
-                                buf.extend_from_slice(value.as_bytes())
-                            },
-                            _ => buf.extend_from_slice(EMPTY_FIELD),
-                        }
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                    let value = tag
+                        .data
+                        .as_deref()
+                        .and_then(|key| req_header.headers.get(key))
+                        .map(|value| value.as_bytes())
+                        .unwrap_or_default();
+                    put_or_empty(&mut buf, value);
                 },
                 TagCategory::ResponseHeader => {
-                    if let Some(resp_header) = session.response_written() {
-                        if let Some(key) = &tag.data {
-                            match get_resp_header_value(resp_header, key) {
-                                Some(value) if !value.is_empty() => {
-                                    buf.extend_from_slice(value)
-                                },
-                                _ => buf.extend_from_slice(EMPTY_FIELD),
-                            }
-                        } else {
-                            buf.extend_from_slice(EMPTY_FIELD);
-                        }
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                    let value = session
+                        .response_written()
+                        .zip(tag.data.as_deref())
+                        .and_then(|(resp_header, key)| {
+                            get_resp_header_value(resp_header, key)
+                        })
+                        .unwrap_or_default();
+                    put_or_empty(&mut buf, value);
                 },
                 TagCategory::PayloadSize => {
-                    buf.extend_from_slice(
+                    buf.put_slice(
                         itoa::Buffer::new()
                             .format(ctx.state.payload_size)
                             .as_bytes(),
@@ -550,14 +509,12 @@ impl Parser {
                     format_byte_size(&mut buf, ctx.state.payload_size);
                 },
                 TagCategory::RequestId => {
-                    if let Some(key) = &ctx.state.request_id {
-                        buf.extend_from_slice(key.as_bytes());
-                    } else {
-                        buf.extend_from_slice(EMPTY_FIELD);
-                    }
+                    let id =
+                        ctx.state.request_id.as_deref().unwrap_or_default();
+                    put_or_empty(&mut buf, id.as_bytes());
                 },
                 TagCategory::Context(field) => {
-                    ctx.append_log_field(&mut buf, field);
+                    ctx.append_log_field(&mut buf, *field);
                 },
             };
         }
@@ -622,8 +579,10 @@ pub fn parse_access_log_directive(
 mod tests {
     use super::{
         Parser, Tag, TagCategory, format_extra_tag, get_resp_header_value,
-        parse_access_log_directive,
+        parse_access_log_directive, parse_tags, put_rfc3339_millis,
     };
+    use bytes::BytesMut;
+    use chrono::{FixedOffset, SecondsFormat, TimeZone, Utc};
     use http::Method;
     use pingap_core::{
         ConnectionInfo, Ctx, RequestState, Timing, UpstreamInfo,
@@ -892,6 +851,10 @@ mod tests {
             log
         );
 
+        // a missing cookie, header or response header is `-`
+        let p: Parser = "{~nope} {>x-nope} {<x-nope}".into();
+        assert_eq!("- - -", p.format(&session, &ctx));
+
         let p: Parser = "{when_utc_iso}".into();
         let log = p.format(&session, &ctx);
         assert_eq!(true, log.len() > 20);
@@ -903,6 +866,73 @@ mod tests {
         let p: Parser = "{when_unix}".into();
         let log = p.format(&session, &ctx);
         assert_eq!(true, log.len() == 13);
+    }
+
+    /// The tokenizer: digits in names, literal braces, nested and
+    /// unterminated braces, unknown tags dropped.
+    #[test]
+    fn test_parse_tags() {
+        let render = |value: &str| {
+            parse_tags(value)
+                .iter()
+                .map(|tag| match &tag.category {
+                    TagCategory::Fill => {
+                        format!("fill({})", tag.data.as_deref().unwrap_or(""))
+                    },
+                    TagCategory::RequestHeader => {
+                        format!("header({})", tag.data.as_deref().unwrap_or(""))
+                    },
+                    category => format!("{category:?}"),
+                })
+                .collect::<Vec<String>>()
+                .join(" ")
+        };
+        assert_eq!(
+            "Remote fill( \") Method fill( ) Uri fill(\")",
+            render(r#"{remote} "{method} {uri}""#)
+        );
+        // digits are part of a name: a header such as X-B3-TraceId
+        assert_eq!("header(X-B3-TraceId)", render("{>X-B3-TraceId}"));
+        // a brace that opens no placeholder is text
+        assert_eq!("fill({ ) Status fill( })", render("{ {status} }"));
+        assert_eq!("fill({) Status", render("{{status}"));
+        assert_eq!("fill({status)", render("{status"));
+        assert_eq!("fill({a b}) Host", render("{a b}{host}"));
+        // a placeholder that names no tag is dropped
+        assert_eq!("Host fill( ) Method", render("{host} {nope}{method}"));
+        assert_eq!("", render(""));
+    }
+
+    /// The allocation-free timestamp matches chrono's rfc3339 output.
+    #[test]
+    fn test_put_rfc3339_millis() {
+        let utc = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap()
+            + chrono::Duration::milliseconds(6);
+        let east = utc.with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap());
+        let west =
+            utc.with_timezone(&FixedOffset::west_opt(5 * 3600 + 1800).unwrap());
+        for (time, use_z) in [(utc, true), (utc, false)] {
+            let mut buf = BytesMut::new();
+            put_rfc3339_millis(&mut buf, &time, use_z);
+            assert_eq!(
+                time.to_rfc3339_opts(SecondsFormat::Millis, use_z),
+                std::str::from_utf8(&buf).unwrap()
+            );
+        }
+        for time in [east, west] {
+            let mut buf = BytesMut::new();
+            put_rfc3339_millis(&mut buf, &time, false);
+            assert_eq!(
+                time.to_rfc3339_opts(SecondsFormat::Millis, false),
+                std::str::from_utf8(&buf).unwrap()
+            );
+        }
+        let mut buf = BytesMut::new();
+        put_rfc3339_millis(&mut buf, &east, false);
+        assert_eq!(
+            "2024-01-02T11:04:05.006+08:00",
+            std::str::from_utf8(&buf).unwrap()
+        );
     }
 
     #[test]
