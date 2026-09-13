@@ -16,16 +16,24 @@ use crate::storage::{History, Storage};
 use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{
-    Client, ConnectOptions, GetOptions, KeyValue, SortOrder, SortTarget,
-    WatchOptions,
+    Client, ConnectOptions, GetOptions, KeyValue, KvClient, SortOrder,
+    SortTarget, WatchOptions,
 };
 use pingap_core::now_sec;
 use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::time::Duration;
-use substring::Substring;
+use tokio::sync::Mutex;
+use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+fn etcd_error(e: etcd_client::Error) -> Error {
+    Error::Etcd {
+        source: Box::new(e),
+    }
+}
 
 pub struct EtcdStorage {
     // Base path for all config entries in etcd
@@ -38,6 +46,11 @@ pub struct EtcdStorage {
     options: ConnectOptions,
     // Enable history
     enable_history: bool,
+    /// The connection, made on first use and kept. `etcd_client::Client`
+    /// is a handle over a shared channel, so handing out clones is cheap;
+    /// every request used to open a fresh connection, which the reload loop
+    /// did every few seconds.
+    client: Mutex<Option<Client>>,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
 
@@ -71,24 +84,21 @@ impl EtcdStorage {
     /// Create a new etcd storage for config.
     /// Connection url format: etcd://host1:port1,host2:port2/pingap?timeout=10s&connect_timeout=5s&user=**&password=**
     pub fn new(value: &str) -> Result<Self> {
-        let mut hosts = "".to_string();
-        let mut path = "".to_string();
-        let mut query = "".to_string();
-        if let Some((value1, value2)) = value
-            .substring(ETCD_PROTOCOL.len(), value.len())
-            .split_once('/')
-        {
-            hosts = value1.to_string();
-            let arr: Vec<&str> = value2.split('?').collect();
-            path = format!("/{}", arr[0]);
-            if arr.len() == 2 {
-                query = arr[1].to_string();
-            }
+        let rest = value.strip_prefix(ETCD_PROTOCOL).unwrap_or(value);
+        // `hosts/path?query`; a missing path is the root.
+        let (hosts, path_query) = rest.split_once('/').unwrap_or((rest, ""));
+        let (path, query) =
+            path_query.split_once('?').unwrap_or((path_query, ""));
+        if hosts.is_empty() {
+            return Err(Error::Invalid {
+                message: format!("etcd url {value} names no host"),
+            });
         }
+        let path = format!("/{path}");
 
         let addrs: Vec<String> =
             hosts.split(',').map(|item| item.to_string()).collect();
-        let params = EtcdStorageParams::try_from(query.as_str())?;
+        let params = EtcdStorageParams::try_from(query)?;
         let mut options = ConnectOptions::default();
 
         if !params.user.is_empty() && !params.password.is_empty() {
@@ -100,11 +110,7 @@ impl EtcdStorage {
         if let Some(connect_timeout) = params.connect_timeout {
             options = options.with_connect_timeout(connect_timeout);
         };
-        let history_path = if path.ends_with("/") {
-            format!("{}-history", path.substring(0, path.len() - 1))
-        } else {
-            format!("{path}-history")
-        };
+        let history_path = format!("{}-history", path.trim_end_matches('/'));
 
         Ok(Self {
             addrs,
@@ -112,20 +118,44 @@ impl EtcdStorage {
             path,
             history_path,
             enable_history: params.enable_history,
+            client: Mutex::new(None),
         })
     }
 
-    /// Connect to etcd server.
-    async fn connect(&self) -> Result<Client> {
-        // TODO
-        // 使用client.clone()会导致第二次请求时失败
-        // 暂时未明确为什么不可复用，后续再优化
-        Client::connect(&self.addrs, Some(self.options.clone()))
+    /// The shared connection, opened on first use.
+    async fn client(&self) -> Result<Client> {
+        let mut slot = self.client.lock().await;
+        if let Some(client) = slot.as_ref() {
+            return Ok(client.clone());
+        }
+        let client = Client::connect(&self.addrs, Some(self.options.clone()))
             .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })
+            .map_err(etcd_error)?;
+        *slot = Some(client.clone());
+        Ok(client)
     }
+
+    /// Runs `op` on the shared connection. A request that fails is tried
+    /// once more on a fresh connection, in case the old one went stale
+    /// (etcd restarted, an auth token expired); every operation here is
+    /// idempotent, so the retry is safe.
+    async fn with_kv<T, F, Fut>(&self, op: F) -> Result<T>
+    where
+        F: Fn(KvClient) -> Fut,
+        Fut: Future<Output = std::result::Result<T, etcd_client::Error>>,
+    {
+        let client = self.client().await?;
+        match op(client.kv_client()).await {
+            Ok(value) => Ok(value),
+            Err(e) => {
+                debug!(error = %e, "etcd request failed, reconnecting");
+                *self.client.lock().await = None;
+                let client = self.client().await?;
+                op(client.kv_client()).await.map_err(etcd_error)
+            },
+        }
+    }
+
     fn get_path(&self, key: &str) -> String {
         path_join(&self.path, key)
     }
@@ -134,15 +164,13 @@ impl EtcdStorage {
     }
     async fn fetch_latest(&self, key: &str) -> Result<Option<KeyValue>> {
         let key = self.get_path(key);
-        let mut c = self.connect().await?.kv_client();
-        let arr = c
-            .get(key.as_bytes(), None)
-            .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })?
-            .take_kvs();
-        Ok(arr.first().cloned())
+        let mut resp = self
+            .with_kv(|mut kv| {
+                let key = key.clone();
+                async move { kv.get(key, None).await }
+            })
+            .await?;
+        Ok(resp.take_kvs().into_iter().next())
     }
 
     async fn save_history(&self, key: &str) -> Result<()> {
@@ -157,12 +185,13 @@ impl EtcdStorage {
         let name = format!("{}-{}", latest.mod_revision(), now_sec());
 
         let history_key = path_join(&self.get_history_path(key), &name);
-        let mut c = self.connect().await?.kv_client();
-        c.put(history_key, latest.value(), None)
-            .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })?;
+        let value = latest.value().to_vec();
+        self.with_kv(|mut kv| {
+            let history_key = history_key.clone();
+            let value = value.clone();
+            async move { kv.put(history_key, value, None).await }
+        })
+        .await?;
         Ok(())
     }
 }
@@ -170,22 +199,21 @@ impl EtcdStorage {
 #[async_trait]
 impl Storage for EtcdStorage {
     async fn fetch(&self, key: &str) -> Result<String> {
-        let mut c = self.connect().await?.kv_client();
         let key = self.get_path(key);
         let mut opts = GetOptions::new();
         if !key.ends_with(".toml") {
             opts = opts.with_prefix();
         }
 
-        let arr = c
-            .get(key.as_bytes(), Some(opts))
-            .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })?
-            .take_kvs();
+        let mut resp = self
+            .with_kv(|mut kv| {
+                let key = key.clone();
+                let opts = opts.clone();
+                async move { kv.get(key, Some(opts)).await }
+            })
+            .await?;
         let mut buffer = vec![];
-        for item in arr {
+        for item in resp.take_kvs() {
             buffer.extend(item.value());
             buffer.push(0x0a);
         }
@@ -195,19 +223,22 @@ impl Storage for EtcdStorage {
     async fn save(&self, key: &str, value: &str) -> Result<()> {
         self.save_history(key).await?;
         let key = self.get_path(key);
-        let mut c = self.connect().await?.kv_client();
-        c.put(key, value, None).await.map_err(|e| Error::Etcd {
-            source: Box::new(e),
-        })?;
+        self.with_kv(|mut kv| {
+            let key = key.clone();
+            let value = value.to_string();
+            async move { kv.put(key, value, None).await }
+        })
+        .await?;
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
         let key = self.get_path(key);
-        let mut c = self.connect().await?.kv_client();
-        c.delete(key, None).await.map_err(|e| Error::Etcd {
-            source: Box::new(e),
-        })?;
+        self.with_kv(|mut kv| {
+            let key = key.clone();
+            async move { kv.delete(key, None).await }
+        })
+        .await?;
         Ok(())
     }
 
@@ -220,21 +251,21 @@ impl Storage for EtcdStorage {
     }
     async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
         let key = self.get_history_path(key);
-        let mut c = self.connect().await?.kv_client();
         let opts = GetOptions::new()
             .with_prefix()
             .with_sort(SortTarget::Create, SortOrder::Descend)
             .with_limit(10);
 
-        let kvs = c
-            .get(key.as_bytes(), Some(opts))
-            .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })?
-            .take_kvs();
+        let mut resp = self
+            .with_kv(|mut kv| {
+                let key = key.clone();
+                let opts = opts.clone();
+                async move { kv.get(key, Some(opts)).await }
+            })
+            .await?;
 
-        let histories = kvs
+        let histories = resp
+            .take_kvs()
             .iter()
             .filter_map(|item| {
                 let key_str = item.key_str().ok()?;
@@ -256,18 +287,16 @@ impl Storage for EtcdStorage {
     /// Note: May miss changes if processing takes too long between updates
     /// Should be used with periodic full fetches to ensure consistency
     async fn observe(&self) -> Result<Observer> {
-        // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
-        // 因此还需配合fetch的形式比对
-        let mut c = self.connect().await?.watch_client();
+        // A watch can miss a change made while an earlier one is still being
+        // handled, so the caller pairs it with periodic full fetches.
+        let mut c = self.client().await?.watch_client();
         let stream = c
             .watch(
                 self.path.as_bytes(),
                 Some(WatchOptions::default().with_prefix()),
             )
             .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
-            })?;
+            .map_err(etcd_error)?;
         Ok(Observer {
             etcd_watch_stream: Some(stream),
         })
@@ -290,5 +319,27 @@ mod tests {
         assert_eq!(params.connect_timeout, Some(Duration::from_secs(5)));
         assert_eq!(params.user, "abc");
         assert_eq!(params.password, "pwd");
+    }
+
+    #[test]
+    fn test_parse_url() {
+        let storage = EtcdStorage::new(
+            "etcd://a:2379,b:2379/pingap/?timeout=10s&enable_history=true",
+        )
+        .unwrap();
+        assert_eq!(
+            vec!["a:2379".to_string(), "b:2379".to_string()],
+            storage.addrs
+        );
+        assert_eq!("/pingap/", storage.path);
+        assert_eq!("/pingap-history", storage.history_path);
+        assert_eq!(true, storage.enable_history);
+        assert_eq!("/pingap/basic.toml", storage.get_path("basic.toml"));
+
+        // No path means the root; no host is an error rather than a
+        // connection attempt to "".
+        let storage = EtcdStorage::new("etcd://127.0.0.1:2379").unwrap();
+        assert_eq!("/", storage.path);
+        assert_eq!(true, EtcdStorage::new("etcd:///pingap").is_err());
     }
 }

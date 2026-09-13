@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::{Error, Result};
+use crate::PingapTomlConfig;
 use bytesize::ByteSize;
-use http::{HeaderName, HeaderValue};
 use pingap_discovery::{DNS_DISCOVERY, is_static_discovery};
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
 use rustls_pki_types::pem::PemObject;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashSet;
 use std::fs::File;
@@ -252,14 +253,17 @@ impl Validate for CertificateConf {
     /// - Validates certificate chain can be parsed if present
     fn validate(&self) -> Result<()> {
         // Validate private key
-        let tls_key = self.tls_key.clone().unwrap_or_default();
-        if !tls_key.is_empty() {
-            let buf_list = pingap_util::convert_pem(&tls_key).map_err(|e| {
+        if let Some(tls_key) =
+            self.tls_key.as_deref().filter(|key| !key.is_empty())
+        {
+            let buf_list = pingap_util::convert_pem(tls_key).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
                 }
             })?;
-            let buf = &buf_list[0];
+            let buf = buf_list.first().ok_or_else(|| Error::Invalid {
+                message: "private key is empty".to_string(),
+            })?;
             let _ = rustls_pki_types::PrivateKeyDer::from_pem_slice(buf)
                 .map_err(|_| Error::Invalid {
                     message: "Failed to parse private key".to_string(),
@@ -267,9 +271,10 @@ impl Validate for CertificateConf {
         }
 
         // Validate main certificate
-        let tls_cert = self.tls_cert.clone().unwrap_or_default();
-        if !tls_cert.is_empty() {
-            validate_cert(&tls_cert)?;
+        if let Some(tls_cert) =
+            self.tls_cert.as_deref().filter(|cert| !cert.is_empty())
+        {
+            validate_cert(tls_cert)?;
         }
 
         // An unrecognised dns provider used to fall through to the manual task,
@@ -810,29 +815,24 @@ impl LocationConf {
         &self,
         upstream_names: Option<&[String]>,
     ) -> Result<()> {
-        // Helper function to validate HTTP headers
+        // The same parse the proxy applies when it builds the location, so
+        // what validates here is what loads there.
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
-            if let Some(headers) = headers {
-                for header in headers.iter() {
-                    // Split header into name and value parts
-                    let arr = header
-                        .split_once(':')
-                        .map(|(k, v)| (k.trim(), v.trim()));
-                    let Some((header_name, header_value)) = arr else {
+            for header in headers.iter().flatten() {
+                match pingap_core::convert_header(header) {
+                    Ok(Some(_)) => {},
+                    Ok(None) => {
                         return Err(Error::Invalid {
                             message: format!("header {header} is invalid"),
                         });
-                    };
-
-                    // Validate header name is valid
-                    HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| Error::Invalid {
-                        message: format!("header name({header_name}) is invalid, error: {err}"),
-                    })?;
-
-                    // Validate header value is valid
-                    HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
-                        message: format!("header value({header_value}) is invalid, error: {err}"),
-                    })?;
+                    },
+                    Err(err) => {
+                        return Err(Error::Invalid {
+                            message: format!(
+                                "header {header} is invalid: {err}"
+                            ),
+                        });
+                    },
                 }
             }
             Ok(())
@@ -880,7 +880,7 @@ impl LocationConf {
         }
 
         let mut weight: u16 = 0;
-        let path = self.path.clone().unwrap_or("".to_string());
+        let path = self.path.as_deref().unwrap_or_default();
 
         // Add weight based on path match type and length
         if path.len() > 1 {
@@ -1336,25 +1336,6 @@ pub trait Hashable: Hash {
 impl Hashable for UpstreamConf {}
 impl Hashable for LocationConf {}
 
-#[derive(Deserialize, Debug, Serialize)]
-struct TomlConfig {
-    basic: Option<BasicConf>,
-    servers: Option<Map<String, Value>>,
-    upstreams: Option<Map<String, Value>>,
-    locations: Option<Map<String, Value>>,
-    plugins: Option<Map<String, Value>>,
-    certificates: Option<Map<String, Value>>,
-    storages: Option<Map<String, Value>>,
-}
-
-fn format_toml(value: &Value) -> String {
-    if let Some(value) = value.as_table() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
-}
-
 pub type PluginConf = Map<String, Value>;
 
 impl Validate for PluginConf {
@@ -1460,137 +1441,140 @@ impl PingapConfig {
         Ok((path, toml_string))
     }
     pub fn get_storage_value(&self, name: &str) -> Result<String> {
-        for (key, item) in self.storages.iter() {
-            if key != name {
-                continue;
-            }
-
-            if let Some(key) = &item.secret {
-                return pingap_util::aes_decrypt(key, &item.value).map_err(
-                    |e| Error::Invalid {
+        let Some(item) = self.storages.get(name) else {
+            return Ok(String::new());
+        };
+        match &item.secret {
+            Some(key) => {
+                pingap_util::aes_decrypt(key, &item.value).map_err(|e| {
+                    Error::Invalid {
                         message: e.to_string(),
-                    },
-                );
-            }
-            return Ok(item.value.clone());
+                    }
+                })
+            },
+            None => Ok(item.value.clone()),
         }
-        Ok("".to_string())
     }
 }
 
-fn convert_include_toml(
-    data: &HashMap<String, String>,
-    replace_includes: bool,
-    mut value: Value,
-) -> String {
-    let Some(m) = value.as_table_mut() else {
-        return "".to_string();
+/// Deserializes one entry straight from its `toml::Value`, naming the
+/// entry in the error.
+fn parse_entry<T: DeserializeOwned>(
+    kind: &str,
+    name: &str,
+    value: Value,
+) -> Result<T> {
+    value.try_into().map_err(|e| Error::Invalid {
+        message: if name.is_empty() {
+            format!("{kind}: {e}")
+        } else {
+            format!("{kind}({name}): {e}")
+        },
+    })
+}
+
+/// Expands an entry's `includes`. Each named storage holds a TOML fragment
+/// whose keys are merged into the entry; a fragment overrides the entry's
+/// own keys and a later fragment overrides an earlier one, as before. An
+/// include that names no storage, or a storage whose value is not TOML,
+/// is a configuration error: it used to be dropped without a word, leaving
+/// the entry without the settings it was meant to share.
+fn expand_includes(
+    storages: &HashMap<String, StorageConf>,
+    kind: &str,
+    name: &str,
+    value: &mut Value,
+) -> Result<()> {
+    let Some(table) = value.as_table_mut() else {
+        return Ok(());
     };
-    if !replace_includes {
-        return m.to_string();
+    let Some(includes) = table.remove("includes") else {
+        return Ok(());
+    };
+    let invalid = |message: String| Error::Invalid {
+        message: format!("{kind}({name}): {message}"),
+    };
+    let Some(includes) = includes.as_array() else {
+        return Err(invalid("includes must be an array".to_string()));
+    };
+    for include in includes {
+        let Some(include_name) = include.as_str() else {
+            return Err(invalid("includes must be storage names".to_string()));
+        };
+        let Some(storage) = storages.get(include_name) else {
+            return Err(invalid(format!(
+                "include({include_name}) is not found"
+            )));
+        };
+        let fragment: Table = toml::from_str(&storage.value).map_err(|e| {
+            invalid(format!("include({include_name}) is not valid toml: {e}"))
+        })?;
+        table.extend(fragment);
     }
-    if let Some(includes) = m.remove("includes")
-        && let Some(includes) = get_include_toml(data, includes)
-        && let Ok(includes) = toml::from_str::<Table>(&includes)
-    {
-        for (key, value) in includes.iter() {
-            m.insert(key.to_string(), value.clone());
-        }
-    }
-    m.to_string()
-}
-
-fn get_include_toml(
-    data: &HashMap<String, String>,
-    includes: Value,
-) -> Option<String> {
-    let values = includes.as_array()?;
-    let arr: Vec<String> = values
-        .iter()
-        .map(|item| {
-            let key = item.as_str().unwrap_or_default();
-            if let Some(value) = data.get(key) {
-                value.clone()
-            } else {
-                "".to_string()
-            }
-        })
-        .collect();
-    Some(arr.join("\n"))
+    Ok(())
 }
 
 pub(crate) fn convert_pingap_config(
     data: &[u8],
     replace_include: bool,
 ) -> Result<PingapConfig, Error> {
-    let data: TomlConfig = toml::from_str(
-        std::string::String::from_utf8_lossy(data)
-            .to_string()
-            .as_str(),
-    )
-    .map_err(|e| Error::De { source: e })?;
+    let config = PingapTomlConfig::from_toml(&String::from_utf8_lossy(data))?;
+    convert_toml_config(&config, replace_include)
+}
 
-    let mut conf = PingapConfig {
-        basic: data.basic.unwrap_or_default(),
-        ..Default::default()
+/// Resolves the loose document into typed configuration. Every entry is
+/// deserialized from its `toml::Value`, not printed back to text and
+/// parsed a second time.
+pub(crate) fn convert_toml_config(
+    data: &PingapTomlConfig,
+    replace_include: bool,
+) -> Result<PingapConfig> {
+    fn entries<T: DeserializeOwned>(
+        section: &Option<Map<String, Value>>,
+        kind: &str,
+        storages: &HashMap<String, StorageConf>,
+        replace_include: bool,
+    ) -> Result<HashMap<String, T>> {
+        let mut out = HashMap::new();
+        for (name, value) in section.iter().flatten() {
+            let mut value = value.clone();
+            if replace_include {
+                expand_includes(storages, kind, name, &mut value)?;
+            }
+            out.insert(name.clone(), parse_entry(kind, name, value)?);
+        }
+        Ok(out)
+    }
+
+    let basic = match &data.basic {
+        Some(value) => parse_entry("basic", "", value.clone())?,
+        None => BasicConf::default(),
     };
-    let mut includes = HashMap::new();
-    for (name, value) in data.storages.unwrap_or_default() {
-        let toml = format_toml(&value);
-        let storage: StorageConf =
-            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
-                message: format!("storage({name}): {e}"),
-            })?;
-        includes.insert(name.clone(), storage.value.clone());
-        conf.storages.insert(name, storage);
-    }
-
-    for (name, value) in data.upstreams.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_include, value);
-
-        let upstream: UpstreamConf =
-            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
-                message: format!("upstream({name}): {e}"),
-            })?;
-        conf.upstreams.insert(name, upstream);
-    }
-    for (name, value) in data.locations.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_include, value);
-
-        let location: LocationConf =
-            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
-                message: format!("location({name}): {e}"),
-            })?;
-        conf.locations.insert(name, location);
-    }
-    for (name, value) in data.servers.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_include, value);
-
-        let server: ServerConf =
-            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
-                message: format!("server({name}): {e}"),
-            })?;
-        conf.servers.insert(name, server);
-    }
-    for (name, value) in data.plugins.unwrap_or_default() {
-        let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
-            .map_err(|e| Error::Invalid {
-            message: format!("plugin({name}): {e}"),
-        })?;
-        conf.plugins.insert(name, plugin);
-    }
-
-    for (name, value) in data.certificates.unwrap_or_default() {
-        let certificate: CertificateConf =
-            toml::from_str(format_toml(&value).as_str()).map_err(|e| {
-                Error::Invalid {
-                    message: format!("certificate({name}): {e}"),
-                }
-            })?;
-        conf.certificates.insert(name, certificate);
-    }
-
-    Ok(conf)
+    let storages = entries(&data.storages, "storage", &HashMap::new(), false)?;
+    Ok(PingapConfig {
+        basic,
+        upstreams: entries(
+            &data.upstreams,
+            "upstream",
+            &storages,
+            replace_include,
+        )?,
+        locations: entries(
+            &data.locations,
+            "location",
+            &storages,
+            replace_include,
+        )?,
+        servers: entries(&data.servers, "server", &storages, replace_include)?,
+        plugins: entries(&data.plugins, "plugin", &storages, false)?,
+        certificates: entries(
+            &data.certificates,
+            "certificate",
+            &storages,
+            false,
+        )?,
+        storages,
+    })
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -1637,9 +1621,12 @@ impl PingapConfig {
         for certificate in self.certificates.values() {
             certificate.validate()?;
         }
-        let ping_conf = toml::to_string_pretty(self)
-            .map_err(|e| Error::Ser { source: e })?;
-        convert_pingap_config(ping_conf.as_bytes(), true)?;
+        // Round trip through the loose form with includes expanded: proves
+        // the config serializes and that every include resolves.
+        convert_toml_config(
+            &PingapTomlConfig::from_pingap_config(self)?,
+            true,
+        )?;
         Ok(())
     }
     /// Generate the content hash of config.
@@ -1653,52 +1640,66 @@ impl PingapConfig {
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
         Ok(format!("{hash:X}"))
     }
-    /// Remove the config by name.
-    pub fn remove(&mut self, category: &str, name: &str) -> Result<()> {
+    /// Whether `name` in `category` can be removed: an upstream, location or
+    /// plugin still referenced by another entry cannot.
+    pub fn check_removable(&self, category: &str, name: &str) -> Result<()> {
+        let in_use = |kind: &str, by: &str, by_name: &str| Error::Invalid {
+            message: format!("{kind}({name}) is in used by {by}({by_name})"),
+        };
         match category {
             CATEGORY_UPSTREAM => {
-                for (location_name, location) in self.locations.iter() {
-                    if let Some(upstream) = &location.upstream
-                        && upstream == name
-                    {
-                        return Err(Error::Invalid {
-                            message: format!(
-                                "upstream({name}) is in used by location({location_name})",
-                            ),
-                        });
-                    }
+                if let Some((location_name, _)) =
+                    self.locations.iter().find(|(_, location)| {
+                        location.upstream.as_deref() == Some(name)
+                    })
+                {
+                    return Err(in_use("upstream", "location", location_name));
                 }
+            },
+            CATEGORY_LOCATION => {
+                if let Some((server_name, _)) =
+                    self.servers.iter().find(|(_, server)| {
+                        server.locations.as_ref().is_some_and(|locations| {
+                            locations.iter().any(|l| l == name)
+                        })
+                    })
+                {
+                    return Err(in_use("location", "server", server_name));
+                }
+            },
+            CATEGORY_PLUGIN => {
+                if let Some((location_name, _)) =
+                    self.locations.iter().find(|(_, location)| {
+                        location.plugins.as_ref().is_some_and(|plugins| {
+                            plugins.iter().any(|p| p == name)
+                        })
+                    })
+                {
+                    return Err(in_use(
+                        "proxy plugin",
+                        "location",
+                        location_name,
+                    ));
+                }
+            },
+            _ => {},
+        }
+        Ok(())
+    }
+    /// Remove the config by name.
+    pub fn remove(&mut self, category: &str, name: &str) -> Result<()> {
+        self.check_removable(category, name)?;
+        match category {
+            CATEGORY_UPSTREAM => {
                 self.upstreams.remove(name);
             },
             CATEGORY_LOCATION => {
-                for (server_name, server) in self.servers.iter() {
-                    if let Some(locations) = &server.locations
-                        && locations.contains(&name.to_string())
-                    {
-                        return Err(Error::Invalid {
-                            message: format!(
-                                "location({name}) is in used by server({server_name})"
-                            ),
-                        });
-                    }
-                }
                 self.locations.remove(name);
             },
             CATEGORY_SERVER => {
                 self.servers.remove(name);
             },
             CATEGORY_PLUGIN => {
-                for (location_name, location) in self.locations.iter() {
-                    if let Some(plugins) = &location.plugins
-                        && plugins.contains(&name.to_string())
-                    {
-                        return Err(Error::Invalid {
-                            message: format!(
-                                "proxy plugin({name}) is in used by location({location_name})"
-                            ),
-                        });
-                    }
-                }
                 self.plugins.remove(name);
             },
             CATEGORY_CERTIFICATE => {
@@ -1709,7 +1710,13 @@ impl PingapConfig {
         Ok(())
     }
     fn descriptions(&self) -> Vec<Description> {
-        let mut value = self.clone();
+        /// `[basic]` on its own, so the whole config need not be cloned and
+        /// emptied to print that one table.
+        #[derive(Serialize)]
+        struct BasicOnly<'a> {
+            basic: &'a BasicConf,
+        }
+        let value = self;
         let mut descriptions = vec![];
         for (name, data) in value.servers.iter() {
             descriptions.push(Description {
@@ -1773,16 +1780,13 @@ impl PingapConfig {
                 data: toml::to_string_pretty(&clone_data).unwrap_or_default(),
             });
         }
-        value.servers = HashMap::new();
-        value.locations = HashMap::new();
-        value.upstreams = HashMap::new();
-        value.plugins = HashMap::new();
-        value.certificates = HashMap::new();
-        value.storages = HashMap::new();
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
-            data: toml::to_string_pretty(&value).unwrap_or_default(),
+            data: toml::to_string_pretty(&BasicOnly {
+                basic: &value.basic,
+            })
+            .unwrap_or_default(),
         });
         descriptions.sort_by_key(|d| d.name.clone());
         descriptions
@@ -1882,7 +1886,9 @@ mod tests {
         BasicConf, LocationConf, PluginCategory, ServerConf, UpstreamConf,
     };
     use super::{CATEGORY_BASIC, CATEGORY_UPSTREAM, convert_pingap_config};
-    use super::{CertificateConf, Hashable, Validate, validate_cert};
+    use super::{
+        CertificateConf, Hashable, PingapConfig, Validate, validate_cert,
+    };
     use bytesize::ByteSize;
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
@@ -2371,7 +2377,7 @@ h1_upgrade = "preserve"
         let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error header name(请求) is invalid, error: invalid HTTP header name",
+            "Invalid error header 请求:响应 is invalid: invalid header name: 请求 - invalid HTTP header name",
             result.expect_err("").to_string()
         );
 
@@ -2692,5 +2698,72 @@ ai02RHnemmqJaNepfmCdyec=
         // spellchecker:off
         assert_eq!("15ba921aee80abc3", conf.hash_key());
         // spellchecker:on
+    }
+    #[test]
+    fn test_includes() {
+        let base = r#"
+[storages.timeouts]
+category = "config"
+value = """
+connection_timeout = "5s"
+read_timeout = "30s"
+"""
+
+[storages.longer]
+category = "config"
+value = """
+read_timeout = "60s"
+"""
+
+[storages.broken]
+category = "config"
+value = "read_timeout = "
+
+[upstreams.api]
+addrs = ["127.0.0.1:8080"]
+read_timeout = "1s"
+"#;
+        let load = |includes: &str, replace: bool| {
+            PingapConfig::new(
+                format!("{base}includes = {includes}").as_bytes(),
+                replace,
+            )
+        };
+
+        // A fragment overrides the entry, a later fragment an earlier one.
+        let config = load(r#"["timeouts", "longer"]"#, true).unwrap();
+        let api = &config.upstreams["api"];
+        assert_eq!(Some(Duration::from_secs(5)), api.connection_timeout);
+        assert_eq!(Some(Duration::from_secs(60)), api.read_timeout);
+        assert_eq!(None, api.includes);
+
+        // Left as written when includes are not expanded.
+        let config = load(r#"["timeouts", "longer"]"#, false).unwrap();
+        let api = &config.upstreams["api"];
+        assert_eq!(None, api.connection_timeout);
+        assert_eq!(Some(Duration::from_secs(1)), api.read_timeout);
+        assert_eq!(
+            Some(vec!["timeouts".to_string(), "longer".to_string()]),
+            api.includes
+        );
+
+        // A broken include is an error, not a silently missing setting.
+        let err =
+            |includes: &str| load(includes, true).unwrap_err().to_string();
+        assert_eq!(
+            "Invalid error upstream(api): include(missing) is not found",
+            err(r#"["missing"]"#)
+        );
+        assert!(err(r#"["broken"]"#).starts_with(
+            "Invalid error upstream(api): include(broken) is not valid toml: "
+        ));
+        assert_eq!(
+            "Invalid error upstream(api): includes must be an array",
+            err(r#""timeouts""#)
+        );
+        assert_eq!(
+            "Invalid error upstream(api): includes must be storage names",
+            err("[1]")
+        );
     }
 }

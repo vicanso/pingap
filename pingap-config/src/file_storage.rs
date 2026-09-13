@@ -15,8 +15,8 @@
 use crate::Error;
 use crate::hcl::convert_hcl_to_toml;
 use crate::kdl::convert_kdl_to_toml;
-use crate::permission_error_message;
 use crate::storage::{History, Storage};
+use crate::{permission_error_message, read_all_config_files};
 use async_trait::async_trait;
 use glob::glob;
 use pingap_core::now_sec;
@@ -24,7 +24,6 @@ use pingap_util::resolve_path;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -121,81 +120,6 @@ impl FileStorage {
         })?;
         Ok(true)
     }
-}
-
-async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
-    let mut data = vec![];
-    // Collect .toml files first
-    let toml_files: std::result::Result<Vec<_>, _> =
-        glob(&format!("{dir}/**/*.toml"))
-            .map_err(|e| Error::Pattern {
-                source: e,
-                path: dir.to_string(),
-            })?
-            .collect();
-    let toml_files = toml_files.map_err(|e| Error::Glob { source: e })?;
-
-    if !toml_files.is_empty() {
-        // .toml files found, use only .toml
-        for f in toml_files {
-            let buf = fs::read(&f)
-                .await
-                .map_err(|e| permission_error_message(&f, e))?;
-            toml::from_str::<toml::Value>(&String::from_utf8_lossy(&buf))
-                .map_err(|e| Error::Invalid {
-                    message: format!("{}: {e}", f.display()),
-                })?;
-            debug!(filename = format!("{f:?}"), "read toml file");
-            data.extend_from_slice(&buf);
-            data.push(0x0a);
-        }
-    } else {
-        // No .toml files, check for .hcl
-        let hcl_files: std::result::Result<Vec<_>, _> =
-            glob(&format!("{dir}/**/*.hcl"))
-                .map_err(|e| Error::Pattern {
-                    source: e,
-                    path: dir.to_string(),
-                })?
-                .collect();
-        let hcl_files = hcl_files.map_err(|e| Error::Glob { source: e })?;
-
-        if !hcl_files.is_empty() {
-            for f in hcl_files {
-                let buf = fs::read(&f)
-                    .await
-                    .map_err(|e| permission_error_message(&f, e))?;
-                debug!(filename = format!("{f:?}"), "read hcl file");
-                let hcl_str = String::from_utf8_lossy(&buf);
-                let toml_str = convert_hcl_to_toml(&hcl_str)?;
-                data.extend_from_slice(toml_str.as_bytes());
-                data.push(0x0a);
-            }
-        } else {
-            // No .hcl files, fall back to .kdl
-            for entry in glob(&format!("{dir}/**/*.kdl")).map_err(|e| {
-                Error::Pattern {
-                    source: e,
-                    path: dir.to_string(),
-                }
-            })? {
-                let f = entry.map_err(|e| Error::Glob { source: e })?;
-                let buf = fs::read(&f)
-                    .await
-                    .map_err(|e| permission_error_message(&f, e))?;
-                debug!(filename = format!("{f:?}"), "read kdl file");
-                let kdl_str = String::from_utf8_lossy(&buf);
-                let toml_str = convert_kdl_to_toml(&kdl_str).map_err(|e| {
-                    Error::Invalid {
-                        message: format!("{}: {e}", f.display()),
-                    }
-                })?;
-                data.extend_from_slice(toml_str.as_bytes());
-                data.push(0x0a);
-            }
-        }
-    }
-    Ok(data)
 }
 
 #[async_trait]
@@ -403,6 +327,25 @@ mod tests {
 
         let data = storage.fetch("").await.unwrap();
         assert_eq!("[locations]", data);
+    }
+
+    /// A syntax error in one file of a directory names that file, not a
+    /// line in the concatenated document.
+    #[tokio::test]
+    async fn test_dir_storage_names_the_broken_file() {
+        for (name, content) in [
+            ("broken.toml", "[servers"),
+            ("broken.hcl", "upstreams \"api\" {"),
+        ] {
+            let dir = tempdir().unwrap();
+            let storage =
+                FileStorage::new(&dir.path().to_string_lossy()).unwrap();
+            tokio::fs::write(dir.path().join(name), content)
+                .await
+                .unwrap();
+            let err = storage.fetch("").await.unwrap_err().to_string();
+            assert!(err.contains(name), "{err}");
+        }
     }
 
     #[tokio::test]

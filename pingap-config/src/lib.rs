@@ -186,80 +186,61 @@ fn permission_error_message(
     }
 }
 
-pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
-    let mut data = vec![];
-    // Collect .toml files first
-    let toml_files: std::result::Result<Vec<_>, _> =
-        glob(&format!("{dir}/**/*.toml"))
-            .map_err(|e| Error::Pattern {
-                source: e,
-                path: dir.to_string(),
-            })?
-            .collect();
-    let toml_files = toml_files.map_err(|e| Error::Glob { source: e })?;
+/// Every `*.<ext>` file under `dir`, recursively, in glob order.
+fn list_config_files(dir: &str, ext: &str) -> Result<Vec<std::path::PathBuf>> {
+    let pattern = format!("{dir}/**/*.{ext}");
+    glob(&pattern)
+        .map_err(|e| Error::Pattern {
+            source: e,
+            path: dir.to_string(),
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Glob { source: e })
+}
 
-    if !toml_files.is_empty() {
-        // .toml files found, use only .toml
-        for f in toml_files {
+/// Reads a config directory into one TOML document. The first format that
+/// has any file wins - `toml`, then `hcl`, then `kdl` - and every file is
+/// checked (or converted) on its own, so a syntax error names the file it
+/// is in rather than a line in the concatenation.
+pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
+    type Convert = fn(&str) -> Result<String>;
+    let formats: [(&str, Option<Convert>); 3] = [
+        ("toml", None),
+        ("hcl", Some(hcl::convert_hcl_to_toml)),
+        ("kdl", Some(kdl::convert_kdl_to_toml)),
+    ];
+    for (ext, convert) in formats {
+        let files = list_config_files(dir, ext)?;
+        if files.is_empty() {
+            continue;
+        }
+        let mut data = vec![];
+        for f in files {
             let buf = fs::read(&f)
                 .await
                 .map_err(|e| permission_error_message(&f, e))?;
-            toml::from_str::<toml::Value>(&String::from_utf8_lossy(&buf))
-                .map_err(|e| Error::Invalid {
-                    message: format!("{}: {e}", f.display()),
-                })?;
-            debug!(filename = format!("{f:?}"), "read toml file");
-            data.extend_from_slice(&buf);
-            data.push(0x0a);
-        }
-    } else {
-        // No .toml files, check for .hcl
-        let hcl_files: std::result::Result<Vec<_>, _> =
-            glob(&format!("{dir}/**/*.hcl"))
-                .map_err(|e| Error::Pattern {
-                    source: e,
-                    path: dir.to_string(),
-                })?
-                .collect();
-        let hcl_files = hcl_files.map_err(|e| Error::Glob { source: e })?;
-
-        if !hcl_files.is_empty() {
-            for f in hcl_files {
-                let buf = fs::read(&f)
-                    .await
-                    .map_err(|e| permission_error_message(&f, e))?;
-                debug!(filename = format!("{f:?}"), "read hcl file");
-                let hcl_str = String::from_utf8_lossy(&buf);
-                let toml_str = hcl::convert_hcl_to_toml(&hcl_str)?;
-                data.extend_from_slice(toml_str.as_bytes());
-                data.push(0x0a);
+            debug!(filename = ?f, "read config file");
+            let text = String::from_utf8_lossy(&buf);
+            let in_file = |e: String| Error::Invalid {
+                message: format!("{}: {e}", f.display()),
+            };
+            match convert {
+                None => {
+                    toml::from_str::<toml::Value>(&text)
+                        .map_err(|e| in_file(e.to_string()))?;
+                    data.extend_from_slice(&buf);
+                },
+                Some(convert) => {
+                    let toml_str =
+                        convert(&text).map_err(|e| in_file(e.to_string()))?;
+                    data.extend_from_slice(toml_str.as_bytes());
+                },
             }
-        } else {
-            // No .hcl files, fall back to .kdl
-            for entry in glob(&format!("{dir}/**/*.kdl")).map_err(|e| {
-                Error::Pattern {
-                    source: e,
-                    path: dir.to_string(),
-                }
-            })? {
-                let f = entry.map_err(|e| Error::Glob { source: e })?;
-                let buf = fs::read(&f)
-                    .await
-                    .map_err(|e| permission_error_message(&f, e))?;
-                debug!(filename = format!("{f:?}"), "read kdl file");
-                let kdl_str = String::from_utf8_lossy(&buf);
-                let toml_str =
-                    kdl::convert_kdl_to_toml(&kdl_str).map_err(|e| {
-                        Error::Invalid {
-                            message: format!("{}: {e}", f.display()),
-                        }
-                    })?;
-                data.extend_from_slice(toml_str.as_bytes());
-                data.push(0x0a);
-            }
+            data.push(b'\n');
         }
+        return Ok(data);
     }
-    Ok(data)
+    Ok(vec![])
 }
 
 pub async fn sync_to_path(
@@ -267,10 +248,7 @@ pub async fn sync_to_path(
     path: &str,
 ) -> Result<()> {
     let config = config_manager.get_current_config();
-    let config = toml::to_string_pretty(&config.as_ref().clone())
-        .map_err(|e| Error::Ser { source: e })?;
-    let config = toml::from_str::<PingapTomlConfig>(&config)
-        .map_err(|e| Error::De { source: e })?;
+    let config = PingapTomlConfig::from_pingap_config(&config)?;
     let new_config_manager = new_config_manager(path)?;
     new_config_manager.save_all(&config).await?;
     Ok(())

@@ -50,6 +50,10 @@ pingap -c "etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --autore
 pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 ```
 
+etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`、`connect_timeout`、`user`、`password`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
+
+目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`），每个文件单独检查，因此语法错误会指出所在文件，而不是拼接后文档里的某一行。
+
 文件后端（仅目录）查询参数：
 
 | Parameter | Meaning |
@@ -151,7 +155,7 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 - **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。`--autoreload` 就地交换配置，适合容器。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。`--autoreload` 就地交换配置，适合容器。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
 
 ## Includes
 
@@ -170,7 +174,7 @@ addrs = ["10.0.0.1:8080"]
 includes = ["commonTimeouts"]
 ```
 
-`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。
+`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。片段的键覆盖条目自身的键，靠后的 include 覆盖靠前的。引用了不存在的 `storages` 条目、或条目内容不是合法 TOML 的 include，会在加载配置时报错（`upstream(api): include(commonTimeouts) is not found`），而不再被静默忽略。
 
 ## 用法
 

@@ -23,7 +23,6 @@ crc32fast = { workspace = true }
 diff = { workspace = true }
 etcd-client = { workspace = true }
 glob = { workspace = true }
-http = { workspace = true }
 humantime-serde = { workspace = true }
 pingap-core = { workspace = true }
 pingap-discovery = { workspace = true }
@@ -35,7 +34,6 @@ serde_json = { workspace = true }
 serde_qs = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
-substring = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }

@@ -60,6 +60,16 @@ pingap -c "etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --autore
 pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 ```
 
+An etcd URL is `etcd://host:2379[,host2:2379]/prefix[?params]`; the prefix
+defaults to `/` when omitted, and a URL without a host is rejected. Parameters
+are `timeout`, `connect_timeout`, `user` and `password`. The storage opens one
+client and reuses it for every request; a request that fails is retried once
+on a fresh connection.
+
+A directory is loaded by reading every `*.toml` file in it (or, when there is
+none, every `*.hcl`, then every `*.kdl`), each checked on its own, so a syntax
+error names the file it is in rather than a line in the concatenation.
+
 Query parameters for the file backend (directories only):
 
 | Parameter | Meaning |
@@ -194,6 +204,10 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 - **File** returns `false` and is polled every `basic.auto_restart_check_interval`.
 
 Both feed the same reload handle; the difference is only the delivery mechanism.
+A poll fetches the raw document (`ConfigManager::load_all_raw`) and hashes it;
+parsing, validation (which resolves every static upstream address) and the diff
+only run when the document changed since the last pass, or when the last pass
+was hot-reload-only and this one may restart.
 `--autoreload` swaps the configuration in place, which is what you want in
 containers. `--autorestart` performs a zero-downtime graceful restart, which is
 what listener-level changes need. That restart hands over on readiness: the
@@ -223,7 +237,12 @@ includes = ["commonTimeouts"]
 ```
 
 `to_pingap_config(replace_include)` controls whether includes are expanded; the
-admin UI reads the unexpanded form so edits stay readable.
+admin UI reads the unexpanded form so edits stay readable. A fragment's keys
+override the entry's own, and a later include overrides an earlier one. An
+include that names no `storages` entry, or a storage whose value is not TOML,
+is rejected when the configuration is loaded
+(`upstream(api): include(commonTimeouts) is not found`) instead of being
+silently dropped.
 
 ## Usage
 

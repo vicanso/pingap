@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::PingapConfig;
-use crate::convert_pingap_config;
+use crate::convert_toml_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::{FileStorage, is_config_dir};
 use crate::memory_storage::MemoryStorage;
@@ -22,6 +22,7 @@ use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
 use pingap_util::resolve_path;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use toml::{Value, map::Map};
@@ -47,6 +48,16 @@ where
     toml::to_string_pretty(value).map_err(|e| Error::Ser { source: e })
 }
 
+/// Serializes `value` as the one table `key` of a document, by reference:
+/// `[key]` / `[key.name]` sections without first cloning the value into a
+/// `toml::Value` wrapper.
+fn wrap_toml<T>(key: &str, value: &T) -> Result<String>
+where
+    T: serde::ser::Serialize + ?Sized,
+{
+    to_string_pretty(&BTreeMap::from([(key, value)]))
+}
+
 #[derive(Deserialize, Debug, Serialize)]
 pub struct PingapTomlConfig {
     pub basic: Option<Value>,
@@ -58,31 +69,34 @@ pub struct PingapTomlConfig {
     pub storages: Option<Map<String, Value>>,
 }
 
+/// The document holding just `value` as `[category]` (basic) or
+/// `[category.name]` (everything else).
 fn format_item_toml_config(
-    value: Option<Value>,
+    value: &Value,
     category: &Category,
     name: &str,
 ) -> Result<String> {
-    if let Some(value) = value {
-        let mut wrapper = Map::new();
-        if name.is_empty() {
-            wrapper.insert(format_category(category).to_string(), value);
-        } else {
-            let mut inner = Map::new();
-            inner.insert(name.to_string(), value);
-            wrapper.insert(
-                format_category(category).to_string(),
-                Value::Table(inner),
-            );
-        }
-
-        to_string_pretty(&wrapper)
-    } else {
-        Ok("".to_string())
+    let key = format_category(category);
+    if name.is_empty() {
+        return wrap_toml(key, value);
     }
+    wrap_toml(key, &BTreeMap::from([(name, value)]))
 }
 
 impl PingapTomlConfig {
+    /// Parses a whole configuration document.
+    pub fn from_toml(data: &str) -> Result<Self> {
+        toml::from_str(data).map_err(|e| Error::De { source: e })
+    }
+    /// The loose form of a resolved configuration: what `--sync` writes to
+    /// another storage and what a validation round trip reads back. Goes
+    /// through `toml::Value`, not through text.
+    pub fn from_pingap_config(config: &PingapConfig) -> Result<Self> {
+        Value::try_from(config)
+            .map_err(|e| Error::Ser { source: e })?
+            .try_into()
+            .map_err(|e| Error::De { source: e })
+    }
     pub fn to_toml(&self) -> Result<String> {
         to_string_pretty(self)
     }
@@ -90,40 +104,31 @@ impl PingapTomlConfig {
         &self,
         replace_include: bool,
     ) -> Result<PingapConfig> {
-        let value = self.to_toml()?;
-        convert_pingap_config(value.as_bytes(), replace_include)
+        convert_toml_config(self, replace_include)
     }
 
     fn get_toml(&self, category: &Category, name: &str) -> Result<String> {
-        let value = self.get(category, name);
-        format_item_toml_config(value, category, name)
+        match self.get(category, name) {
+            Some(value) => format_item_toml_config(value, category, name),
+            None => Ok(String::new()),
+        }
     }
     fn get_category_toml(&self, category: &Category) -> Result<String> {
-        let wrapper = |value: Option<Value>| {
-            if let Some(value) = value {
-                let mut wrapper = Map::new();
-                wrapper.insert(format_category(category).to_string(), value);
-                to_string_pretty(&wrapper)
-            } else {
-                Ok("".to_string())
+        let key = format_category(category);
+        fn wrap<T: Serialize>(key: &str, value: &Option<T>) -> Result<String> {
+            match value {
+                Some(value) => wrap_toml(key, value),
+                None => Ok(String::new()),
             }
-        };
+        }
         match category {
-            Category::Basic => wrapper(self.basic.clone()),
-            Category::Server => wrapper(self.servers.clone().map(Value::Table)),
-            Category::Location => {
-                wrapper(self.locations.clone().map(Value::Table))
-            },
-            Category::Upstream => {
-                wrapper(self.upstreams.clone().map(Value::Table))
-            },
-            Category::Plugin => wrapper(self.plugins.clone().map(Value::Table)),
-            Category::Certificate => {
-                wrapper(self.certificates.clone().map(Value::Table))
-            },
-            Category::Storage => {
-                wrapper(self.storages.clone().map(Value::Table))
-            },
+            Category::Basic => wrap(key, &self.basic),
+            Category::Server => wrap(key, &self.servers),
+            Category::Location => wrap(key, &self.locations),
+            Category::Upstream => wrap(key, &self.upstreams),
+            Category::Plugin => wrap(key, &self.plugins),
+            Category::Certificate => wrap(key, &self.certificates),
+            Category::Storage => wrap(key, &self.storages),
         }
     }
     fn update(&mut self, category: &Category, name: &str, value: Value) {
@@ -154,34 +159,17 @@ impl PingapTomlConfig {
             },
         };
     }
-    fn get(&self, category: &Category, name: &str) -> Option<Value> {
-        match category {
-            Category::Basic => self.basic.clone(),
-            Category::Server => self
-                .servers
-                .as_ref()
-                .and_then(|servers| servers.get(name).cloned()),
-            Category::Location => self
-                .locations
-                .as_ref()
-                .and_then(|locations| locations.get(name).cloned()),
-            Category::Upstream => self
-                .upstreams
-                .as_ref()
-                .and_then(|upstreams| upstreams.get(name).cloned()),
-            Category::Plugin => self
-                .plugins
-                .as_ref()
-                .and_then(|plugins| plugins.get(name).cloned()),
-            Category::Certificate => self
-                .certificates
-                .as_ref()
-                .and_then(|certificates| certificates.get(name).cloned()),
-            Category::Storage => self
-                .storages
-                .as_ref()
-                .and_then(|storages| storages.get(name).cloned()),
-        }
+    fn get(&self, category: &Category, name: &str) -> Option<&Value> {
+        let section = match category {
+            Category::Basic => return self.basic.as_ref(),
+            Category::Server => &self.servers,
+            Category::Location => &self.locations,
+            Category::Upstream => &self.upstreams,
+            Category::Plugin => &self.plugins,
+            Category::Certificate => &self.certificates,
+            Category::Storage => &self.storages,
+        };
+        section.as_ref()?.get(name)
     }
     fn delete(&mut self, category: &Category, name: &str) {
         match category {
@@ -354,9 +342,15 @@ impl ConfigManager {
         Ok(key)
     }
 
+    /// The whole configuration as the storage holds it, one TOML document.
+    /// Cheaper than [`ConfigManager::load_all`] when the caller only wants
+    /// to know whether anything changed since it last looked.
+    pub async fn load_all_raw(&self) -> Result<String> {
+        self.storage.fetch("").await
+    }
+
     pub async fn load_all(&self) -> Result<PingapTomlConfig> {
-        let data = self.storage.fetch("").await?;
-        toml::from_str(&data).map_err(|e| Error::De { source: e })
+        PingapTomlConfig::from_toml(&self.load_all_raw().await?)
     }
 
     /// Whether `key` is a file this `ConfigMode` itself writes.
@@ -531,19 +525,15 @@ impl ConfigManager {
     ) -> Result<()> {
         let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
-        let value = toml::to_string_pretty(value)
-            .map_err(|e| Error::Ser { source: e })?;
+        let value =
+            Value::try_from(value).map_err(|e| Error::Ser { source: e })?;
         // update by item
         if self.mode == ConfigMode::MultiByItem {
-            let value: Value =
-                toml::from_str(&value).map_err(|e| Error::De { source: e })?;
-            let value = format_item_toml_config(Some(value), &category, name)?;
+            let value = format_item_toml_config(&value, &category, name)?;
             return self.storage.save(&key, &value).await;
         }
         // load all config
         let mut config = self.load_all().await?;
-        let value: Value =
-            toml::from_str(&value).map_err(|e| Error::De { source: e })?;
         config.update(&category, name, value);
         // update by type
         let value = if self.mode == ConfigMode::MultiByType {
@@ -562,24 +552,25 @@ impl ConfigManager {
     ) -> Result<Option<T>> {
         let key = self.get_key(&category, name)?;
         let data = self.storage.fetch(&key).await?;
-        let config: PingapTomlConfig =
-            toml::from_str(&data).map_err(|e| Error::De { source: e })?;
+        let config = PingapTomlConfig::from_toml(&data)?;
 
-        if let Some(value) = config.get(&category, name) {
-            let value = to_string_pretty(&value)?;
-            let value =
-                toml::from_str(&value).map_err(|e| Error::De { source: e })?;
-            Ok(Some(value))
-        } else {
-            Ok(None)
+        match config.get(&category, name) {
+            Some(value) => value
+                .clone()
+                .try_into()
+                .map(Some)
+                .map_err(|e| Error::De { source: e }),
+            None => Ok(None),
         }
     }
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
         let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
 
-        let mut current_config = (*self.get_current_config()).clone();
-        current_config.remove(category.to_string().as_str(), name)?;
+        // Refuse to remove something still referenced, without cloning the
+        // whole running config to find out.
+        self.get_current_config()
+            .check_removable(category.to_string().as_str(), name)?;
 
         if self.mode == ConfigMode::MultiByItem {
             return self.storage.delete(&key).await;

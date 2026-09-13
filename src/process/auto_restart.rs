@@ -21,12 +21,12 @@ use crate::upstreams::try_update_upstreams;
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
     CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-    CATEGORY_UPSTREAM, ConfigManager, PingapConfig,
+    CATEGORY_UPSTREAM, ConfigManager, PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -36,6 +36,7 @@ use pingap_logger::LoggerReloadHandle;
 use pingap_logger::new_env_filter;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
@@ -44,10 +45,70 @@ use tracing::{debug, error, info};
 
 static LOG_TARGET: &str = "main::auto_restart";
 
+/// What the previous pass saw: the hash of the raw configuration document
+/// and whether that pass was allowed to restart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LastSeen {
+    hash: u64,
+    restart_eligible: bool,
+}
+
+static LAST_SEEN: ArcSwapOption<LastSeen> = ArcSwapOption::const_empty();
+
+fn raw_hash(raw: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    raw.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether a pass over a document hashing to `hash` has nothing to do: the
+/// document is the one the last pass already handled, and either that pass
+/// could restart or this one cannot. A hot-reload-only pass may leave a
+/// change behind that only a restart applies, so the next restart-eligible
+/// pass still has to look at the same document.
+fn should_skip(
+    last: Option<&LastSeen>,
+    hash: u64,
+    hot_reload_only: bool,
+) -> bool {
+    last.is_some_and(|last| {
+        last.hash == hash && (last.restart_eligible || hot_reload_only)
+    })
+}
+
+/// Loads the configuration and, when it changed since the last pass,
+/// applies it through `apply_config`. Returns `None` when there was nothing
+/// new: the poll then costs one storage read and a hash instead of a parse,
+/// a validation (which resolves every static upstream address) and a diff.
+async fn diff_and_update_config(
+    config_manager: Arc<ConfigManager>,
+    hot_reload_only: bool,
+) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
+    let raw = config_manager.load_all_raw().await?;
+    let hash = raw_hash(&raw);
+    if should_skip(LAST_SEEN.load().as_deref(), hash, hot_reload_only) {
+        debug!(target: LOG_TARGET, "config is unchanged");
+        return Ok(None);
+    }
+    let new_config =
+        PingapTomlConfig::from_toml(&raw)?.to_pingap_config(true)?;
+    let restart_requested =
+        apply_config(config_manager, &new_config, hot_reload_only).await?;
+    // Recorded only after a pass that finished. An error - the document
+    // does not parse, an address does not resolve - is retried on the next
+    // tick, and a pass that asked for a restart is repeated by the next
+    // restart-eligible tick in case the restart was abandoned.
+    LAST_SEEN.store(Some(Arc::new(LastSeen {
+        hash,
+        restart_eligible: !hot_reload_only && !restart_requested,
+    })));
+    Ok(Some(new_config))
+}
+
 /// Compares configurations and handles updates through hot reload or full restart
 ///
 /// This function:
-/// 1. Loads and validates the new configuration
+/// 1. Validates the new configuration
 /// 2. Compares it with current config to find differences
 /// 3. Attempts hot reload for supported changes:
 ///    - Server locations
@@ -60,19 +121,20 @@ static LOG_TARGET: &str = "main::auto_restart";
 /// 4. Sends notifications for successful updates
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart
-async fn diff_and_update_config(
+///
+/// Returns whether a restart was requested.
+async fn apply_config(
     config_manager: Arc<ConfigManager>,
+    new_config: &PingapConfig,
     hot_reload_only: bool,
-) -> Result<PingapConfig, Box<dyn std::error::Error>> {
-    let new_toml_config = config_manager.load_all().await?;
-    let new_config = new_toml_config.to_pingap_config(true)?;
+) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
     let current_config: PingapConfig =
         config_manager.get_current_config().as_ref().clone();
 
     let (updated_category_list, original_diff_result) =
-        current_config.diff(&new_config);
+        current_config.diff(new_config);
     debug!(
         target: LOG_TARGET,
         updated_category_list = updated_category_list.join(","),
@@ -81,7 +143,7 @@ async fn diff_and_update_config(
     );
     // no update config
     if original_diff_result.is_empty() {
-        return Ok(new_config);
+        return Ok(false);
     }
 
     let mut reload_fail_messages = vec![];
@@ -313,7 +375,7 @@ async fn diff_and_update_config(
         );
         // no update config
         if original_diff_result.is_empty() {
-            return Ok(new_config);
+            return Ok(false);
         }
         // update current config to be hot reload config
         config_manager.set_current_config(hot_reload_config);
@@ -333,14 +395,14 @@ async fn diff_and_update_config(
                 .await;
             }
         }
-        return Ok(new_config);
+        return Ok(false);
     }
     // restart mode
     // update current config to be hot reload config
     config_manager.set_current_config(hot_reload_config.clone());
 
     // diff hot reload config and new config
-    let (_, new_config_result) = hot_reload_config.diff(&new_config);
+    let (_, new_config_result) = hot_reload_config.diff(new_config);
     debug!(
         target: LOG_TARGET,
         new_config_result = new_config_result.join("\n"),
@@ -372,7 +434,7 @@ async fn diff_and_update_config(
     if should_restart {
         restart().await;
     }
-    Ok(new_config)
+    Ok(should_restart)
 }
 
 /// AutoRestart service manages configuration updates on a schedule
@@ -513,28 +575,11 @@ impl BackgroundService for ConfigObserverService {
                     // fetch and diff update
                     // some change may be restart
                     if let Some(new_config) = run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await {
-                        let new_level = new_config
-                            .basic
-                            .log_level
-                            .clone()
-                            .unwrap_or_default();
-                        let current_level = self.current_log_level.load().to_string();
-                        if current_level != new_level {
-                            info!(
-                                target: LOG_TARGET,
-                                current_level, new_level, "reload log level"
-                            );
-                            if let Err(e) = self
-                                .log_reload_handle
-                                .modify(|filter| *filter = new_env_filter(&new_level))
-                            {
-                                error!(
-                                    target: LOG_TARGET,
-                                    error = %e,
-                                    "reload log level fail"
-                                )
-                            }
-                        }
+                        reload_log_level(
+                            &self.log_reload_handle,
+                            &self.current_log_level,
+                            &new_config,
+                        );
                     }
                 }
                 result = observer.watch() => {
@@ -575,7 +620,7 @@ async fn run_diff_and_update_config(
     hot_reload_only: bool,
 ) -> Option<PingapConfig> {
     match diff_and_update_config(config_manager, hot_reload_only).await {
-        Ok(new_config) => Some(new_config),
+        Ok(new_config) => new_config,
         Err(e) => {
             error!(
                 target: LOG_TARGET,
@@ -612,26 +657,76 @@ impl BackgroundTask for AutoRestart {
         )
         .await
         {
-            let new_level =
-                new_config.basic.log_level.clone().unwrap_or_default();
-            let current_level = self.current_log_level.load().to_string();
-            if current_level != new_level {
-                info!(
-                    target: LOG_TARGET,
-                    current_level, new_level, "reload log level"
-                );
-                if let Err(e) = self
-                    .log_reload_handle
-                    .modify(|filter| *filter = new_env_filter(&new_level))
-                {
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        "reload log level fail"
-                    )
-                }
-            }
+            reload_log_level(
+                &self.log_reload_handle,
+                &self.current_log_level,
+                &new_config,
+            );
         }
         Ok(true)
+    }
+}
+
+/// Applies the log level of `new_config` when it differs from the one in
+/// place, and remembers it so an unchanged level is not re-applied on the
+/// next pass.
+fn reload_log_level(
+    handle: &LoggerReloadHandle,
+    current: &ArcSwap<String>,
+    new_config: &PingapConfig,
+) {
+    let new_level = new_config.basic.log_level.clone().unwrap_or_default();
+    let current_level = current.load();
+    if new_level == **current_level {
+        return;
+    }
+    info!(
+        target: LOG_TARGET,
+        current_level = current_level.as_str(),
+        new_level,
+        "reload log level"
+    );
+    match handle.modify(|filter| *filter = new_env_filter(&new_level)) {
+        Ok(()) => current.store(Arc::new(new_level)),
+        Err(e) => error!(
+            target: LOG_TARGET,
+            error = %e,
+            "reload log level fail"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LastSeen, should_skip};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_should_skip() {
+        // Nothing seen yet: every pass runs.
+        assert_eq!(false, should_skip(None, 1, true));
+        assert_eq!(false, should_skip(None, 1, false));
+
+        // A changed document runs whatever the last pass was.
+        let hot_only = LastSeen {
+            hash: 1,
+            restart_eligible: false,
+        };
+        assert_eq!(false, should_skip(Some(&hot_only), 2, true));
+        assert_eq!(false, should_skip(Some(&hot_only), 2, false));
+
+        // Unchanged after a hot-reload-only pass: another hot-reload-only
+        // pass has nothing to add, a restart-eligible one still has to look.
+        assert_eq!(true, should_skip(Some(&hot_only), 1, true));
+        assert_eq!(false, should_skip(Some(&hot_only), 1, false));
+
+        // Unchanged after a restart-eligible pass that needed no restart:
+        // nothing is left for either kind of pass.
+        let settled = LastSeen {
+            hash: 1,
+            restart_eligible: true,
+        };
+        assert_eq!(true, should_skip(Some(&settled), 1, true));
+        assert_eq!(true, should_skip(Some(&settled), 1, false));
     }
 }
