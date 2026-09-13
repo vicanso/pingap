@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use hex::ToHex;
 use http::StatusCode;
-use pingap_config::PluginConf;
+use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
     RequestPluginResult,
@@ -106,7 +106,13 @@ impl TryFrom<&PluginConf> for CombinedAuth {
             let mut ip_rules = None;
             let ip_list = get_str_slice_conf(value, "ip_list");
             if !ip_list.is_empty() {
-                ip_rules = Some(pingap_util::IpRules::new(&ip_list));
+                ip_rules =
+                    Some(pingap_util::IpRules::try_new(&ip_list).map_err(
+                        |e| Error::Invalid {
+                            category: PluginCategory::CombinedAuth.to_string(),
+                            message: e.to_string(),
+                        },
+                    )?);
             }
             // `deviation` bounds the replay window, so it has to be a
             // deliberate choice. It used to default to 0, which rejects every

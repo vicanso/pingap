@@ -23,7 +23,7 @@ IP-restricted `PURGE` method.
 | `eviction` | bool | absent | Presence of the key enables LRU eviction. Memory backend only. |
 | `predictor` | bool | absent | Presence of the key enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
-| `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. |
+| `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. |
 | `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. |
 
 ### Backend selection

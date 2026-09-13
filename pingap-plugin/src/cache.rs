@@ -300,7 +300,11 @@ impl TryFrom<&PluginConf> for Cache {
         };
 
         let purge_ip_rules =
-            IpRules::new(&get_str_slice_conf(value, "purge_ip_list"));
+            IpRules::try_new(&get_str_slice_conf(value, "purge_ip_list"))
+                .map_err(|e| Error::Invalid {
+                    category: PluginCategory::Cache.to_string(),
+                    message: e.to_string(),
+                })?;
 
         let skip_value = get_str_conf(value, "skip");
         let skip = if skip_value.is_empty() {

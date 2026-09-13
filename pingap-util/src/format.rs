@@ -14,6 +14,14 @@
 
 use std::fmt::Write;
 
+/// Writes an integer without going through `fmt::Display`: this runs for
+/// every access log line, and `itoa` is a table lookup where `write!` is
+/// the formatting machinery.
+#[inline]
+fn write_number(writer: &mut impl Write, value: usize) {
+    let _ = writer.write_str(itoa::Buffer::new().format(value));
+}
+
 /// A powerful macro to format a value with units, handling integer and fractional parts.
 ///
 /// It takes a writer, a value, and a series of thresholds with their corresponding units and divisors.
@@ -40,13 +48,14 @@ macro_rules! format_with_units {
                 let decimal_digit = (remainder * 10) / $divisor;
 
                 // 3. Write directly to the writer, avoiding intermediate strings.
-                let _ = write!($writer, "{}", whole_part);
+                write_number($writer, whole_part);
                 if decimal_digit > 0 {
                     // Only write the decimal part if it's not zero.
                     // This naturally handles the "strip .0" logic.
-                    let _ = write!($writer, ".{}", decimal_digit);
+                    let _ = $writer.write_char('.');
+                    write_number($writer, decimal_digit);
                 }
-                let _ = write!($writer, "{}", $unit);
+                let _ = $writer.write_str($unit);
 
                 handled = true;
             }
@@ -54,7 +63,8 @@ macro_rules! format_with_units {
 
         // Fallback for the base unit.
         if !handled {
-            let _ = write!($writer, "{}{}", value, $base_unit);
+            write_number($writer, value);
+            let _ = $writer.write_str($base_unit);
         }
     };
 }
@@ -93,5 +103,13 @@ mod tests {
         assert_eq!(formatted_byte_size(1024), "1KB");
         assert_eq!(formatted_byte_size(1124), "1.1KB");
         assert_eq!(formatted_byte_size(1220 * 1000), "1.2MB");
+        assert_eq!(formatted_byte_size(0), "0B");
+        assert_eq!(formatted_byte_size(999_999), "999.9KB");
+        assert_eq!(formatted_byte_size(5 * 1_000_000_000), "5GB");
+
+        // Any `fmt::Write` sink works, the access log writes into BytesMut.
+        let mut bytes = bytes::BytesMut::new();
+        format_byte_size(&mut bytes, 1500);
+        assert_eq!(b"1.5KB", bytes.as_ref());
     }
 }

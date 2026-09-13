@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `ip_restriction`。 |
-| `ip_list` | string[] | `[]` | IPv4/IPv6 地址与 CIDR 范围。 |
+| `ip_list` | string[] | `[]` | IPv4/IPv6 地址与 CIDR 范围。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。 |
 | `type` | string | `allow` | `deny` 拦截列表中的 IP；其他值（含未设置）仅允许列表中的 IP。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
 

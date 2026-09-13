@@ -4,7 +4,7 @@ Pingap 项目的工具集合。
 
 ## 功能
 
-- **加解密**：AES-256-GCM-SIV 加密与解密。
+- **加解密**：AES-256-GCM-SIV 加密与解密，使用固定 nonce，旧版本写入的值新版本仍能读回。
 - **格式化**：时长与字节大小的可读格式化。
 - **IP 规则**：判断 IP 是否匹配一组规则（IP 与 CIDR）。
 - **路径处理**：解析含 `~` 的路径并拼接 URL 路径。
@@ -19,7 +19,7 @@ Pingap 项目的工具集合。
 
 ```toml
 [dependencies]
-pingap-util = "0.12.0"
+pingap-util = "0.14"
 ```
 
 ## 用法
@@ -61,6 +61,9 @@ let rules = IpRules::new(&[
 assert!(rules.is_match("192.168.1.100").unwrap());
 assert!(rules.is_match("10.0.0.1").unwrap());
 assert!(!rules.is_match("172.16.0.1").unwrap());
+
+// `new` 会丢弃既不是 IP 也不是网段的条目；`try_new` 则报错，配置校验用的是后者。
+assert!(IpRules::try_new(&["10.0.0.1", "not-an-ip"]).is_err());
 ```
 
 ### 路径处理
@@ -68,7 +71,7 @@ assert!(!rules.is_match("172.16.0.1").unwrap());
 ```rust
 use pingap_util::{resolve_path, path_join};
 
-// Note: This test depends on the user's home directory
+// `~` 与 `~/...` 展开为用户主目录；`~name` 原样保留。
 // let home_path = dirs::home_dir().unwrap().to_string_lossy().to_string();
 // assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
 
@@ -108,8 +111,7 @@ foo = "bar"
 "#;
 
 let cleaned_toml = toml_omit_empty_value(toml_str).unwrap();
-assert_eq!(cleaned_toml.trim(), "[a]
-foo = "bar"");
+assert_eq!(cleaned_toml.trim(), "[a]\nfoo = \"bar\"");
 ```
 
 ## 许可证

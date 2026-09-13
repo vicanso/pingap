@@ -179,7 +179,7 @@ impl Plugin for Stats {
             location_accepted: ctx.state.location_accepted_count,
             hostname: get_hostname().to_string(),
             version: pingap_util::get_pkg_version().to_string(),
-            rustc_version: pingap_util::get_rustc_version(),
+            rustc_version: pingap_util::get_rustc_version().to_string(),
             start_time: get_start_time(),
             uptime: uptime.to_string(),
             memory_mb: info.memory_mb,

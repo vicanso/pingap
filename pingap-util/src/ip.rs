@@ -2,7 +2,6 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
@@ -13,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Error;
 use ahash::AHashSet;
 use ipnet::IpNet;
 use std::net::{AddrParseError, IpAddr};
@@ -30,13 +30,34 @@ impl IpRules {
     /// Creates a new IpRules instance from a list of IP addresses and/or CIDR networks.
     ///
     /// The input values are parsed and stored in optimized data structures for fast lookups.
-    /// Invalid entries are ignored and a warning is logged.
+    /// An entry that is neither is dropped; [`IpRules::try_new`] rejects it
+    /// instead, which is what configuration validation wants.
     pub fn new<T: AsRef<str>>(values: &[T]) -> Self {
+        Self::parse(values).0
+    }
+
+    /// Like [`IpRules::new`], but an entry that is neither an IP address nor
+    /// a CIDR network is an error. A typo in an allow or deny list must fail
+    /// validation rather than silently let traffic through or block it.
+    pub fn try_new<T: AsRef<str>>(values: &[T]) -> Result<Self, Error> {
+        let (rules, invalid) = Self::parse(values);
+        if invalid.is_empty() {
+            return Ok(rules);
+        }
+        Err(Error::Invalid {
+            message: format!("ip or cidr: {}", invalid.join(", ")),
+        })
+    }
+
+    /// Parses every entry, returning the rules and the entries that were
+    /// neither an address nor a network.
+    fn parse<T: AsRef<str>>(values: &[T]) -> (Self, Vec<String>) {
         let mut ip_net_list = vec![];
         let mut ip_set = AHashSet::new();
+        let mut invalid = vec![];
 
         for item in values {
-            let item_str = item.as_ref();
+            let item_str = item.as_ref().trim();
             // Try parsing as a CIDR network first.
             if let Ok(value) = IpNet::from_str(item_str) {
                 ip_net_list.push(value);
@@ -44,13 +65,16 @@ impl IpRules {
             } else if let Ok(value) = IpAddr::from_str(item_str) {
                 ip_set.insert(value);
             } else {
-                // If it's neither, warn about the invalid entry.
+                invalid.push(item_str.to_string());
             }
         }
-        Self {
-            ip_net_list,
-            ip_set,
-        }
+        (
+            Self {
+                ip_net_list,
+                ip_set,
+            },
+            invalid,
+        )
     }
 
     /// Checks if a given IP address matches any of the stored rules.
@@ -118,5 +142,16 @@ mod tests {
         assert_eq!(rules.is_match("192.168.3.1"), Ok(false));
         // Test invalid IP string input for is_match
         assert!(rules.is_match("999.999.999.999").is_err());
+    }
+
+    #[test]
+    fn test_try_new_rejects_invalid_entries() {
+        let rules =
+            IpRules::try_new(&[" 10.0.0.1 ", "192.168.1.0/24"]).unwrap();
+        assert_eq!(rules.is_match("10.0.0.1"), Ok(true));
+
+        let err = IpRules::try_new(&["10.0.0.1", "not-an-ip", "10.0.0/8"])
+            .unwrap_err();
+        assert_eq!("Invalid ip or cidr: not-an-ip, 10.0.0/8", err.to_string());
     }
 }

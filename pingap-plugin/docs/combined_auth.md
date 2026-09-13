@@ -19,7 +19,7 @@ stays replayable. An optional IP allow-list can be attached per application.
 | `authorizations[].app_id` | string | — | Identifier the caller sends as `?app_id=`. Entries without it are skipped. |
 | `authorizations[].secret` | string | — | Shared secret. The literal `*` disables **all** checks for this app. |
 | `authorizations[].deviation` | int | — | **Required** (unless `secret = "*"`), greater than zero. Maximum allowed clock skew, in seconds. |
-| `authorizations[].ip_list` | string[] | — | IPs / CIDRs allowed to use this app id. |
+| `authorizations[].ip_list` | string[] | — | IPs / CIDRs allowed to use this app id. An entry that is neither fails configuration validation. |
 
 ## Request format
 

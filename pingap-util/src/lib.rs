@@ -15,8 +15,9 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use path_absolutize::*;
 use snafu::Snafu;
+use std::borrow::Cow;
 use std::path::Path;
-use substring::Substring;
+use std::sync::LazyLock;
 
 mod crypto;
 mod format;
@@ -51,13 +52,17 @@ pub fn get_pkg_version() -> &'static str {
     VERSION
 }
 
-/// Get the rustc version.
-pub fn get_rustc_version() -> String {
-    rustc_version_runtime::version().to_string()
+static RUSTC_VERSION: LazyLock<String> =
+    LazyLock::new(|| rustc_version_runtime::version().to_string());
+
+/// Get the rustc version the binary was built with.
+pub fn get_rustc_version() -> &'static str {
+    RUSTC_VERSION.as_str()
 }
 
 /// Resolves a path string to its absolute form.
-/// If the path starts with '~', it will be expanded to the user's home directory.
+/// A leading `~` or `~/` is expanded to the user's home directory; `~name`
+/// is somebody else's home and is left alone.
 /// Returns an empty string if the input path is empty.
 ///
 /// # Arguments
@@ -67,18 +72,19 @@ pub fn get_rustc_version() -> String {
 /// The absolute path as a String
 pub fn resolve_path(path: &str) -> String {
     if path.is_empty() {
-        return "".to_string();
+        return String::new();
     }
-    let mut p = path.to_string();
-    if p.starts_with('~')
+    let mut p = Cow::Borrowed(path);
+    if (path == "~" || path.starts_with("~/"))
         && let Some(home) = dirs::home_dir()
     {
-        p = home.to_string_lossy().to_string() + p.substring(1, p.len());
+        let mut expanded = home.to_string_lossy().into_owned();
+        expanded.push_str(&path[1..]);
+        p = Cow::Owned(expanded);
     }
-    if let Ok(p) = Path::new(&p).absolutize() {
-        p.to_string_lossy().to_string()
-    } else {
-        p
+    match Path::new(p.as_ref()).absolutize() {
+        Ok(absolute) => absolute.to_string_lossy().into_owned(),
+        Err(_) => p.into_owned(),
     }
 }
 
@@ -110,17 +116,25 @@ pub fn is_pem(value: &str) -> bool {
 /// # Returns
 /// Result containing the certificate/key bytes or an error
 pub fn convert_pem(value: &str) -> Result<Vec<Vec<u8>>> {
-    let buf = if is_pem(value) {
-        value.as_bytes().to_vec()
-    } else if Path::new(&resolve_path(value)).is_file() {
-        std::fs::read(resolve_path(value)).map_err(|e| Error::Io {
-            source: e,
-            file: value.to_string(),
-        })?
+    // PEM text is parsed in place; a file or base64 value is read into
+    // `loaded` first.
+    let loaded: Vec<u8>;
+    let buf: &[u8] = if is_pem(value) {
+        value.as_bytes()
     } else {
-        base64_decode(value).map_err(|e| Error::Base64Decode { source: e })?
+        let path = resolve_path(value);
+        loaded = if Path::new(&path).is_file() {
+            std::fs::read(&path).map_err(|e| Error::Io {
+                source: e,
+                file: value.to_string(),
+            })?
+        } else {
+            base64_decode(value)
+                .map_err(|e| Error::Base64Decode { source: e })?
+        };
+        &loaded
     };
-    let pems = pem::parse_many(&buf).map_err(|e| Error::Invalid {
+    let pems = pem::parse_many(buf).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
     if pems.is_empty() {
@@ -128,12 +142,10 @@ pub fn convert_pem(value: &str) -> Result<Vec<Vec<u8>>> {
             message: "pem data is empty".to_string(),
         });
     }
-    let mut data = vec![];
-    for pem in pems {
-        data.push(pem::encode(&pem).as_bytes().to_vec());
-    }
-
-    Ok(data)
+    Ok(pems
+        .iter()
+        .map(|pem| pem::encode(pem).into_bytes())
+        .collect())
 }
 
 /// Converts an optional certificate string into bytes.
@@ -145,13 +157,11 @@ pub fn convert_pem(value: &str) -> Result<Vec<Vec<u8>>> {
 /// # Returns
 /// Optional vector of bytes containing the certificate data
 pub fn convert_certificate_bytes(value: Option<&str>) -> Option<Vec<Vec<u8>>> {
-    if let Some(value) = value {
-        if value.is_empty() {
-            return None;
-        }
-        return convert_pem(value).ok();
+    let value = value?;
+    if value.is_empty() {
+        return None;
     }
-    None
+    convert_pem(value).ok()
 }
 
 pub fn base64_encode<T: AsRef<[u8]>>(data: T) -> String {
@@ -164,7 +174,9 @@ pub fn base64_decode<T: AsRef<[u8]>>(
     STANDARD.decode(data)
 }
 
-/// Removes empty tables/sections from a TOML string
+/// Removes empty tables/sections from a TOML string. Only non-empty
+/// tables survive: a top-level scalar goes too, since a pingap config has
+/// nothing but tables at the top.
 ///
 /// # Arguments
 /// * `value` - TOML string to process
@@ -176,20 +188,9 @@ pub fn toml_omit_empty_value(value: &str) -> Result<String, Error> {
         toml::from_str::<toml::Table>(value).map_err(|e| Error::Invalid {
             message: e.to_string(),
         })?;
-    let mut omit_keys = vec![];
-    for (key, value) in data.iter() {
-        let Some(table) = value.as_table() else {
-            omit_keys.push(key.to_string());
-            continue;
-        };
-        if table.keys().len() == 0 {
-            omit_keys.push(key.to_string());
-            continue;
-        }
-    }
-    for key in omit_keys {
-        data.remove(&key);
-    }
+    data.retain(|_, value| {
+        value.as_table().is_some_and(|table| !table.is_empty())
+    });
     toml::to_string_pretty(&data).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })
@@ -205,15 +206,19 @@ pub fn toml_omit_empty_value(value: &str) -> Result<String, Error> {
 /// # Returns
 /// Joined path as a String
 pub fn path_join(value1: &str, value2: &str) -> String {
-    let end_slash = value1.ends_with("/");
-    let start_slash = value2.starts_with("/");
-    if end_slash && start_slash {
-        format!("{value1}{}", value2.substring(1, value2.len()))
-    } else if end_slash || start_slash {
-        format!("{value1}{value2}")
-    } else {
-        format!("{value1}/{value2}")
+    let end_slash = value1.ends_with('/');
+    // Both sides bring a slash: keep the first one only.
+    let value2 = match value2.strip_prefix('/') {
+        Some(rest) if end_slash => rest,
+        _ => value2,
+    };
+    let mut joined = String::with_capacity(value1.len() + value2.len() + 1);
+    joined.push_str(value1);
+    if !end_slash && !value2.starts_with('/') {
+        joined.push('/');
     }
+    joined.push_str(value2);
+    joined
 }
 
 #[cfg(test)]
@@ -231,10 +236,14 @@ mod tests {
 
     #[test]
     fn test_resolve_path() {
-        assert_eq!(
-            dirs::home_dir().unwrap().to_string_lossy(),
-            resolve_path("~/")
-        );
+        let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+        assert_eq!(home, resolve_path("~/"));
+        assert_eq!(home, resolve_path("~"));
+        assert_eq!(format!("{home}/opt/pingap"), resolve_path("~/opt/pingap"));
+        // Somebody else's home is not this user's home with a suffix.
+        assert_eq!(true, resolve_path("~other/x").ends_with("/~other/x"));
+        assert_eq!("", resolve_path(""));
+        assert_eq!("/opt/pingap", resolve_path("/opt/pingap/../pingap"));
     }
     #[test]
     fn test_get_rustc_version() {
@@ -247,6 +256,11 @@ mod tests {
         assert_eq!("a/b", path_join("a/", "b"));
         assert_eq!("a/b", path_join("a", "/b"));
         assert_eq!("a/b", path_join("a/", "/b"));
+        assert_eq!("/foo/bar", path_join("/foo/", "/bar"));
+        assert_eq!("a/", path_join("a", "/"));
+        assert_eq!("/b", path_join("", "b"));
+        assert_eq!("a/", path_join("a/", ""));
+        assert_eq!("/", path_join("", ""));
     }
 
     #[test]
@@ -266,6 +280,15 @@ addrs = [
 ]
 "###
         );
+
+        // Top-level scalars and empty tables go, nested empty tables stay
+        // inside their non-empty parent.
+        let result =
+            toml_omit_empty_value("name = \"x\"\n[a]\n[b]\nc = 1\n[b.d]\n")
+                .unwrap();
+        assert_eq!("[b]\nc = 1\n\n[b.d]\n", result);
+
+        assert_eq!(true, toml_omit_empty_value("not = [toml").is_err());
     }
 
     #[test]

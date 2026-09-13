@@ -16,7 +16,7 @@
 | `authorizations[].app_id` | string | — | 调用方以 `?app_id=` 发送的标识。无此项的条目被跳过。 |
 | `authorizations[].secret` | string | — | 共享密钥。字面量 `*` 会禁用该应用的**所有**检查。 |
 | `authorizations[].deviation` | int | `0` | 允许的最大时钟偏差（秒）。 |
-| `authorizations[].ip_list` | string[] | — | 允许使用该 app id 的 IP / CIDR。 |
+| `authorizations[].ip_list` | string[] | — | 允许使用该 app id 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。 |
 
 ## 请求格式
 

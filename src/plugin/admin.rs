@@ -676,7 +676,7 @@ async fn handle_request_admin(
         let mut basic_info = BasicInfo {
             start_time: get_start_time(),
             version: pingap_util::get_pkg_version().to_string(),
-            rustc_version: pingap_util::get_rustc_version(),
+            rustc_version: pingap_util::get_rustc_version().to_string(),
             config_hash: plugin
                 .manager
                 .get_current_config()

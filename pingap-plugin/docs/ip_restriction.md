@@ -10,7 +10,7 @@ Allow- or deny-list access by client IP address or CIDR range.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `ip_restriction`. |
-| `ip_list` | string[] | `[]` | IPv4/IPv6 addresses and CIDR ranges. |
+| `ip_list` | string[] | `[]` | IPv4/IPv6 addresses and CIDR ranges. An entry that is neither fails configuration validation. |
 | `type` | string | `allow` | `allow` permits **only** listed IPs; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
 

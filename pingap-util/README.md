@@ -4,7 +4,7 @@ A collection of utilities for the Pingap project.
 
 ## Features
 
-- **Cryptography**: AES-256-GCM-SIV encryption and decryption.
+- **Cryptography**: AES-256-GCM-SIV encryption and decryption under a fixed nonce, so a value written by one release reads back in the next.
 - **Formatting**: Human-readable formatting for durations and byte sizes.
 - **IP Rules**: Check if an IP address matches a set of rules (IPs and CIDR networks).
 - **Path Manipulation**: Resolve paths containing `~` and join URL paths.
@@ -19,7 +19,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pingap-util = "0.12.0"
+pingap-util = "0.14"
 ```
 
 ## Usage
@@ -61,6 +61,10 @@ let rules = IpRules::new(&[
 assert!(rules.is_match("192.168.1.100").unwrap());
 assert!(rules.is_match("10.0.0.1").unwrap());
 assert!(!rules.is_match("172.16.0.1").unwrap());
+
+// `new` drops an entry that is neither an IP nor a network; `try_new`
+// rejects it, which is what configuration validation wants.
+assert!(IpRules::try_new(&["10.0.0.1", "not-an-ip"]).is_err());
 ```
 
 ### Path Manipulation
@@ -68,7 +72,7 @@ assert!(!rules.is_match("172.16.0.1").unwrap());
 ```rust
 use pingap_util::{resolve_path, path_join};
 
-// Note: This test depends on the user's home directory
+// `~` and `~/...` expand to the home directory; `~name` is left alone.
 // let home_path = dirs::home_dir().unwrap().to_string_lossy().to_string();
 // assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
 
@@ -108,8 +112,7 @@ foo = "bar"
 "#;
 
 let cleaned_toml = toml_omit_empty_value(toml_str).unwrap();
-assert_eq!(cleaned_toml.trim(), "[a]
-foo = "bar"");
+assert_eq!(cleaned_toml.trim(), "[a]\nfoo = \"bar\"");
 ```
 
 ## License

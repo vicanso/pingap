@@ -21,14 +21,15 @@ ahash = { workspace = true }
 base64 = { workspace = true }
 dirs = { workspace = true }
 ipnet = { workspace = true }
+itoa = { workspace = true }
 path-absolutize = { workspace = true }
 pem = { workspace = true }
 rustc_version_runtime = { workspace = true }
 snafu = { workspace = true }
-substring = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }

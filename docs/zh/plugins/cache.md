@@ -21,7 +21,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `eviction` | bool | 缺席 | 键存在即启用 LRU 淘汰。 |
 | `predictor` | bool | 缺席 | 键存在即启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
-| `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。 |
+| `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。 |
 | `skip` | string | — | 路径+查询串的正则；匹配的请求完全绕过缓存。 |
 
 ### 后端选择

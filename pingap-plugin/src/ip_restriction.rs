@@ -19,7 +19,7 @@ use super::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
-use pingap_config::PluginConf;
+use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     ensure_client_ip,
@@ -64,7 +64,11 @@ impl TryFrom<&PluginConf> for IpRestriction {
 
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
-        let ip_rules = IpRules::new(&get_str_slice_conf(value, "ip_list"));
+        let ip_rules = IpRules::try_new(&get_str_slice_conf(value, "ip_list"))
+            .map_err(|e| Error::Invalid {
+                category: PluginCategory::IpRestriction.to_string(),
+                message: e.to_string(),
+            })?;
 
         // Get custom error message or use default
         let mut message = get_str_conf(value, "message");
