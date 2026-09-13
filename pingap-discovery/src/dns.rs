@@ -36,7 +36,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// How long a built `Resolver` may be reused before re-reading system conf.
 const RESOLVER_REFRESH: Duration = Duration::from_secs(60);
@@ -53,6 +53,18 @@ struct DiscoveryCache {
     backends: BTreeSet<Backend>,
     failed_hosts: Vec<String>,
     valid_until: Instant,
+}
+
+/// One discovery round.
+struct Discovered {
+    backends: BTreeSet<Backend>,
+    /// Hosts that did not resolve this round.
+    failed_hosts: Vec<String>,
+    /// Served from the TTL cache rather than resolved just now. A cached
+    /// round is not news: it is neither logged at info nor notified about.
+    from_cache: bool,
+    /// The backend set differs from the previous round's.
+    changed: bool,
 }
 
 /// DNS service discovery implementation
@@ -85,7 +97,7 @@ impl Dns {
     /// # Returns
     /// * `Result<Self>` - New DNS discovery instance
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
-        let hosts = format_addrs(addrs, tls);
+        let hosts = format_addrs(addrs, tls)?;
         Ok(Self {
             hosts,
             ipv4_only,
@@ -144,7 +156,7 @@ impl Dns {
     /// # Returns
     /// * `Self` - The DNS discovery instance
     pub fn with_domain(mut self, domain: String) -> Self {
-        self.domain = Some(domain);
+        self.domain = Some(domain).filter(|domain| !domain.is_empty());
         self
     }
 
@@ -156,7 +168,7 @@ impl Dns {
     /// # Returns
     /// * `Self` - The DNS discovery instance
     pub fn with_search(mut self, search: String) -> Self {
-        self.search = Some(search);
+        self.search = Some(search).filter(|search| !search.is_empty());
         self
     }
 
@@ -278,13 +290,7 @@ impl Dns {
     }
 
     /// Discovers backend services by resolving DNS
-    ///
-    /// # Returns
-    /// * `Result<(BTreeSet<Backend>, HashMap<u64, bool>, Vec<String>)>` -
-    ///   backends, enablement map, and hosts that failed to resolve
-    async fn run_discover(
-        &self,
-    ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>, Vec<String>)> {
+    async fn run_discover(&self) -> Result<Discovered> {
         // Honour DNS TTLs: health-check / update loops may call us more often
         // than records change; reuse the last set until the shortest TTL
         // expires (clamped to [MIN, MAX]).
@@ -301,11 +307,12 @@ impl Dns {
                         .as_millis(),
                     "dns discover cache hit"
                 );
-                return Ok((
-                    cached.backends.clone(),
-                    HashMap::new(),
-                    cached.failed_hosts.clone(),
-                ));
+                return Ok(Discovered {
+                    backends: cached.backends.clone(),
+                    failed_hosts: cached.failed_hosts.clone(),
+                    from_cache: true,
+                    changed: false,
+                });
             }
         }
 
@@ -345,37 +352,33 @@ impl Dns {
                 .iter()
                 .filter(|ip| !self.ipv4_only || ip.is_ipv4())
             {
-                // Build SocketAddr directly — avoid format! + to_socket_addrs.
-                let socket_addr = if port.is_empty() {
-                    StdSocketAddr::new(ip, 0)
-                } else {
-                    let port_num: u16 =
-                        port.parse().map_err(|e| Error::Invalid {
-                            message: format!(
-                                "invalid port {port} for host: {e}"
-                            ),
-                        })?;
-                    StdSocketAddr::new(ip, port_num)
-                };
-
                 upstreams.insert(Backend {
-                    addr: SocketAddr::Inet(socket_addr),
+                    addr: SocketAddr::Inet(StdSocketAddr::new(ip, *port)),
                     weight: *weight,
                     ext: Extensions::new(),
                 });
             }
         }
 
-        {
+        let changed = {
             let mut cache = self.discovery_cache.lock().await;
+            let changed = cache
+                .as_ref()
+                .is_none_or(|cached| cached.backends != upstreams);
             *cache = Some(DiscoveryCache {
                 backends: upstreams.clone(),
                 failed_hosts: failed_hosts.clone(),
                 valid_until,
             });
-        }
+            changed
+        };
 
-        Ok((upstreams, HashMap::new(), failed_hosts))
+        Ok(Discovered {
+            backends: upstreams,
+            failed_hosts,
+            from_cache: false,
+            changed,
+        })
     }
 }
 
@@ -388,20 +391,47 @@ impl ServiceDiscovery for Dns {
         let hosts: Vec<String> =
             self.hosts.iter().map(|item| item.0.clone()).collect();
         match self.run_discover().await {
-            Ok((upstreams, enablement, failed_hosts)) => {
-                let addrs: Vec<String> = upstreams
-                    .iter()
-                    .map(|item| item.addr.to_string())
-                    .collect();
-
-                info!(
-                    target: LOG_TARGET,
-                    hosts = hosts.join(","),
-                    addrs = addrs.join(","),
-                    elapsed = format!("{}ms", start_time.elapsed().as_millis()),
-                    "dns discover success"
-                );
-                if !failed_hosts.is_empty()
+            Ok(discovered) => {
+                let Discovered {
+                    backends,
+                    failed_hosts,
+                    from_cache,
+                    changed,
+                } = discovered;
+                // A cached or unchanged round is routine; only a new
+                // backend set is worth an info line, and only a fresh
+                // resolution is worth a notification - the cache would
+                // otherwise repeat the same failure every tick.
+                if from_cache || !changed {
+                    debug!(
+                        target: LOG_TARGET,
+                        hosts = hosts.join(","),
+                        from_cache,
+                        elapsed = format!("{}ms", start_time.elapsed().as_millis()),
+                        "dns discover unchanged"
+                    );
+                } else {
+                    let addrs: Vec<String> = backends
+                        .iter()
+                        .map(|item| item.addr.to_string())
+                        .collect();
+                    info!(
+                        target: LOG_TARGET,
+                        hosts = hosts.join(","),
+                        addrs = addrs.join(","),
+                        elapsed = format!("{}ms", start_time.elapsed().as_millis()),
+                        "dns discover success"
+                    );
+                }
+                if backends.is_empty() {
+                    warn!(
+                        target: LOG_TARGET,
+                        hosts = hosts.join(","),
+                        "dns discover resolved no backend"
+                    );
+                }
+                if !from_cache
+                    && !failed_hosts.is_empty()
                     && let Some(sender) = &self.sender
                 {
                     sender
@@ -415,7 +445,7 @@ impl ServiceDiscovery for Dns {
                         })
                         .await;
                 }
-                return Ok((upstreams, enablement));
+                return Ok((backends, HashMap::new()));
             },
             Err(e) => {
                 error!(
@@ -487,8 +517,16 @@ mod tests {
         let (ip_list, _) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(true, !ip_list.is_empty());
 
-        let (backends, _, _) = dns.run_discover().await.unwrap();
-        assert_eq!(true, !backends.is_empty());
+        let discovered = dns.run_discover().await.unwrap();
+        assert_eq!(true, !discovered.backends.is_empty());
+        assert_eq!(false, discovered.from_cache);
+        assert_eq!(true, discovered.changed);
+        // Within the TTL the same set comes back from the cache, and is
+        // not reported as a change.
+        let again = dns.run_discover().await.unwrap();
+        assert_eq!(discovered.backends, again.backends);
+        assert_eq!(true, again.from_cache);
+        assert_eq!(false, again.changed);
 
         // new dns discover backends
         let result = new_dns_discover_backends(&Discovery {
@@ -527,9 +565,10 @@ mod tests {
         assert_eq!(true, ip_list[1].is_some());
         assert_eq!(vec!["no-such-host-pingap-test".to_string()], failed_hosts);
 
-        let (backends, _, failed_hosts) = dns.run_discover().await.unwrap();
+        let discovered = dns.run_discover().await.unwrap();
+        let backends = discovered.backends;
         assert_eq!(true, !backends.is_empty());
-        assert_eq!(1, failed_hosts.len());
+        assert_eq!(1, discovered.failed_hosts.len());
         // Every backend belongs to the host that resolved - none may carry
         // the failed host's port.
         for backend in backends.iter() {

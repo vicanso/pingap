@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET};
+use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET, split_addr};
 use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptions};
@@ -23,9 +23,10 @@ use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
-use std::net::ToSocketAddrs;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
 const CONTAINER_EVENTS: &[&str] = &[
@@ -44,38 +45,26 @@ const EVENT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 type CachedAddrs = Vec<(std::net::SocketAddr, usize)>;
 
-/// Container represents a Docker container with service discovery configuration
-#[derive(Debug, Clone)]
+/// One `addrs` entry: the label containers are matched by, the port to
+/// reach them on (0 for the container's own published port) and the weight
+/// every matching container gets.
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Container {
     label: String,
     weight: usize,
     port: u16,
-    addrs: Vec<String>,
 }
 
 impl Container {
-    /// Creates a new Container instance from an address string
-    /// Format: "label:port weight" or "label weight" or "label"
-    fn new(addr: &str) -> Self {
-        let (weight, label, port) = Self::parse_addr(addr);
-        Self {
+    /// Parses `label[:port] [weight]`. A bad port or weight is a
+    /// configuration error, the same as for the other discoveries.
+    fn new(addr: &str) -> Result<Self> {
+        let (label, port, weight) = split_addr(addr)?;
+        Ok(Self {
             label,
             weight,
-            port,
-            addrs: vec![],
-        }
-    }
-
-    fn parse_addr(addr: &str) -> (usize, String, u16) {
-        let parts: Vec<_> = addr.split(' ').collect();
-        let weight = parts.get(1).and_then(|w| w.parse().ok()).unwrap_or(1);
-
-        let (label, port) = parts[0]
-            .split_once(':')
-            .map(|(l, p)| (l.to_string(), p.parse().unwrap_or(0)))
-            .unwrap_or((parts[0].to_string(), 0));
-
-        (weight, label, port)
+            port: port.unwrap_or(0),
+        })
     }
 }
 
@@ -108,43 +97,9 @@ impl DockerState {
         Some((port_info.private_port, port_info.public_port.unwrap_or(0)))
     }
 
-    async fn list_containers(&self) -> Result<Vec<Container>> {
-        let mut containers = self.containers.clone();
-
-        for container in containers.iter_mut() {
-            let summaries: Vec<bollard::models::ContainerSummary> =
-                self.list_containers_by_label(&container.label).await?;
-            container.addrs = summaries
-                .iter()
-                .filter_map(|item| {
-                    let (private_port, public_port) =
-                        Self::get_container_ports(item, container.port)?;
-
-                    let networks =
-                        item.network_settings.as_ref()?.networks.as_ref()?;
-
-                    let mut addrs = Vec::new();
-                    for network in networks.values() {
-                        if public_port > 0 {
-                            if let Some(gateway) = &network.gateway {
-                                addrs.push(format!("{gateway}:{public_port}"));
-                            }
-                        } else if let Some(ip) = &network.ip_address {
-                            addrs.push(format!("{ip}:{private_port}"));
-                        }
-                    }
-                    Some(addrs)
-                })
-                .flatten()
-                .collect();
-        }
-
-        Ok(containers)
-    }
-
     async fn list_containers_by_label(
         &self,
-        label: &String,
+        label: &str,
     ) -> Result<Vec<bollard::models::ContainerSummary>> {
         let mut filters = HashMap::new();
         filters.insert("label".to_string(), vec![label.to_string()]);
@@ -164,7 +119,11 @@ impl DockerState {
             .collect()
     }
 
-    /// Resolves all matching containers to a list of (SocketAddr, weight) pairs.
+    /// Resolves all matching containers to a list of (SocketAddr, weight)
+    /// pairs. Docker reports addresses as IP literals, so they are parsed
+    /// directly; a network without a usable address (host networking
+    /// leaves `ip_address` empty) is skipped rather than failing the whole
+    /// round.
     async fn resolve_addrs(&self) -> Result<CachedAddrs> {
         let mut addrs = Vec::new();
 
@@ -172,19 +131,46 @@ impl DockerState {
             names = format!("{:?}", self.labels()),
             "docker discover is running"
         );
-        let containers = self.list_containers().await?;
-        for container in containers.iter() {
-            for addr in container.addrs.iter() {
-                for socket_addr in
-                    addr.to_socket_addrs().map_err(|e| Error::Io {
-                        source: e,
-                        content: format!("{addr} to socket addr fail"),
-                    })?
-                {
-                    if self.ipv4_only && !socket_addr.is_ipv4() {
+        for container in self.containers.iter() {
+            let summaries =
+                self.list_containers_by_label(&container.label).await?;
+            for summary in summaries.iter() {
+                let Some((private_port, public_port)) =
+                    Self::get_container_ports(summary, container.port)
+                else {
+                    continue;
+                };
+                let Some(networks) = summary
+                    .network_settings
+                    .as_ref()
+                    .and_then(|settings| settings.networks.as_ref())
+                else {
+                    continue;
+                };
+                for network in networks.values() {
+                    // A published port is reached through the gateway, an
+                    // unpublished one through the container's own address.
+                    let (ip, port) = if public_port > 0 {
+                        (network.gateway.as_deref(), public_port)
+                    } else {
+                        (network.ip_address.as_deref(), private_port)
+                    };
+                    let Some(ip) = ip.and_then(|ip| ip.parse::<IpAddr>().ok())
+                    else {
+                        debug!(
+                            target: LOG_TARGET,
+                            label = container.label,
+                            "container network has no usable address"
+                        );
+                        continue;
+                    };
+                    if self.ipv4_only && !ip.is_ipv4() {
                         continue;
                     }
-                    addrs.push((socket_addr, container.weight));
+                    addrs.push((
+                        std::net::SocketAddr::new(ip, port),
+                        container.weight,
+                    ));
                 }
             }
         }
@@ -216,7 +202,11 @@ fn addrs_to_backends(
 struct Docker {
     state: Arc<DockerState>,
     cached: Arc<Mutex<Option<CachedAddrs>>>,
-    watcher_init: std::sync::Once,
+    /// The event watcher, started by the first `discover` and stopped when
+    /// this discovery is dropped: a reload replaces the upstream, and the
+    /// old watcher must not keep its Docker connection, its refreshes and
+    /// its failure notifications going for an upstream nobody uses.
+    watcher: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Docker {
@@ -228,8 +218,10 @@ impl Docker {
         let docker = bollard::Docker::connect_with_local_defaults()
             .map_err(|e| Error::Docker { source: e })?;
 
-        let containers =
-            addrs.iter().map(|addr| Container::new(addr)).collect();
+        let containers = addrs
+            .iter()
+            .map(|addr| Container::new(addr))
+            .collect::<Result<Vec<_>>>()?;
 
         let state = Arc::new(DockerState {
             docker,
@@ -238,51 +230,85 @@ impl Docker {
             sender,
         });
 
-        let cached = Arc::new(Mutex::new(None));
-
         Ok(Self {
             state,
-            cached,
-            watcher_init: std::sync::Once::new(),
+            cached: Arc::new(Mutex::new(None)),
+            watcher: Mutex::new(None),
         })
     }
 
     fn read_cache(&self) -> Option<CachedAddrs> {
-        self.cached.lock().ok()?.clone()
+        self.cached
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
-    /// Ensures the background event watcher is spawned exactly once.
-    /// Must be called from within a Tokio runtime context.
+    /// Spawns the background event watcher on the first call. Must run
+    /// inside a Tokio runtime.
     fn ensure_watcher_started(&self) {
-        let state = self.state.clone();
-        let cached = self.cached.clone();
-        self.watcher_init.call_once(move || {
-            tokio::spawn(watch_docker_events(state, cached));
-        });
+        let mut watcher = self
+            .watcher
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if watcher.is_none() {
+            *watcher = Some(tokio::spawn(watch_docker_events(
+                self.state.clone(),
+                self.cached.clone(),
+            )));
+        }
     }
 }
 
-/// Refreshes the cached address list by querying Docker for matching containers.
+impl Drop for Docker {
+    fn drop(&mut self) {
+        if let Some(watcher) = self
+            .watcher
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            watcher.abort();
+        }
+    }
+}
+
+/// Refreshes the cached address list by querying Docker for matching
+/// containers. A refresh that finds the same addresses is routine and logged
+/// at debug; a changed set is logged at info.
 async fn refresh_cache(
     state: &DockerState,
     cached: &Mutex<Option<CachedAddrs>>,
 ) {
-    let now = SystemTime::now();
+    let start = Instant::now();
     let names = state.labels();
     match state.resolve_addrs().await {
         Ok(addrs) => {
+            let changed = {
+                let mut guard = cached
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let changed = guard.as_ref() != Some(&addrs);
+                *guard = Some(addrs.clone());
+                changed
+            };
             let addr_strs: Vec<String> =
                 addrs.iter().map(|(a, _)| a.to_string()).collect();
-            info!(
-                target: LOG_TARGET,
-                names = names.join(","),
-                addrs = addr_strs.join(","),
-                elapsed =
-                    format!("{}ms", now.elapsed().unwrap_or_default().as_millis()),
-                "docker discover refreshed via event"
-            );
-            if let Ok(mut guard) = cached.lock() {
-                *guard = Some(addrs);
+            if changed {
+                info!(
+                    target: LOG_TARGET,
+                    names = names.join(","),
+                    addrs = addr_strs.join(","),
+                    elapsed = format!("{}ms", start.elapsed().as_millis()),
+                    "docker discover refreshed"
+                );
+            } else {
+                debug!(
+                    target: LOG_TARGET,
+                    names = names.join(","),
+                    addrs = addr_strs.join(","),
+                    "docker discover unchanged"
+                );
             }
         },
         Err(e) => {
@@ -312,14 +338,16 @@ async fn refresh_cache(
 
 /// Background task: watches Docker container events and refreshes the
 /// cached address list in real time. Reconnects automatically on stream
-/// errors with a delay.
+/// errors with a delay, re-listing the containers first so nothing that
+/// happened while the stream was down is missed.
 async fn watch_docker_events(
     state: Arc<DockerState>,
     cached: Arc<Mutex<Option<CachedAddrs>>>,
 ) {
-    refresh_cache(&state, &cached).await;
-
     loop {
+        // Catch up: at start, and after every reconnect.
+        refresh_cache(&state, &cached).await;
+
         let mut filters = HashMap::new();
         filters.insert("type".to_string(), vec!["container".to_string()]);
         filters.insert(
@@ -337,7 +365,7 @@ async fn watch_docker_events(
             "docker event watcher started"
         );
 
-        'events: while let Some(result) = stream.next().await {
+        while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => {
                     info!(
@@ -350,6 +378,7 @@ async fn watch_docker_events(
                     // before refreshing, to batch rapid successive events
                     // (e.g. scaling up multiple containers at once).
                     let deadline = tokio::time::Instant::now() + EVENT_DEBOUNCE;
+                    let mut stream_ended = false;
                     loop {
                         match tokio::time::timeout_at(deadline, stream.next())
                             .await
@@ -357,12 +386,16 @@ async fn watch_docker_events(
                             Err(_) => break,
                             Ok(Some(Ok(_))) => continue,
                             _ => {
-                                refresh_cache(&state, &cached).await;
-                                break 'events;
+                                stream_ended = true;
+                                break;
                             },
                         }
                     }
                     refresh_cache(&state, &cached).await;
+                    if stream_ended {
+                        // The reconnect below refreshes again.
+                        break;
+                    }
                 },
                 Err(e) => {
                     error!(
@@ -386,34 +419,30 @@ impl ServiceDiscovery for Docker {
     ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
         self.ensure_watcher_started();
 
-        let now = SystemTime::now();
         let names: Vec<String> = self.state.labels();
 
-        // Fast path: return data from the event-driven cache.
+        // Fast path: the event-driven cache. Serving it is routine; the
+        // watcher logs when the set changes.
         if let Some(addrs) = self.read_cache() {
-            let result = addrs_to_backends(&addrs);
-            let addr_strs: Vec<String> =
-                result.0.iter().map(|b| b.addr.to_string()).collect();
-            info!(
+            debug!(
                 target: LOG_TARGET,
                 names = names.join(","),
-                addrs = addr_strs.join(","),
-                elapsed = format!(
-                    "{}ms",
-                    now.elapsed().unwrap_or_default().as_millis()
-                ),
+                count = addrs.len(),
                 "docker discover from cache"
             );
-            return Ok(result);
+            return Ok(addrs_to_backends(&addrs));
         }
 
         // Slow path: cache not yet populated (first call before the
         // background watcher has completed its initial discovery).
+        let start = Instant::now();
         match self.state.resolve_addrs().await {
             Ok(addrs) => {
-                if let Ok(mut guard) = self.cached.lock() {
-                    *guard = Some(addrs.clone());
-                }
+                *self
+                    .cached
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    Some(addrs.clone());
                 let result = addrs_to_backends(&addrs);
                 let addr_strs: Vec<String> =
                     result.0.iter().map(|b| b.addr.to_string()).collect();
@@ -421,10 +450,7 @@ impl ServiceDiscovery for Docker {
                     target: LOG_TARGET,
                     names = names.join(","),
                     addrs = addr_strs.join(","),
-                    elapsed = format!(
-                        "{}ms",
-                        now.elapsed().unwrap_or_default().as_millis()
-                    ),
+                    elapsed = format!("{}ms", start.elapsed().as_millis()),
                     "docker discover success"
                 );
                 Ok(result)
@@ -434,10 +460,7 @@ impl ServiceDiscovery for Docker {
                     target: LOG_TARGET,
                     error = %e,
                     names = names.join(","),
-                    elapsed = format!(
-                        "{}ms",
-                        now.elapsed().unwrap_or_default().as_millis()
-                    ),
+                    elapsed = format!("{}ms", start.elapsed().as_millis()),
                     "docker discover fail"
                 );
                 if let Some(sender) = &self.state.sender {
@@ -468,4 +491,77 @@ pub fn new_docker_discover_backends(discovery: &Discovery) -> Result<Backends> {
     )?;
     let backends = Backends::new(Box::new(docker));
     Ok(backends)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_container_new() {
+        assert_eq!(
+            Container {
+                label: "app=api".to_string(),
+                weight: 1,
+                port: 0,
+            },
+            Container::new("app=api").unwrap()
+        );
+        assert_eq!(
+            Container {
+                label: "app=api".to_string(),
+                weight: 5,
+                port: 8080,
+            },
+            Container::new("app=api:8080 5").unwrap()
+        );
+        for bad in ["app=api:x", "app=api:8080 0", "app=api 1 2"] {
+            assert_eq!(true, Container::new(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn test_get_container_ports() {
+        let mut summary = bollard::models::ContainerSummary::default();
+        // No port list at all: nothing to connect to.
+        assert_eq!(None, DockerState::get_container_ports(&summary, 8080));
+
+        summary.ports = Some(vec![bollard::models::PortSummary {
+            private_port: 3000,
+            public_port: Some(33000),
+            ..Default::default()
+        }]);
+        // A configured port wins and is reached directly.
+        assert_eq!(
+            Some((8080, 0)),
+            DockerState::get_container_ports(&summary, 8080)
+        );
+        // Otherwise the container's own mapping is used.
+        assert_eq!(
+            Some((3000, 33000)),
+            DockerState::get_container_ports(&summary, 0)
+        );
+    }
+
+    #[test]
+    fn test_addrs_to_backends() {
+        let addrs: CachedAddrs = vec![
+            ("10.0.0.2:8080".parse().unwrap(), 2),
+            ("10.0.0.1:8080".parse().unwrap(), 1),
+            ("10.0.0.1:8080".parse().unwrap(), 1),
+        ];
+        let (backends, _) = addrs_to_backends(&addrs);
+        let listed: Vec<(String, usize)> = backends
+            .iter()
+            .map(|backend| (backend.addr.to_string(), backend.weight))
+            .collect();
+        assert_eq!(
+            vec![
+                ("10.0.0.1:8080".to_string(), 1),
+                ("10.0.0.2:8080".to_string(), 2)
+            ],
+            listed
+        );
+    }
 }

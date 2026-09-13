@@ -26,7 +26,7 @@
 addrs = ["10.0.0.1:8080", "10.0.0.2:8080 5"]
 ```
 
-地址可带尾部权重（`host:port weight`），负载均衡器会遵守。主机名仅在启动时解析一次：名称背后地址会变时用 `dns`。
+地址可带尾部权重（`host:port weight`），负载均衡器会遵守；带端口的 IPv6 字面量写作 `[::1]:8080`。端口和权重在加载配置时就会检查：无法解析的端口或为 `0` 的权重（这样的后端永远不会被选中）会直接报错，而不是被静默丢弃。主机名仅在启动时解析一次：名称背后地址会变时用 `dns`。
 
 ### DNS
 
@@ -48,7 +48,7 @@ ipv4_only = true
 | `dns_search` | 非限定名的搜索列表 |
 | `ipv4_only` | 忽略 AAAA 记录 |
 
-每个解析到的 A/AAAA 成为后端，因此覆盖无头 Kubernetes 服务与轮询 DNS。
+每个解析到的 A/AAAA 成为后端，因此覆盖无头 Kubernetes 服务与轮询 DNS。解析结果会沿用到最短记录 TTL 到期；解析失败只在发生时通知一次，之后命中缓存的刷新不会重复通知，成功日志也只在后端集合真正变化时打印。
 
 ### Docker
 
@@ -59,7 +59,7 @@ discovery = "docker"
 update_frequency = "10s"
 ```
 
-每项为 `label[:port] [weight]`。按 Docker 标签匹配容器，其发布地址成为后端，因此 `docker compose up --scale api=5` 会在下次刷新时被发现。通过 `DOCKER_HOST` 连接 Docker 守护进程，否则回退默认套接字。
+每项为 `label[:port] [weight]`。按 Docker 标签匹配容器，其发布地址成为后端，因此 `docker compose up --scale api=5` 会在下次刷新时被发现。通过 `DOCKER_HOST` 连接 Docker 守护进程，否则回退默认套接字。后台任务跟随容器事件即时刷新列表；每次重连守护进程后都会重新列举容器，上游因重载被替换时该任务随之停止。
 
 ### Transparent
 

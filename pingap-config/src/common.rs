@@ -533,9 +533,18 @@ impl UpstreamConf {
 
         // Check if any address contains a hostname (non-IP)
         let has_hostname = self.addrs.iter().any(|addr| {
-            // Extract host portion before port
-            let host =
-                addr.split_once(':').map_or(addr.as_str(), |(host, _)| host);
+            // `host[:port] [weight]`; an IPv6 literal with a port is
+            // bracketed, a bare one has more than one colon and no port.
+            let host_port = addr.split_whitespace().next().unwrap_or(addr);
+            let host = if let Some(rest) = host_port.strip_prefix('[') {
+                rest.split_once(']').map_or(rest, |(host, _)| host)
+            } else if host_port.matches(':').count() > 1 {
+                host_port
+            } else {
+                host_port
+                    .split_once(':')
+                    .map_or(host_port, |(host, _)| host)
+            };
 
             // If host can't be parsed as IP, it's a hostname
             host.parse::<std::net::IpAddr>().is_err()
@@ -553,6 +562,37 @@ impl UpstreamConf {
             return Err(Error::Invalid {
                 message: "upstream addrs is empty".to_string(),
             });
+        }
+
+        // The weight applies to every discovery: a zero weight is a backend
+        // that is never selected, and anything else after it is a typo.
+        for addr in &self.addrs {
+            let mut parts = addr.split_whitespace();
+            if parts.next().is_none() {
+                return Err(Error::Invalid {
+                    message: "upstream addr is empty".to_string(),
+                });
+            }
+            if let Some(weight) = parts.next()
+                && weight
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|weight| *weight > 0)
+                    .is_none()
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "upstream addr({addr}) weight must be a positive integer"
+                    ),
+                });
+            }
+            if parts.next().is_some() {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "upstream addr({addr}) has more than a weight after the address"
+                    ),
+                });
+            }
         }
 
         // Only validate addresses for static discovery
@@ -1967,6 +2007,64 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
         let tmp: TmpPluginCategory = serde_json::from_str(&data).unwrap();
         assert_eq!(PluginCategory::RequestId, tmp.category);
+    }
+
+    #[test]
+    fn test_upstream_conf_guess_discovery() {
+        let guess = |addrs: &[&str]| {
+            UpstreamConf {
+                addrs: addrs.iter().map(|addr| addr.to_string()).collect(),
+                ..Default::default()
+            }
+            .guess_discovery()
+        };
+        // IP literals, with or without port and weight, are static.
+        assert_eq!("", guess(&["127.0.0.1:8080", "127.0.0.1 10"]));
+        assert_eq!("", guess(&["[::1]:8080 2", "[::1]", "2001:db8::1"]));
+        // A name anywhere means DNS.
+        assert_eq!("dns", guess(&["127.0.0.1:8080", "api:8080"]));
+        assert_eq!("dns", guess(&["api"]));
+        // An explicit choice always wins.
+        let conf = UpstreamConf {
+            addrs: vec!["api:8080".to_string()],
+            discovery: Some("static".to_string()),
+            ..Default::default()
+        };
+        assert_eq!("static", conf.guess_discovery());
+    }
+
+    #[test]
+    fn test_upstream_conf_addr_weight() {
+        for (addr, message) in [
+            ("127.0.0.1:8080 0", "weight must be a positive integer"),
+            ("127.0.0.1:8080 x", "weight must be a positive integer"),
+            (
+                "127.0.0.1:8080 1 2",
+                "has more than a weight after the address",
+            ),
+        ] {
+            let conf = UpstreamConf {
+                addrs: vec![addr.to_string()],
+                ..Default::default()
+            };
+            let err = conf.validate().expect_err(addr).to_string();
+            assert_eq!(true, err.contains(message), "{addr}: {err}");
+        }
+        // The weight is checked for every discovery, not only static.
+        let conf = UpstreamConf {
+            addrs: vec!["api:8080 0".to_string()],
+            discovery: Some("dns".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(true, conf.validate().is_err());
+        let conf = UpstreamConf {
+            addrs: vec![
+                "[::1]:8080 3".to_string(),
+                "127.0.0.1:8080".to_string(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(true, conf.validate().is_ok());
     }
 
     #[test]

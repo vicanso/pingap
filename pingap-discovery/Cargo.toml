@@ -23,7 +23,7 @@ http = { workspace = true }
 pingap-core = { workspace = true }
 pingora = { workspace = true }
 snafu = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

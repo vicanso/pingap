@@ -32,8 +32,11 @@ addrs = ["10.0.0.1:8080", "10.0.0.2:8080 5"]
 ```
 
 An address may carry a trailing weight (`host:port weight`), which the load
-balancer honours. Hostnames are resolved once, at startup: use `dns` if the
-address behind the name changes.
+balancer honours; an IPv6 literal with a port is written `[::1]:8080`. The
+port and the weight are checked when the configuration is loaded, so a port
+that does not parse or a weight of `0` (a backend that would never be
+selected) is rejected rather than silently dropped. Hostnames are resolved
+once, at startup: use `dns` if the address behind the name changes.
 
 ### DNS
 
@@ -56,7 +59,10 @@ ipv4_only = true
 | `ipv4_only` | Ignore AAAA records |
 
 Every resolved A/AAAA record becomes a backend, so this covers headless
-Kubernetes services and round-robin DNS.
+Kubernetes services and round-robin DNS. Results are reused until the
+shortest record TTL runs out; a lookup failure is reported once, when it
+happens, not again on every refresh that serves the cached result, and the
+success line is logged only when the backend set actually changes.
 
 ### Docker
 
@@ -70,7 +76,10 @@ update_frequency = "10s"
 Each entry is `label[:port] [weight]`. Containers are matched by Docker label
 and their published address becomes a backend, so `docker compose up --scale
 api=5` is picked up on the next refresh. The Docker daemon is reached through
-`DOCKER_HOST`, falling back to the default socket.
+`DOCKER_HOST`, falling back to the default socket. A background watcher
+follows container events and refreshes the list as they happen; it re-lists
+the containers after every reconnect to the daemon, and stops when a reload
+replaces the upstream.
 
 ### Transparent
 

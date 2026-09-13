@@ -45,45 +45,92 @@ impl From<Error> for pingora::BError {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub(crate) type Addr = (String, String, usize);
+/// A configured backend address: host (a name or a bare IP literal, an
+/// IPv6 one without its brackets), port and weight.
+pub(crate) type Addr = (String, u16, usize);
 
-/// Formats a list of address strings into a vector of structured address tuples.
-///
-/// # Arguments
-///
-/// * `addrs` - A slice of strings containing addresses in the format "host:port weight" or "host:port" or "host"
-/// * `tls` - A boolean indicating whether to use TLS default port (443) or HTTP default port (80)
-///
-/// # Returns
-///
-/// Returns a vector of tuples containing (host, port, weight), where:
-/// * host is the hostname or IP address
-/// * port is either specified in the address or defaults to 443/80 based on TLS setting
-/// * weight is either specified after the address or defaults to 1
-pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
-    let mut new_addrs = vec![];
-    for addr in addrs.iter() {
-        // get the weight of address
-        let arr: Vec<_> = addr.split(' ').collect();
-        let weight = if arr.len() == 2 {
-            arr[1].parse::<usize>().unwrap_or(1)
-        } else {
-            1
-        };
-        // split ip and port
-        // the port will use default value if none
-        if let Some((host, port)) = arr[0].split_once(':') {
-            new_addrs.push((host.to_string(), port.to_string(), weight));
-        } else {
-            let port = if tls {
-                "443".to_string()
-            } else {
-                "80".to_string()
-            };
-            new_addrs.push((arr[0].to_string(), port, weight));
-        }
+fn invalid(message: String) -> Error {
+    Error::Invalid { message }
+}
+
+/// Splits one `addrs` entry - `host[:port] [weight]`, where an IPv6 literal
+/// with a port is written `[::1]:8080` - into its host, optional port and
+/// weight. Every part is checked here, once, so a bad port or weight is a
+/// configuration error rather than something each discovery tick trips
+/// over: a weight of zero would never be selected, and a port that does
+/// not parse used to fail silently on every refresh.
+pub(crate) fn split_addr(addr: &str) -> Result<(String, Option<u16>, usize)> {
+    let mut parts = addr.split_whitespace();
+    let host_port = parts
+        .next()
+        .ok_or_else(|| invalid("address is empty".to_string()))?;
+    let weight = match parts.next() {
+        None => 1,
+        Some(weight) => weight
+            .parse::<usize>()
+            .ok()
+            .filter(|weight| *weight > 0)
+            .ok_or_else(|| {
+                invalid(format!("weight of {addr} must be a positive integer"))
+            })?,
+    };
+    if parts.next().is_some() {
+        return Err(invalid(format!(
+            "{addr} has more than a weight after the address"
+        )));
     }
-    new_addrs
+    let parse_port = |port: &str| {
+        port.parse::<u16>()
+            .ok()
+            .filter(|port| *port > 0)
+            .ok_or_else(|| invalid(format!("port of {addr} is invalid")))
+    };
+    // `[v6]` or `[v6]:port`
+    if let Some(rest) = host_port.strip_prefix('[') {
+        let (host, after) = rest.split_once(']').ok_or_else(|| {
+            invalid(format!("{addr} is missing the closing bracket"))
+        })?;
+        if host.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(invalid(format!(
+                "{addr} has brackets around something that is not an IPv6 address"
+            )));
+        }
+        let port = match after.strip_prefix(':') {
+            Some(port) => Some(parse_port(port)?),
+            None if after.is_empty() => None,
+            None => return Err(invalid(format!("{addr} is invalid"))),
+        };
+        return Ok((host.to_string(), port, weight));
+    }
+    // A bare IPv6 literal has more than one colon and no port.
+    if host_port.matches(':').count() > 1 {
+        if host_port.parse::<std::net::Ipv6Addr>().is_err() {
+            return Err(invalid(format!(
+                "{addr} is not an IPv6 address; write [addr]:port for a port"
+            )));
+        }
+        return Ok((host_port.to_string(), None, weight));
+    }
+    match host_port.split_once(':') {
+        Some((host, port)) if !host.is_empty() => {
+            Ok((host.to_string(), Some(parse_port(port)?), weight))
+        },
+        Some(_) => Err(invalid(format!("{addr} has no host"))),
+        None => Ok((host_port.to_string(), None, weight)),
+    }
+}
+
+/// Parses every `addrs` entry, filling in the default port (443 under TLS,
+/// 80 otherwise) where none is given.
+pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Result<Vec<Addr>> {
+    let default_port = if tls { 443 } else { 80 };
+    addrs
+        .iter()
+        .map(|addr| {
+            let (host, port, weight) = split_addr(addr)?;
+            Ok((host, port.unwrap_or(default_port), weight))
+        })
+        .collect()
 }
 
 pub const DNS_DISCOVERY: &str = "dns";
@@ -138,11 +185,11 @@ impl Discovery {
         self
     }
     pub fn with_domain(mut self, domain: String) -> Self {
-        self.dns_domain = Some(domain);
+        self.dns_domain = Some(domain).filter(|domain| !domain.is_empty());
         self
     }
     pub fn with_search(mut self, search: String) -> Self {
-        self.dns_search = Some(search);
+        self.dns_search = Some(search).filter(|search| !search.is_empty());
         self
     }
 }
@@ -156,21 +203,74 @@ pub use docker::{is_docker_discovery, new_docker_discover_backends};
 
 #[cfg(test)]
 mod tests {
-    use super::format_addrs;
+    use super::{Discovery, format_addrs, split_addr};
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_format_addrs() {
-        let addrs = format_addrs(&["127.0.0.1:8080".to_string()], false);
-        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "8080", 1)]"#);
+        let one = |addr: &str, tls: bool| {
+            format_addrs(&[addr.to_string()], tls).unwrap().remove(0)
+        };
+        assert_eq!(
+            ("127.0.0.1".to_string(), 8080, 1),
+            one("127.0.0.1:8080", false)
+        );
+        assert_eq!(("127.0.0.1".to_string(), 80, 1), one("127.0.0.1", false));
+        assert_eq!(("127.0.0.1".to_string(), 443, 1), one("127.0.0.1", true));
+        assert_eq!(
+            ("127.0.0.1".to_string(), 80, 10),
+            one("127.0.0.1 10", false)
+        );
+        // Any amount of whitespace separates the weight.
+        assert_eq!(("api".to_string(), 8080, 3), one("  api:8080   3 ", false));
+        // IPv6 literals keep their address, lose the brackets.
+        assert_eq!(("::1".to_string(), 8080, 1), one("[::1]:8080", false));
+        assert_eq!(("::1".to_string(), 443, 2), one("[::1] 2", true));
+        assert_eq!(
+            ("2001:db8::1".to_string(), 80, 1),
+            one("2001:db8::1", false)
+        );
 
-        let addrs = format_addrs(&["127.0.0.1".to_string()], false);
-        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "80", 1)]"#);
+        for bad in [
+            "",
+            "127.0.0.1:abc",
+            "127.0.0.1:0",
+            "127.0.0.1:70000",
+            "127.0.0.1:80 0",
+            "127.0.0.1:80 x",
+            "127.0.0.1:80 1 2",
+            ":80",
+            "[::1",
+            "[::1]8080",
+            "[nope]:80",
+            "a:b:c",
+        ] {
+            assert_eq!(
+                true,
+                split_addr(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+        assert_eq!(
+            true,
+            format_addrs(&["ok:80".to_string(), "bad:x".to_string()], false)
+                .is_err()
+        );
+    }
 
-        let addrs = format_addrs(&["127.0.0.1".to_string()], true);
-        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "443", 1)]"#);
-
-        let addrs = format_addrs(&["127.0.0.1 10".to_string()], false);
-        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "80", 10)]"#);
+    #[test]
+    fn test_discovery_builder_drops_empty_values() {
+        let discovery = Discovery::new(vec![])
+            .with_dns_server(String::new())
+            .with_domain(String::new())
+            .with_search(String::new());
+        assert_eq!(None, discovery.dns_server);
+        assert_eq!(None, discovery.dns_domain);
+        assert_eq!(None, discovery.dns_search);
+        let discovery = Discovery::new(vec![])
+            .with_domain("svc".to_string())
+            .with_search("a,b".to_string());
+        assert_eq!(Some("svc".to_string()), discovery.dns_domain);
+        assert_eq!(Some("a,b".to_string()), discovery.dns_search);
     }
 }
