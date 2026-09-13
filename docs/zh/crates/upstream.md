@@ -33,9 +33,12 @@
   - **TCP 控制**：TCP keepalive、缓冲区大小与 TCP Fast Open 等高级选项。
   - **请求头策略**：默认按 RFC 9110 的要求，在请求到达后端前剥离 hop-by-hop 头与 `Connection` 提名的头，且只转发 WebSocket 升级。每条规则都可按上游单独放宽（`strip_hop_by_hop`、`strip_connection_nominated`、`reject_malformed_connection_nominations`、`h1_upgrade`），供仍依赖旧透传行为的后端使用，例如 Docker `attach`/`exec` 或 h2c 升级。
 
+- **熔断**：开启 `enable_backend_stats` 后统计每个后端的响应（`backend_failure_status_code` 决定哪些状态码算失败，默认所有 5xx；连接不上的请求总是算失败）。`circuit_break_max_consecutive_failures` 与 `circuit_break_max_failure_percent`（后者要在统计窗口内累计到 `circuit_break_min_requests_threshold` 个请求后才生效；两者填 `0` 即关闭该规则）任一触发即熔断：后端进入**打开**状态，在 `circuit_break_open_duration` 内被跳过，之后进入**半开**，最多放行 `circuit_break_half_open_consecutive_success_threshold` 个探测请求；连续成功这么多次则关闭熔断，失败一次则重新打开。状态通过 `pingap_upstream_backend_circuit_state` 导出（0 关闭、1 打开、2 半开）。
+
 - **运行时管理**：
   - 可在运行时动态增删改上游，无服务中断。
   - 暴露健康与连接指标，便于监控与可观测。
+  - `algo`（`round_robin`，或 `hash`、`hash:<ip|url|path|header|cookie|query>[:<key>]`）与 `alpn`（`h1`、`h2`、`h2h1`）在构建上游时校验，未知值报错而不是静默用默认值。
 
 ## 核心概念
 
@@ -49,6 +52,10 @@
 - `RoundRobin(LoadBalancer<RoundRobin>)`
 - `Consistent { lb: LoadBalancer<Consistent>, hash: HashStrategy }`
 - `Transparent`
+
+透明上游按每个请求的 authority（HTTP/2 的 `:authority`，HTTP/1 的 `Host` 头）构建 peer。其中的端口会被采用（`Host: backend:8080` 连到 8080；没有端口时按 `sni` 取 80 或 443），主机名异步解析（IP 字面量不需要查询；`ipv4_only` 会像其他发现方式一样只取名字的 IPv4 地址），解析不到的主机对该请求返回 `503`，而不是在 peer 构造函数里解析失败——那以前会直接 panic。
+
+`HealthCheckTask` 每次后端刷新与健康检查以 `debug` 级别记录；只有失败才是 `error`。
 
 ### `HealthCheckTask`
 
@@ -86,7 +93,7 @@ fn main() {
 
     // In a request handling context, a peer would be created.
     // This is a simplified representation.
-    // let http_peer = upstream.new_http_peer(&session, &client_ip);
+    // let http_peer = upstream.new_http_peer(&session, &mut client_ip, true).await;
     
     println!("Upstream '{}' created successfully.", upstream.name);
 }

@@ -27,7 +27,7 @@ pub struct CircuitBreakerConfig {
     pub max_consecutive_failures: u32,
 
     /// The maximum failure rate (percentage, 0.0 to 100.0) required to trip the circuit breaker.
-    /// If set to > 100.0, circuit breaking based on failure rate is disabled.
+    /// If set to 0.0 or > 100.0, circuit breaking based on failure rate is disabled.
     pub max_failure_percent: f64,
 
     /// The minimum total number of requests (within the statistics window) required
@@ -298,7 +298,13 @@ impl BackendCircuitStates {
                     {
                         is_fail = true
                     }
-                    if !is_fail && config.max_failure_percent <= 100.0 {
+                    // A percent of 0 is "not configured": every failure rate
+                    // is >= 0, so checking it tripped the breaker on the
+                    // first failure once the request threshold was met.
+                    if !is_fail
+                        && config.max_failure_percent > 0.0
+                        && config.max_failure_percent <= 100.0
+                    {
                         let stats = stats.get_window_stats(address);
                         if stats.total_requests >= config.min_requests_threshold
                             && stats.failure_rate_percent
@@ -308,10 +314,15 @@ impl BackendCircuitStates {
                         }
                     }
 
+                    // Tripping opens the breaker: the backend is skipped for
+                    // `open_duration` and probed afterwards. It used to go
+                    // straight to half-open, which kept sending it up to a
+                    // probe window of requests right after the failures
+                    // that tripped it.
                     if is_fail {
                         state
                             .current_state
-                            .store(STATE_HALF_OPEN, Ordering::Relaxed);
+                            .store(STATE_OPEN, Ordering::Relaxed);
                         *data =
                             BreakerStateData::new(self.config.open_duration);
                     }
@@ -330,6 +341,100 @@ impl BackendCircuitStates {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::StatusCode;
+    use pretty_assertions::assert_eq;
+
+    /// Closed -> open on consecutive failures, half-open after the open
+    /// duration with a bounded number of probes, closed again after enough
+    /// consecutive successes.
+    #[test]
+    fn test_state_machine() {
+        let addr = "127.0.0.1:8080";
+        let stats = BackendStats::new(Duration::from_secs(60), vec![]);
+        let states = BackendCircuitStates::new(CircuitBreakerConfig {
+            max_consecutive_failures: 3,
+            max_failure_percent: 0.0,
+            min_requests_threshold: 1,
+            half_open_consecutive_success_threshold: 2,
+            open_duration: Duration::from_millis(50),
+        });
+        let fail = || {
+            stats.on_transport_failure(addr);
+            states.update_state_after_request(addr, true, &stats);
+        };
+        let succeed = || {
+            stats.on_response(addr, StatusCode::OK);
+            states.update_state_after_request(addr, false, &stats);
+        };
+
+        fail();
+        fail();
+        assert_eq!(STATE_CLOSED, states.get_state_code(addr));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        // The third consecutive failure trips it: open, not half-open.
+        fail();
+        assert_eq!(STATE_OPEN, states.get_state_code(addr));
+        assert_eq!(false, states.is_backend_acceptable(addr));
+
+        // After the open duration the first request is let through as a
+        // probe, then at most `threshold` of them.
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(false, states.is_backend_acceptable(addr));
+
+        // Enough consecutive successes close it.
+        succeed();
+        assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
+        succeed();
+        assert_eq!(STATE_CLOSED, states.get_state_code(addr));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+
+        // A failure while half-open reopens it.
+        fail();
+        fail();
+        fail();
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        fail();
+        assert_eq!(STATE_OPEN, states.get_state_code(addr));
+    }
+
+    /// `max_failure_percent = 0` means the rate rule is off; it used to
+    /// trip on the first failure once the request threshold was met.
+    #[test]
+    fn test_failure_percent_zero_is_disabled() {
+        let addr = "127.0.0.1:8080";
+        // 9 successes and 1 failure in the stats window; the window
+        // reports the previous interval, so wait one out.
+        let stats = BackendStats::new(Duration::from_secs(1), vec![]);
+        for _ in 0..9 {
+            stats.on_response(addr, StatusCode::OK);
+        }
+        stats.on_response(addr, StatusCode::BAD_GATEWAY);
+        std::thread::sleep(Duration::from_millis(1100));
+        assert_eq!(10, stats.get_window_stats(addr).total_requests);
+
+        let states = BackendCircuitStates::new(CircuitBreakerConfig {
+            max_consecutive_failures: 100,
+            max_failure_percent: 0.0,
+            min_requests_threshold: 1,
+            ..Default::default()
+        });
+        states.update_state_after_request(addr, true, &stats);
+        assert_eq!(STATE_CLOSED, states.get_state_code(addr));
+
+        // With a rate configured the same traffic trips it.
+        let states = BackendCircuitStates::new(CircuitBreakerConfig {
+            max_consecutive_failures: 100,
+            max_failure_percent: 10.0,
+            min_requests_threshold: 1,
+            ..Default::default()
+        });
+        states.update_state_after_request(addr, true, &stats);
+        assert_eq!(STATE_OPEN, states.get_state_code(addr));
+    }
 
     #[test]
     fn test_is_backend_acceptable_stack_key() {

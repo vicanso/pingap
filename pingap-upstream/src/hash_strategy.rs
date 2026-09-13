@@ -42,7 +42,13 @@ impl HashStrategy {
     ) -> Cow<'a, str> {
         match self {
             HashStrategy::Url => {
-                Cow::Owned(session.req_header().uri.to_string())
+                let uri = &session.req_header().uri;
+                // Origin-form (`/path?query`), what a proxy normally gets,
+                // prints as its path-and-query, so it needs no allocation.
+                match (uri.scheme(), uri.authority(), uri.path_and_query()) {
+                    (None, None, Some(value)) => Cow::Borrowed(value.as_str()),
+                    _ => Cow::Owned(uri.to_string()),
+                }
             },
             HashStrategy::Ip => {
                 if client_ip.is_none() {
@@ -72,16 +78,25 @@ impl HashStrategy {
     }
 }
 
-impl From<(&str, &str)> for HashStrategy {
-    fn from(tuple: (&str, &str)) -> Self {
-        match tuple.0 {
+impl HashStrategy {
+    /// The strategy named by `hash:<hash_type>[:<key>]`; `None` for a
+    /// name that is not one.
+    pub fn parse(hash_type: &str, key: &str) -> Option<Self> {
+        Some(match hash_type {
             "url" => HashStrategy::Url,
             "ip" => HashStrategy::Ip,
-            "header" => HashStrategy::Header(tuple.1.to_string()),
-            "cookie" => HashStrategy::Cookie(tuple.1.to_string()),
-            "query" => HashStrategy::Query(tuple.1.to_string()),
-            _ => HashStrategy::Path,
-        }
+            "header" => HashStrategy::Header(key.to_string()),
+            "cookie" => HashStrategy::Cookie(key.to_string()),
+            "query" => HashStrategy::Query(key.to_string()),
+            "" | "path" => HashStrategy::Path,
+            _ => return None,
+        })
+    }
+}
+
+impl From<(&str, &str)> for HashStrategy {
+    fn from(tuple: (&str, &str)) -> Self {
+        Self::parse(tuple.0, tuple.1).unwrap_or(HashStrategy::Path)
     }
 }
 
@@ -109,6 +124,8 @@ mod tests {
                 == HashStrategy::from(("query", "id"))
         );
         assert!(HashStrategy::Path == HashStrategy::from(("", "")));
+        assert!(HashStrategy::Path == HashStrategy::from(("path", "")));
+        assert_eq!(true, HashStrategy::parse("nope", "").is_none());
     }
 
     #[tokio::test]

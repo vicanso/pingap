@@ -63,10 +63,11 @@ use rustls_pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -238,6 +239,10 @@ pub struct Upstream {
     /// Whether to enable TCP Fast Open for reduced connection latency
     tcp_fast_open: Option<bool>,
 
+    /// A transparent upstream resolves the request's host to IPv4 only,
+    /// the same switch static and DNS discovery apply to their addresses.
+    ipv4_only: bool,
+
     /// Tracer for monitoring active connections to this upstream
     peer_tracer: Option<UpstreamPeerTracer>,
 
@@ -286,18 +291,22 @@ where
     S: BackendSelection + 'static,
     S::Iter: BackendIter,
 {
-    let mut update_frequency = if let Some(value) = conf.update_frequency {
-        Some(value)
-    } else {
-        Some(Duration::from_secs(60))
-    };
-    // For static discovery, perform immediate backend update
+    let mut update_frequency =
+        Some(conf.update_frequency.unwrap_or(Duration::from_secs(60)));
+    // Static discovery resolves nothing, so its backends are loaded right
+    // here, once, and never refreshed.
     if is_static_discovery(&conf.guess_discovery()) {
         update_frequency = None;
+        let static_error = |message: String| Error::Common {
+            category: "static_discovery".to_string(),
+            message,
+        };
         lb.update()
             .now_or_never()
-            .expect("static should not block")
-            .expect("static should not error");
+            .ok_or_else(|| {
+                static_error("backend update did not complete".to_string())
+            })?
+            .map_err(|e| static_error(e.to_string()))?;
     }
 
     let observe: Option<HealthObserveCallback> = if let Some(sender) = sender {
@@ -312,7 +321,7 @@ where
     // Set up health checking for the backends
     let (health_check_conf, hc) = new_health_check(
         name,
-        &conf.health_check.clone().unwrap_or_default(),
+        conf.health_check.as_deref().unwrap_or_default(),
         observe,
     )
     .map_err(|e| Error::Common {
@@ -378,34 +387,44 @@ fn new_load_balancer(
     }
     let backends = new_backends(&discovery_category, &discovery)?;
 
-    // Parse the load balancing algorithm configuration
-    // Format: "algo:hash_type:hash_key" (e.g. "hash:cookie:session_id")
-    // let algo_method = conf.algo.clone().unwrap_or_default();
-    let algo_method = conf.algo.as_deref().unwrap_or("round_robin");
-
-    let parts: Vec<&str> = algo_method.split(':').collect();
-    if parts.first() == Some(&"hash") && parts.len() >= 2 {
-        let hash_type = parts[1];
-        let hash_key = parts.get(2).copied().unwrap_or_default();
-        let lb = update_health_check_params(
-            LoadBalancer::<Consistent>::from_backends(backends),
-            name,
-            conf,
-            sender,
-        )?;
-        Ok(SelectionLb::Consistent {
-            lb,
-            hash: HashStrategy::from((hash_type, hash_key)),
-        })
-    } else {
-        // Default to RoundRobin
-        let lb = update_health_check_params(
-            LoadBalancer::<RoundRobin>::from_backends(backends),
-            name,
-            conf,
-            sender,
-        )?;
-        Ok(SelectionLb::RoundRobin(lb))
+    // The algorithm: `round_robin`, or `hash:<type>[:<key>]` such as
+    // `hash:cookie:session_id`. An unknown name is an error rather than
+    // silently round robin (or path hashing).
+    let algo = conf.algo.as_deref().unwrap_or("round_robin");
+    let invalid = |message: String| Error::Common {
+        category: "new_upstream".to_string(),
+        message,
+    };
+    let mut parts = algo.splitn(3, ':');
+    match parts.next().unwrap_or_default().trim() {
+        "" | "round_robin" => {
+            let lb = update_health_check_params(
+                LoadBalancer::<RoundRobin>::from_backends(backends),
+                name,
+                conf,
+                sender,
+            )?;
+            Ok(SelectionLb::RoundRobin(lb))
+        },
+        "hash" => {
+            let hash_type = parts.next().unwrap_or_default().trim();
+            let hash_key = parts.next().unwrap_or_default();
+            let hash = HashStrategy::parse(hash_type, hash_key).ok_or_else(|| {
+                invalid(format!(
+                    "hash type {hash_type:?} of algo {algo:?} is invalid, expected ip, url, path, header, cookie or query"
+                ))
+            })?;
+            let lb = update_health_check_params(
+                LoadBalancer::<Consistent>::from_backends(backends),
+                name,
+                conf,
+                sender,
+            )?;
+            Ok(SelectionLb::Consistent { lb, hash })
+        },
+        _ => Err(invalid(format!(
+            "algo {algo:?} is invalid, expected round_robin or hash:<type>[:<key>]"
+        ))),
     }
 }
 
@@ -526,6 +545,57 @@ fn h2_window_size(size: Option<ByteSize>) -> Option<u32> {
     size.map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX))
 }
 
+/// Splits a `Host` value into name and port: `example.com`,
+/// `example.com:8080`, `[::1]` or `[::1]:8080`.
+fn split_host_port(host: &str, default_port: u16) -> (&str, u16) {
+    let (name, port) = if host.starts_with('[') {
+        match host.split_once(']') {
+            Some((name, rest)) => (&name[1..], rest.strip_prefix(':')),
+            None => (host, None),
+        }
+    } else {
+        match host.rsplit_once(':') {
+            Some((name, port)) if !name.contains(':') => (name, Some(port)),
+            _ => (host, None),
+        }
+    };
+    let port = port
+        .and_then(|port| port.parse::<u16>().ok())
+        .unwrap_or(default_port);
+    (name, port)
+}
+
+/// The host name part of a `Host` value, without a port or brackets.
+fn host_name(host: &str) -> &str {
+    split_host_port(host, 0).0
+}
+
+/// Resolves a `Host` value to a socket address. An IP literal is parsed;
+/// a name is looked up on tokio's blocking pool, taking the first address
+/// (the first IPv4 one with `ipv4_only`). `None` when it does not resolve.
+async fn resolve_host(
+    host: &str,
+    default_port: u16,
+    ipv4_only: bool,
+) -> Option<SocketAddr> {
+    let (name, port) = split_host_port(host, default_port);
+    if let Ok(ip) = name.parse::<IpAddr>() {
+        return Some(SocketAddr::new(ip, port));
+    }
+    match tokio::net::lookup_host((name, port)).await {
+        Ok(mut addrs) => addrs.find(|addr| !ipv4_only || addr.is_ipv4()),
+        Err(e) => {
+            debug!(
+                target: LOG_TARGET,
+                host,
+                error = %e,
+                "resolve transparent host fail"
+            );
+            None
+        },
+    }
+}
+
 impl Upstream {
     /// Creates a new Upstream instance from the provided configuration
     ///
@@ -544,15 +614,21 @@ impl Upstream {
         let key = conf.hash_key();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
+        let invalid = |message: String| Error::Common {
+            category: "new_upstream".to_string(),
+            message,
+        };
 
-        let alpn = if let Some(alpn) = &conf.alpn {
-            match alpn.to_uppercase().as_str() {
-                "H2H1" => ALPN::H2H1,
-                "H2" => ALPN::H2,
-                _ => ALPN::H1,
-            }
-        } else {
-            ALPN::H1
+        let alpn = match conf.alpn.as_deref().map(str::to_uppercase).as_deref()
+        {
+            None | Some("") | Some("H1") => ALPN::H1,
+            Some("H2") => ALPN::H2,
+            Some("H2H1") => ALPN::H2H1,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "alpn {other:?} is invalid, expected h1, h2 or h2h1"
+                )));
+            },
         };
 
         let tcp_keepalive = if (conf.tcp_idle.is_some()
@@ -578,11 +654,22 @@ impl Upstream {
         };
         let failure_status_codes = conf
             .backend_failure_status_code
-            .clone()
+            .as_deref()
             .unwrap_or_default()
-            .split(",")
-            .flat_map(|code| code.trim().parse::<u16>().ok())
-            .collect::<Vec<u16>>();
+            .split(',')
+            .map(str::trim)
+            .filter(|code| !code.is_empty())
+            .map(|code| {
+                code.parse::<u16>()
+                    .ok()
+                    .filter(|code| StatusCode::from_u16(*code).is_ok())
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "backend failure status code {code:?} is invalid"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<u16>>>()?;
         let tracer = peer_tracer
             .as_ref()
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
@@ -637,6 +724,7 @@ impl Upstream {
             tcp_recv_buf: conf.tcp_recv_buf.map(|item| item.as_u64() as usize),
             tcp_keepalive,
             tcp_fast_open: conf.tcp_fast_open,
+            ipv4_only: conf.ipv4_only.unwrap_or_default(),
             peer_tracer,
             tracer,
             processing: AtomicI32::new(0),
@@ -676,113 +764,131 @@ impl Upstream {
     ///
     /// # Arguments
     /// * `session` - Current HTTP session containing request details
-    /// * `ctx` - Request context state
+    /// * `client_ip` - The request's client ip, resolved and written back
+    ///   when the hash strategy needs it
+    /// * `count_processing` - When `true`, bump the in-flight processing
+    ///   counter. Callers that retry via pingora's `upstream_peer` loop must
+    ///   pass `true` only on the first attempt: each retry re-enters this
+    ///   method, and counting every attempt would permanently inflate the
+    ///   gauge (only one matching `completed()` runs at request end).
     ///
     /// # Returns
-    /// * `Option<HttpPeer>` - Configured HTTP peer if a healthy backend is available, None otherwise
+    /// * `Option<HttpPeer>` - Configured HTTP peer if a healthy backend is
+    ///   available (for a transparent upstream: if the request's host
+    ///   resolves), None otherwise
     ///
     /// This method:
     /// 1. Selects an appropriate backend using the configured load balancing strategy
     /// 2. Optionally increments the processing counter (once per request — see
     ///    `count_processing`)
     /// 3. Creates and configures an HttpPeer with the connection settings
-    ///
-    /// # Arguments
-    /// * `count_processing` - When `true`, bump the in-flight processing
-    ///   counter. Callers that retry via pingora's `upstream_peer` loop must
-    ///   pass `true` only on the first attempt: each retry re-enters this
-    ///   method, and counting every attempt would permanently inflate the
-    ///   gauge (only one matching `completed()` runs at request end).
     #[inline]
-    pub fn new_http_peer(
+    pub async fn new_http_peer(
         &self,
         session: &Session,
         client_ip: &mut Option<String>,
         count_processing: bool,
     ) -> Option<HttpPeer> {
-        // Select a backend based on the load balancing strategy
-        let upstream = match &self.lb {
+        let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
-                lb.select_with(b"", 4, |backend, healthy| {
+                let backend = lb.select_with(b"", 4, |backend, healthy| {
                     self.accept_backend(backend, healthy)
-                })
+                })?;
+                HttpPeer::new(backend, self.tls, self.sni.clone())
             },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
                 let value = hash.get_value(session, client_ip);
-                lb.select_with(value.as_bytes(), 4, |backend, healthy| {
-                    self.accept_backend(backend, healthy)
-                })
+                let backend =
+                    lb.select_with(value.as_bytes(), 4, |backend, healthy| {
+                        self.accept_backend(backend, healthy)
+                    })?;
+                HttpPeer::new(backend, self.tls, self.sni.clone())
             },
-            // For transparent mode, no backend selection needed
-            SelectionLb::Transparent => None,
-        };
-
-        // Create HTTP peer based on load balancing mode
-        let p = if matches!(self.lb, SelectionLb::Transparent) {
             // In transparent mode, use the request's host header
-            let host = pingap_core::get_host(session.req_header())?;
-            // Set SNI: either use host header ($host) or configured value
-            let sni = if self.sni == "$host" {
-                host.to_string()
-            } else {
-                self.sni.clone()
-            };
-            // use default port for transparent http/https
-            let port = if self.tls { 443 } else { 80 };
-            // Create peer with host:port, TLS settings, and SNI
-            Some(HttpPeer::new(format!("{host}:{port}"), self.tls, sni))
-        } else {
-            // For load balanced modes, create peer from selected backend
-            upstream.map(|upstream| {
-                HttpPeer::new(upstream, self.tls, self.sni.clone())
-            })
+            SelectionLb::Transparent => {
+                self.new_transparent_peer(session).await?
+            },
         };
 
-        // Configure connection options for the peer
-        p.map(|mut p| {
-            // Count only after a peer was actually produced, and only when the
-            // caller says this is the request's first attempt.
-            if count_processing {
-                self.processing.fetch_add(1, Ordering::Relaxed);
-            }
-            // Set various timeout values
-            p.options.connection_timeout = self.connection_timeout;
-            p.options.total_connection_timeout = self.total_connection_timeout;
-            p.options.read_timeout = self.read_timeout;
-            p.options.idle_timeout = self.idle_timeout;
-            p.options.write_timeout = self.write_timeout;
-            // Configure TLS certificate verification if specified
-            if let Some(verify_cert) = self.verify_cert {
-                p.options.verify_cert = verify_cert;
-            }
-            // Set protocol negotiation settings
-            p.options.alpn = self.alpn.clone();
-            // Hop-by-hop / Connection / Upgrade handling for this upstream
-            p.options.http_upstream_request_policy = self.request_policy;
-            // Private CA bundle for verifying this upstream's certificate
-            p.options.ca = self.ca.clone();
-            p.group_key = self.ca_key;
-            // HTTP/2 flow-control windows advertised to this upstream
-            p.options.h2_stream_window_size = self.h2_stream_window_size;
-            p.options.h2_connection_window_size =
-                self.h2_connection_window_size;
-            // Override the default number of concurrent h2 streams per
-            // connection to enable practical HTTP/2 multiplexing to the backend
-            if let Some(max_h2_streams) = self.max_h2_streams {
-                p.options.max_h2_streams = max_h2_streams;
-            }
-            // Configure TCP-specific options
-            p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
-            p.options.tcp_recv_buf = self.tcp_recv_buf;
-            if let Some(tcp_fast_open) = self.tcp_fast_open {
-                p.options.tcp_fast_open = tcp_fast_open;
-            }
-            // Set connection tracing if enabled
-            p.options.tracer.clone_from(&self.tracer);
-            p
-        })
+        // Count only after a peer was actually produced, and only when the
+        // caller says this is the request's first attempt.
+        if count_processing {
+            self.processing.fetch_add(1, Ordering::Relaxed);
+        }
+        // Set various timeout values
+        p.options.connection_timeout = self.connection_timeout;
+        p.options.total_connection_timeout = self.total_connection_timeout;
+        p.options.read_timeout = self.read_timeout;
+        p.options.idle_timeout = self.idle_timeout;
+        p.options.write_timeout = self.write_timeout;
+        // Configure TLS certificate verification if specified
+        if let Some(verify_cert) = self.verify_cert {
+            p.options.verify_cert = verify_cert;
+        }
+        // Set protocol negotiation settings
+        p.options.alpn = self.alpn.clone();
+        // Hop-by-hop / Connection / Upgrade handling for this upstream
+        p.options.http_upstream_request_policy = self.request_policy;
+        // Private CA bundle for verifying this upstream's certificate
+        p.options.ca = self.ca.clone();
+        p.group_key = self.ca_key;
+        // HTTP/2 flow-control windows advertised to this upstream
+        p.options.h2_stream_window_size = self.h2_stream_window_size;
+        p.options.h2_connection_window_size = self.h2_connection_window_size;
+        // Override the default number of concurrent h2 streams per
+        // connection to enable practical HTTP/2 multiplexing to the backend
+        if let Some(max_h2_streams) = self.max_h2_streams {
+            p.options.max_h2_streams = max_h2_streams;
+        }
+        // Configure TCP-specific options
+        p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
+        p.options.tcp_recv_buf = self.tcp_recv_buf;
+        if let Some(tcp_fast_open) = self.tcp_fast_open {
+            p.options.tcp_fast_open = tcp_fast_open;
+        }
+        // Set connection tracing if enabled
+        p.options.tracer.clone_from(&self.tracer);
+        Some(p)
+    }
+
+    /// The peer of a transparent upstream: the request's `Host`, resolved
+    /// here. pingora's `HttpPeer::new` would resolve a name itself, with a
+    /// blocking lookup on the worker thread and a panic when it fails -
+    /// on a header any client can send. An IP literal needs no lookup; a
+    /// name goes through tokio's resolver, and one that does not resolve
+    /// is `None`, a 503 for this request.
+    async fn new_transparent_peer(
+        &self,
+        session: &Session,
+    ) -> Option<HttpPeer> {
+        let req_header = session.req_header();
+        // The authority as the client sent it, port included: `:authority`
+        // for HTTP/2, the `Host` header for HTTP/1. `get_host` strips the
+        // port, which is right for routing but sent `Host: backend:8080`
+        // to port 80 here.
+        let host = req_header
+            .uri
+            .authority()
+            .map(|authority| authority.as_str())
+            .or_else(|| {
+                req_header
+                    .headers
+                    .get(http::header::HOST)
+                    .and_then(|value| value.to_str().ok())
+            })
+            .filter(|host| !host.is_empty())?;
+        // use default port for transparent http/https
+        let port = if self.tls { 443 } else { 80 };
+        let addr = resolve_host(host, port, self.ipv4_only).await?;
+        // Set SNI: either use host header ($host) or configured value
+        let sni = if self.sni == "$host" {
+            host_name(host).to_string()
+        } else {
+            self.sni.clone()
+        };
+        Some(HttpPeer::new(addr, self.tls, sni))
     }
 
     /// Returns the backends of the upstream
@@ -964,7 +1070,7 @@ impl BackgroundTask for HealthCheckTask {
                             "update backends fail"
                         )
                     } else {
-                        info!(
+                        debug!(
                             target: LOG_TARGET,
                             name,
                             elapsed = format!(
@@ -982,7 +1088,7 @@ impl BackgroundTask for HealthCheckTask {
                 }
                 let health_check_start_time = Instant::now();
                 up.lb.run_health_check().await;
-                info!(
+                debug!(
                     target: LOG_TARGET,
                     name,
                     elapsed = format!(
@@ -1070,8 +1176,8 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        Upstream, UpstreamConf, UpstreamProvider, new_backends,
-        new_load_balancer,
+        Upstream, UpstreamConf, UpstreamProvider, host_name, new_backends,
+        new_load_balancer, resolve_host, split_host_port,
     };
     use crate::new_ahash_upstreams;
     use bytesize::ByteSize;
@@ -1080,7 +1186,7 @@ mod tests {
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
     use pingora::upstreams::peer::{
-        H1UpgradePolicy, HttpUpstreamRequestPolicy,
+        H1UpgradePolicy, HttpUpstreamRequestPolicy, Peer,
     };
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -1223,13 +1329,17 @@ mod tests {
         let mut client_ip = None;
         assert_eq!(
             true,
-            up.new_http_peer(&session, &mut client_ip, true).is_some()
+            up.new_http_peer(&session, &mut client_ip, true)
+                .await
+                .is_some()
         );
         assert_eq!(value, up.processing.load(Ordering::Relaxed));
         // A retry must not bump processing again
         assert_eq!(
             true,
-            up.new_http_peer(&session, &mut client_ip, false).is_some()
+            up.new_http_peer(&session, &mut client_ip, false)
+                .await
+                .is_some()
         );
         assert_eq!(value, up.processing.load(Ordering::Relaxed));
     }
@@ -1255,7 +1365,10 @@ mod tests {
         )
         .unwrap();
         let mut client_ip = None;
-        let peer = up.new_http_peer(&session, &mut client_ip, true).unwrap();
+        let peer = up
+            .new_http_peer(&session, &mut client_ip, true)
+            .await
+            .unwrap();
         assert_eq!(100, peer.options.max_h2_streams);
 
         // Unset falls back to Pingora's default of 1.
@@ -1270,7 +1383,10 @@ mod tests {
         )
         .unwrap();
         let mut client_ip = None;
-        let peer = up.new_http_peer(&session, &mut client_ip, true).unwrap();
+        let peer = up
+            .new_http_peer(&session, &mut client_ip, true)
+            .await
+            .unwrap();
         assert_eq!(1, peer.options.max_h2_streams);
     }
 
@@ -1281,17 +1397,20 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let new_peer = |conf: UpstreamConf| {
+        let new_peer = async |conf: UpstreamConf| {
             let up = Upstream::new("policy", &conf, None).unwrap();
             let mut client_ip = None;
-            up.new_http_peer(&session, &mut client_ip, true).unwrap()
+            up.new_http_peer(&session, &mut client_ip, true)
+                .await
+                .unwrap()
         };
 
         // Nothing set: pingora's standards-oriented default, untouched.
         let peer = new_peer(UpstreamConf {
             addrs: vec!["192.168.1.1:8001".to_string()],
             ..Default::default()
-        });
+        })
+        .await;
         assert_eq!(
             HttpUpstreamRequestPolicy::default(),
             peer.options.http_upstream_request_policy
@@ -1305,7 +1424,8 @@ mod tests {
             reject_malformed_connection_nominations: Some(false),
             h1_upgrade: Some("preserve".to_string()),
             ..Default::default()
-        });
+        })
+        .await;
         assert_eq!(
             HttpUpstreamRequestPolicy::preserve(),
             peer.options.http_upstream_request_policy
@@ -1316,7 +1436,8 @@ mod tests {
             addrs: vec!["192.168.1.1:8001".to_string()],
             h1_upgrade: Some("Deny".to_string()),
             ..Default::default()
-        });
+        })
+        .await;
         assert_eq!(
             HttpUpstreamRequestPolicy::deny_upgrades(),
             peer.options.http_upstream_request_policy
@@ -1325,7 +1446,8 @@ mod tests {
             addrs: vec!["192.168.1.1:8001".to_string()],
             strip_connection_nominated: Some(false),
             ..Default::default()
-        });
+        })
+        .await;
         let policy = peer.options.http_upstream_request_policy;
         assert_eq!(false, policy.strip_connection_nominated);
         assert_eq!(true, policy.strip_hop_by_hop);
@@ -1339,17 +1461,20 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let new_peer = |conf: UpstreamConf| {
+        let new_peer = async |conf: UpstreamConf| {
             let up = Upstream::new("ca", &conf, None).unwrap();
             let mut client_ip = None;
-            up.new_http_peer(&session, &mut client_ip, true).unwrap()
+            up.new_http_peer(&session, &mut client_ip, true)
+                .await
+                .unwrap()
         };
 
         // Nothing set: system trust store and pingora's window defaults.
         let peer = new_peer(UpstreamConf {
             addrs: vec!["192.168.1.1:8001".to_string()],
             ..Default::default()
-        });
+        })
+        .await;
         assert_eq!(true, peer.options.ca.is_none());
         assert_eq!(0, peer.group_key);
         assert_eq!(None, peer.options.h2_stream_window_size);
@@ -1368,7 +1493,8 @@ mod tests {
             h2_stream_window_size: Some(ByteSize::mib(1)),
             h2_connection_window_size: Some(ByteSize::mib(16)),
             ..Default::default()
-        });
+        })
+        .await;
         assert_eq!(2, peer.options.ca.as_ref().unwrap().len());
         // Pooled connections are keyed by the CA bundle as well.
         assert_ne!(0, peer.group_key);
@@ -1394,6 +1520,139 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert_eq!(true, err.contains("category: ca"), "{err}");
+    }
+
+    /// `algo`, `alpn` and the failure status codes are checked when the
+    /// upstream is built.
+    #[test]
+    fn test_new_upstream_rejects_invalid_values() {
+        let build = |conf: UpstreamConf| {
+            Upstream::new("invalid", &conf, None)
+                .expect_err("error")
+                .to_string()
+        };
+        let addrs = vec!["192.168.1.1:8001".to_string()];
+        assert_eq!(
+            "Common error, category: new_upstream, algo \"least_conn\" is invalid, expected round_robin or hash:<type>[:<key>]",
+            build(UpstreamConf {
+                addrs: addrs.clone(),
+                algo: Some("least_conn".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            "Common error, category: new_upstream, hash type \"ipv4\" of algo \"hash:ipv4\" is invalid, expected ip, url, path, header, cookie or query",
+            build(UpstreamConf {
+                addrs: addrs.clone(),
+                algo: Some("hash:ipv4".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            "Common error, category: new_upstream, alpn \"H3\" is invalid, expected h1, h2 or h2h1",
+            build(UpstreamConf {
+                addrs: addrs.clone(),
+                alpn: Some("h3".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            "Common error, category: new_upstream, backend failure status code \"5xx\" is invalid",
+            build(UpstreamConf {
+                addrs: addrs.clone(),
+                backend_failure_status_code: Some("500, 5xx".to_string()),
+                ..Default::default()
+            })
+        );
+        // `hash` alone hashes the path; `round_robin` and blank are round robin.
+        for algo in ["hash", "hash:path", "round_robin", ""] {
+            assert!(
+                Upstream::new(
+                    "ok",
+                    &UpstreamConf {
+                        addrs: addrs.clone(),
+                        algo: Some(algo.to_string()),
+                        ..Default::default()
+                    },
+                    None
+                )
+                .is_ok(),
+                "{algo}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_split_host_port() {
+        assert_eq!(("example.com", 80), split_host_port("example.com", 80));
+        assert_eq!(
+            ("example.com", 8080),
+            split_host_port("example.com:8080", 80)
+        );
+        assert_eq!(("::1", 443), split_host_port("[::1]", 443));
+        assert_eq!(("::1", 8443), split_host_port("[::1]:8443", 443));
+        assert_eq!(("127.0.0.1", 80), split_host_port("127.0.0.1", 80));
+        // a bare IPv6 literal is not a name:port
+        assert_eq!(("::1", 80), split_host_port("::1", 80));
+        assert_eq!("example.com", host_name("example.com:8080"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_host() {
+        assert_eq!(
+            Some("127.0.0.1:8080".parse().unwrap()),
+            resolve_host("127.0.0.1:8080", 80, false).await
+        );
+        assert_eq!(
+            Some("[::1]:443".parse().unwrap()),
+            resolve_host("[::1]", 443, false).await
+        );
+        // A name is looked up; `ipv4_only` skips its IPv6 addresses.
+        let addr = resolve_host("localhost", 80, true).await.unwrap();
+        assert_eq!(true, addr.is_ipv4());
+        assert_eq!(80, addr.port());
+        assert_eq!(None, resolve_host("nonexistent.invalid", 80, false).await);
+    }
+
+    /// A transparent upstream resolves the request's host itself: an IP
+    /// literal (with or without a port) directly, a name through the
+    /// resolver, and a host that does not resolve is `None` rather than a
+    /// panic inside pingora's peer constructor.
+    #[tokio::test]
+    async fn test_transparent_peer() {
+        let peer_for = async |host: &str| {
+            let input_header =
+                format!("GET /vicanso/pingap HTTP/1.1\r\nHost: {host}\r\n\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let up = Upstream::new(
+                "transparent",
+                &UpstreamConf {
+                    addrs: vec!["transparent".to_string()],
+                    discovery: Some("transparent".to_string()),
+                    sni: Some("$host".to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(true, up.is_transparent());
+            let mut client_ip = None;
+            up.new_http_peer(&session, &mut client_ip, true).await
+        };
+        let peer = peer_for("127.0.0.1:19999").await.unwrap();
+        assert_eq!("127.0.0.1:19999", peer.address().to_string());
+        assert_eq!("127.0.0.1", peer.sni);
+        let peer = peer_for("[::1]:8443").await.unwrap();
+        assert_eq!("[::1]:8443", peer.address().to_string());
+        // tls on (sni set), so the default port is 443
+        let peer = peer_for("127.0.0.1").await.unwrap();
+        assert_eq!("127.0.0.1:443", peer.address().to_string());
+        let peer = peer_for("localhost").await.unwrap();
+        assert_eq!(443, peer.address().as_inet().unwrap().port());
+        assert_eq!(true, peer_for("nonexistent.invalid").await.is_none());
+        assert_eq!(true, peer_for("example.com:notaport:1").await.is_none());
     }
 
     #[test]

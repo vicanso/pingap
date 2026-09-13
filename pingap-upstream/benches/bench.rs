@@ -120,5 +120,18 @@ fn bench_hash_strategy(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, bench_hash_strategy,);
+#[allow(clippy::unwrap_used)]
+fn bench_backend_stats(c: &mut Criterion) {
+    use http::StatusCode;
+    use pingap_upstream::BackendStats;
+    use std::time::Duration;
+    let stats = BackendStats::new(Duration::from_secs(60), vec![]);
+    let addr = "192.168.1.1:8080";
+    stats.on_response(addr, StatusCode::OK);
+    c.bench_function("backend stats on_response", |b| {
+        b.iter(|| stats.on_response(addr, StatusCode::OK))
+    });
+}
+
+criterion_group!(benches, bench_hash_strategy, bench_backend_stats);
 criterion_main!(benches);

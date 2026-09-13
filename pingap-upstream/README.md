@@ -33,9 +33,12 @@
     -   **TCP Control**: Advanced options for TCP keepalives, buffer sizes, and TCP Fast Open.
     -   **Request Header Policy**: By default hop-by-hop and `Connection`-nominated request headers are stripped before a request reaches the backend and only WebSocket upgrades are forwarded, as RFC 9110 asks. Each rule can be relaxed per upstream (`strip_hop_by_hop`, `strip_connection_nominated`, `reject_malformed_connection_nominations`, `h1_upgrade`) for a backend that still depends on the old passthrough behaviour, such as Docker `attach`/`exec` or h2c upgrades.
 
+-   **Circuit Breaking**: With `enable_backend_stats` on, each backend's responses are counted (`backend_failure_status_code` decides what counts as a failure; by default every 5xx does, and a connection that could not be made always does). `circuit_break_max_consecutive_failures` and `circuit_break_max_failure_percent` (the latter only once `circuit_break_min_requests_threshold` requests were seen in the stats window; `0` disables either rule) trip the breaker: the backend is **open** and skipped for `circuit_break_open_duration`, then **half-open**, where up to `circuit_break_half_open_consecutive_success_threshold` probe requests are let through; that many consecutive successes close it again, one failure reopens it. The state is exported as `pingap_upstream_backend_circuit_state` (0 closed, 1 open, 2 half-open).
+
 -   **Runtime Management**:
     -   Upstreams can be dynamically added, updated, or removed at runtime without service interruption.
     -   Exposes health and connection metrics for monitoring and observability.
+    -   `algo` (`round_robin`, or `hash`, `hash:<ip|url|path|header|cookie|query>[:<key>]`) and `alpn` (`h1`, `h2`, `h2h1`) are validated when the upstream is built; an unknown value is an error instead of silently the default.
 
 ## Core Concepts
 
@@ -49,6 +52,10 @@ This enum represents the configured load balancing strategy for an `Upstream`:
 -   `RoundRobin(LoadBalancer<RoundRobin>)`
 -   `Consistent { lb: LoadBalancer<Consistent>, hash: HashStrategy }`
 -   `Transparent`
+
+A transparent upstream builds the peer from the request's authority (`:authority` for HTTP/2, the `Host` header for HTTP/1) on every request. A port in it is honoured (`Host: backend:8080` connects to port 8080; without one, 80 or 443 by `sni`), the host is resolved asynchronously (an IP literal needs no lookup; `ipv4_only` restricts a name to its IPv4 addresses, as it does for the other discovery modes), and a host that does not resolve is a `503` for that request rather than a failed lookup inside the peer constructor, which used to panic.
+
+The `HealthCheckTask` logs each backend refresh and health check at `debug`; only failures are `error`.
 
 ### `HealthCheckTask`
 
@@ -87,7 +94,7 @@ fn main() {
 
     // In a request handling context, a peer would be created.
     // This is a simplified representation.
-    // let http_peer = upstream.new_http_peer(&session, &client_ip);
+    // let http_peer = upstream.new_http_peer(&session, &mut client_ip, true).await;
     
     println!("Upstream '{}' created successfully.", upstream.name);
 }

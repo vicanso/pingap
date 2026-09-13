@@ -1212,67 +1212,56 @@ impl ProxyHttp for Server {
         debug!(target: LOG_TARGET, "--> upstream peer");
         defer!(debug!(target: LOG_TARGET, "<-- upstream peer"););
 
-        let peer = ctx
-            .upstream
-            .location_instance
-            .clone()
-            .as_ref()
-            .and_then(|location| {
-                let upstream = if ctx.upstream.name.is_empty() {
-                    get_upstream_with_variables(
-                        location.upstream(),
-                        ctx,
-                        self.upstream_provider.as_ref(),
-                    )?
-                } else {
-                    // override upstream by other plugin
-                    get_upstream_with_variables(
-                        &ctx.upstream.name,
-                        ctx,
-                        self.upstream_provider.as_ref(),
-                    )?
-                };
-                ctx.upstream.upstream_instance = Some(upstream.clone());
-                Some(upstream)
-            })
-            .and_then(|upstream| {
-                ctx.upstream.connected_count = upstream.connected();
-                ctx.upstream.name = upstream.name.clone();
-                #[cfg(feature = "tracing")]
-                if let Some(features) = &ctx.features
-                    && let Some(tracer) = &features.otel_tracer
-                {
-                    let name = format!("upstream.{}", upstream.name);
-                    let mut span = tracer.new_upstream_span(&name);
-                    span.set_attribute(KeyValue::new(
-                        "upstream.connected",
-                        ctx.upstream.connected_count.unwrap_or_default() as i64,
-                    ));
-                    let features = ctx.features.get_or_insert_default();
-                    features.upstream_span = Some(span);
-                }
-                // Count processing only on the first attempt: pingora re-calls
-                // upstream_peer on every retry, and completed() runs once.
-                let first_attempt = ctx.upstream.retries == 0;
-                upstream
-                    .new_http_peer(
-                        session,
-                        &mut ctx.conn.client_ip,
-                        first_attempt,
-                    )
-                    .inspect(|peer| {
-                        ctx.upstream.address = peer.address().to_string();
-                    })
-            })
-            .ok_or_else(|| {
-                new_internal_error(
-                    503,
-                    format!(
-                        "No available upstream for {}",
-                        ctx.upstream.location
-                    ),
-                )
-            })?;
+        let no_available_upstream = |ctx: &Ctx| {
+            new_internal_error(
+                503,
+                format!("No available upstream for {}", ctx.upstream.location),
+            )
+        };
+        let location = ctx.upstream.location_instance.clone();
+        let upstream = location.as_ref().and_then(|location| {
+            let name = if ctx.upstream.name.is_empty() {
+                location.upstream()
+            } else {
+                // override upstream by other plugin
+                &ctx.upstream.name
+            };
+            get_upstream_with_variables(
+                name,
+                ctx,
+                self.upstream_provider.as_ref(),
+            )
+        });
+        let Some(upstream) = upstream else {
+            return Err(no_available_upstream(ctx));
+        };
+        ctx.upstream.upstream_instance = Some(upstream.clone());
+        ctx.upstream.connected_count = upstream.connected();
+        ctx.upstream.name = upstream.name.clone();
+        #[cfg(feature = "tracing")]
+        if let Some(features) = &ctx.features
+            && let Some(tracer) = &features.otel_tracer
+        {
+            let name = format!("upstream.{}", upstream.name);
+            let mut span = tracer.new_upstream_span(&name);
+            span.set_attribute(KeyValue::new(
+                "upstream.connected",
+                ctx.upstream.connected_count.unwrap_or_default() as i64,
+            ));
+            let features = ctx.features.get_or_insert_default();
+            features.upstream_span = Some(span);
+        }
+        // Count processing only on the first attempt: pingora re-calls
+        // upstream_peer on every retry, and completed() runs once.
+        let first_attempt = ctx.upstream.retries == 0;
+        // Async: a transparent upstream resolves the request's host here.
+        let Some(peer) = upstream
+            .new_http_peer(session, &mut ctx.conn.client_ip, first_attempt)
+            .await
+        else {
+            return Err(no_available_upstream(ctx));
+        };
+        ctx.upstream.address = peer.address().to_string();
 
         // start connect to upstream
         ctx.timing.upstream_connect =

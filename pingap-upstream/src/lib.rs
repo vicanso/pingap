@@ -107,5 +107,6 @@ pub trait UpstreamProvider: Send + Sync {
     }
 }
 
+pub use backend_stats::{BackendStats, WindowStats};
 pub use hash_strategy::HashStrategy;
 pub use upstream::*;
