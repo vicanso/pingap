@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, error};
 
-const LOG_CATEGORY: &str = "location";
+const LOG_TARGET: &str = "pingap::location";
 
 pub type Locations = AHashMap<String, Arc<Location>>;
 
@@ -583,7 +583,7 @@ impl Location {
             max_retry_window: conf.max_retry_window,
         };
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             location = format!("{location:?}"),
             "create a new location"
         );
@@ -837,23 +837,34 @@ impl LocationInstance for Location {
             _ => Cow::Borrowed(rewrite.value.as_str()),
         };
 
+        // One pass over the path: the leftmost match both builds the new
+        // path (what `Regex::replace` does) and keeps its groups, so the
+        // named captures below cost no second run of the regex.
+        let mut captures = None;
         let mut new_path = if rewrite.match_all {
             replacement.into_owned()
         } else {
-            match re.replace(path, replacement.as_ref()) {
+            let Some(found) = re.captures(path) else {
                 // no match: nothing to rewrite, and nothing was allocated
-                Cow::Borrowed(_) => return false,
-                Cow::Owned(new_path) => new_path,
-            }
+                return false;
+            };
+            let Some(whole) = found.get(0) else {
+                return false;
+            };
+            let mut new_path =
+                String::with_capacity(path.len() + replacement.len());
+            new_path.push_str(&path[..whole.start()]);
+            found.expand(replacement.as_ref(), &mut new_path);
+            new_path.push_str(&path[whole.end()..]);
+            captures = Some(found);
+            new_path
         };
         if new_path == path {
             return false;
         }
 
-        // Only run the regex a second time to harvest named captures when the
-        // pattern actually declares some.
         if rewrite.has_named_captures
-            && let Some(captures) = re.captures(path)
+            && let Some(captures) = &captures
         {
             for name in re.capture_names().flatten() {
                 if let Some(match_value) = captures.name(name) {
@@ -872,13 +883,13 @@ impl LocationInstance for Location {
             new_path.push('?');
             new_path.push_str(query);
         }
-        debug!(category = LOG_CATEGORY, new_path, "rewrite path");
+        debug!(target: LOG_TARGET, new_path, "rewrite path");
 
         // set new uri
         if let Err(e) =
             new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
         {
-            error!(category = LOG_CATEGORY, error = %e, location = self.name.as_ref(), "new path parse fail");
+            error!(target: LOG_TARGET, error = %e, location = self.name.as_ref(), "new path parse fail");
         }
 
         true
@@ -1232,6 +1243,44 @@ mod tests {
         // whitespace runs and a blank rule are fine
         assert_eq!(None, build("^/a   /b"));
         assert_eq!(None, build("  "));
+    }
+
+    /// A rule whose output equals the input is no rewrite: nothing is set
+    /// and no captures are harvested, as before the single-pass version.
+    #[test]
+    fn test_rewrite_unchanged_path() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                rewrite: Some(
+                    "^/(?<first>[a-z]+)/(.*)$ /$first/$2".to_string(),
+                ),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/me?x=1", None).unwrap();
+        let mut variables = None;
+        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!(None, variables);
+        assert_eq!("/users/me?x=1", req_header.uri.to_string());
+
+        // `$$` is a literal dollar, `$0` the whole match.
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                rewrite: Some("^/old(/.*)$ /new$$$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/old/a", None).unwrap();
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut None));
+        assert_eq!("/new$/a", req_header.uri.to_string());
     }
 
     #[test]

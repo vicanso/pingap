@@ -35,8 +35,9 @@ use std::sync::Arc;
 /// Precomputed host buckets for a weight-ordered location list.
 #[derive(Debug, Clone, Default)]
 pub struct LocationHostIndex {
-    /// Weight-descending location names (same order as the server's list).
-    ordered: Vec<String>,
+    /// Weight-descending location names (same order as the server's list),
+    /// shared with the [`ServerLocationRoute`] built from it.
+    ordered: Arc<Vec<String>>,
     /// Exact host → indices into `ordered`.
     exact: AHashMap<String, Vec<u16>>,
     /// `(domain, indices)` for `*.domain` patterns.
@@ -96,7 +97,7 @@ impl LocationHostIndex {
         suffixes.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         Self {
-            ordered: ordered_names.to_vec(),
+            ordered: Arc::new(ordered_names.to_vec()),
             exact,
             suffixes,
             regex,
@@ -168,13 +169,17 @@ impl ServerLocationRoute {
         }
     }
 
-    /// Build from weight-ordered names, resolving each location for host buckets.
+    /// Build from weight-ordered names, resolving each location for host
+    /// buckets. The route and its index share one copy of the names.
     pub fn build(
         ordered: Vec<String>,
         resolve: impl FnMut(&str) -> Option<Arc<Location>>,
     ) -> Self {
         let host_index = LocationHostIndex::build(&ordered, resolve);
-        Self::new(ordered, host_index)
+        Self {
+            ordered: host_index.ordered.clone(),
+            host_index: Arc::new(host_index),
+        }
     }
 }
 

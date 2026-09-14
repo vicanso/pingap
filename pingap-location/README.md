@@ -39,7 +39,7 @@ How the request `Host` header is matched:
 
 Example: `~(?<name>.+)\.npmtrend\.com` matches `charts.npmtrend.com` and captures `charts` as `name`.
 
-Exact and wildcard patterns are stored lowercased and compared to the request host in place, so a request with `Host: API.Example.COM` matches `api.example.com` without a lowercased copy being made per pattern.
+Exact and wildcard patterns are stored lowercased and compared to the request host in place, so a request with `Host: API.Example.COM` matches `api.example.com` without a lowercased copy being made per pattern. A regex pattern (host or path) that declares no named groups is tested with a plain match, which lets the regex engine skip tracking group positions; only a pattern with `(?<name>...)` groups pays for extracting them.
 
 ### `LocationHostIndex` / `ServerLocationRoute`
 
@@ -51,5 +51,6 @@ This enum determines how to match the request's URL path. The matching strategy 
 
 - **`=` (Exact Match)**: The path must be an exact match. e.g., `=/api/v1/status`.
 - **`~` (Regex Match)**: The path is matched against a regular expression. e.g., `~/api/users/(\d+)`.
+  A rewrite rule runs its regex once per request: the leftmost match builds the new path and, when the pattern has named groups, those become request variables from the same match.
 - **(Prefix Match)**: If no prefix is provided, the request path must start with the given string. e.g., `/api/`.
 - **(Any)**: An empty path string matches any request path.

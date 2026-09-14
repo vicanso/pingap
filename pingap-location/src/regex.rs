@@ -20,6 +20,10 @@ use regex::Regex;
 pub struct RegexCapture {
     // The compiled regular expression
     re: Regex,
+    /// The pattern declares named groups. Without any there is nothing to
+    /// extract, and a match can use the regex's fastest engine instead of
+    /// the one that tracks group positions.
+    has_named_captures: bool,
 }
 
 impl RegexCapture {
@@ -28,7 +32,11 @@ impl RegexCapture {
     pub fn new(value: &str) -> Result<Self, regex::Error> {
         // Compile the regex pattern
         let re = Regex::new(value)?;
-        Ok(RegexCapture { re })
+        let has_named_captures = re.capture_names().flatten().next().is_some();
+        Ok(RegexCapture {
+            re,
+            has_named_captures,
+        })
     }
 
     /// Attempts to match the regex pattern against a string and extract named captures
@@ -39,6 +47,9 @@ impl RegexCapture {
         &self,
         value: &str,
     ) -> (bool, Option<AHashMap<String, String>>) {
+        if !self.has_named_captures {
+            return (self.re.is_match(value), None);
+        }
         // get captures, if not matched, return false
         let Some(captures) = self.re.captures(value) else {
             return (false, None);
@@ -79,5 +90,11 @@ mod tests {
         assert_eq!("03", capture_variables.get("month").unwrap());
         assert_eq!("14", capture_variables.get("day").unwrap());
         assert_eq!(3, capture_variables.len());
+        assert_eq!((false, None), re.captures("2024-03"));
+
+        // No named groups: a plain match, nothing to extract.
+        let re = RegexCapture::new(r"^/api/(\d+)$").unwrap();
+        assert_eq!((true, None), re.captures("/api/12"));
+        assert_eq!((false, None), re.captures("/api/x"));
     }
 }
