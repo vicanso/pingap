@@ -164,15 +164,20 @@ pub fn add_self_signed_certificate(
     certificate: LoadedCertificate,
     not_after: i64,
 ) -> Arc<SelfSignedCertificate> {
-    let mut m = SELF_SIGNED_CERTIFICATE_MAP.load().as_ref().clone();
     let v = Arc::new(SelfSignedCertificate {
         certificate: Arc::new(certificate),
         not_after,
         stale: AtomicBool::new(false),
         count: AtomicU32::new(0),
     });
-    m.insert(name, v.clone());
-    SELF_SIGNED_CERTIFICATE_MAP.store(Arc::new(m));
+    // `rcu`, not load-modify-store: two handshakes issuing certificates at
+    // the same time both keep their entry instead of one overwriting the
+    // other's map.
+    SELF_SIGNED_CERTIFICATE_MAP.rcu(|m| {
+        let mut m = m.as_ref().clone();
+        m.insert(name.clone(), v.clone());
+        m
+    });
     v
 }
 

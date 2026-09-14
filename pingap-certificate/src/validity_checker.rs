@@ -14,6 +14,7 @@
 
 use super::LOG_TARGET;
 use crate::CertificateProvider;
+use ahash::AHashSet;
 use async_trait::async_trait;
 use pingap_core::Error as ServiceError;
 use pingap_core::{
@@ -51,13 +52,22 @@ async fn do_validity_check(
 
     let now = pingap_core::now_sec() as i64;
     let mut name_list = vec![];
-    for (name, cert) in provider.list().iter() {
+    // The store maps every domain to its certificate: check each
+    // certificate once and report it by its configured name, not once per
+    // domain.
+    let mut checked = AHashSet::new();
+    for cert in provider.list().values() {
+        if !checked.insert(cert.hash_key.clone()) {
+            continue;
+        }
         let Some(info) = &cert.info else {
             continue;
         };
         if info.acme.is_some() {
             continue;
         }
+        let name = cert.name.clone().unwrap_or_default();
+        let domains = cert.domains.join(",");
         let mut buffer_days = cert.buffer_days;
         if buffer_days == 0 {
             buffer_days = DEFAULT_EXPIRATION_WARNING_DAYS;
@@ -69,9 +79,10 @@ async fn do_validity_check(
                 target: LOG_TARGET,
                 expired_date = info.not_after.to_string(),
                 name,
+                domains,
                 "certificate will be expired",
             );
-            name_list.push(name.clone());
+            name_list.push(name);
             continue;
         }
 
@@ -80,12 +91,14 @@ async fn do_validity_check(
                 target: LOG_TARGET,
                 valid_date = info.not_before.to_string(),
                 name,
+                domains,
                 "certificate is not valid",
             );
-            name_list.push(name.clone());
+            name_list.push(name);
             continue;
         }
     }
+    name_list.sort();
 
     if !name_list.is_empty()
         && let Some(sender) = &sender

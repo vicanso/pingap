@@ -4057,7 +4057,6 @@ dependencies = [
  "pingora",
  "pretty_assertions",
  "rcgen",
- "regex",
  "rustls",
  "rustls-pki-types",
  "serde",

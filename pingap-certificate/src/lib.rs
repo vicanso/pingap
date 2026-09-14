@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
-use std::sync::LazyLock;
 
 mod chain;
 mod dynamic_certificate;
@@ -96,7 +95,8 @@ fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
 
 /// Parses the leaf certificate's details from `pem` and returns them with
 /// every PEM block of the bundle (leaf first, then the chain), each checked
-/// to be a certificate.
+/// to be a certificate. Each block is parsed once; the leaf used to be
+/// parsed twice and every block copied.
 pub fn parse_leaf_chain_certificates(
     pem: &str,
     key: &str,
@@ -106,74 +106,92 @@ pub fn parse_leaf_chain_certificates(
             category: "certificate".to_string(),
             message: "invalid pem data".to_string(),
         })?;
-    let key_data_list =
-        pingap_util::convert_certificate_bytes(Some(key)).unwrap_or_default();
-    let leaf_pem_data = &pem_data_list[0];
-    let (_, p) =
-        x509_parser::pem::parse_x509_pem(leaf_pem_data).map_err(|e| {
-            Error::X509 {
-                category: "parse_x509_pem".to_string(),
-                message: e.to_string(),
+    let key = pingap_util::convert_certificate_bytes(Some(key))
+        .and_then(|mut list| {
+            if list.is_empty() {
+                None
+            } else {
+                Some(list.swap_remove(0))
             }
-        })?;
+        })
+        .unwrap_or_default();
 
-    let x509 = p.parse_x509().map_err(|e| Error::X509 {
-        category: "parse_x509".to_string(),
-        message: e.to_string(),
-    })?;
-    let mut dns_names = vec![];
-    if let Ok(Some(subject_alternative_name)) = x509.subject_alternative_name()
-    {
-        // get dns name and ip address of certificate
-        for item in subject_alternative_name.value.general_names.iter() {
-            match item {
-                x509_parser::prelude::GeneralName::DNSName(name) => {
-                    dns_names.push(name.to_string());
-                },
-                x509_parser::prelude::GeneralName::IPAddress(data) => {
-                    if let Ok(addr) = parse_ip_addr(data) {
-                        dns_names.push(addr.to_string());
-                    }
-                },
-                _ => {},
-            };
-        }
-    };
-    dns_names.sort();
-    let validity = x509.validity();
-
-    let mut x509_certificates = Vec::with_capacity(pem_data_list.len());
-    for pem in pem_data_list.iter() {
-        let (_, block) =
-            x509_parser::pem::parse_x509_pem(pem).map_err(|e| {
+    let mut leaf_certificate = None;
+    for (index, pem) in pem_data_list.iter().enumerate() {
+        // The leaf's errors keep their own categories; a chain block that
+        // does not parse is an invalid bundle.
+        let leaf = index == 0;
+        let pem_error = |e: &dyn std::fmt::Display| {
+            if leaf {
+                Error::X509 {
+                    category: "parse_x509_pem".to_string(),
+                    message: e.to_string(),
+                }
+            } else {
                 Error::Invalid {
                     category: "x509_from_pem".to_string(),
                     message: e.to_string(),
                 }
-            })?;
-        block.parse_x509().map_err(|e| Error::Invalid {
-            category: "x509_from_pem".to_string(),
-            message: e.to_string(),
-        })?;
-        x509_certificates.push(pem.clone());
+            }
+        };
+        let x509_error = |e: &dyn std::fmt::Display| {
+            if leaf {
+                Error::X509 {
+                    category: "parse_x509".to_string(),
+                    message: e.to_string(),
+                }
+            } else {
+                Error::Invalid {
+                    category: "x509_from_pem".to_string(),
+                    message: e.to_string(),
+                }
+            }
+        };
+        let (_, block) =
+            x509_parser::pem::parse_x509_pem(pem).map_err(|e| pem_error(&e))?;
+        let x509 = block.parse_x509().map_err(|e| x509_error(&e))?;
+        if !leaf {
+            continue;
+        }
+        let mut dns_names = vec![];
+        if let Ok(Some(subject_alternative_name)) =
+            x509.subject_alternative_name()
+        {
+            // get dns name and ip address of certificate
+            for item in subject_alternative_name.value.general_names.iter() {
+                match item {
+                    x509_parser::prelude::GeneralName::DNSName(name) => {
+                        dns_names.push(name.to_string());
+                    },
+                    x509_parser::prelude::GeneralName::IPAddress(data) => {
+                        if let Ok(addr) = parse_ip_addr(data) {
+                            dns_names.push(addr.to_string());
+                        }
+                    },
+                    _ => {},
+                };
+            }
+        };
+        dns_names.sort();
+        let validity = x509.validity();
+        leaf_certificate = Some(Certificate {
+            domains: dns_names,
+            pem: pem.clone(),
+            not_after: validity.not_after.timestamp(),
+            not_before: validity.not_before.timestamp(),
+            issuer: x509.issuer.to_string(),
+            ..Default::default()
+        });
     }
-    let key = if key_data_list.is_empty() {
-        vec![]
-    } else {
-        key_data_list[0].clone()
+    let Some(mut leaf_certificate) = leaf_certificate else {
+        return Err(Error::Invalid {
+            category: "certificate".to_string(),
+            message: "invalid pem data".to_string(),
+        });
     };
+    leaf_certificate.key = key;
 
-    let leaf_certificate = Certificate {
-        domains: dns_names,
-        pem: leaf_pem_data.clone(),
-        key,
-        not_after: validity.not_after.timestamp(),
-        not_before: validity.not_before.timestamp(),
-        issuer: x509.issuer.to_string(),
-        ..Default::default()
-    };
-
-    Ok((leaf_certificate, x509_certificates))
+    Ok((leaf_certificate, pem_data_list))
 }
 
 /// Represents a X.509 certificate with associated metadata
@@ -195,23 +213,17 @@ pub struct Certificate {
     pub issuer: String,
 }
 impl Certificate {
-    /// Extracts the Common Name (CN) from the certificate issuer field
+    /// Extracts the Common Name (CN) from the certificate issuer field,
+    /// which x509-parser renders as `C=US, O=Let's Encrypt, CN=E5`.
     ///
     /// # Returns
     /// * `String` - The issuer's Common Name or empty string if not found
     pub fn get_issuer_common_name(&self) -> String {
-        static CN_REGEX: LazyLock<Option<regex::Regex>> = LazyLock::new(|| {
-            regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").ok()
-        });
-        let Some(regex) = CN_REGEX.as_ref() else {
-            return "".to_string();
-        };
-
-        regex
-            .captures(&self.issuer)
-            .and_then(|caps| caps.name("CN"))
-            .map(|m| m.as_str().to_string())
+        self.issuer
+            .split(", ")
+            .find_map(|part| part.strip_prefix("CN="))
             .unwrap_or_default()
+            .to_string()
     }
     /// Checks if the certificate is valid and not expiring within 48 hours
     ///
@@ -322,5 +334,22 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         assert_eq!(1791253416, cert.not_after);
         assert_eq!("mkcert vicanso@tree", cert.get_issuer_common_name());
         assert_eq!(true, cert.valid(2));
+    }
+
+    #[test]
+    fn test_get_issuer_common_name() {
+        let issuer = |issuer: &str| super::Certificate {
+            issuer: issuer.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            "E5",
+            issuer("C=US, O=Let's Encrypt, CN=E5").get_issuer_common_name()
+        );
+        assert_eq!(
+            "mkcert vicanso@tree",
+            issuer("CN=mkcert vicanso@tree, O=mkcert").get_issuer_common_name()
+        );
+        assert_eq!("", issuer("O=no common name").get_issuer_common_name());
     }
 }

@@ -22,7 +22,6 @@ pingap-core = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }
 rcgen = { workspace = true }
-regex = { workspace = true }
 rustls = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 serde = { workspace = true }

@@ -8,7 +8,7 @@
 - **基于 SNI 的证书选择**：TLS 握手时根据客户端提供的主机名自动选择正确证书。适合单 IP 托管多个 TLS 站点。
 - **通配符证书支持**：原生处理通配符证书（如 `*.example.com`），保护多个子域。
 - **即时自签证书生成**：可作为本地 CA 动态生成自签证书。适合开发环境或为任意域名终止 TLS 的服务。
-- **证书有效期监控**：后台服务周期性检查即将过期的证书，可配置发送通知，避免意外中断。
+- **证书有效期监控**：后台服务周期性检查即将过期的证书，可配置发送通知，避免意外中断。每张证书只检查一次，按配置名上报（日志附带其域名），不论它服务多少个域名。
 - **Let's Encrypt 链支持**：捆绑常见 Let's Encrypt 中间证书，确保 Let's Encrypt 签发证书的信任链完整。
 - **灵活配置**：通过 `CertificateConf` 结构体轻松配置，可从多种配置源加载。
 
@@ -29,7 +29,9 @@
 
 crate 核心是 `GlobalCertificate`：SNI 选择逻辑（精确 → 通配 → 默认，CA 条目即时签发）两边共用，交给 pingora 的方式按后端分支——OpenSSL 实现 `TlsAccept::certificate_callback`，rustls 实现 `ResolvesServerCert`。
 
-证书存储用 `arc_swap::ArcSwap` 包装哈希表，可对整套证书做原子、无锁更新。配置变更时创建新映射并与旧映射交换，确保入站请求始终看到一致的证书视图。
+证书存储用 `arc_swap::ArcSwap` 包装哈希表，可对整套证书做原子、无锁更新。配置变更时创建新映射并与旧映射交换，确保入站请求始终看到一致的证书视图。`update_certificates(configs, previous)` 在构建新映射时沿用配置（含文件路径所指文件内容）未变的证书，因此重载只解析、加载有变化的证书，并只上报这些名字；`parse_certificates` 是不复用任何旧证书的同一过程。
+
+OpenSSL 后端下，被 OpenSSL 拒绝的 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（或 `tlsv1.1`/`tlsv1.2`/`tlsv1.3` 以外的版本名）在构建监听器时报错，服务器不会带着与配置不同的设置启动。
 
 ## 模块
 

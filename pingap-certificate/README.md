@@ -8,7 +8,7 @@ The `pingap-certificate` crate is a robust TLS certificate management library de
 - **SNI-Based Certificate Selection**: Automatically selects the correct certificate during the TLS handshake based on the hostname provided by the client. This is essential for hosting multiple TLS-secured websites on a single IP address.
 - **Wildcard Certificate Support**: Natively handles wildcard certificates (e.g., `*.example.com`) for securing multiple subdomains.
 - **On-the-Fly Self-Signed Certificate Generation**: Includes a feature to act as a local Certificate Authority (CA) to generate self-signed certificates dynamically. This is particularly useful for development environments or for services that terminate TLS for arbitrary domains.
-- **Certificate Validity Monitoring**: A background service periodically checks for certificates that are nearing their expiration date and can be configured to send notifications, preventing unexpected outages.
+- **Certificate Validity Monitoring**: A background service periodically checks for certificates that are nearing their expiration date and can be configured to send notifications, preventing unexpected outages. Each certificate is checked once and reported by its configured name (with its domains in the log), however many domains it serves.
 - **Let's Encrypt Chain Support**: Bundles common Let's Encrypt intermediate certificates to ensure proper chain of trust for certificates issued by Let's Encrypt.
 - **Flexible Configuration**: Easily configured through `CertificateConf` structs, which can be loaded from various configuration sources.
 
@@ -35,6 +35,15 @@ rustls implements `ResolvesServerCert`.
 The certificate store is an `arc_swap::ArcSwap` around a hash map, so the whole
 set can be updated atomically without locks. A config change builds a new map
 and swaps it in, so inbound requests always see a consistent view.
+`update_certificates(configs, previous)` builds that map while carrying over
+every certificate whose configuration (and, for file paths, file content) is
+unchanged, so a reload parses and loads only what changed and reports exactly
+those names; `parse_certificates` is the same with nothing to reuse.
+
+Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
+`tls_max_version` that OpenSSL rejects (or a version name other than
+`tlsv1.1`/`tlsv1.2`/`tlsv1.3`) is an error when the listener is built, so the
+server does not come up with other settings than the configured ones.
 
 ## Modules
 

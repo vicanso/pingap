@@ -19,6 +19,7 @@ use ahash::AHashMap;
 #[cfg(feature = "openssl")]
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
+use pingap_config::Hashable;
 use pingora::listeners::tls::TlsSettings;
 #[cfg(feature = "openssl")]
 use pingora::tls::ssl::{NameType, SslRef, SslVersion};
@@ -39,34 +40,45 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 // - No matching certificate is found for the requested domain
 pub static DEFAULT_SERVER_NAME: &str = "*";
 
-// Parses certificate configurations and builds the certificate store
-// Parameters:
-// - certificate_configs: Map of certificate names to their configurations
-// Returns:
-// - DynamicCertificates: Map of domain names to parsed certificates
-// - Vec<(String, String)>: List of (certificate_name, error_message) for failed parsing
-pub fn parse_certificates(
+/// Builds the certificate store (domain -> certificate) from the
+/// configurations, keeping every entry of `previous` whose configuration
+/// did not change: its PEM, key and chain are not parsed and loaded again.
+///
+/// Returns the store, `(name, error)` for the entries that failed, and the
+/// names that were built anew.
+pub fn update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
-) -> (DynamicCertificates, Vec<(String, String)>) {
+    previous: &DynamicCertificates,
+) -> (DynamicCertificates, Vec<(String, String)>, Vec<String>) {
+    let mut previous_by_name: AHashMap<&str, &Arc<TlsCertificate>> =
+        AHashMap::with_capacity(previous.len());
+    for cert in previous.values() {
+        if let Some(name) = &cert.name {
+            previous_by_name.entry(name.as_str()).or_insert(cert);
+        }
+    }
+
     let mut dynamic_certs = AHashMap::new();
     let mut errors = vec![];
-
-    // Use a temporary map to avoid cloning the Arc<TlsCertificate> for each domain.
-    let mut cert_cache: AHashMap<String, Arc<TlsCertificate>> = AHashMap::new();
-
+    let mut updated = vec![];
     for (name, conf) in certificate_configs.iter() {
         if conf.tls_cert.is_none() || conf.tls_key.is_none() {
             continue;
         }
-
-        let cert_arc = match cert_cache.get(name) {
-            Some(cert) => cert.clone(),
+        // The hash covers the configuration and, for file paths, the
+        // files' content, so a matching one means nothing to reload.
+        let hash_key = conf.hash_key();
+        let reused = previous_by_name
+            .get(name.as_str())
+            .filter(|cert| cert.hash_key == hash_key)
+            .map(|cert| Arc::clone(cert));
+        let cert_arc = match reused {
+            Some(cert) => cert,
             None => match TlsCertificate::try_from(conf) {
                 Ok(mut cert) => {
                     cert.name = Some(name.clone());
-                    let arc_cert = Arc::new(cert);
-                    cert_cache.insert(name.clone(), arc_cert.clone());
-                    arc_cert
+                    updated.push(name.clone());
+                    Arc::new(cert)
                 },
                 Err(e) => {
                     errors.push((name.clone(), e.to_string()));
@@ -92,7 +104,17 @@ pub fn parse_certificates(
                 .insert(DEFAULT_SERVER_NAME.to_string(), cert_arc.clone());
         }
     }
-    (dynamic_certs, errors)
+    (dynamic_certs, errors, updated)
+}
+
+/// Builds the certificate store from scratch: `update_certificates` with
+/// nothing to reuse.
+pub fn parse_certificates(
+    certificate_configs: &HashMap<String, CertificateConf>,
+) -> (DynamicCertificates, Vec<(String, String)>) {
+    let (certs, errors, _) =
+        update_certificates(certificate_configs, &AHashMap::new());
+    (certs, errors)
 }
 
 /// Parameters for configuring TLS settings
@@ -109,27 +131,30 @@ pub struct TlsSettingParams {
     pub tls_max_version: Option<String>, // Maximum TLS version
 }
 
-/// Applies certificate, private key and chain certificate to an SSL context
-///
-/// # Arguments
-/// * `ssl` - Reference to the SSL context to modify
-/// * `cert` - X509 certificate to apply
-/// * `key` - Private key for the certificate
-/// * `chain_certificate` - Optional chain certificate
-///
-/// # Side Effects
-/// Logs errors if any operation fails but continues execution
+/// The OpenSSL protocol version named by a `tls_min_version` /
+/// `tls_max_version` value. An unknown name is an error; it used to be
+/// TLS 1.2 without a word.
 #[cfg(feature = "openssl")]
-fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
-    if let Some(version) = &version {
-        let version = match version.to_lowercase().as_str() {
-            "tlsv1.1" => SslVersion::TLS1_1,
-            "tlsv1.3" => SslVersion::TLS1_3,
-            _ => SslVersion::TLS1_2,
-        };
-        return Some(version);
-    }
-    None
+fn convert_tls_version(version: &Option<String>) -> Result<Option<SslVersion>> {
+    let Some(version) =
+        version.as_deref().map(str::trim).filter(|v| !v.is_empty())
+    else {
+        return Ok(None);
+    };
+    let ssl_version = match version.to_lowercase().as_str() {
+        "tlsv1.1" => SslVersion::TLS1_1,
+        "tlsv1.2" => SslVersion::TLS1_2,
+        "tlsv1.3" => SslVersion::TLS1_3,
+        _ => {
+            return Err(Error::Invalid {
+                category: "tls_version".to_string(),
+                message: format!(
+                    "tls version {version:?} is invalid, expected tlsv1.1, tlsv1.2 or tlsv1.3"
+                ),
+            });
+        },
+    };
+    Ok(Some(ssl_version))
 }
 
 /// Serves certificates to pingora's listener: exact, wildcard and default
@@ -178,46 +203,50 @@ impl GlobalCertificate {
 
 #[cfg(feature = "openssl")]
 impl GlobalCertificate {
+    /// The listener's TLS settings. A cipher list, cipher suite or protocol
+    /// version OpenSSL rejects is an error here, so the server does not
+    /// come up with settings other than the ones configured; it used to
+    /// log the rejection and carry on with OpenSSL's defaults.
     pub fn new_tls_settings(
         &self,
         params: &TlsSettingParams,
     ) -> Result<TlsSettings> {
-        let name = params.server_name.clone();
-        let mut tls_settings = TlsSettings::with_callbacks(Box::new(
-            self.clone(),
-        ))
-        .map_err(|e| Error::Invalid {
+        let name = params.server_name.as_str();
+        let invalid = |what: &str, e: &dyn std::fmt::Display| Error::Invalid {
             category: "new_tls_settings".to_string(),
-            message: e.to_string(),
-        })?;
+            message: format!("server {name}: {what} fail: {e}"),
+        };
+        let mut tls_settings =
+            TlsSettings::with_callbacks(Box::new(self.clone()))
+                .map_err(|e| invalid("new tls settings", &e))?;
         if params.enabled_h2 {
             tls_settings.enable_h2();
         }
-        if let Some(cipher_list) = &params.cipher_list
-            && let Err(e) = tls_settings.set_cipher_list(cipher_list)
-        {
-            error!(target: LOG_TARGET, error = %e, name, "set cipher list fail");
+        if let Some(cipher_list) = &params.cipher_list {
+            tls_settings
+                .set_cipher_list(cipher_list)
+                .map_err(|e| invalid("set cipher list", &e))?;
         }
-        if let Some(cipher_suites) = &params.cipher_suites
-            && let Err(e) = tls_settings.set_ciphersuites(cipher_suites)
-        {
-            error!(target: LOG_TARGET, error = %e, name, "set cipher suites fail");
+        if let Some(cipher_suites) = &params.cipher_suites {
+            tls_settings
+                .set_ciphersuites(cipher_suites)
+                .map_err(|e| invalid("set cipher suites", &e))?;
         }
-        if let Some(version) = convert_tls_version(&params.tls_min_version) {
-            if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
-                error!(target: LOG_TARGET, error = %e, name, "set tls min proto version fail");
-            }
+        if let Some(version) = convert_tls_version(&params.tls_min_version)? {
+            tls_settings
+                .set_min_proto_version(Some(version))
+                .map_err(|e| invalid("set tls min proto version", &e))?;
             if version == pingora::tls::ssl::SslVersion::TLS1_1 {
                 tls_settings.set_security_level(0);
                 tls_settings
                     .clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
             }
         }
-        if let Err(e) = tls_settings
-            .set_max_proto_version(convert_tls_version(&params.tls_max_version))
-        {
-            error!(target: LOG_TARGET, error = %e, name, "set tls max proto version fail");
-        }
+        tls_settings
+            .set_max_proto_version(convert_tls_version(
+                &params.tls_max_version,
+            )?)
+            .map_err(|e| invalid("set tls max proto version", &e))?;
 
         if let Some(min_version) = tls_settings.min_proto_version() {
             info!(
@@ -379,18 +408,75 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     #[cfg(feature = "openssl")]
     #[test]
     fn test_convert_tls_version() {
+        let convert =
+            |value: &str| convert_tls_version(&Some(value.to_string()));
+        assert_eq!(Some(SslVersion::TLS1_1), convert("tlsv1.1").unwrap());
+        assert_eq!(Some(SslVersion::TLS1_2), convert("TLSv1.2").unwrap());
+        assert_eq!(Some(SslVersion::TLS1_3), convert("tlsv1.3").unwrap());
+        assert_eq!(None, convert("").unwrap());
+        assert_eq!(None, convert_tls_version(&None).unwrap());
         assert_eq!(
-            SslVersion::TLS1_1,
-            convert_tls_version(&Some("tlsv1.1".to_string())).unwrap()
+            "Invalid error, category: tls_version, tls version \"tlsv1.0\" is invalid, expected tlsv1.1, tlsv1.2 or tlsv1.3",
+            convert("tlsv1.0").expect_err("error").to_string()
         );
+    }
+
+    /// A reload keeps the certificates whose configuration did not change
+    /// and reports only the rebuilt ones.
+    #[test]
+    fn test_update_certificates_reuses_unchanged() {
+        let (tls_cert, tls_key) = get_tls_pem();
+        let conf = CertificateConf {
+            tls_cert: Some(tls_cert),
+            tls_key: Some(tls_key),
+            domains: Some("a.example.com, b.example.com".to_string()),
+            ..Default::default()
+        };
+        let configs = HashMap::from([("first".to_string(), conf.clone())]);
+        let (certs, errors, updated) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty());
+        assert_eq!(vec!["first".to_string()], updated);
+        assert_eq!(2, certs.len());
         assert_eq!(
-            SslVersion::TLS1_2,
-            convert_tls_version(&Some("tlsv1.2".to_string())).unwrap()
+            true,
+            Arc::ptr_eq(&certs["a.example.com"], &certs["b.example.com"])
         );
+
+        // Same configuration: the same certificate object, nothing updated.
+        let (again, errors, updated) = update_certificates(&configs, &certs);
+        assert_eq!(true, errors.is_empty());
+        assert_eq!(true, updated.is_empty());
         assert_eq!(
-            SslVersion::TLS1_3,
-            convert_tls_version(&Some("tlsv1.3".to_string())).unwrap()
+            true,
+            Arc::ptr_eq(&certs["a.example.com"], &again["a.example.com"])
         );
+
+        // A changed configuration is rebuilt; a broken one is reported and
+        // left out.
+        let mut changed = conf.clone();
+        changed.is_default = Some(true);
+        let configs = HashMap::from([
+            ("first".to_string(), changed),
+            (
+                "broken".to_string(),
+                CertificateConf {
+                    tls_cert: Some("nope".to_string()),
+                    tls_key: Some("nope".to_string()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let (next, errors, updated) = update_certificates(&configs, &again);
+        assert_eq!(vec!["first".to_string()], updated);
+        assert_eq!(1, errors.len());
+        assert_eq!("broken", errors[0].0);
+        assert_eq!(3, next.len());
+        assert_eq!(
+            false,
+            Arc::ptr_eq(&again["a.example.com"], &next["a.example.com"])
+        );
+        assert_eq!(true, next.contains_key(DEFAULT_SERVER_NAME));
     }
 
     #[test]

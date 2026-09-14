@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_certificate::{
     CertificateProvider, DEFAULT_SERVER_NAME, DynamicCertificates,
-    parse_certificates,
+    update_certificates,
 };
 use pingap_config::CertificateConf;
 use std::collections::HashMap;
@@ -78,17 +78,10 @@ pub fn new_certificate_provider() -> Arc<dyn CertificateProvider> {
 pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
-    let (new_certs, errors) = parse_certificates(certificate_configs);
-    let old_certs = CERTIFICATE_PROVIDER.list();
-    let updated_certificates: Vec<String> = new_certs
-        .iter()
-        .filter(|(name, cert)| {
-            old_certs
-                .get(*name)
-                .is_none_or(|old_cert| old_cert.hash_key != cert.hash_key)
-        })
-        .map(|(name, _)| name.clone())
-        .collect();
+    // Certificates whose configuration did not change are carried over
+    // as they are, not parsed and loaded again.
+    let (new_certs, errors, updated_certificates) =
+        update_certificates(certificate_configs, &CERTIFICATE_PROVIDER.list());
 
     let error_messages: Vec<String> = errors
         .into_iter()

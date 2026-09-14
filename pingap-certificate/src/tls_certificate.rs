@@ -58,8 +58,8 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
     fn try_from(value: &CertificateConf) -> Result<Self, Self::Error> {
         // parse certificate
         let (info, x509_certificates) = parse_leaf_chain_certificates(
-            value.tls_cert.clone().unwrap_or_default().as_str(),
-            value.tls_key.clone().unwrap_or_default().as_str(),
+            value.tls_cert.as_deref().unwrap_or_default(),
+            value.tls_key.as_deref().unwrap_or_default(),
         )
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
@@ -77,20 +77,19 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
                 category: ERROR_CERTIFICATE.to_string(),
             });
         }
-        let mut chain_certificates = x509_certificates[1..].to_vec();
-        if chain_certificates.is_empty()
+        let mut pems = x509_certificates;
+        if pems.len() == 1
             && category == LETS_ENCRYPT
             && let Some(chain_certificate) = get_lets_encrypt_chain_certificate(
                 info.get_issuer_common_name().as_str(),
             )
         {
-            chain_certificates = vec![chain_certificate];
+            pems.push(chain_certificate);
         }
-
-        let mut pems = Vec::with_capacity(1 + chain_certificates.len());
-        pems.push(x509_certificates[0].clone());
-        pems.extend(chain_certificates.iter().cloned());
-        let certificate = LoadedCertificate::from_pem(&pems, &info.get_key())?;
+        let certificate = LoadedCertificate::from_pem(&pems, &info.key)?;
+        // The chain is kept on its own: a CA entry attaches it to every
+        // certificate it issues.
+        let chain_certificates = pems.split_off(1);
         Ok(TlsCertificate {
             hash_key,
             chain_certificates,
@@ -122,11 +121,8 @@ fn new_certificate_with_ca(
             category: ERROR_CA.to_string(),
         });
     };
-    let binding = info.get_cert();
-    let ca_pem = std::string::String::from_utf8_lossy(&binding);
-
-    let binding = info.get_key();
-    let ca_key = std::string::String::from_utf8_lossy(&binding);
+    let ca_pem = String::from_utf8_lossy(&info.pem);
+    let ca_key = String::from_utf8_lossy(&info.key);
 
     let ca_kp =
         rcgen::KeyPair::from_pem(&ca_key).map_err(|e| Error::Invalid {
@@ -238,7 +234,8 @@ impl TlsCertificate {
         // Format the common name (converts subdomain.example.com to *.example.com)
         let cn = Self::format_common_name(server_name);
         // Create a unique cache key using the certificate name and common name
-        let cache_key = format!("{:?}:{}", self.name, cn);
+        let cache_key =
+            format!("{}:{cn}", self.name.as_deref().unwrap_or_default());
 
         // Try to get existing certificate from cache
         if let Some(cert) = get_self_signed_certificate(&cache_key) {
@@ -269,13 +266,11 @@ impl TlsCertificate {
     /// # Returns
     /// The formatted common name as a String
     fn format_common_name(server_name: &str) -> String {
-        let parts: Vec<&str> = server_name.split('.').collect();
-        // If there are more than 2 parts (e.g., sub.example.com),
-        // convert to wildcard format (*.example.com)
-        if parts.len() > 2 {
-            format!("*.{}", parts[1..].join("."))
-        } else {
-            server_name.to_string()
+        // Three labels or more (sub.example.com) become the wildcard of the
+        // parent (*.example.com); the parent itself is kept as is.
+        match server_name.split_once('.') {
+            Some((_, parent)) if parent.contains('.') => format!("*.{parent}"),
+            _ => server_name.to_string(),
         }
     }
 }
@@ -295,6 +290,14 @@ mod tests {
         assert_eq!(
             "example.com",
             TlsCertificate::format_common_name("example.com")
+        );
+        assert_eq!(
+            "*.b.example.com",
+            TlsCertificate::format_common_name("a.b.example.com")
+        );
+        assert_eq!(
+            "localhost",
+            TlsCertificate::format_common_name("localhost")
         );
     }
 
