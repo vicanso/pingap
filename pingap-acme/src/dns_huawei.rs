@@ -48,7 +48,7 @@ struct Recordset {
     id: String,
 }
 fn sha256_hex(data: &[u8]) -> String {
-    let mut hasher = sha2::Sha256::new();
+    let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
 }
@@ -60,27 +60,32 @@ struct HuaweiAuthParams {
     access_key_secret: String,
 }
 
+/// One signed request to the Huawei Cloud DNS API (SDK-HMAC-SHA256).
+///
+/// `sign_uri` is the path as it goes into the canonical request; Huawei
+/// signs collection paths with a trailing slash (`/v2/zones/`) while the
+/// request itself goes without, and a single resource (`.../recordsets/<id>`)
+/// is signed as requested. The three calls below used to each carry their
+/// own copy of this signing code.
 async fn huawei_cloud_api_request(
+    client: &reqwest::Client,
     params: &HuaweiAuthParams,
     method: reqwest::Method,
     uri: &str,
+    sign_uri: &str,
     query: &str,
     payload_str: &str,
 ) -> Result<String> {
     let host = params.host.as_str();
-    let endpoint = params.endpoint.as_str();
-    let ak = params.access_key_id.as_str();
-    let sk = params.access_key_secret.as_str();
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let http_method = method.as_str();
-    let canonical_uri = uri;
-    let canonical_query_string = query;
+    let with_body =
+        method == reqwest::Method::POST || method == reqwest::Method::PUT;
+    let content_type = "application/json";
     let mut headers_to_sign = BTreeMap::new();
     headers_to_sign.insert("host", host);
     headers_to_sign.insert("x-sdk-date", &timestamp);
-    let content_type_header = "application/json";
-    if method == reqwest::Method::POST || method == reqwest::Method::PUT {
-        headers_to_sign.insert("content-type", content_type_header);
+    if with_body {
+        headers_to_sign.insert("content-type", content_type);
     }
     let canonical_headers = headers_to_sign
         .iter()
@@ -91,21 +96,26 @@ async fn huawei_cloud_api_request(
         .copied()
         .collect::<Vec<&str>>()
         .join(";");
-    let hashed_request_payload = sha256_hex(payload_str.as_bytes());
+    let hashed_payload = sha256_hex(payload_str.as_bytes());
     let canonical_request = format!(
-        "{http_method}\n{canonical_uri}\n{canonical_query_string}\n{canonical_headers}\n{signed_headers}\n{hashed_request_payload}"
+        "{}\n{sign_uri}\n{query}\n{canonical_headers}\n{signed_headers}\n{hashed_payload}",
+        method.as_str()
     );
     let algorithm = "SDK-HMAC-SHA256";
-    let hashed_canonical_request = sha256_hex(canonical_request.as_bytes());
-    let string_to_sign =
-        format!("{algorithm}\n{timestamp}\n{hashed_canonical_request}");
+    let string_to_sign = format!(
+        "{algorithm}\n{timestamp}\n{}",
+        sha256_hex(canonical_request.as_bytes())
+    );
     let mut mac =
-        Hmac::<Sha256>::new_from_slice(sk.as_bytes()).map_err(new_error)?;
+        Hmac::<Sha256>::new_from_slice(params.access_key_secret.as_bytes())
+            .map_err(new_error)?;
     mac.update(string_to_sign.as_bytes());
     let signature = hex::encode(mac.finalize().into_bytes());
     let authorization = format!(
-        "{algorithm} Access={ak}, SignedHeaders={signed_headers}, Signature={signature}"
+        "{algorithm} Access={}, SignedHeaders={signed_headers}, Signature={signature}",
+        params.access_key_id
     );
+
     let mut headers = HeaderMap::new();
     headers.insert(HOST, host.parse().map_err(new_error)?);
     headers.insert("X-Sdk-Date", timestamp.parse().map_err(new_error)?);
@@ -113,18 +123,14 @@ async fn huawei_cloud_api_request(
         HeaderName::from_str("Authorization").map_err(new_error)?,
         authorization.parse().map_err(new_error)?,
     );
-    if method == reqwest::Method::POST || method == reqwest::Method::PUT {
-        headers.insert(
-            CONTENT_TYPE,
-            content_type_header.parse().map_err(new_error)?,
-        );
+    if with_body {
+        headers.insert(CONTENT_TYPE, content_type.parse().map_err(new_error)?);
     }
-    let mut full_url = format!("{endpoint}{uri}");
+    let mut full_url = format!("{}{uri}", params.endpoint);
     if !query.is_empty() {
         full_url.push('?');
         full_url.push_str(query);
     }
-    let client = reqwest::Client::new();
     let response = client
         .request(method, &full_url)
         .headers(headers)
@@ -142,69 +148,20 @@ async fn huawei_cloud_api_request(
 }
 
 async fn get_huawei_zone_id(
+    client: &reqwest::Client,
     params: &HuaweiAuthParams,
     root_domain: &str,
 ) -> Result<String> {
-    let host = params.host.as_str();
-    let endpoint = params.endpoint.as_str();
-    let ak = params.access_key_id.as_str();
-    let sk = params.access_key_secret.as_str();
-    let query = format!("name={root_domain}");
-    let uri_for_request = "/v2/zones";
-    let uri_for_signature = "/v2/zones/";
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let canonical_request_for_sig = {
-        let mut headers_to_sign = BTreeMap::new();
-        headers_to_sign.insert("host", host);
-        headers_to_sign.insert("x-sdk-date", &timestamp);
-        let canonical_headers = headers_to_sign
-            .iter()
-            .map(|(k, v)| format!("{}:{}\n", k, v.trim()))
-            .collect::<String>();
-        let signed_headers = headers_to_sign
-            .keys()
-            .copied()
-            .collect::<Vec<&str>>()
-            .join(";");
-        let hashed_payload = sha256_hex("".as_bytes());
-        format!(
-            "GET\n{uri_for_signature}\n{query}\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
-        )
-    };
-    let algorithm = "SDK-HMAC-SHA256";
-    let hashed_canonical_request =
-        sha256_hex(canonical_request_for_sig.as_bytes());
-    let string_to_sign =
-        format!("{algorithm}\n{timestamp}\n{hashed_canonical_request}");
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(sk.as_bytes()).map_err(new_error)?;
-    mac.update(string_to_sign.as_bytes());
-    let signature = hex::encode(mac.finalize().into_bytes());
-    let authorization = format!(
-        "{algorithm} Access={ak}, SignedHeaders=host;x-sdk-date, Signature={signature}"
-    );
-    let mut headers = HeaderMap::new();
-    headers.insert(HOST, host.parse().map_err(new_error)?);
-    headers.insert("X-Sdk-Date", timestamp.parse().map_err(new_error)?);
-    headers.insert(
-        HeaderName::from_str("Authorization").map_err(new_error)?,
-        authorization.parse().map_err(new_error)?,
-    );
-    let full_url_for_request = format!("{endpoint}{uri_for_request}?{query}");
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&full_url_for_request)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(new_error)?;
-    let status = response.status();
-    let body = response.text().await.map_err(new_error)?;
-    if !status.is_success() {
-        return Err(new_error(format!(
-            "API Error after fix: {status} - {body}"
-        )));
-    }
+    let body = huawei_cloud_api_request(
+        client,
+        params,
+        reqwest::Method::GET,
+        "/v2/zones",
+        "/v2/zones/",
+        &format!("name={root_domain}"),
+        "",
+    )
+    .await?;
     let resp: ZonesResponse = serde_json::from_str(&body).map_err(new_error)?;
     resp.zones
         .into_iter()
@@ -214,134 +171,70 @@ async fn get_huawei_zone_id(
 }
 
 async fn add_huawei_dns_record(
+    client: &reqwest::Client,
     params: &HuaweiAuthParams,
     zone_id: &str,
     full_record_name: &str,
     value: &str,
 ) -> Result<String> {
-    let host = params.host.as_str();
-    let endpoint = params.endpoint.as_str();
-    let ak = params.access_key_id.as_str();
-    let sk = params.access_key_secret.as_str();
-    // Apply the same contradictory URI logic as get_huawei_zone_id
-    let uri_for_request = format!("/v2/zones/{zone_id}/recordsets");
-    let uri_for_signature = format!("/v2/zones/{zone_id}/recordsets/");
-
-    let txt_value_formatted = format!("\"{value}\"");
     let payload = json!({
         "name": full_record_name,
         "type": "TXT",
         "ttl": 300,
-        "records": [txt_value_formatted]
+        "records": [format!("\"{value}\"")]
     });
-    let payload_str = payload.to_string();
-
-    // Manually build the signature and request, just like in get_huawei_zone_id
-    // let host = format!("dns.{region}.myhuaweicloud.com");
-    // let endpoint = format!("https://{host}");
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-
-    let canonical_request_for_sig = {
-        let mut headers_to_sign = BTreeMap::new();
-        headers_to_sign.insert("host", host);
-        headers_to_sign.insert("x-sdk-date", &timestamp);
-        headers_to_sign.insert("content-type", "application/json");
-        let canonical_headers = headers_to_sign
-            .iter()
-            .map(|(k, v)| format!("{}:{}\n", k, v.trim()))
-            .collect::<String>();
-        let signed_headers = headers_to_sign
-            .keys()
-            .copied()
-            .collect::<Vec<&str>>()
-            .join(";");
-        let hashed_payload = sha256_hex(payload_str.as_bytes());
-        format!(
-            "POST\n{uri_for_signature}\n\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
-        )
-    };
-
-    let algorithm = "SDK-HMAC-SHA256";
-    let hashed_canonical_request =
-        sha256_hex(canonical_request_for_sig.as_bytes());
-    let string_to_sign =
-        format!("{algorithm}\n{timestamp}\n{hashed_canonical_request}");
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(sk.as_bytes()).map_err(new_error)?;
-    mac.update(string_to_sign.as_bytes());
-    let signature = hex::encode(mac.finalize().into_bytes());
-
-    let authorization = format!(
-        "{algorithm} Access={ak}, SignedHeaders=content-type;host;x-sdk-date, Signature={signature}"
-    );
-
-    let mut headers = HeaderMap::new();
-    headers.insert(HOST, host.parse().map_err(new_error)?);
-    headers.insert("X-Sdk-Date", timestamp.parse().map_err(new_error)?);
-    headers
-        .insert(CONTENT_TYPE, "application/json".parse().map_err(new_error)?);
-    headers.insert(
-        HeaderName::from_str("Authorization").map_err(new_error)?,
-        authorization.parse().map_err(new_error)?,
-    );
-
-    let full_url_for_request = format!("{endpoint}{uri_for_request}");
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(&full_url_for_request)
-        .headers(headers)
-        .body(payload_str)
-        .send()
-        .await
-        .map_err(new_error)?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(new_error)?;
-    if !status.is_success() {
-        return Err(new_error(format!(
-            "API Error after final fix: {status} - {body}"
-        )));
-    }
-
+    let body = huawei_cloud_api_request(
+        client,
+        params,
+        reqwest::Method::POST,
+        &format!("/v2/zones/{zone_id}/recordsets"),
+        &format!("/v2/zones/{zone_id}/recordsets/"),
+        "",
+        &payload.to_string(),
+    )
+    .await?;
     let resp: Recordset = serde_json::from_str(&body).map_err(new_error)?;
     Ok(resp.id)
 }
 
-// The delete function acts on a specific resource ID, not a collection.
-// It should NOT have the trailing slash. The general request function is fine for this.
 async fn delete_huawei_dns_record(
+    client: &reqwest::Client,
     params: &HuaweiAuthParams,
     zone_id: &str,
     recordset_id: &str,
 ) -> Result<String> {
     let uri = format!("/v2/zones/{zone_id}/recordsets/{recordset_id}");
-    huawei_cloud_api_request(params, reqwest::Method::DELETE, &uri, "", "")
-        .await
+    huawei_cloud_api_request(
+        client,
+        params,
+        reqwest::Method::DELETE,
+        &uri,
+        &uri,
+        "",
+        "",
+    )
+    .await
 }
 
-// [The rest of the file (extract_root_domain, HuaweiDnsTask struct and impl) is unchanged and correct.]
+/// The registrable domain that names the zone: `example.co.uk` for
+/// `_acme-challenge.sub.example.co.uk`, resolved against the public suffix
+/// list. Taking the last two labels, as before, named `co.uk`.
 fn extract_root_domain(full_domain: &str) -> Result<String> {
-    let parts: Vec<&str> =
-        full_domain.trim_end_matches('.').split('.').collect();
-    if parts.len() < 2 {
-        return Err(new_error(format!("Invalid domain: {full_domain}")));
-    }
-    Ok(parts
-        .iter()
-        .rev()
-        .take(2)
-        .rev()
-        .cloned()
-        .collect::<Vec<&str>>()
-        .join("."))
+    let name = full_domain.trim_end_matches('.');
+    psl::domain_str(name)
+        .filter(|domain| domain.contains('.'))
+        .map(str::to_string)
+        .ok_or_else(|| new_error(format!("Invalid domain: {full_domain}")))
 }
+
 #[derive(Default)]
 struct TxtRecordInfo {
     zone_id: String,
     record_id: String,
 }
 pub(crate) struct HuaweiDnsTask {
+    /// One client for the task: the calls share its connection pool.
+    client: reqwest::Client,
     params: HuaweiAuthParams,
     txt_record_info: Mutex<TxtRecordInfo>,
 }
@@ -372,6 +265,7 @@ impl HuaweiDnsTask {
             ));
         }
         Ok(Self {
+            client: reqwest::Client::new(),
             params: HuaweiAuthParams {
                 host,
                 endpoint,
@@ -386,9 +280,12 @@ impl HuaweiDnsTask {
 impl AcmeDnsTask for HuaweiDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let root_domain = extract_root_domain(domain)?;
-        let zone_id = get_huawei_zone_id(&self.params, &root_domain).await?;
+        let zone_id =
+            get_huawei_zone_id(&self.client, &self.params, &root_domain)
+                .await?;
         let full_record_name = format!("{domain}.");
         let record_id = add_huawei_dns_record(
+            &self.client,
             &self.params,
             &zone_id,
             &full_record_name,
@@ -405,10 +302,36 @@ impl AcmeDnsTask for HuaweiDnsTask {
         if info.record_id.is_empty() {
             return Ok(());
         }
-        delete_huawei_dns_record(&self.params, &info.zone_id, &info.record_id)
-            .await?;
+        delete_huawei_dns_record(
+            &self.client,
+            &self.params,
+            &info.zone_id,
+            &info.record_id,
+        )
+        .await?;
         info.zone_id.clear();
         info.record_id.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_root_domain;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_extract_root_domain() {
+        assert_eq!(
+            "example.com",
+            extract_root_domain("_acme-challenge.sub.example.com").unwrap()
+        );
+        assert_eq!(
+            "example.co.uk",
+            extract_root_domain("_acme-challenge.example.co.uk.").unwrap()
+        );
+        assert_eq!("example.com", extract_root_domain("example.com").unwrap());
+        assert_eq!(true, extract_root_domain("com").is_err());
+        assert_eq!(true, extract_root_domain("localhost").is_err());
     }
 }

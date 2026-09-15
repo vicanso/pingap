@@ -16,7 +16,7 @@ use super::{AcmeDnsTask, Error, LOG_TARGET, Result, get_value_from_env};
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
-use crate::dns_manual::ManualDnsTask;
+use crate::dns_manual::{MANUAL_DNS_REMARK, ManualDnsTask};
 use crate::dns_tencent::TencentDnsTask;
 use async_trait::async_trait;
 use hickory_resolver::Resolver;
@@ -25,12 +25,12 @@ use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RecordType;
 use hickory_resolver::system_conf::read_system_conf;
 use instant_acme::{
-    Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
-    OrderStatus, RetryPolicy,
+    Account, AccountCredentials, ChallengeType, Identifier, LetsEncrypt,
+    NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
-    Certificate, parse_certificates, parse_leaf_chain_certificates,
+    Certificate, parse_leaf_chain_certificates, update_certificates,
 };
 use pingap_config::{
     Category, CertificateConf, ConfigManager, DNS_PROVIDER_MANUAL,
@@ -51,8 +51,7 @@ use std::sync::Arc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use substring::Substring;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 
@@ -195,7 +194,7 @@ async fn do_update_certificates(
         };
 
         if !should_renew {
-            info!(
+            debug!(
                 target: LOG_TARGET,
                 domains = domains.join(","),
                 name,
@@ -242,21 +241,15 @@ async fn renew_certificate(
     Ok(())
 }
 
+/// Installs the certificates from `certificate_configs` in `provider`,
+/// keeping every certificate whose configuration did not change; after a
+/// renewal that is all of them but the renewed one.
 fn try_update_certificates(
     provider: Arc<dyn CertificateProvider>,
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
-    let (new_certs, errors) = parse_certificates(certificate_configs);
-    let old_certs = provider.list();
-    let updated_certificates: Vec<String> = new_certs
-        .iter()
-        .filter(|(name, cert)| {
-            old_certs
-                .get(*name)
-                .is_none_or(|old_cert| old_cert.hash_key != cert.hash_key)
-        })
-        .map(|(name, _)| name.clone())
-        .collect();
+    let (new_certs, errors, updated_certificates) =
+        update_certificates(certificate_configs, &provider.list());
 
     let error_messages: Vec<String> = errors
         .into_iter()
@@ -412,6 +405,8 @@ impl BackgroundTask for LetsEncryptTask {
 /// The remark every http-01 token is stored with; the cleanup below uses it to
 /// tell tokens apart from storage entries a person created.
 static HTTP_01_TOKEN_REMARK: &str = "let's encrypt http-01 token";
+/// The remark the ACME account credentials are stored with.
+static ACCOUNT_REMARK: &str = "let's encrypt account credentials";
 /// How old a token has to be before cleanup may touch it. Validation completes
 /// within minutes of `set_ready`, whichever instance wrote the token, so a day
 /// is far outside any window in which another process could still need it.
@@ -419,7 +414,8 @@ const HTTP_01_TOKEN_MAX_AGE: u64 = 24 * 3600;
 /// Cleanup cadence in service cycles (one cycle per minute).
 const TOKEN_CLEAR_INTERVAL: u32 = 60;
 
-/// Removes http-01 challenge tokens that no validation can still be using.
+/// Removes http-01 challenge tokens, and the TXT values the manual DNS task
+/// records, that no validation can still be using.
 ///
 /// Tokens used to be stored and never deleted, piling up in the storage
 /// category forever (one file per token in the separated layout). Removal is
@@ -443,7 +439,10 @@ async fn clear_stale_http_tokens(
         };
         // The remark decides what is a token; entries people created through
         // the admin panel carry their own remarks and are never touched.
-        if conf.remark.as_deref() != Some(HTTP_01_TOKEN_REMARK) {
+        if !matches!(
+            conf.remark.as_deref(),
+            Some(remark) if remark == HTTP_01_TOKEN_REMARK || remark == MANUAL_DNS_REMARK
+        ) {
             continue;
         }
         let stale = conf.created_at.is_none_or(|created_at| {
@@ -501,20 +500,17 @@ fn get_lets_encrypt_certificate(
         });
     };
 
-    let pem = cert.tls_cert.clone().unwrap_or_default();
-    let key = cert.tls_key.clone().unwrap_or_default();
+    let pem = cert.tls_cert.as_deref().unwrap_or_default();
+    let key = cert.tls_key.as_deref().unwrap_or_default();
     if pem.is_empty() || key.is_empty() {
         return Ok(None);
     }
 
-    let (cert, _) = parse_leaf_chain_certificates(
-        cert.tls_cert.clone().unwrap_or_default().as_str(),
-        cert.tls_key.clone().unwrap_or_default().as_str(),
-    )
-    .map_err(|e| Error::Fail {
-        category: "new_certificate".to_string(),
-        message: e.to_string(),
-    })?;
+    let (cert, _) =
+        parse_leaf_chain_certificates(pem, key).map_err(|e| Error::Fail {
+            category: "new_certificate".to_string(),
+            message: e.to_string(),
+        })?;
     Ok(Some(cert))
 }
 
@@ -531,10 +527,10 @@ pub async fn handle_lets_encrypt(
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     // lets encrypt acme challenge path
-    if path.starts_with(WELL_KNOWN_PATH_PREFIX) {
-        // token auth
-        let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
-
+    let Some(token) = path.strip_prefix(WELL_KNOWN_PATH_PREFIX) else {
+        return Ok(false);
+    };
+    {
         // The token is attacker-controlled and used directly as a storage
         // lookup key. ACME HTTP-01 tokens are base64url strings, so reject
         // anything else up front: this blocks path traversal (`../certificate/
@@ -605,9 +601,158 @@ pub async fn handle_lets_encrypt(
         }
         .send(session)
         .await?;
-        return Ok(true);
+        Ok(true)
     }
-    Ok(false)
+}
+
+/// The storage entry the ACME account credentials live in, one per CA
+/// environment.
+fn account_storage_name(production: bool) -> &'static str {
+    if production {
+        "lets_encrypt_account"
+    } else {
+        "lets_encrypt_staging_account"
+    }
+}
+
+/// The ACME account: the one stored from an earlier order when it still
+/// works, otherwise a new one, stored for the next time. Every order used to
+/// register a new account, which Let's Encrypt rate-limits per IP and which
+/// left a trail of one-shot accounts behind.
+async fn load_or_create_account(
+    config_manager: &Arc<ConfigManager>,
+    url: &str,
+    production: bool,
+) -> Result<Account> {
+    let name = account_storage_name(production);
+    let stored: Option<StorageConf> = config_manager
+        .get(Category::Storage, name)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(
+                target: LOG_TARGET,
+                error = %e,
+                "load let's encrypt account fail, create a new one"
+            );
+            None
+        });
+    if let Some(stored) = stored {
+        let account = match serde_json::from_str::<AccountCredentials>(
+            &stored.value,
+        ) {
+            Ok(credentials) => {
+                let builder =
+                    Account::builder().map_err(|e| Error::Instant {
+                        category: "create_account".to_string(),
+                        source: e,
+                    })?;
+                builder.from_credentials(credentials).await
+            },
+            Err(e) => {
+                warn!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    "stored let's encrypt account is invalid, create a new one"
+                );
+                return create_account(config_manager, url, name).await;
+            },
+        };
+        match account {
+            Ok(account) => return Ok(account),
+            Err(e) => warn!(
+                target: LOG_TARGET,
+                error = %e,
+                "stored let's encrypt account is not usable, create a new one"
+            ),
+        }
+    }
+    create_account(config_manager, url, name).await
+}
+
+async fn create_account(
+    config_manager: &Arc<ConfigManager>,
+    url: &str,
+    name: &str,
+) -> Result<Account> {
+    let (account, credentials) = Account::builder()
+        .map_err(|e| Error::Instant {
+            category: "create_account".to_string(),
+            source: e,
+        })?
+        .create(
+            &NewAccount {
+                contact: &[],
+                terms_of_service_agreed: true,
+                only_return_existing: false,
+            },
+            url.to_string(),
+            None,
+        )
+        .await
+        .map_err(|e| Error::Instant {
+            category: "create_account".to_string(),
+            source: e,
+        })?;
+    info!(target: LOG_TARGET, "create let's encrypt account success");
+    // Best effort: an order can proceed with an account that could not be
+    // stored; the next one registers again.
+    let value = match serde_json::to_string(&credentials) {
+        Ok(value) => value,
+        Err(e) => {
+            warn!(
+                target: LOG_TARGET,
+                error = %e,
+                "serialize let's encrypt account fail"
+            );
+            return Ok(account);
+        },
+    };
+    let conf = StorageConf {
+        category: "config".to_string(),
+        value,
+        secret: None,
+        remark: Some(ACCOUNT_REMARK.to_string()),
+        created_at: Some(pingap_core::now_sec()),
+    };
+    if let Err(e) = config_manager.update(Category::Storage, name, &conf).await
+    {
+        warn!(
+            target: LOG_TARGET,
+            error = %e,
+            "save let's encrypt account fail"
+        );
+    }
+    Ok(account)
+}
+
+/// A resolver on the system's DNS configuration for confirming that a TXT
+/// record has propagated. No caching: the first lookup runs before the
+/// record exists, and a cached NXDOMAIN (negative TTL is the SOA minimum -
+/// often 600s, longer than the whole wait) would be replayed for every
+/// remaining attempt, so the check could never see the record appear.
+fn new_txt_resolver() -> Result<Resolver<TokioRuntimeProvider>> {
+    // The system resolver, like everything else on this host uses; the
+    // previous hardcoded default (Google public DNS) is only the fallback
+    // when the system configuration is unreadable.
+    let (resolver_config, mut resolver_options) = read_system_conf()
+        .unwrap_or_else(|e| {
+            warn!(
+                target: LOG_TARGET,
+                error = %e,
+                "read system dns conf fail, use default resolver"
+            );
+            (ResolverConfig::default(), ResolverOpts::default())
+        });
+    resolver_options.cache_size = 0;
+    let mut resolver_builder = Resolver::builder_with_config(
+        resolver_config,
+        TokioRuntimeProvider::default(),
+    );
+    *resolver_builder.options_mut() = resolver_options;
+    resolver_builder.build().map_err(|e| Error::Fail {
+        category: "build_resolver".to_string(),
+        message: e.to_string(),
+    })
 }
 
 /// ACME HTTP-01 tokens are base64url strings; anything else is rejected so the
@@ -652,25 +797,8 @@ async fn new_lets_encrypt(
     };
     ensure_crypto_provider();
 
-    let (account, _) = Account::builder()
-        .map_err(|e| Error::Instant {
-            category: "create_account".to_string(),
-            source: e,
-        })?
-        .create(
-            &NewAccount {
-                contact: &[],
-                terms_of_service_agreed: true,
-                only_return_existing: false,
-            },
-            url.to_string(),
-            None,
-        )
-        .await
-        .map_err(|e| Error::Instant {
-            category: "create_account".to_string(),
-            source: e,
-        })?;
+    let account =
+        load_or_create_account(&config_manager, url, production).await?;
 
     let mut order = account
         .new_order(&NewOrder::new(
@@ -697,6 +825,8 @@ async fn new_lets_encrypt(
     }
 
     let mut dns_tasks = vec![];
+    // Built on the first DNS-01 challenge and shared by the order's others.
+    let mut resolver = None;
 
     let result = (async {
         let mut authorizations = order.authorizations();
@@ -732,11 +862,9 @@ async fn new_lets_encrypt(
                     .ok_or_else(|| Error::NotFound {
                         message: "Dns01 challenge not found".to_string(),
                     })?;
-                let mut identifier = challenge.identifier().to_string();
-                if identifier.starts_with("*.") {
-                    identifier =
-                        identifier.substring(2, identifier.len()).to_string();
-                }
+                let identifier = challenge.identifier().to_string();
+                let identifier =
+                    identifier.strip_prefix("*.").unwrap_or(&identifier);
                 let dns_txt_value = challenge.key_authorization().dns_value();
                 let acme_dns_name = format!("_acme-challenge.{identifier}");
                 let task: Box<dyn AcmeDnsTask> = match params
@@ -769,34 +897,10 @@ async fn new_lets_encrypt(
                     dns_txt_value,
                     "add dns txt record success for {acme_dns_name}"
                 );
-                // The system resolver, like everything else on this host uses;
-                // the previous hardcoded default (Google public DNS) is only
-                // the fallback when the system configuration is unreadable.
-                let (resolver_config, mut resolver_options) =
-                    read_system_conf().unwrap_or_else(|e| {
-                        warn!(
-                            target: LOG_TARGET,
-                            error = %e,
-                            "read system dns conf fail, use default resolver"
-                        );
-                        (ResolverConfig::default(), ResolverOpts::default())
-                    });
-                // No caching: the first lookup runs before the record has
-                // propagated, and a cached NXDOMAIN (negative TTL is the SOA
-                // minimum - often 600s, longer than this whole loop) would be
-                // replayed for every remaining attempt, so the check could
-                // never see the record appear.
-                resolver_options.cache_size = 0;
-                let mut resolver_builder = Resolver::builder_with_config(
-                    resolver_config,
-                    TokioRuntimeProvider::default(),
-                );
-                *resolver_builder.options_mut() = resolver_options;
-                let resolver =
-                    resolver_builder.build().map_err(|e| Error::Fail {
-                        category: "build_resolver".to_string(),
-                        message: e.to_string(),
-                    })?;
+                let resolver = match &resolver {
+                    Some(resolver) => resolver,
+                    None => resolver.insert(new_txt_resolver()?),
+                };
                 // dns txt record may take a while to propagate, so we need to retry
                 let mut confirmed = false;
                 for i in 0..10 {
@@ -1061,9 +1165,21 @@ mod tests {
             )
             .await
             .unwrap();
+        // The manual DNS task's TXT value: swept by age like a token.
+        manager
+            .update(
+                Category::Storage,
+                "manual-txt",
+                &token(
+                    Some(now - 25 * 3600),
+                    crate::dns_manual::MANUAL_DNS_REMARK,
+                ),
+            )
+            .await
+            .unwrap();
 
         let removed = clear_stale_http_tokens(&manager, now).await.unwrap();
-        assert_eq!(2, removed);
+        assert_eq!(3, removed);
 
         let left = manager.load_all().await.unwrap();
         let left = left.storages.unwrap();
@@ -1071,9 +1187,17 @@ mod tests {
         assert!(left.contains_key("user-data"));
         assert!(!left.contains_key("stale"));
         assert!(!left.contains_key("legacy"));
+        assert!(!left.contains_key("manual-txt"));
 
         // Nothing left to do on the next run.
         assert_eq!(0, clear_stale_http_tokens(&manager, now).await.unwrap());
+    }
+
+    #[test]
+    fn test_account_storage_name() {
+        use super::account_storage_name;
+        assert_eq!("lets_encrypt_account", account_storage_name(true));
+        assert_eq!("lets_encrypt_staging_account", account_storage_name(false));
     }
 
     #[test]

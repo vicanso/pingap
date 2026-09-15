@@ -22,7 +22,6 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 use tokio::sync::Mutex;
 use url::Url;
-use url::form_urlencoded::byte_serialize;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -39,12 +38,26 @@ struct AddRecordResponse {
     record_id: String,
 }
 
+/// Aliyun's signature encoding: RFC 3986 unreserved characters as they
+/// are, everything else `%XX` - a space is `%20`, not `+`, and `*` is
+/// `%2A`. The form encoder used before got those two wrong.
 fn percent_encode(input: &str) -> String {
-    byte_serialize(input.as_bytes()).collect()
+    let mut out = String::with_capacity(input.len() + 8);
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'_' | b'.' | b'~')
+        {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 /// Aliyun API request
 async fn ali_api_request(
+    client: &reqwest::Client,
     endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
@@ -91,7 +104,6 @@ async fn ali_api_request(
         percent_encode(&signature)
     );
 
-    let client = reqwest::Client::new();
     let response = client.get(&request_url).send().await.map_err(new_error)?;
 
     if response.status().is_success() {
@@ -105,6 +117,7 @@ async fn ali_api_request(
 
 /// add a dns txt record
 async fn add_ali_dns_record(
+    client: &reqwest::Client,
     endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
@@ -121,6 +134,7 @@ async fn add_ali_dns_record(
     params.insert("Value", value.to_string());
 
     let response_body = ali_api_request(
+        client,
         endpoint,
         access_key_id,
         access_key_secret,
@@ -133,6 +147,7 @@ async fn add_ali_dns_record(
 }
 
 async fn delete_ali_dns_record(
+    client: &reqwest::Client,
     endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
@@ -142,11 +157,19 @@ async fn delete_ali_dns_record(
     params.insert("Action", "DeleteDomainRecord".to_string());
     params.insert("RecordId", record_id.to_string());
 
-    ali_api_request(endpoint, access_key_id, access_key_secret, &mut params)
-        .await
+    ali_api_request(
+        client,
+        endpoint,
+        access_key_id,
+        access_key_secret,
+        &mut params,
+    )
+    .await
 }
 
 pub(crate) struct AliDnsTask {
+    /// One client for the task: the calls share its connection pool.
+    client: reqwest::Client,
     access_key_id: String,
     access_key_secret: String,
     endpoint: String,
@@ -177,6 +200,7 @@ impl AliDnsTask {
         }
 
         Ok(Self {
+            client: reqwest::Client::new(),
             access_key_id,
             access_key_secret,
             endpoint,
@@ -189,6 +213,7 @@ impl AliDnsTask {
 impl AcmeDnsTask for AliDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let response = add_ali_dns_record(
+            &self.client,
             &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
@@ -203,7 +228,11 @@ impl AcmeDnsTask for AliDnsTask {
 
     async fn done(&self) -> Result<()> {
         let mut record = self.record.lock().await;
+        if record.is_empty() {
+            return Ok(());
+        }
         delete_ali_dns_record(
+            &self.client,
             &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
@@ -212,5 +241,22 @@ impl AcmeDnsTask for AliDnsTask {
         .await?;
         *record = String::new();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent_encode;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_percent_encode() {
+        assert_eq!("abc-_.~", percent_encode("abc-_.~"));
+        assert_eq!("a%20b%2Ac", percent_encode("a b*c"));
+        assert_eq!(
+            "2024-01-01T00%3A00%3A00Z",
+            percent_encode("2024-01-01T00:00:00Z")
+        );
+        assert_eq!("%2F%3D%26", percent_encode("/=&"));
     }
 }

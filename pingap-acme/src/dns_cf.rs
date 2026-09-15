@@ -45,6 +45,7 @@ fn new_error(err: impl ToString) -> Error {
 
 /// Get the zone id of the domain
 async fn get_zone_id(
+    client: &reqwest::Client,
     endpoint: &str,
     api_token: &str,
     domain_name: &str,
@@ -56,7 +57,6 @@ async fn get_zone_id(
     let domain = psl::domain_str(domain_name)
         .unwrap_or(domain_name)
         .to_string();
-    let client = reqwest::Client::new();
     let url = format!("{endpoint}/client/v4/zones");
 
     let response = client
@@ -95,13 +95,13 @@ async fn get_zone_id(
 }
 
 async fn add_cf_dns_record(
+    client: &reqwest::Client,
     endpoint: &str,
     api_token: &str,
     zone_id: &str,
     record_name: &str,
     content: &str,
 ) -> Result<String> {
-    let client = reqwest::Client::new();
     let url = format!("{endpoint}/client/v4/zones/{zone_id}/dns_records");
 
     // create a txt record
@@ -140,12 +140,12 @@ async fn add_cf_dns_record(
 }
 
 async fn delete_cf_dns_record(
+    client: &reqwest::Client,
     endpoint: &str,
     api_token: &str,
     zone_id: &str,
     record_id: &str,
 ) -> Result<()> {
-    let client = reqwest::Client::new();
     let url =
         format!("{endpoint}/client/v4/zones/{zone_id}/dns_records/{record_id}");
 
@@ -176,6 +176,8 @@ async fn delete_cf_dns_record(
 }
 
 pub(crate) struct CfDnsTask {
+    /// One client for the task: the calls share its connection pool.
+    client: reqwest::Client,
     endpoint: String,
     api_token: String,
     zone: Mutex<String>,
@@ -196,6 +198,7 @@ impl CfDnsTask {
             return Err(new_error("token is required"));
         }
         Ok(Self {
+            client: reqwest::Client::new(),
             endpoint,
             api_token: token,
             zone: Mutex::new(String::new()),
@@ -210,11 +213,17 @@ impl AcmeDnsTask for CfDnsTask {
         let (_, domain_name) = domain
             .split_once(".")
             .ok_or(new_error(format!("invalid domain '{domain}'")))?;
-        let zone_id =
-            get_zone_id(&self.endpoint, &self.api_token, domain_name).await?;
+        let zone_id = get_zone_id(
+            &self.client,
+            &self.endpoint,
+            &self.api_token,
+            domain_name,
+        )
+        .await?;
         let mut zone = self.zone.lock().await;
         *zone = zone_id.clone();
         let record_id = add_cf_dns_record(
+            &self.client,
             &self.endpoint,
             &self.api_token,
             &zone_id,
@@ -229,8 +238,17 @@ impl AcmeDnsTask for CfDnsTask {
     async fn done(&self) -> Result<()> {
         let mut zone = self.zone.lock().await;
         let mut record = self.record.lock().await;
-        delete_cf_dns_record(&self.endpoint, &self.api_token, &zone, &record)
-            .await?;
+        if record.is_empty() {
+            return Ok(());
+        }
+        delete_cf_dns_record(
+            &self.client,
+            &self.endpoint,
+            &self.api_token,
+            &zone,
+            &record,
+        )
+        .await?;
         *zone = String::new();
         *record = String::new();
         Ok(())

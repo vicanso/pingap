@@ -67,8 +67,12 @@ Any value in `dns_service_url` may be written as `$ENV:NAME` and is read from th
 environment, so credentials stay out of the configuration file.
 
 The provider adds the `_acme-challenge` TXT record, waits for validation, and
-removes it afterwards. With `manual` (or an empty provider) the challenge is
-attempted only once per process start, since there is nothing to poll.
+removes it afterwards. The zone is the registrable domain of the record name,
+resolved against the public suffix list (`example.co.uk`, not `co.uk`). With
+`manual` (or an empty provider) the challenge is attempted only once per
+process start, since there is nothing to poll; the TXT value is logged and
+also written to the storage category, from where the hourly sweep removes it
+a day later.
 
 ## Certificate configuration
 
@@ -102,6 +106,13 @@ is why ACME needs a writable backend. Tokens are stored with a `created_at`
 timestamp and swept hourly: anything older than a day (far outside the window in
 which any instance sharing the storage could still be serving it to the CA) is
 deleted, so tokens no longer accumulate in the storage category forever.
+
+The ACME account is stored there too, as the `lets_encrypt_account` entry of the
+storage category (`lets_encrypt_staging_account` against the staging CA), and
+reused by every later order on any instance sharing the backend. An account was
+registered per order before, which Let's Encrypt rate-limits per IP; a stored
+account that no longer works is replaced by a new one. The entry holds the
+account's private key, like a certificate entry holds its `tls_key`.
 
 ## Environment
 

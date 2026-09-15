@@ -74,6 +74,7 @@ fn new_error(err: impl ToString) -> Error {
 }
 
 async fn tencent_cloud_api_request(
+    client: &reqwest::Client,
     host: &str,
     endpoint: &str,
     secret_id: &str,
@@ -81,8 +82,11 @@ async fn tencent_cloud_api_request(
     action: &str,
     payload_str: &str,
 ) -> Result<String> {
-    let timestamp = Utc::now().timestamp();
-    let date = Utc::now().format("%Y-%m-%d").to_string();
+    // One clock reading for both: taken separately, a request straddling
+    // midnight signed with one day and stamped with the next.
+    let now = Utc::now();
+    let timestamp = now.timestamp();
+    let date = now.format("%Y-%m-%d").to_string();
 
     // canonical request
     let http_request_method = "POST";
@@ -118,8 +122,6 @@ async fn tencent_cloud_api_request(
         "{algorithm} Credential={secret_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
     );
 
-    let client = reqwest::Client::new();
-
     let response = client
         .post(endpoint)
         .header(HOST, host)
@@ -153,6 +155,7 @@ async fn tencent_cloud_api_request(
 }
 
 async fn add_tencent_dns_record(
+    client: &reqwest::Client,
     host: &str,
     endpoint: &str,
     access_key_id: &str,
@@ -172,6 +175,7 @@ async fn add_tencent_dns_record(
         "TTL": 600
     });
     let body = tencent_cloud_api_request(
+        client,
         host,
         endpoint,
         access_key_id,
@@ -190,6 +194,7 @@ async fn add_tencent_dns_record(
 }
 
 async fn delete_tencent_dns_record(
+    client: &reqwest::Client,
     host: &str,
     endpoint: &str,
     access_key_id: &str,
@@ -204,6 +209,7 @@ async fn delete_tencent_dns_record(
         "RecordId": record_id
     });
     tencent_cloud_api_request(
+        client,
         host,
         endpoint,
         access_key_id,
@@ -216,6 +222,8 @@ async fn delete_tencent_dns_record(
 }
 
 pub(crate) struct TencentDnsTask {
+    /// One client for the task: the calls share its connection pool.
+    client: reqwest::Client,
     host: String,
     endpoint: String,
     access_key_id: String,
@@ -251,6 +259,7 @@ impl TencentDnsTask {
             ));
         }
         Ok(Self {
+            client: reqwest::Client::new(),
             host,
             endpoint,
             access_key_id,
@@ -265,6 +274,7 @@ impl TencentDnsTask {
 impl AcmeDnsTask for TencentDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let record_id = add_tencent_dns_record(
+            &self.client,
             &self.host,
             &self.endpoint,
             &self.access_key_id,
@@ -282,7 +292,11 @@ impl AcmeDnsTask for TencentDnsTask {
     async fn done(&self) -> Result<()> {
         let mut domain = self.domain.lock().await;
         let mut record = self.record.lock().await;
+        if *record == 0 {
+            return Ok(());
+        }
         delete_tencent_dns_record(
+            &self.client,
             &self.host,
             &self.endpoint,
             &self.access_key_id,

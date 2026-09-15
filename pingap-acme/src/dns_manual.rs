@@ -15,12 +15,16 @@
 use super::{AcmeDnsTask, Error, LOG_TARGET};
 use async_trait::async_trait;
 use nanoid::nanoid;
-use pingap_config::{Category, ConfigManager};
-use serde_json::json;
+use pingap_config::{Category, ConfigManager, StorageConf};
 use std::sync::Arc;
 use tracing::{error, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// The remark every manual TXT value is stored with; the token cleanup in
+/// `lets_encrypt` removes these by age like the http-01 tokens.
+pub(crate) static MANUAL_DNS_REMARK: &str =
+    "dns txt value for acme challenge, it will be removed later auto";
 
 pub(crate) struct ManualDnsTask {
     config_manager: Arc<ConfigManager>,
@@ -40,19 +44,25 @@ impl AcmeDnsTask for ManualDnsTask {
             "set the DNS record {domain} IN TXT {value}",
         );
         let name = nanoid!(8);
-        // let key = format!("storages/{name}.toml");
-        let data = json!({
-            "category": "config",
-            "secret": "",
-            "value": value,
-            "remark": "dns text value for acme challenge, it will be removed later auto"
-        });
+        let conf = StorageConf {
+            category: "config".to_string(),
+            value: value.to_string(),
+            secret: None,
+            remark: Some(MANUAL_DNS_REMARK.to_string()),
+            // Never deleted on completion; the age based cleanup keys off
+            // this instead. Entries used to stay forever.
+            created_at: Some(pingap_core::now_sec()),
+        };
         if let Err(e) = self
             .config_manager
-            .update(Category::Storage, &name, &data)
+            .update(Category::Storage, &name, &conf)
             .await
         {
-            error!(error = e.to_string(), "save dns txt record fail");
+            error!(
+                target: LOG_TARGET,
+                error = %e,
+                "save dns txt record fail"
+            );
         };
         Ok(())
     }

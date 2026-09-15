@@ -51,11 +51,11 @@ buffer_days = 30
 | `tencent` | DNSPod / 腾讯云 | `https://dnspod.tencentcloudapi.com?access_key_id=xxx&access_key_secret=xxx` |
 | `manual` 或未设 | — | 无 API。TXT 记录记入日志，需自行添加。 |
 
-名称正是 `ali` 与 `cf`，不是 `aliyun` / `cloudflare`。**任何未识别值会静默回退到 manual 任务**，拼写错误不会大声失败——只是等待没人会添加的 TXT。请对照上表仔细核对拼写。
+规范名称是 `ali` 与 `cf`；早期文档用过 `aliyun`、`cloudflare`，作为别名仍可接受。其他任何值会被 `pingap -t` 拒绝，而不是静默回退到 manual 任务、等待没人会添加的 TXT。
 
 `dns_service_url` 中任意值可写成 `$ENV:NAME` 并从环境读取，密钥不必进配置文件。
 
-提供商添加 `_acme-challenge` TXT、等待校验后删除。`manual`（或空提供商）时 challenge 每个进程启动只尝试一次，因为没有可轮询的对象。
+提供商添加 `_acme-challenge` TXT、等待校验后删除。zone 取记录名的可注册域名，按公共后缀列表解析（`example.co.uk`，而不是 `co.uk`）。`manual`（或空提供商）时 challenge 每个进程启动只尝试一次，因为没有可轮询的对象；TXT 值记入日志，同时写入 storage 类别，一天后由每小时的清扫删除。
 
 ## 证书配置
 
@@ -80,6 +80,8 @@ buffer_days = 30
 - **快速启动**：证书持久化到 `~/.pingap/acme/<domains>.toml`（仅属主可读），下次启动恢复。
 
 HTTP-01 challenge 令牌也经配置存储往返，因此 ACME 需要可写后端。令牌保存时带 `created_at` 时间戳并每小时清扫一次：超过一天的（远超共享存储的任何实例仍可能向 CA 提供它的时间窗口）会被删除，令牌不再在存储类别里无限堆积。
+
+ACME 账号也存在那里：storage 类别的 `lets_encrypt_account` 条目（对 staging CA 是 `lets_encrypt_staging_account`），之后每次下单、共享后端的任一实例都复用它。原来每次下单都注册一个新账号，而 Let's Encrypt 对此按 IP 限流；存下的账号不再可用时会换新的。该条目保存账号私钥，和证书条目保存 `tls_key` 一样。
 
 ## 环境变量
 

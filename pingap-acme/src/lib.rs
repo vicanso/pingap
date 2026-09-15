@@ -15,7 +15,6 @@
 use async_trait::async_trait;
 use pingap_certificate::rcgen;
 use snafu::Snafu;
-use substring::Substring;
 
 /// Category name for ACME-related logging
 pub static LOG_TARGET: &str = "pingap::acme";
@@ -53,17 +52,13 @@ pub enum Error {
 /// Convenience type alias for Results with our Error type
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// `$ENV:NAME` is read from the environment; anything else (including an
+/// unset variable's name) is returned as it is.
 fn get_value_from_env(value: &str) -> String {
-    if value.is_empty() {
-        return value.to_string();
-    }
-    let key_prefix = "$ENV:";
-    if value.starts_with(key_prefix) {
-        std::env::var(value.substring(key_prefix.len(), value.len()))
-            .unwrap_or(value.to_string())
-    } else {
-        value.to_string()
-    }
+    value
+        .strip_prefix("$ENV:")
+        .and_then(|name| std::env::var(name).ok())
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// Acme DNS task
@@ -83,3 +78,23 @@ mod dns_tencent;
 mod lets_encrypt;
 
 pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};
+
+#[cfg(test)]
+mod tests {
+    use super::get_value_from_env;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_get_value_from_env() {
+        assert_eq!("", get_value_from_env(""));
+        assert_eq!("plain", get_value_from_env("plain"));
+        assert_eq!(
+            std::env::var("PATH").unwrap_or_default(),
+            get_value_from_env("$ENV:PATH")
+        );
+        assert_eq!(
+            "$ENV:PINGAP_NOT_SET_FOR_SURE",
+            get_value_from_env("$ENV:PINGAP_NOT_SET_FOR_SURE")
+        );
+    }
+}

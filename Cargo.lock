@@ -4003,7 +4003,6 @@ dependencies = [
  "sha1",
  "sha2",
  "snafu",
- "substring",
  "tempfile",
  "tokio",
  "tokio-test",
