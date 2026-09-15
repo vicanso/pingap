@@ -17,7 +17,7 @@ use super::tracing::{
     initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
     set_otel_upstream_attrs,
 };
-use super::{LOG_TARGET, ServerConf, set_append_proxy_headers};
+use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -142,8 +142,8 @@ pub struct Server {
     /// Optional parser for customizing access log format and output
     log_parser: Option<Parser>,
 
-    /// HTML/JSON template used for rendering error responses
-    error_template: String,
+    /// HTML/JSON template used for rendering error responses, parsed once
+    error_template: ErrorTemplate,
 
     /// Number of worker threads for request processing. None uses default.
     threads: Option<usize>,
@@ -234,6 +234,17 @@ pub struct ServerServices {
 
 const META_DEFAULTS: CacheMetaDefaults =
     CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 1, 1);
+
+/// Whether an origin response's `Vary` names `*`, checked without building
+/// the lowercased name list.
+fn has_vary_star(headers: &http::HeaderMap) -> bool {
+    headers
+        .get_all(http::header::VARY)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|name| name.trim() == "*")
+}
 
 /// The header names an origin response lists in `Vary`, trimmed and
 /// lowercased.
@@ -336,7 +347,7 @@ impl Server {
             processing: AtomicI32::new(0),
             addr: conf.addr.clone(),
             log_parser: p,
-            error_template: conf.error_template.clone(),
+            error_template: ErrorTemplate::new(&conf.error_template),
             tls_cipher_list: conf.tls_cipher_list.clone(),
             tls_ciphersuites: conf.tls_ciphersuites.clone(),
             tls_min_version: conf.tls_min_version.clone(),
@@ -524,7 +535,7 @@ impl Server {
         }
         lb.threads = threads;
         // support listen multi address
-        for addr in addr.split(',') {
+        for addr in addr.split(',').map(str::trim).filter(|a| !a.is_empty()) {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {
                 let mut tls_settings = dynamic_cert
@@ -776,7 +787,7 @@ impl Server {
             && header.uri.path() == self.prometheus_metrics;
 
         if should_handle {
-            let prom = self.prometheus.as_ref().unwrap(); // is_some() 检查已通过
+            let prom = self.prometheus.as_ref()?;
             let result = async {
                 let body =
                     prom.metrics().map_err(|e| new_internal_error(500, e))?;
@@ -1440,7 +1451,7 @@ impl ProxyHttp for Server {
 
         // RFC 9111 §4.1: `Vary: *` never matches a later request, so the
         // response cannot be reused; pingora does not check this itself.
-        if vary_header_names(&resp.headers).any(|name| name == "*") {
+        if has_vary_star(&resp.headers) {
             return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom(
                 "vary *",
             )));
@@ -1655,17 +1666,17 @@ impl ProxyHttp for Server {
         };
 
         let error_type = e.etype().as_str();
-        let content = self
-            .error_template
-            .replace("{{version}}", pingap_util::get_pkg_version())
-            .replace("{{content}}", &e.to_string())
-            .replace("{{error_type}}", error_type);
+        let content = self.error_template.render(
+            pingap_util::get_pkg_version(),
+            &e.to_string(),
+            error_type,
+        );
         let buf = Bytes::from(content);
         ctx.state.status = Some(
             StatusCode::from_u16(code)
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         );
-        let content_type = if buf.starts_with(b"{") {
+        let content_type = if self.error_template.is_json() {
             "application/json; charset=utf-8"
         } else {
             "text/html; charset=utf-8"
@@ -1677,8 +1688,7 @@ impl ProxyHttp for Server {
 
         let user_agent = server_session
             .get_header(http::header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
+            .and_then(|v| v.to_str().ok());
 
         error!(
             target: LOG_TARGET,

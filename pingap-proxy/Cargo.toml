@@ -65,3 +65,7 @@ tracing = [
     "pingap-core/tracing",
     "pingap-performance/tracing",
 ]
+
+[[bench]]
+name = "bench"
+harness = false

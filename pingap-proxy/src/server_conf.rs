@@ -237,16 +237,6 @@ impl fmt::Display for ServerConf {
 }
 // Conversion implementation from PingapConfig to Vec<ServerConf>
 pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
-    let mut upstreams = vec![];
-    for (name, item) in conf.upstreams {
-        upstreams.push((name, item));
-    }
-    let mut locations = vec![];
-    for (name, item) in conf.locations {
-        locations.push((name, item));
-    }
-    // Sort locations by weight in descending order for priority routing
-    locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
     let mut servers = vec![];
     for (name, item) in conf.servers {
         // Set up error template, using default if none specified

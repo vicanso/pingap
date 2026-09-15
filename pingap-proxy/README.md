@@ -124,7 +124,11 @@ Notes on a few of these:
   instead configures push mode.
 - `enable_server_timing` adds a `Server-Timing` response header built from the
   request's timing breakdown — useful when diagnosing where latency comes from.
-- `error_template` (under `[basic]`) replaces the built-in `error.html`.
+- `error_template` (under `[basic]`) replaces the built-in `error.html`. The
+  template is parsed once when the server starts; `{{version}}`,
+  `{{content}}` (the error message) and `{{error_type}}` are filled in per
+  error, any other `{{...}}` is kept as text, and a template starting with `{`
+  is served as `application/json`.
 
 ## Per-request context
 

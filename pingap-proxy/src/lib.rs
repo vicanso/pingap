@@ -16,6 +16,7 @@ use ahash::AHashMap;
 use std::sync::Arc;
 
 mod cache;
+mod error_template;
 mod headers;
 mod server;
 mod server_conf;
@@ -23,6 +24,7 @@ mod server_conf;
 mod tracing;
 static LOG_TARGET: &str = "pingap::proxy";
 
+pub use error_template::ErrorTemplate;
 pub(crate) use headers::*;
 pub use server::*;
 pub use server_conf::*;
