@@ -4277,6 +4277,7 @@ dependencies = [
 name = "pingap-performance"
 version = "0.14.3"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "bytesize",
  "cfg-if",
@@ -4294,7 +4295,6 @@ dependencies = [
  "prometheus",
  "reqwest 0.13.5",
  "serde",
- "smallvec",
  "snafu",
  "sysinfo",
  "tokio",

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Error, LOG_TARGET, Result, get_process_system_info};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
@@ -29,10 +30,10 @@ use prometheus::{
 use prometheus::{
     Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
-use smallvec::SmallVec;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tracing::error;
+use tracing::{error, warn};
 use url::Url;
 
 /// Optional upstream provider used to refresh per-backend gauges on scrape.
@@ -64,129 +65,205 @@ pub struct Prometheus {
     /// Central registry for all metrics
     r: Registry,
 
+    /// The children of the empty `location` label - the "every request"
+    /// series - resolved once at construction. They are touched by every
+    /// request, and looking them up means hashing the label set inside
+    /// prometheus' `MetricVec` each time.
+    all: LocationMetrics,
+
+    /// `http_responses_codes` children of the empty `location` label, one
+    /// per status class, indexed by [`code_class`].
+    all_codes: [IntCounter; CODE_LABELS.len()],
+
+    /// Upstream names seen by the previous metrics refresh, so the
+    /// per-upstream series of an upstream that has since been removed from
+    /// the configuration can be dropped rather than exported forever.
+    known_upstreams: ArcSwap<Vec<String>>,
+
     /// Counter tracking total HTTP requests by location.
     /// Helps understand traffic patterns and load distribution.
-    http_requests_total: Box<IntCounterVec>,
+    http_requests_total: IntCounterVec,
 
     /// Gauge showing current active requests by location.
     /// Useful for monitoring concurrent load and detecting potential bottlenecks.
-    http_requests_current: Box<IntGaugeVec>,
+    http_requests_current: IntGaugeVec,
 
     /// Histogram of request payload sizes in KB.
     /// Helps identify unusual request patterns and potential DoS attempts.
-    http_received: Box<HistogramVec>,
+    http_received: HistogramVec,
 
     /// Total bytes received from clients, labeled by location
-    http_received_bytes: Box<IntCounterVec>,
+    http_received_bytes: IntCounterVec,
 
     /// Count of HTTP response codes grouped by category (2xx, 3xx, etc.), labeled by location and code
-    http_responses_codes: Box<IntCounterVec>,
+    http_responses_codes: IntCounterVec,
 
     /// Histogram of HTTP request processing times in seconds, labeled by location
-    http_response_time: Box<HistogramVec>,
+    http_response_time: HistogramVec,
 
     /// Histogram of response payload sizes sent to clients in KB, labeled by location
-    http_sent: Box<HistogramVec>,
+    http_sent: HistogramVec,
 
     /// Total bytes sent to clients, labeled by location
-    http_sent_bytes: Box<IntCounterVec>,
+    http_sent_bytes: IntCounterVec,
 
     /// Count of TCP connection reuses
-    connection_reuses: Box<IntCounter>,
+    connection_reuses: IntCounter,
 
     /// Histogram of TLS handshake durations in seconds
-    tls_handshake_time: Box<Histogram>,
+    tls_handshake_time: Histogram,
 
     /// Total number of connections to upstream servers, labeled by upstream
-    upstream_connections: Box<IntGaugeVec>,
+    upstream_connections: IntGaugeVec,
 
     /// Current number of active upstream connections, labeled by upstream
-    upstream_connections_current: Box<IntGaugeVec>,
+    upstream_connections_current: IntGaugeVec,
 
     /// Histogram of TCP connection times to upstream servers in seconds, labeled by upstream
-    upstream_tcp_connect_time: Box<HistogramVec>,
+    upstream_tcp_connect_time: HistogramVec,
 
     /// Histogram of TLS handshake times with upstream servers in seconds, labeled by upstream
-    upstream_tls_handshake_time: Box<HistogramVec>,
+    upstream_tls_handshake_time: HistogramVec,
 
     /// Count of upstream connection reuses, labeled by upstream
-    upstream_reuses: Box<IntCounterVec>,
+    upstream_reuses: IntCounterVec,
 
     /// Histogram of upstream request processing times in seconds, labeled by upstream
-    upstream_processing_time: Box<HistogramVec>,
+    upstream_processing_time: HistogramVec,
 
     /// Histogram of upstream response times in seconds, labeled by upstream
-    upstream_response_time: Box<HistogramVec>,
+    upstream_response_time: HistogramVec,
 
     /// Histogram of cache lookup times in seconds
-    cache_lookup_time: Box<Histogram>,
+    cache_lookup_time: Histogram,
 
     /// Histogram of cache lock acquisition times in seconds
-    cache_lock_time: Box<Histogram>,
+    cache_lock_time: Histogram,
 
     /// Current number of cache read operations in progress
-    cache_reading: Box<IntGauge>,
+    cache_reading: IntGauge,
 
     /// Current number of cache write operations in progress
-    cache_writing: Box<IntGauge>,
+    cache_writing: IntGauge,
 
     /// Histogram of response compression ratios
-    compression_ratio: Box<Histogram>,
+    compression_ratio: Histogram,
 
     /// Current memory usage in megabytes
-    memory: Box<IntGauge>,
+    memory: IntGauge,
 
     /// Current number of open file descriptors
-    fd_count: Box<IntGauge>,
+    fd_count: IntGauge,
 
     /// Current number of IPv4 TCP connections
-    tcp_count: Box<IntGauge>,
+    tcp_count: IntGauge,
 
     /// Current number of IPv6 TCP connections
-    tcp6_count: Box<IntGauge>,
+    tcp6_count: IntGauge,
 
     /// Sliding-window failure rate percent per upstream backend (0–100)
-    upstream_backend_failure_rate: Box<GaugeVec>,
+    upstream_backend_failure_rate: GaugeVec,
 
     /// Sliding-window request count per upstream backend
-    upstream_backend_requests: Box<IntGaugeVec>,
+    upstream_backend_requests: IntGaugeVec,
 
     /// Circuit breaker state per upstream backend: 0 closed, 1 open, 2 half-open
-    upstream_backend_circuit_state: Box<IntGaugeVec>,
+    upstream_backend_circuit_state: IntGaugeVec,
     /// Seconds the latest backend refresh spent in service discovery, per upstream
-    upstream_discovery_time: Box<GaugeVec>,
+    upstream_discovery_time: GaugeVec,
     /// Seconds the latest backend refresh spent rebuilding the selector, per upstream
-    upstream_selector_build_time: Box<GaugeVec>,
+    upstream_selector_build_time: GaugeVec,
     /// Histogram of how long upstream connections had been idle when the
     /// keep-alive pool evicted them to make room, in seconds; the count is
     /// the number of evictions
-    upstream_pool_eviction_idle_time: Box<Histogram>,
+    upstream_pool_eviction_idle_time: Histogram,
+}
+
+/// The per-request metrics of one `location` label value.
+struct LocationMetrics {
+    requests_total: IntCounter,
+    requests_current: IntGauge,
+    received: Histogram,
+    received_bytes: IntCounter,
+    response_time: Histogram,
+    sent: Histogram,
+    sent_bytes: IntCounter,
+}
+
+impl LocationMetrics {
+    /// The children of `location`, resolved once.
+    fn new(p: &PrometheusVecs<'_>, location: &str) -> Self {
+        let labels = [location];
+        Self {
+            requests_total: p.requests_total.with_label_values(&labels),
+            requests_current: p.requests_current.with_label_values(&labels),
+            received: p.received.with_label_values(&labels),
+            received_bytes: p.received_bytes.with_label_values(&labels),
+            response_time: p.response_time.with_label_values(&labels),
+            sent: p.sent.with_label_values(&labels),
+            sent_bytes: p.sent_bytes.with_label_values(&labels),
+        }
+    }
+}
+
+/// The vectors [`LocationMetrics::new`] resolves its children from.
+struct PrometheusVecs<'a> {
+    requests_total: &'a IntCounterVec,
+    requests_current: &'a IntGaugeVec,
+    received: &'a HistogramVec,
+    received_bytes: &'a IntCounterVec,
+    response_time: &'a HistogramVec,
+    sent: &'a HistogramVec,
+    sent_bytes: &'a IntCounterVec,
+}
+
+/// Status classes of `http_responses_codes`, in the order [`code_class`]
+/// indexes them.
+const CODE_LABELS: [&str; 6] = ["1xx", "2xx", "3xx", "4xx", "5xx", "unknown"];
+
+/// Index of a status code in [`CODE_LABELS`].
+#[inline]
+fn code_class(code: u16) -> usize {
+    match code {
+        100..=199 => 0,
+        200..=299 => 1,
+        300..=399 => 2,
+        400..=499 => 3,
+        500..=599 => 4,
+        _ => 5,
+    }
 }
 
 /// Milliseconds to seconds conversion factor
 const SECOND: f64 = 1000.0;
 
 impl Prometheus {
-    /// Records metrics at the start of request processing.
+    /// Counts a request as accepted, before any location has been matched.
     ///
-    /// # Arguments
-    /// * `location` - The routing location identifier for the request
+    /// Called for every request, so the empty-`location` series really is
+    /// the total: requests that match no location (a 404), the admin
+    /// endpoints, ACME challenges and the metrics endpoint itself used to
+    /// be missing from it entirely, because counting only started once a
+    /// location had been matched.
     ///
-    /// # Metrics Updated
-    /// - Increments total request counter
-    /// - Increments current request gauge
-    /// - Updates location-specific counters if location is provided
-    pub fn before(&self, location: &str) {
-        self.http_requests_total.with_label_values(&[""]).inc();
-        self.http_requests_current.with_label_values(&[""]).inc();
-        if !location.is_empty() {
-            self.http_requests_total
-                .with_label_values(&[location])
-                .inc();
-            self.http_requests_current
-                .with_label_values(&[location])
-                .inc();
+    /// Paired with [`Prometheus::after`], which runs for every request.
+    pub fn on_request_start(&self) {
+        self.all.requests_total.inc();
+        self.all.requests_current.inc();
+    }
+
+    /// Counts the request against the location it was routed to. A request
+    /// that matched none is only counted by [`Prometheus::on_request_start`].
+    pub fn on_location_matched(&self, location: &str) {
+        if location.is_empty() {
+            return;
         }
+        self.http_requests_total
+            .with_label_values(&[location])
+            .inc();
+        self.http_requests_current
+            .with_label_values(&[location])
+            .inc();
     }
 
     /// Records comprehensive metrics at request completion.
@@ -215,60 +292,47 @@ impl Prometheus {
         let upstream = &ctx.upstream.name;
         let elapsed = ctx.timing.created_at.elapsed().as_millis();
         let response_time = elapsed as f64 / SECOND;
+        let payload_bytes = ctx.state.payload_size as u64;
         // payload size(kb)
-        let payload_size = ctx.state.payload_size as f64 / 1024.0;
-        let mut code = 0;
-        if let Some(status) = &ctx.state.status {
-            code = status.as_u16();
-        }
+        let payload_size = payload_bytes as f64 / 1024.0;
+        let code = ctx.state.status.map(|status| status.as_u16()).unwrap_or(0);
+        let class = code_class(code);
         let sent_bytes = session.body_bytes_sent() as u64;
         let sent = sent_bytes as f64 / 1024.0;
 
-        // http response code
-        let code_label = match code {
-            100..=199 => "1xx",
-            200..=299 => "2xx",
-            300..=399 => "3xx",
-            400..=499 => "4xx",
-            500..=599 => "5xx",
-            _ => "unknown",
-        };
-        let mut labels_list: SmallVec<[[&str; 1]; 2]> = SmallVec::new();
-
-        labels_list.push([""]);
-        if !location.is_empty() {
-            labels_list.push([location]);
+        // Every request, through the children resolved at construction.
+        self.all.requests_current.dec();
+        self.all.received.observe(payload_size);
+        self.all.received_bytes.inc_by(payload_bytes);
+        // response time x second
+        self.all.response_time.observe(response_time);
+        // response body size(kb)
+        self.all.sent.observe(sent);
+        if sent_bytes > 0 {
+            self.all.sent_bytes.inc_by(sent_bytes);
         }
-        for labels in labels_list.iter() {
-            self.http_requests_current.with_label_values(labels).dec();
+        self.all_codes[class].inc();
+
+        if !location.is_empty() {
+            let labels = [location];
+            self.http_requests_current.with_label_values(&labels).dec();
             self.http_received
-                .with_label_values(labels)
+                .with_label_values(&labels)
                 .observe(payload_size);
             self.http_received_bytes
-                .with_label_values(labels)
-                .inc_by(ctx.state.payload_size as u64);
-
-            // response time x second
+                .with_label_values(&labels)
+                .inc_by(payload_bytes);
             self.http_response_time
-                .with_label_values(labels)
+                .with_label_values(&labels)
                 .observe(response_time);
-
-            // response body size(kb)
-            self.http_sent.with_label_values(labels).observe(sent);
+            self.http_sent.with_label_values(&labels).observe(sent);
             if sent_bytes > 0 {
                 self.http_sent_bytes
-                    .with_label_values(labels)
+                    .with_label_values(&labels)
                     .inc_by(sent_bytes);
             }
-        }
-
-        self.http_responses_codes
-            .with_label_values(&["", code_label])
-            .inc();
-
-        if !location.is_empty() {
             self.http_responses_codes
-                .with_label_values(&[location, code_label])
+                .with_label_values(&[location, CODE_LABELS[class]])
                 .inc();
         }
 
@@ -376,10 +440,26 @@ impl Prometheus {
         let Some(provider) = METRICS_UPSTREAM_PROVIDER.get() else {
             return;
         };
-        for (upstream_name, stats) in provider.get_all_stats() {
+        let all_stats = provider.get_all_stats();
+        // These gauges describe the state as of this scrape and every one of
+        // them is written again below, so clearing them first is what drops
+        // the label sets of backends that no longer exist. Without it a
+        // backend address that came from DNS or docker discovery keeps being
+        // exported with its last value forever: prometheus holds a child
+        // until it is removed, and those addresses churn.
+        self.upstream_backend_failure_rate.reset();
+        self.upstream_backend_requests.reset();
+        self.upstream_backend_circuit_state.reset();
+        self.upstream_discovery_time.reset();
+        self.upstream_selector_build_time.reset();
+        // The per-upstream series are written on the request path instead, so
+        // they cannot be rebuilt here; drop the ones whose upstream is gone.
+        self.forget_removed_upstreams(&all_stats);
+
+        for (upstream_name, stats) in all_stats {
             self.refresh_upstream_update_timing(&upstream_name, &stats);
             // Union of backends that have window stats and/or a circuit state.
-            let mut backends: std::collections::HashSet<&str> =
+            let mut backends: HashSet<&str> =
                 stats.backend_stats.keys().map(|s| s.as_str()).collect();
             backends.extend(stats.circuit_states.keys().map(|s| s.as_str()));
             for backend in backends {
@@ -398,6 +478,40 @@ impl Prometheus {
                     .with_label_values(&labels)
                     .set(state as i64);
             }
+        }
+    }
+
+    /// Removes the per-upstream series of every upstream that was present at
+    /// the previous refresh but is no longer configured, and remembers the
+    /// current set for the next one.
+    fn forget_removed_upstreams(
+        &self,
+        live: &HashMap<String, pingap_upstream::UpstreamStats>,
+    ) {
+        let previous = self.known_upstreams.load();
+        for name in previous.iter() {
+            if live.contains_key(name) {
+                continue;
+            }
+            let labels = [name.as_str()];
+            let _ = self.upstream_connections.remove_label_values(&labels);
+            let _ = self
+                .upstream_connections_current
+                .remove_label_values(&labels);
+            let _ = self.upstream_tcp_connect_time.remove_label_values(&labels);
+            let _ = self
+                .upstream_tls_handshake_time
+                .remove_label_values(&labels);
+            let _ = self.upstream_reuses.remove_label_values(&labels);
+            let _ = self.upstream_processing_time.remove_label_values(&labels);
+            let _ = self.upstream_response_time.remove_label_values(&labels);
+        }
+        // Equal length plus every old name still live means the same set.
+        let unchanged = previous.len() == live.len()
+            && previous.iter().all(|name| live.contains_key(name));
+        if !unchanged {
+            self.known_upstreams
+                .store(Arc::new(live.keys().cloned().collect()));
         }
     }
 
@@ -462,6 +576,8 @@ struct PrometheusPushParams {
     username: String,
     /// Optional basic auth password
     password: Option<String>,
+    /// Reused across pushes so the connection to the gateway is kept.
+    client: reqwest::Client,
 }
 
 /// Pushes metrics to Prometheus pushgateway
@@ -486,12 +602,17 @@ async fn do_push(
     // http push metrics
     let encoder = ProtobufEncoder::new();
     let mut buf = Vec::new();
-
-    for mf in params.p.gather() {
-        let _ = encoder.encode(&[mf], &mut buf);
+    if let Err(e) = encoder.encode(&params.p.gather(), &mut buf) {
+        error!(
+            target: LOG_TARGET,
+            name = params.name,
+            error = %e,
+            "encode prometheus metrics fail"
+        );
+        return Ok(true);
     }
-    let client = reqwest::Client::new();
-    let mut builder = client
+    let mut builder = params
+        .client
         .post(&params.url)
         .header(http::header::CONTENT_TYPE, encoder.format_type())
         .body(buf);
@@ -568,8 +689,21 @@ pub fn new_prometheus_push_service(
         username,
         password,
         p,
+        client: reqwest::Client::new(),
     };
+    // The push runs as a task of the shared background service, which ticks
+    // once a minute, so the interval can only be a whole number of minutes.
     let offset = ((interval.as_secs() / 60) as u32).max(1);
+    let effective = Duration::from_secs(offset as u64 * 60);
+    if effective != interval {
+        warn!(
+            target: LOG_TARGET,
+            name,
+            requested = humantime::Duration::from(interval).to_string(),
+            effective = humantime::Duration::from(effective).to_string(),
+            "prometheus push interval is rounded to whole minutes"
+        );
+    }
 
     let task = Box::new(PrometheusPushTask { offset, params });
     Ok(task)
@@ -688,8 +822,7 @@ macro_rules! register_metric {
         $r.register(Box::new(metric.clone())).map_err(|e| Error::Prometheus {
             message: e.to_string(),
         })?;
-        // return the boxed original metric
-        Ok(Box::new(metric))
+        Ok(metric)
     }};
 }
 
@@ -901,33 +1034,23 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         new_int_gauge,
         server,
         "pingap_tcp_count",
-        "pingap tcp connections"
+        "pingap ipv4 tcp sockets in the network namespace"
     )?;
     let tcp6_count = register_metric!(
         r,
         new_int_gauge,
         server,
         "pingap_tcp6_count",
-        "pingap tcp6 connections"
+        "pingap ipv6 tcp sockets in the network namespace"
     )?;
-    let upstream_backend_failure_rate =
-        {
-            let opts = Opts::new(
-                "pingap_upstream_backend_failure_rate",
-                "pingap sliding-window backend failure rate percent (0-100)",
-            )
-            .const_label("server", server);
-            let metric = GaugeVec::new(opts, &["upstream", "backend"])
-                .map_err(|e| Error::Prometheus {
-                    message: e.to_string(),
-                })?;
-            r.register(Box::new(metric.clone())).map_err(|e| {
-                Error::Prometheus {
-                    message: e.to_string(),
-                }
-            })?;
-            Box::new(metric)
-        };
+    let upstream_backend_failure_rate = register_metric!(
+        r,
+        new_gauge_vec,
+        server,
+        "pingap_upstream_backend_failure_rate",
+        "pingap sliding-window backend failure rate percent (0-100)",
+        &["upstream", "backend"]
+    )?;
     let upstream_backend_requests = register_metric!(
         r,
         new_int_gauge_vec,
@@ -978,8 +1101,26 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0]
     )?;
 
+    let all = LocationMetrics::new(
+        &PrometheusVecs {
+            requests_total: &http_requests_total,
+            requests_current: &http_requests_current,
+            received: &http_received,
+            received_bytes: &http_received_bytes,
+            response_time: &http_response_time,
+            sent: &http_sent,
+            sent_bytes: &http_sent_bytes,
+        },
+        "",
+    );
+    let all_codes = CODE_LABELS
+        .map(|code| http_responses_codes.with_label_values(&["", code]));
+
     Ok(Prometheus {
         r,
+        all,
+        all_codes,
+        known_upstreams: ArcSwap::from_pointee(Vec::new()),
         http_requests_total,
         http_requests_current,
         http_received,
@@ -1027,6 +1168,32 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio_test::io::Builder;
 
+    /// The value of the exported series whose name starts with `name` and
+    /// whose line carries every fragment of `labels`. Order-independent, so
+    /// it does not depend on how the encoder sorts label pairs.
+    fn metric_value(buf: &str, name: &str, labels: &[&str]) -> Option<String> {
+        buf.lines()
+            .filter(|line| line.starts_with(name))
+            .find(|line| labels.iter().all(|label| line.contains(label)))
+            .and_then(|line| line.split_whitespace().next_back())
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn test_code_class() {
+        for (code, label) in [
+            (100, "1xx"),
+            (204, "2xx"),
+            (302, "3xx"),
+            (404, "4xx"),
+            (502, "5xx"),
+            (0, "unknown"),
+            (999, "unknown"),
+        ] {
+            assert_eq!(label, CODE_LABELS[code_class(code)], "{code}");
+        }
+    }
+
     #[test]
     fn test_upstream_pool_eviction_idle_time() {
         let p = new_prometheus("pingap").unwrap();
@@ -1067,7 +1234,8 @@ mod tests {
         session.read_request().await.unwrap();
 
         let p = new_prometheus("pingap").unwrap();
-        p.before("");
+        p.on_request_start();
+        p.on_location_matched("lo");
 
         p.after(
             &session,
@@ -1110,7 +1278,114 @@ mod tests {
                 ..Default::default()
             },
         );
-        let buf = p.metrics().unwrap();
-        assert_eq!(237, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        // Counted once for the total and once for the matched location, and
+        // the in-flight gauge is back to zero on both.
+        for labels in ["location=\"\"", "location=\"lo\""] {
+            assert_eq!(
+                Some("1".to_string()),
+                metric_value(&buf, "pingap_http_requests_total{", &[labels]),
+                "{labels}: {buf}"
+            );
+            assert_eq!(
+                Some("0".to_string()),
+                metric_value(&buf, "pingap_http_requests_current{", &[labels]),
+                "{labels}: {buf}"
+            );
+            assert_eq!(
+                Some("1".to_string()),
+                metric_value(
+                    &buf,
+                    "pingap_http_responses_codes{",
+                    &[labels, "code=\"2xx\""]
+                ),
+                "{labels}: {buf}"
+            );
+            assert_eq!(
+                Some("1024".to_string()),
+                metric_value(&buf, "pingap_http_received_bytes{", &[labels]),
+                "{labels}: {buf}"
+            );
+        }
+        // Upstream and cache timings reached their histograms.
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_upstream_response_time_count{",
+                &["upstream=\"upstream\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(&buf, "pingap_cache_lookup_time_count{", &[]),
+            "{buf}"
+        );
+    }
+
+    /// A request that matches no location still counts towards the totals;
+    /// it used to be invisible, so a flood of 404s showed up nowhere.
+    #[tokio::test]
+    async fn test_request_without_location_is_counted() {
+        let input_header = "GET /nope HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let p = new_prometheus("pingap").unwrap();
+        p.on_request_start();
+        p.on_location_matched("");
+        p.after(&session, &Ctx::default());
+
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(&buf, "pingap_http_requests_total{", &[]),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("0".to_string()),
+            metric_value(&buf, "pingap_http_requests_current{", &[]),
+            "{buf}"
+        );
+        // No status was set, so it lands in the unknown class.
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_http_responses_codes{",
+                &["code=\"unknown\""]
+            ),
+            "{buf}"
+        );
+        // And no per-location series was created.
+        assert_eq!(false, buf.contains("location=\"lo\""), "{buf}");
+    }
+
+    /// The per-upstream series of an upstream that left the configuration
+    /// stop being exported instead of lingering with their last value.
+    #[test]
+    fn test_forget_removed_upstreams() {
+        let p = new_prometheus("pingap").unwrap();
+        p.upstream_connections.with_label_values(&["kept"]).set(1);
+        p.upstream_connections.with_label_values(&["gone"]).set(2);
+        p.upstream_reuses.with_label_values(&["gone"]).inc();
+
+        let live: HashMap<String, pingap_upstream::UpstreamStats> =
+            ["kept", "gone"]
+                .into_iter()
+                .map(|name| (name.to_string(), Default::default()))
+                .collect();
+        p.forget_removed_upstreams(&live);
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(true, buf.contains("upstream=\"gone\""), "{buf}");
+
+        let live: HashMap<String, pingap_upstream::UpstreamStats> =
+            HashMap::from([("kept".to_string(), Default::default())]);
+        p.forget_removed_upstreams(&live);
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(false, buf.contains("upstream=\"gone\""), "{buf}");
+        assert_eq!(true, buf.contains("upstream=\"kept\""), "{buf}");
     }
 }

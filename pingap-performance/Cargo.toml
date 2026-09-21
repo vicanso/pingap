@@ -19,14 +19,24 @@ path = "src/lib.rs"
 default = ["openssl"]
 openssl = ["pingora/openssl", "pingap-upstream/openssl"]
 tls-rustls = ["pingora/rustls", "pingap-upstream/tls-rustls"]
-tracing = ["prometheus", "pingap-cache/tracing"]
+tracing = [
+    "dep:prometheus",
+    "dep:reqwest",
+    "dep:url",
+    "dep:humantime",
+    "dep:http",
+    "dep:snafu",
+    "pingap-cache/tracing",
+]
 
 [dependencies]
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 bytesize = { workspace = true }
 cfg-if = { workspace = true }
-humantime = { workspace = true }
-http = { workspace = true }
+# Only used by `prom.rs`, which is behind the `tracing` feature.
+humantime = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
 memory-stats = { workspace = true }
 num_cpus = { workspace = true }
 pingap-cache = { workspace = true }
@@ -35,14 +45,12 @@ pingap-location = { workspace = true }
 pingap-upstream = { workspace = true }
 pingora = { workspace = true }
 prometheus = { workspace = true, features = ["protobuf"], optional = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 serde = { workspace = true }
-smallvec = { workspace = true }
-snafu = { workspace = true }
+snafu = { workspace = true, optional = true }
 sysinfo = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true }
+url = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { workspace = true }
@@ -50,6 +58,7 @@ procfs = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-test = { workspace = true }
 
 [lints.clippy]

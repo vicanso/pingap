@@ -35,22 +35,27 @@ Give a URL instead of a path and Pingap pushes to a Pushgateway:
 
 ```toml
 [servers.main]
-prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=15s"
+prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 ```
+
+The push runs as a task of the shared background service, which ticks once a
+minute, so `interval` is rounded down to a whole number of minutes and never
+goes below one. A value that does not survive that rounding is logged with the
+interval actually used, so `?interval=15s` does not silently become a minute.
 
 ## Exported metrics
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
 | `pingap_http_requests_total` | counter | location | Requests accepted |
-| `pingap_http_requests_current` | gauge | — | Requests in flight |
-| `pingap_http_responses_codes` | counter | location, status | Responses by status |
+| `pingap_http_requests_current` | gauge | location | Requests in flight |
+| `pingap_http_responses_codes` | counter | location, code | Responses by status class (`2xx`, `5xx`, …) |
 | `pingap_http_response_time` | histogram | location | End-to-end response time (s) |
-| `pingap_http_received` / `pingap_http_received_bytes` | counter / histogram | location | Request payload size |
-| `pingap_http_sent` / `pingap_http_sent_bytes` | counter / histogram | location | Response payload size |
+| `pingap_http_received` / `pingap_http_received_bytes` | histogram / counter | location | Request payload size |
+| `pingap_http_sent` / `pingap_http_sent_bytes` | histogram / counter | location | Response payload size |
 | `pingap_connection_reuses` | counter | — | Reused downstream connections |
 | `pingap_tls_handshake_time` | histogram | — | Downstream TLS handshake (s) |
-| `pingap_upstream_connections` | gauge | upstream | Established upstream connections |
+| `pingap_upstream_connections` | gauge | upstream | Established upstream connections; only exported for an upstream with `enable_tracer = true`, which is what counts them |
 | `pingap_upstream_connections_current` | gauge | upstream | Upstream connections in use |
 | `pingap_upstream_reuses` | counter | upstream | Reused upstream connections |
 | `pingap_upstream_tcp_connect_time` | histogram | upstream | Upstream TCP connect (s) |
@@ -69,11 +74,24 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=15s"
 | `pingap_compression_ratio` | histogram | — | Compression ratio achieved |
 | `pingap_memory` | gauge | — | Process memory (MB) |
 | `pingap_fd_count` | gauge | — | Open file descriptors |
-| `pingap_tcp_count` / `pingap_tcp6_count` | gauge | — | IPv4 / IPv6 TCP connections |
+| `pingap_tcp_count` / `pingap_tcp6_count` | gauge | — | IPv4 / IPv6 TCP sockets in the process's **network namespace**, not only Pingap's own: the source is `/proc/<pid>/net/tcp`, so on a host without a separate namespace it counts every process's sockets (Linux only) |
 
 Because most latency metrics are labelled per location or per upstream, a
 dashboard can attribute a regression to a specific route or backend without
 extra instrumentation.
+
+The empty `location` label is the total, and it really is every request: one
+that matched no location (a `404`), an admin endpoint, an ACME challenge and a
+scrape of this very endpoint all count towards it. Only requests that were
+routed somewhere also carry a named `location`.
+
+Series that describe current state — the per-backend failure rate, request
+count and circuit state, and the per-upstream discovery and selector build
+times — are rebuilt from scratch on every scrape, so a backend that has gone
+away stops being exported instead of lingering with its last value. The same
+happens to the per-upstream series of an upstream removed from the
+configuration. This matters most with DNS and Docker discovery, where backend
+addresses churn and would otherwise accumulate as dead time series.
 
 ## Process information
 
@@ -86,6 +104,13 @@ println!("{} MB, {} threads, {} fds", info.memory_mb, info.threads, info.fd_coun
 
 `get_processing_accepted()` returns the global in-flight and accepted request
 counters. Both are what the `stats` plugin serialises.
+
+A snapshot is cached for one second. Collecting one reads several `/proc`
+files, and three consumers ask for it independently — a Prometheus scrape, the
+`stats` plugin on every request to its path, and the metrics log task — so the
+cache bounds that to one collection per second however often it is asked for.
+The socket tables are counted rather than parsed, and the fields that cannot
+change (architecture, CPU counts, kernel version) are read once per process.
 
 The collector also feeds `pingap_cache::update_available_memory()`, so the
 memory cache sizes itself against the real machine or container limit instead of

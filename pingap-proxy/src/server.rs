@@ -702,7 +702,7 @@ impl Server {
         // set prometheus stats
         #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {
-            prom.before(&ctx.upstream.location);
+            prom.on_location_matched(&ctx.upstream.location);
         }
 
         // validate content length
@@ -1142,6 +1142,13 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
+        // Counted before any routing, so the totals cover requests that
+        // match no location, the admin endpoints, ACME challenges and the
+        // metrics endpoint itself.
+        #[cfg(feature = "tracing")]
+        if let Some(prom) = &self.prometheus {
+            prom.on_request_start();
+        }
         if self.h1_pipelining {
             // Opt this HTTP/1.1 connection into sequential pipelining
             // (RFC 9112 §9.3.2). pingora keeps the flag across keep-alive
@@ -1778,12 +1785,11 @@ impl ProxyHttp for Server {
                 duration: took,
             });
         }
+        // Every request, matched or not: `on_request_start` ran for all of
+        // them in `early_request_filter`, and this is what pairs with it.
         #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {
-            // because prom.before will not be called if location is empty
-            if !ctx.upstream.location.is_empty() {
-                prom.after(session, ctx);
-            }
+            prom.after(session, ctx);
         }
 
         #[cfg(feature = "tracing")]
