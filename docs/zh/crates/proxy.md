@@ -97,7 +97,15 @@ modules = ["grpc-web"]
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
 - `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。
 - `enable_server_timing` 添加由请求时序分解构建的 `Server-Timing` 响应头——便于诊断延迟来源。
-- `error_template`（在 `[basic]` 下）替换内置 `error.html`。模板在 server 启动时解析一次；每次出错填入 `{{version}}`、`{{content}}`（错误信息）和 `{{error_type}}`，其他 `{{...}}` 原样保留，以 `{` 开头的模板按 `application/json` 返回。
+- `error_template`（在 `[basic]` 下）替换内置 `error.html`。模板在 server 启动时解析一次，每次出错填入三个占位符：
+
+  ```text
+  {{version}}     pingap 版本
+  {{error_type}}  pingora 的错误类型，同时作为 X-Pingap-EType 响应头发送
+  {{content}}     错误信息
+  ```
+
+  其他双花括号名称按字面文本保留；首字符为 `{` 的模板按 `application/json` 返回。
 
 ## 每请求上下文
 

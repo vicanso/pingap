@@ -125,10 +125,17 @@ Notes on a few of these:
 - `enable_server_timing` adds a `Server-Timing` response header built from the
   request's timing breakdown — useful when diagnosing where latency comes from.
 - `error_template` (under `[basic]`) replaces the built-in `error.html`. The
-  template is parsed once when the server starts; `{{version}}`,
-  `{{content}}` (the error message) and `{{error_type}}` are filled in per
-  error, any other `{{...}}` is kept as text, and a template starting with `{`
-  is served as `application/json`.
+  template is parsed once when the server starts, and three placeholders are
+  filled in per error:
+
+  ```text
+  {{version}}     the pingap version
+  {{error_type}}  the pingora error type, also sent as X-Pingap-EType
+  {{content}}     the error message
+  ```
+
+  Any other name in double braces is left as literal text, and a template
+  whose first character is `{` is served as `application/json`.
 
 ## Per-request context
 
