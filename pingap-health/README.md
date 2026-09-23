@@ -1,6 +1,6 @@
 # Pingap Health Check
 
-This crate provides health check functionalities for the Pingap project. It supports TCP, HTTP/S, and gRPC health checks, which can be configured via a URL-like string.
+This crate provides health check functionalities for the Pingap project. It supports TCP, HTTP/S, gRPC and WebSocket health checks, which can be configured via a URL-like string.
 
 ## Usage
 
@@ -32,10 +32,14 @@ The following query parameters can be used to configure the health check:
 - `check_frequency`: The interval between health checks. Default: `10s`.
 - `success`: The number of consecutive successful checks to mark the backend as healthy. Default: `1`.
 - `failure`: The number of consecutive failed checks to mark the backend as unhealthy. Default: `2`.
-- `reuse`: If present, the connection will be reused.
-- `tls`: If present, TLS will be enabled for gRPC.
+- `reuse`: If present, an HTTP/S check keeps its connection in pingora's pool between checks instead of connecting afresh each time.
+- `tls`: If present, a gRPC check uses TLS, with the URL host as SNI. Certificates are not verified, the same as for `https://` and `wss://`.
 - `service`: The service name for gRPC health checks.
 - `parallel`: If present, health checks will be performed in parallel.
+
+A value that does not parse is a configuration error rather than a silent fallback to the default: a duration without a unit (`check_frequency=5`), a zero duration, `success=0` or `failure=0` are all rejected when the upstream is created, so `pingap -t` reports them.
+
+An upstream without a `health_check` gets `tcp://` with the defaults above: a backend is unhealthy after two failed connects and healthy again after one success.
 
 ### Examples
 
@@ -62,6 +66,8 @@ grpc://my-grpc-service:50051?service=my.service.v1.MyService&tls
 ```
 
 This will perform a gRPC health check on `my-grpc-service:50051` using the service name `my.service.v1.MyService`. The connection will use TLS.
+
+The check is the `grpc.health.v1.Health/Check` call, made over pingora's own HTTP/2 client (h2 in the clear, or TLS with `tls`) with the connection and read timeouts above; the request and response are encoded in the crate, so no gRPC library is involved at runtime. The backend must answer `SERVING` for the service (`service` left out asks for the overall server health). `NOT_SERVING`, a service the server does not know, a call that fails, or a backend that does not speak gRPC at all each fail the check. The HTTP/2 connection to a backend stays open and later checks reuse it.
 
 #### WebSocket Health Check
 

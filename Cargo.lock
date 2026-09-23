@@ -4156,6 +4156,7 @@ name = "pingap-health"
 version = "0.14.3"
 dependencies = [
  "async-trait",
+ "bytes",
  "http",
  "humantime",
  "pingap-util",
@@ -4165,9 +4166,7 @@ dependencies = [
  "sha1",
  "snafu",
  "strum 0.28.0",
- "tempfile",
  "tokio",
- "tokio-test",
  "tonic",
  "tonic-health",
  "tracing",

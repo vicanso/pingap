@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
+bytes = { workspace = true }
 humantime = { workspace = true }
 http = { workspace = true }
 pingap-util = { workspace = true }
@@ -23,15 +24,15 @@ sha1 = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
 tracing = { workspace = true }
-tonic = { workspace = true }
-tonic-health = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "macros"] }
-tempfile = { workspace = true }
-tokio-test = { workspace = true }
+# A real gRPC health server for the gRPC check's tests; the check itself
+# speaks the protocol over pingora and needs neither.
+tonic = { workspace = true }
+tonic-health = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

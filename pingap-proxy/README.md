@@ -48,11 +48,15 @@ Additional hooks that are not plugin steps but matter operationally:
 | `upstream_peer` | Chooses the backend and applies the location's retry budget (`max_retries`, `max_retry_window`) |
 | `connected_to_upstream` | Records reuse, TCP connect and TLS handshake timings |
 | `request_body_filter` | Enforces the location's `client_max_body_size` |
-| `fail_to_proxy` | Renders the error page from the configured template |
+| `fail_to_proxy` | Classifies the failure and renders the error page from the configured template (see [Error responses](#error-responses)) |
 
 A plugin runs at **exactly one** request step. Configuring a step a plugin does
 not implement is a silent no-op — see
 [pingap-plugin](../pingap-plugin/README.md#lifecycle-steps).
+
+A plugin that answers at `EarlyRequest` ends the request there. pingora only
+lets a request stop at `request_filter`, so that step recognises the response
+already sent and nothing later runs on top of it.
 
 ## Routing
 
@@ -73,6 +77,38 @@ So `=/api/health` beats `/api` beats `~^/api/.*`, and a host-qualified location
 beats an otherwise identical one without a host.
 
 When nothing matches, the request is answered with `404` and the error `No matching location, host:<host>`.
+
+A matched location counts the request against its `max_processing` limit only
+after the `client_max_body_size` check has passed, and every request it counted
+is uncounted when it completes, a `429` included; a request rejected with `413`
+never touches the count.
+
+## Error responses
+
+`fail_to_proxy` turns a pingora error into a status and, when there is still
+someone to send it to, a page rendered from the error template:
+
+| Failure | Status | Page written |
+| --- | --- | --- |
+| A location or plugin rejected the request with a status | that status | yes |
+| Upstream connect, read or write failure | 502 | yes |
+| Downstream read timeout (`downstream_read_timeout`) | 408 | yes |
+| Malformed request header | 400 | yes |
+| Client closed the connection, the socket failed on a read or write, or a write timed out | 499 | no |
+| Anything else | 500 | yes |
+
+`499` is nginx's code for a client that went away. It is recorded for the
+access log and the metrics, but nothing is written to a connection that is dead
+or stuck, and the event is logged at `info` rather than `error` because there
+is nothing to fix on this side. Once a final response header has gone out, a
+later failure (an upstream dropping mid-body, say) keeps the status the client
+saw and appends nothing to the body, the same rule pingora's own error response
+follows.
+
+Each failure is logged once, by pingap, with the client address, method, host
+and path, the pingora error type and the status; pingora's own line for the
+same error is suppressed. The response headers for the statuses pingap raises
+itself are built once and cloned.
 
 ## Server configuration
 

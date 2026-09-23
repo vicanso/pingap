@@ -55,6 +55,14 @@ pub enum Error {
     },
     #[snafu(display("Invalid health check schema: {schema}, {message}"))]
     InvalidSchema { schema: String, message: String },
+    #[snafu(display(
+        "Invalid health check parameter {key}={value}: {message}"
+    ))]
+    InvalidParam {
+        key: String,
+        value: String,
+        message: String,
+    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -70,8 +78,11 @@ fn update_peer_options(
     options.total_connection_timeout = timeout;
     options.read_timeout = Some(conf.read_timeout);
     options.write_timeout = Some(conf.read_timeout);
-    // set zero to disable reuse connection
-    options.idle_timeout = Some(Duration::from_secs(0));
+    // A connection is only pooled when a check releases it (`reuse`), and
+    // then it has to stay there until the next check comes round. A zero
+    // idle timeout used to be set here "to disable reuse": it evicted a
+    // released connection at once, so `reuse` reconnected every time.
+    options.idle_timeout = None;
     options
 }
 
@@ -98,44 +109,41 @@ pub fn new_health_check(
     HealthCheckConf,
     Box<dyn HealthCheck + Send + Sync + 'static>,
 )> {
-    let mut health_check_conf = HealthCheckConf {
-        schema: HealthCheckSchema::Tcp,
-        check_frequency: DEFAULT_CHECK_FREQUENCY,
-        ..Default::default()
-    };
-    let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check
-        .is_empty()
-    {
-        let mut check = TcpHealthCheck::new();
-        check.health_changed_callback = health_changed_callback;
-        check.peer_template.options.connection_timeout =
-            Some(Duration::from_secs(3));
-        info!(
-            target: LOG_TARGET,
-            name,
-            options = %check.peer_template.options,
-            "new health check"
-        );
-        check
+    let health_check_conf: HealthCheckConf = if health_check.is_empty() {
+        // The same check `tcp://` with no parameters gives: the documented
+        // defaults. This used to be pingora's bare TCP check, which
+        // flipped a backend on a single failure and came back with a
+        // configuration of zero timeouts and thresholds.
+        HealthCheckConf {
+            schema: HealthCheckSchema::Tcp,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+            read_timeout: DEFAULT_READ_TIMEOUT,
+            check_frequency: DEFAULT_CHECK_FREQUENCY,
+            consecutive_success: DEFAULT_CONSECUTIVE_SUCCESS,
+            consecutive_failure: DEFAULT_CONSECUTIVE_FAILURE,
+            ..Default::default()
+        }
     } else {
-        health_check_conf = health_check.try_into()?;
-        info!(
-            target: LOG_TARGET,
-            name,
-            schema = health_check_conf.schema.to_string(),
-            path = health_check_conf.path,
-            connection_timeout =
-                format_duration(health_check_conf.connection_timeout)
-                    .to_string(),
-            read_timeout =
-                format_duration(health_check_conf.read_timeout).to_string(),
-            check_frequency =
-                format_duration(health_check_conf.check_frequency).to_string(),
-            reuse_connection = health_check_conf.reuse_connection,
-            consecutive_success = health_check_conf.consecutive_success,
-            consecutive_failure = health_check_conf.consecutive_failure,
-            "new http/grpc health check"
-        );
+        health_check.try_into()?
+    };
+    info!(
+        target: LOG_TARGET,
+        name,
+        schema = health_check_conf.schema.to_string(),
+        host = health_check_conf.host,
+        path = health_check_conf.path,
+        connection_timeout =
+            format_duration(health_check_conf.connection_timeout).to_string(),
+        read_timeout =
+            format_duration(health_check_conf.read_timeout).to_string(),
+        check_frequency =
+            format_duration(health_check_conf.check_frequency).to_string(),
+        reuse_connection = health_check_conf.reuse_connection,
+        consecutive_success = health_check_conf.consecutive_success,
+        consecutive_failure = health_check_conf.consecutive_failure,
+        "new health check"
+    );
+    let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
         match health_check_conf.schema {
             HealthCheckSchema::Http | HealthCheckSchema::Https => {
                 Box::new(http::new_http_health_check(
@@ -144,14 +152,11 @@ pub fn new_health_check(
                     health_changed_callback,
                 ))
             },
-            HealthCheckSchema::Grpc => {
-                let check = GrpcHealthCheck::new(
-                    name,
-                    &health_check_conf,
-                    health_changed_callback,
-                )?;
-                Box::new(check)
-            },
+            HealthCheckSchema::Grpc => Box::new(GrpcHealthCheck::new(
+                name,
+                &health_check_conf,
+                health_changed_callback,
+            )),
             HealthCheckSchema::Ws | HealthCheckSchema::Wss => {
                 Box::new(WebSocketHealthCheck::new(
                     name,
@@ -159,13 +164,12 @@ pub fn new_health_check(
                     health_changed_callback,
                 ))
             },
-            _ => Box::new(new_tcp_health_check(
+            HealthCheckSchema::Tcp => Box::new(new_tcp_health_check(
                 name,
                 &health_check_conf,
                 health_changed_callback,
             )),
-        }
-    };
+        };
     Ok((health_check_conf, hc))
 }
 
@@ -211,6 +215,30 @@ mod tests {
     fn test_new_health_check() {
         let (conf, _) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse", None).unwrap();
         assert_eq!(Duration::from_secs(10), conf.check_frequency);
+
+        let err = new_health_check("upstreamname", "ftp://upstreamname", None)
+            .err()
+            .expect("ftp is not a health check schema");
+        assert_eq!(
+            true,
+            err.to_string()
+                .starts_with("Invalid health check schema: ftp"),
+            "{err}"
+        );
+    }
+
+    /// No `health_check` at all is `tcp://` with the documented defaults,
+    /// not pingora's bare check that flipped a backend on one failure.
+    #[test]
+    fn test_default_health_check() {
+        let (conf, _) = new_health_check("upstreamname", "", None).unwrap();
+        assert_eq!(HealthCheckSchema::Tcp, conf.schema);
+        assert_eq!(DEFAULT_CONNECTION_TIMEOUT, conf.connection_timeout);
+        assert_eq!(DEFAULT_CHECK_FREQUENCY, conf.check_frequency);
+        assert_eq!(DEFAULT_CONSECUTIVE_SUCCESS, conf.consecutive_success);
+        assert_eq!(DEFAULT_CONSECUTIVE_FAILURE, conf.consecutive_failure);
+        let tcp_check = new_tcp_health_check("", &conf, None);
+        assert_eq!(DEFAULT_CONSECUTIVE_FAILURE, tcp_check.consecutive_failure);
     }
 
     #[test]

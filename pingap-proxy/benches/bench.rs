@@ -1,5 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use pingap_proxy::ErrorTemplate;
+use pingap_proxy::{ErrorTemplate, error_response_header};
+use pingora::protocols::http::error_resp::gen_error_response;
 
 const TEMPLATE: &str = include_str!("../src/error.html");
 
@@ -21,5 +22,12 @@ fn bench_error_template(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_error_template);
+fn bench_error_response_header(c: &mut Criterion) {
+    let mut group = c.benchmark_group("error response header");
+    group.bench_function("generated", |b| b.iter(|| gen_error_response(404)));
+    group.bench_function("prebuilt", |b| b.iter(|| error_response_header(404)));
+    group.finish();
+}
+
+criterion_group!(benches, bench_error_template, bench_error_response_header);
 criterion_main!(benches);

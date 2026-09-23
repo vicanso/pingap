@@ -106,33 +106,52 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut tls = false;
         let mut parallel_check = false;
         let mut service = "".to_string();
-        // HttpHealthCheck
+        // A value that does not parse is an error, not the default: with a
+        // silent fallback `failure=three` or `check_frequency=5` (no unit)
+        // ran the check with settings the operator never asked for.
+        let invalid =
+            |key: &str, value: &str, message: String| Error::InvalidParam {
+                key: key.to_string(),
+                value: value.to_string(),
+                message,
+            };
+        let duration = |key: &str, value: &str| -> Result<Duration> {
+            let d = parse_duration(value)
+                .map_err(|e| invalid(key, value, e.to_string()))?;
+            if d.is_zero() {
+                return Err(invalid(
+                    key,
+                    value,
+                    "must be greater than zero".to_string(),
+                ));
+            }
+            Ok(d)
+        };
+        let count = |key: &str, value: &str| -> Result<usize> {
+            match value.parse::<usize>() {
+                Ok(0) => {
+                    Err(invalid(key, value, "must be at least 1".to_string()))
+                },
+                Ok(v) => Ok(v),
+                Err(e) => Err(invalid(key, value, e.to_string())),
+            }
+        };
         for (key, value) in value.query_pairs().into_iter() {
             match key.as_ref() {
                 "connection_timeout" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        connection_timeout = d;
-                    }
+                    connection_timeout = duration(&key, &value)?;
                 },
                 "read_timeout" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        read_timeout = d;
-                    }
+                    read_timeout = duration(&key, &value)?;
                 },
                 "check_frequency" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        check_frequency = d;
-                    }
+                    check_frequency = duration(&key, &value)?;
                 },
                 "success" => {
-                    if let Ok(v) = value.parse::<usize>() {
-                        consecutive_success = v;
-                    }
+                    consecutive_success = count(&key, &value)?;
                 },
                 "failure" => {
-                    if let Ok(v) = value.parse::<usize>() {
-                        consecutive_failure = v;
-                    }
+                    consecutive_failure = count(&key, &value)?;
                 },
                 "reuse" => {
                     reuse_connection = true;
@@ -211,5 +230,98 @@ mod tests {
             Duration::from_secs(1),
             http_check.peer_template.options.read_timeout.unwrap()
         );
+        // Not zero: that evicted a released connection at once.
+        assert_eq!(None, http_check.peer_template.options.idle_timeout);
+    }
+
+    #[test]
+    fn test_invalid_params_are_rejected() {
+        for (url, expect) in [
+            (
+                "http://h/p?connection_timeout=abc",
+                "connection_timeout=abc",
+            ),
+            ("http://h/p?check_frequency=5", "check_frequency=5"),
+            ("http://h/p?read_timeout=0s", "must be greater than zero"),
+            ("http://h/p?success=two", "success=two"),
+            ("http://h/p?failure=0", "must be at least 1"),
+        ] {
+            let err = HealthCheckConf::try_from(url).unwrap_err();
+            assert_eq!(true, err.to_string().contains(expect), "{url}: {err}");
+        }
+    }
+
+    /// With `reuse` the second check rides the first one's connection;
+    /// without it every check connects afresh.
+    #[tokio::test]
+    async fn test_reuse_keeps_the_connection() {
+        use pingora::lb::Backend;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A keep-alive HTTP server that counts the connections it accepts.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counter = connections.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let mut pending = Vec::new();
+                    loop {
+                        let n = stream.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        pending.extend_from_slice(&buf[..n]);
+                        // One response per complete request, and only then.
+                        while let Some(end) = pending
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                        {
+                            pending.drain(..end + 4);
+                            if stream
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                                )
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let run = |query: &'static str| {
+            let addr = addr.clone();
+            async move {
+                let (_, hc) = crate::new_health_check(
+                    "http",
+                    &format!(
+                        "http://{addr}/ping?connection_timeout=1s&read_timeout=1s{query}"
+                    ),
+                    None,
+                )
+                .unwrap();
+                let backend = Backend::new(&addr).unwrap();
+                hc.check(&backend).await.unwrap();
+                hc.check(&backend).await.unwrap();
+            }
+        };
+        run("&reuse").await;
+        assert_eq!(
+            1,
+            connections.load(Ordering::SeqCst),
+            "reuse must not reconnect"
+        );
+        run("").await;
+        assert_eq!(3, connections.load(Ordering::SeqCst));
     }
 }

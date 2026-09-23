@@ -41,9 +41,11 @@
 | `upstream_peer` | 选择后端并应用 location 的重试预算（`max_retries`、`max_retry_window`） |
 | `connected_to_upstream` | 记录复用、TCP 连接与 TLS 握手时序 |
 | `request_body_filter` | 强制 location 的 `client_max_body_size` |
-| `fail_to_proxy` | 用配置的模板渲染错误页 |
+| `fail_to_proxy` | 对失败分类，并用配置的模板渲染错误页（见[错误响应](#错误响应)） |
 
 插件在请求的**恰好一个**步骤运行。配置插件未实现的步骤是静默空操作——见 [pingap-plugin](../plugins/#生命周期步骤)。
+
+在 `EarlyRequest` 步骤直接应答的插件会在此结束请求。pingora 只允许请求在 `request_filter` 处停止，因此该步骤会识别已经发出的响应，后续步骤不会再叠加执行。
 
 ## 路由
 
@@ -61,6 +63,25 @@
 因此 `=/api/health` 胜过 `/api` 胜过 `~^/api/.*`，带主机限定的 location 胜过其他相同但不带主机的。
 
 无匹配时请求以 `404` 结束，错误信息为 `No matching location, host:<host>`。
+
+匹配到的 location 只有在通过 `client_max_body_size` 检查之后才把请求计入 `max_processing` 限制，计入的每个请求在结束时都会扣回（`429` 也一样）；被 `413` 拒绝的请求不会触碰计数。
+
+## 错误响应
+
+`fail_to_proxy` 把 pingora 错误转成状态码，并在客户端仍在时用错误模板渲染页面：
+
+| 失败 | 状态码 | 是否写页面 |
+| --- | --- | --- |
+| location 或插件以某状态码拒绝请求 | 该状态码 | 是 |
+| 上游连接、读或写失败 | 502 | 是 |
+| 下游读超时（`downstream_read_timeout`） | 408 | 是 |
+| 请求头格式错误 | 400 | 是 |
+| 客户端关闭连接、socket 读写失败或写超时 | 499 | 否 |
+| 其他 | 500 | 是 |
+
+`499` 是 nginx 表示客户端已离开的状态码。它会记录到访问日志与指标中，但不会向已断开或卡住的连接写任何内容，事件以 `info` 而非 `error` 级别记录，因为服务端无需修复什么。一旦最终响应头已发出，之后的失败（例如上游在响应体中途断开）保留客户端实际看到的状态码，且不会向响应体追加任何内容，与 pingora 自身错误响应的规则一致。
+
+每次失败只由 pingap 记录一条日志，包含客户端地址、方法、主机与路径、pingora 错误类型和状态码；pingora 对同一错误的日志被抑制。pingap 自身产生的状态码对应的响应头只构建一次然后克隆。
 
 ## Server 配置
 

@@ -19,6 +19,7 @@ use super::tracing::{
 };
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
+use ahash::AHashMap;
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
@@ -287,8 +288,62 @@ fn cache_variance(
     builder.finalize()
 }
 
-static HTTP_500_RESPONSE: LazyLock<ResponseHeader> =
-    LazyLock::new(|| error_resp::gen_error_response(500));
+/// Error response headers for the statuses pingap raises itself, built
+/// once; any other status is generated on demand the way pingora does it.
+static ERROR_RESPONSES: LazyLock<AHashMap<u16, ResponseHeader>> =
+    LazyLock::new(|| {
+        [400, 404, 408, 413, 429, 500, 502, 503]
+            .into_iter()
+            .map(|code| (code, error_resp::gen_error_response(code)))
+            .collect()
+    });
+
+/// The bare response header (status, server, date placeholder, cache
+/// control) for an error status, cloned from a prebuilt one when there is
+/// one.
+pub fn error_response_header(code: u16) -> ResponseHeader {
+    ERROR_RESPONSES
+        .get(&code)
+        .cloned()
+        .unwrap_or_else(|| error_resp::gen_error_response(code))
+}
+
+/// The status to answer a proxy failure with, and whether the client is
+/// gone, so that nothing can be sent to it.
+///
+/// pingora's own default writes nothing for a downstream read error, write
+/// error or closed connection; a write that timed out is treated the same
+/// here, since another write would only wait it out again. The `499` is
+/// nginx's code for a client that went away, kept for the access log and
+/// the metrics. A downstream read timeout is the client failing to send
+/// its request or body in time, which is `408` (it used to fall through to
+/// `500`).
+fn classify_proxy_error(e: &pingora::Error) -> (u16, bool) {
+    use pingora::ErrorType::*;
+    match e.etype() {
+        HTTPStatus(code) => (*code, false),
+        // spellchecker:off
+        _ => {
+            match e.esource() {
+                pingora::ErrorSource::Upstream => (502, false),
+                pingora::ErrorSource::Downstream => match e.etype() {
+                    ConnectionClosed | ReadError | WriteError
+                    | WriteTimedout => (499, true),
+                    ReadTimedout | ConnectTimedout => (408, false),
+                    // The request itself is malformed - e.g. `Connection`
+                    // nominating Host, which the upstream request policy
+                    // rejects. pingora's own default answers 400 here; 500
+                    // would file a client mistake under server errors.
+                    InvalidHTTPHeader => (400, false),
+                    _ => (500, false),
+                },
+                pingora::ErrorSource::Internal
+                | pingora::ErrorSource::Unset => (500, false),
+            }
+        },
+        // spellchecker:on
+    }
+}
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -684,11 +739,9 @@ impl Server {
             return Ok(());
         };
 
-        // only execute all subsequent operations after successtracingy matching location
+        // The name is all the access log and the per-location metrics
+        // need; they pair their own counters by it.
         ctx.upstream.location = location.name.clone();
-        ctx.upstream.location_instance = Some(location.clone());
-        ctx.upstream.max_retries = location.max_retries;
-        ctx.upstream.max_retry_window = location.max_retry_window;
         if let Some(captures) = captures {
             ctx.extend_variables(captures);
         }
@@ -705,12 +758,23 @@ impl Server {
             prom.on_location_matched(&ctx.upstream.location);
         }
 
-        // validate content length
+        // Rejected before the location counts the request. `logging` calls
+        // `on_response` for whatever `location_instance` holds, so the
+        // instance is only recorded once `on_request` is about to run: a
+        // 413 used to leave it in place without the matching increment,
+        // and every such request pushed the location's processing count
+        // one below the truth, loosening `max_processing` a little more.
         location
             .validate_content_length(header)
             .map_err(|e| new_internal_error(413, e))?;
 
-        // limit processing
+        ctx.upstream.location_instance = Some(location.clone());
+        ctx.upstream.max_retries = location.max_retries;
+        ctx.upstream.max_retry_window = location.max_retry_window;
+
+        // `on_request` counts the request before it can reject it with a
+        // 429, and the instance is recorded already, so that rejection is
+        // undone in `logging` like any completed request.
         let (accepted, processing) = location.on_request()?;
         ctx.state.location_accepted_count = accepted;
         ctx.state.location_processing_count = processing;
@@ -729,7 +793,9 @@ impl Server {
             grpc_web.init();
         }
 
-        // initialize plugins and execute
+        // initialize plugins and execute. A plugin answering here is
+        // honoured by `request_filter`, which is where pingora first lets
+        // the request stop; the flag is the response itself.
         ctx.plugins = location.plugins_for(self.plugin_provider.as_ref());
         let _ = self
             .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
@@ -1180,6 +1246,15 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> request filter");
         defer!(debug!(target: LOG_TARGET, "<-- request filter"););
+        // pingora cannot stop after early_request_filter, so a plugin that
+        // answered at the EarlyRequest step arrives here with its response
+        // already on the wire. Nothing else writes one before this point,
+        // and proxying on top of it would have pingora drop the second
+        // header with a warning and append the upstream body to the
+        // plugin's page.
+        if session.response_written().is_some() {
+            return Ok(true);
+        }
         // try to handle special requests in order
         // admin route
         if let Some(result) = self.handle_admin_request(session, ctx).await {
@@ -1346,12 +1421,14 @@ impl ProxyHttp for Server {
     fn fail_to_connect(
         &self,
         _session: &mut Session,
-        peer: &HttpPeer,
+        _peer: &HttpPeer,
         ctx: &mut Self::CTX,
         mut e: Box<pingora::Error>,
     ) -> Box<pingora::Error> {
+        // The peer is the one `upstream_peer` just returned, whose address
+        // it recorded on the context; no need to format it again.
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
-            upstream_instance.on_transport_failure(&peer.address().to_string());
+            upstream_instance.on_transport_failure(&ctx.upstream.address);
         }
         let Some(max_retries) = ctx.upstream.max_retries else {
             return e;
@@ -1626,10 +1703,10 @@ impl ProxyHttp for Server {
 
     /// Handles proxy failures and generates appropriate error responses.
     /// Error handling for:
-    /// - Upstream connection failures (502, 504)
-    /// - Client timeouts (408)
+    /// - Upstream failures (502)
+    /// - Downstream read timeouts (408)
     /// - Malformed request headers (400)
-    /// - Client disconnections (499)
+    /// - A client that went away (499, nothing is written)
     /// Generates error pages using configured template
     async fn fail_to_proxy(
         &self,
@@ -1644,45 +1721,79 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- fail to proxy"););
         let server_session = session.as_mut();
 
-        let code = match e.etype() {
-            pingora::HTTPStatus(code) => *code,
-            // spellchecker:off
-            _ => match e.esource() {
-                pingora::ErrorSource::Upstream => 502,
-                pingora::ErrorSource::Downstream => match e.etype() {
-                    pingora::ErrorType::ConnectTimedout => 408,
-                    // client close the connection
-                    pingora::ErrorType::ConnectionClosed => 499,
-                    // The request itself is malformed - e.g. `Connection`
-                    // nominating Host, which the upstream request policy
-                    // rejects. pingora's own default answers 400 here; 500
-                    // would file a client mistake under server errors.
-                    pingora::ErrorType::InvalidHTTPHeader => 400,
-                    _ => 500,
-                },
-                pingora::ErrorSource::Internal
-                | pingora::ErrorSource::Unset => 500,
-            },
-            // spellchecker:on
-        };
-        let mut resp = match code {
-            502 => error_resp::HTTP_502_RESPONSE.clone(),
-            400 => error_resp::HTTP_400_RESPONSE.clone(),
-            500 => HTTP_500_RESPONSE.clone(),
-            _ => error_resp::gen_error_response(code),
-        };
-
+        let (code, client_gone) = classify_proxy_error(e);
         let error_type = e.etype().as_str();
+        // A final response header is already out (pingora counts a 101 as
+        // final too): the status the client saw stays on record, and no
+        // page goes after it, the rule of pingora's own
+        // `write_error_response`. Writing anyway would have the header
+        // dropped with a warning and the page appended to the body.
+        let response_started =
+            server_session.response_written().is_some_and(|resp| {
+                !resp.status.is_informational() || resp.status == 101
+            });
+        if !response_started {
+            ctx.state.status = Some(
+                StatusCode::from_u16(code)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            );
+        }
+
+        let req_header = server_session.req_header();
+        let user_agent = req_header
+            .headers
+            .get(http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok());
+        let method = req_header.method.as_str();
+        let host = pingap_core::get_host(req_header).unwrap_or_default();
+        let path = req_header.uri.path();
+        // The one line per failure; pingora's own is suppressed, see
+        // `suppress_error_log`.
+        if client_gone {
+            // Nothing to fix on this side, and nobody left to answer.
+            info!(
+                target: LOG_TARGET,
+                error = %e,
+                remote_addr = ctx.conn.remote_addr,
+                client_ip = ctx.conn.client_ip,
+                user_agent,
+                error_type,
+                method,
+                host,
+                path,
+                status = code,
+                "client gone, no response sent"
+            );
+        } else {
+            error!(
+                target: LOG_TARGET,
+                error = %e,
+                remote_addr = ctx.conn.remote_addr,
+                client_ip = ctx.conn.client_ip,
+                user_agent,
+                error_type,
+                method,
+                host,
+                path,
+                status = code,
+                response_started,
+                "fail to proxy"
+            );
+        }
+        if client_gone || response_started {
+            return FailToProxy {
+                error_code: code,
+                can_reuse_downstream: false,
+            };
+        }
+
+        let mut resp = error_response_header(code);
         let content = self.error_template.render(
             pingap_util::get_pkg_version(),
             &e.to_string(),
             error_type,
         );
         let buf = Bytes::from(content);
-        ctx.state.status = Some(
-            StatusCode::from_u16(code)
-                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-        );
         let content_type = if self.error_template.is_json() {
             "application/json; charset=utf-8"
         } else {
@@ -1692,21 +1803,6 @@ impl ProxyHttp for Server {
         let _ = resp.insert_header("X-Pingap-EType", error_type);
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
-
-        let user_agent = server_session
-            .get_header(http::header::USER_AGENT)
-            .and_then(|v| v.to_str().ok());
-
-        error!(
-            target: LOG_TARGET,
-            error = %e,
-            remote_addr = ctx.conn.remote_addr,
-            client_ip = ctx.conn.client_ip,
-            user_agent,
-            error_type,
-            path = server_session.req_header().uri.path(),
-            "fail to proxy"
-        );
 
         // TODO: we shouldn't be closing downstream connections on internally generated errors
         // and possibly other upstream connect() errors (connection refused, timeout, etc)
@@ -1732,6 +1828,19 @@ impl ProxyHttp for Server {
             error_code: code,
             can_reuse_downstream: false,
         }
+    }
+    /// pingora logs every proxy failure itself through the `log` crate,
+    /// which pingap bridges into its own output, so each one showed up
+    /// twice: once from `fail_to_proxy` with the client, the request and
+    /// the error type, and once more from pingora with only the request
+    /// summary. The first line covers the second, so pingora's is dropped.
+    fn suppress_error_log(
+        &self,
+        _session: &Session,
+        _ctx: &Self::CTX,
+        _error: &pingora::Error,
+    ) -> bool {
+        true
     }
     /// Performs request logging and cleanup after request completion.
     /// Handles:
@@ -1843,6 +1952,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, SystemTime};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio_test::io::Builder;
 
     #[test]
@@ -1869,13 +1979,7 @@ mod tests {
         assert_eq!("1.3", result.tls_version.unwrap_or_default());
     }
 
-    /// Creates a new test server instance with default configuration.
-    /// Pass a plugin provider to exercise the plugin chain; the default one
-    /// resolves nothing, which is enough for tests that ignore plugins.
-    fn new_server_with(
-        plugin_provider: Option<Arc<dyn PluginProvider>>,
-    ) -> Server {
-        let toml_data = r###"
+    const TEST_TOML: &str = r###"
 [upstreams.charts]
 # upstream address list
 addrs = ["127.0.0.1:5000"]
@@ -1935,6 +2039,14 @@ value = "PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk="
 category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
+
+    /// Creates a test server from `toml_data` (normally `TEST_TOML`).
+    /// Pass a plugin provider to exercise the plugin chain; the default one
+    /// resolves nothing, which is enough for tests that ignore plugins.
+    fn new_server_from(
+        toml_data: &str,
+        plugin_provider: Option<Arc<dyn PluginProvider>>,
+    ) -> Server {
         let pingap_conf = PingapConfig::new(toml_data.as_ref(), false).unwrap();
 
         let location = Arc::new(
@@ -2033,8 +2145,36 @@ value = 'proxy_set_headers = ["name:value"]'
         .unwrap()
     }
 
+    fn new_server_with(
+        plugin_provider: Option<Arc<dyn PluginProvider>>,
+    ) -> Server {
+        new_server_from(TEST_TOML, plugin_provider)
+    }
+
     fn new_server() -> Server {
         new_server_with(None)
+    }
+
+    /// The two halves of an in-memory connection carrying `request`, for
+    /// the paths that write a response. The `tokio_test` mock used
+    /// elsewhere panics on any write it was not told to expect, which is
+    /// what the "nothing is written" tests rely on.
+    async fn new_duplex_session(
+        request: &str,
+    ) -> (Session, tokio::io::DuplexStream) {
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+        (session, client)
+    }
+
+    /// Everything the server wrote; `session` has to be dropped first so
+    /// the client sees the end of the stream.
+    async fn read_response(mut client: tokio::io::DuplexStream) -> String {
+        let mut buf = vec![];
+        client.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
     }
 
     #[tokio::test]
@@ -2609,5 +2749,278 @@ value = 'proxy_set_headers = ["name:value"]'
                 path
             );
         }
+    }
+
+    /// A location's processing count is decremented in `logging` for every
+    /// request that recorded the instance, so the instance must only be
+    /// recorded once the request has been counted: a 413 used to leave the
+    /// count one too low each time, and a 429 has to be undone the same
+    /// way as any completed request.
+    #[tokio::test]
+    async fn test_rejected_requests_keep_location_counters_straight() {
+        let toml = TEST_TOML.replace(
+            "weight = 1024",
+            "weight = 1024\nclient_max_body_size = \"1kb\"\nmax_processing = 1",
+        );
+        let server = new_server_from(&toml, None);
+        let location = server.location_provider.get("lo").unwrap();
+        async fn run(
+            server: &Server,
+            request: &str,
+        ) -> (Session, Ctx, pingora::Result<()>) {
+            let mock_io = Builder::new().read(request.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result =
+                server.early_request_filter(&mut session, &mut ctx).await;
+            (session, ctx, result)
+        }
+
+        // Too large a body: rejected before the location counts it, so
+        // there is nothing for `logging` to undo.
+        let (mut session, mut ctx, result) = run(
+            &server,
+            "POST /vicanso/pingap HTTP/1.1\r\nContent-Length: 2048\r\n\r\n",
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(
+            true,
+            matches!(err.etype(), pingora::ErrorType::HTTPStatus(413)),
+            "{err}"
+        );
+        assert_eq!("lo", ctx.upstream.location.as_ref());
+        assert_eq!(true, ctx.upstream.location_instance.is_none());
+        assert_eq!(0, location.stats().processing);
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(0, location.stats().processing);
+
+        // Over `max_processing`: counted, rejected, undone once logged.
+        let (mut first_session, mut first_ctx, result) =
+            run(&server, "GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        result.unwrap();
+        assert_eq!(1, location.stats().processing);
+        let (mut session, mut ctx, result) =
+            run(&server, "GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        let err = result.unwrap_err();
+        assert_eq!(
+            true,
+            matches!(err.etype(), pingora::ErrorType::HTTPStatus(429)),
+            "{err}"
+        );
+        assert_eq!(true, ctx.upstream.location_instance.is_some());
+        assert_eq!(2, location.stats().processing);
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(1, location.stats().processing);
+        server
+            .logging(&mut first_session, None, &mut first_ctx)
+            .await;
+        assert_eq!(0, location.stats().processing);
+    }
+
+    /// Answers at the EarlyRequest step and counts every call at any step.
+    struct EarlyResponder {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Plugin for EarlyResponder {
+        async fn handle_request(
+            &self,
+            step: PluginStep,
+            _session: &mut Session,
+            _ctx: &mut Ctx,
+        ) -> pingora::Result<RequestPluginResult> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(if step == PluginStep::EarlyRequest {
+                RequestPluginResult::Respond(pingap_core::HttpResponse::text(
+                    "early",
+                ))
+            } else {
+                RequestPluginResult::Continue
+            })
+        }
+    }
+
+    /// pingora only lets a request stop at `request_filter`, so a response
+    /// sent by an EarlyRequest plugin has to be recognised there: the
+    /// request is reported as handled, and no later step runs on top of
+    /// the answer.
+    #[tokio::test]
+    async fn test_early_plugin_response_is_final() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let server = new_server_with(Some(Arc::new(CountingPluginProvider {
+            plugin: Arc::new(EarlyResponder {
+                calls: calls.clone(),
+            }),
+        })));
+        let (mut session, client) =
+            new_duplex_session("GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        server
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(true, session.response_written().is_some());
+        assert_eq!(
+            true,
+            server.request_filter(&mut session, &mut ctx).await.unwrap()
+        );
+        assert_eq!(1, calls.load(Ordering::SeqCst));
+        assert_eq!(Some(StatusCode::OK), ctx.state.status);
+        drop(session);
+        let response = read_response(client).await;
+        assert_eq!(
+            true,
+            response.starts_with("HTTP/1.1 200 OK\r\n"),
+            "{response}"
+        );
+        assert_eq!(true, response.ends_with("early"), "{response}");
+    }
+
+    #[test]
+    fn test_classify_proxy_error() {
+        use pingora::ErrorType::*;
+        let down = pingora::Error::new_down;
+        let up = pingora::Error::new_up;
+        assert_eq!(
+            (404, false),
+            classify_proxy_error(&new_internal_error(404, "no route"))
+        );
+        assert_eq!((502, false), classify_proxy_error(&up(ConnectRefused)));
+        // An upstream that went away mid-transfer is still ours to report.
+        assert_eq!((502, false), classify_proxy_error(&up(ReadError)));
+        assert_eq!((499, true), classify_proxy_error(&down(ConnectionClosed)));
+        assert_eq!((499, true), classify_proxy_error(&down(ReadError)));
+        assert_eq!((499, true), classify_proxy_error(&down(WriteError)));
+        assert_eq!((499, true), classify_proxy_error(&down(WriteTimedout)));
+        assert_eq!((408, false), classify_proxy_error(&down(ReadTimedout)));
+        assert_eq!(
+            (400, false),
+            classify_proxy_error(&down(InvalidHTTPHeader))
+        );
+        assert_eq!((500, false), classify_proxy_error(&down(UnknownError)));
+        assert_eq!(
+            (500, false),
+            classify_proxy_error(&pingora::Error::new_in(InternalError))
+        );
+    }
+
+    #[test]
+    fn test_error_response_header() {
+        // Prebuilt or generated, the header is the same one.
+        for code in [404, 418] {
+            let prebuilt = error_response_header(code);
+            let generated = error_resp::gen_error_response(code);
+            assert_eq!(generated.status, prebuilt.status);
+            assert_eq!(generated.headers, prebuilt.headers);
+        }
+    }
+
+    /// The connection is dead or stuck: nothing is written (the mock has no
+    /// write expectation and panics on one), and the access log gets a 499.
+    #[tokio::test]
+    async fn test_dead_client_gets_no_error_page() {
+        use pingora::ErrorType::*;
+        let server = new_server();
+        for error_type in
+            [ConnectionClosed, ReadError, WriteError, WriteTimedout]
+        {
+            let mock_io = Builder::new()
+                .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result = server
+                .fail_to_proxy(
+                    &mut session,
+                    &pingora::Error::new_down(error_type),
+                    &mut ctx,
+                )
+                .await;
+            assert_eq!(499, result.error_code);
+            assert_eq!(false, result.can_reuse_downstream);
+            assert_eq!(
+                Some(StatusCode::from_u16(499).unwrap()),
+                ctx.state.status
+            );
+            assert_eq!(true, session.response_written().is_none());
+        }
+    }
+
+    /// A downstream read timeout is the client's slowness: 408, with the
+    /// page from the template.
+    #[tokio::test]
+    async fn test_read_timeout_gets_408_page() {
+        let server = new_server();
+        let (mut session, client) = new_duplex_session(
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: example.com\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        let result = server
+            .fail_to_proxy(
+                &mut session,
+                &pingora::Error::new_down(pingora::ErrorType::ReadTimedout),
+                &mut ctx,
+            )
+            .await;
+        assert_eq!(408, result.error_code);
+        assert_eq!(Some(StatusCode::REQUEST_TIMEOUT), ctx.state.status);
+        drop(session);
+        let response = read_response(client).await;
+        assert_eq!(
+            true,
+            response.starts_with("HTTP/1.1 408 Request Timeout\r\n"),
+            "{response}"
+        );
+        assert_eq!(
+            true,
+            response.contains("X-Pingap-EType: ReadTimedout\r\n"),
+            "{response}"
+        );
+        assert_eq!(
+            true,
+            response.contains("Content-Type: text/html; charset=utf-8\r\n"),
+            "{response}"
+        );
+    }
+
+    /// Once a final header is out the rest of the response is not ours to
+    /// replace: the status stays what the client saw, and no page is
+    /// appended to the body.
+    #[tokio::test]
+    async fn test_no_error_page_after_response_started() {
+        let server = new_server();
+        let (mut session, client) =
+            new_duplex_session("GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        header.insert_header("Content-Length", "100").unwrap();
+        session
+            .as_mut()
+            .write_response_header(Box::new(header))
+            .await
+            .unwrap();
+        ctx.state.status = Some(StatusCode::OK);
+        let result = server
+            .fail_to_proxy(
+                &mut session,
+                &pingora::Error::new_up(pingora::ErrorType::ReadError),
+                &mut ctx,
+            )
+            .await;
+        assert_eq!(502, result.error_code);
+        assert_eq!(Some(StatusCode::OK), ctx.state.status);
+        drop(session);
+        let response = read_response(client).await;
+        assert_eq!(
+            true,
+            response.starts_with("HTTP/1.1 200 OK\r\n"),
+            "{response}"
+        );
+        assert_eq!(false, response.contains("ReadError"), "{response}");
     }
 }

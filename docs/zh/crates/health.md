@@ -1,6 +1,6 @@
 # Pingap 健康检查
 
-本 crate 为 Pingap 提供健康检查能力。支持 TCP、HTTP/S 与 gRPC 健康检查，通过类 URL 字符串配置。
+本 crate 为 Pingap 提供健康检查能力。支持 TCP、HTTP/S、gRPC 与 WebSocket 健康检查，通过类 URL 字符串配置。
 
 ## 用法
 
@@ -32,10 +32,14 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 - `check_frequency`：检查间隔。默认：`10s`。
 - `success`：连续成功次数后标记健康。默认：`1`。
 - `failure`：连续失败次数后标记不健康。默认：`2`。
-- `reuse`：存在则复用连接。
-- `tls`：存在则为 gRPC 启用 TLS。
+- `reuse`：存在则 HTTP/S 检查把连接保留在 pingora 的连接池中供下次检查复用，而不是每次重新连接。
+- `tls`：存在则 gRPC 检查使用 TLS，SNI 为 URL 中的主机名。不校验证书，与 `https://`、`wss://` 一致。
 - `service`：gRPC 健康检查的服务名。
 - `parallel`：存在则并行执行健康检查。
+
+无法解析的值是配置错误，不会静默回退到默认值：没有单位的时长（`check_frequency=5`）、为零的时长、`success=0` 或 `failure=0` 都会在创建 upstream 时被拒绝，`pingap -t` 会报告出来。
+
+没有配置 `health_check` 的 upstream 等同于不带参数的 `tcp://`，使用上述默认值：连续两次连接失败标记不健康，一次成功即恢复。
 
 ### 示例
 
@@ -62,6 +66,8 @@ grpc://my-grpc-service:50051?service=my.service.v1.MyService&tls
 ```
 
 对 `my-grpc-service:50051` 做 gRPC 健康检查，服务名为 `my.service.v1.MyService`，使用 TLS。
+
+检查即 `grpc.health.v1.Health/Check` 调用，通过 pingora 自身的 HTTP/2 客户端发出（明文 h2，或带 `tls` 时走 TLS），沿用上面的连接与读超时；请求和响应由本 crate 自行编解码，运行时不依赖任何 gRPC 库。后端必须对该服务回复 `SERVING`（不填 `service` 表示询问整个服务器的健康状态）。`NOT_SERVING`、服务器不认识的服务、调用失败或后端根本不说 gRPC，都算检查失败。到每个后端的 HTTP/2 连接会保持打开，后续检查复用它。
 
 #### WebSocket 健康检查
 
