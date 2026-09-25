@@ -14,7 +14,7 @@
 | `set_headers` | string[] | — | `Name: value` — 替换任何已有值。 |
 | `set_headers_not_exists` | string[] | — | `Name: value` — 仅在头不存在时设置。 |
 | `remove_headers` | string[] | — | 要删除的头名。 |
-| `rename_headers` | string[] | — | `Old-Name: New-Name` — 移动值。 |
+| `rename_headers` | string[] | — | `Old-Name: New-Name` — 移动该头的全部值。 |
 | `mode` | string | *(response)* | `upstream` 改为改写上游响应头。 |
 
 操作始终按以下顺序执行，与声明顺序无关：
@@ -80,5 +80,5 @@ set_headers = ["Cache-Control: public, max-age=3600"]
 ## 使用说明
 
 - `remove_headers` 与 `rename_headers` 的名称必须是合法 HTTP 头名，否则启动失败，`pingap -t` 会报告。
-- `rename_headers` 向目标追加，因此重命名到已存在的头会产生两个值，而非覆盖。
+- `rename_headers` 向目标追加，因此重命名到已存在的头会产生两个值，而非覆盖。`Set-Cookie` 这类多值头会连同全部值一起移动。
 - 无法解析的动态值回退为字面配置字符串，因此 `$hostnam` 这类拼写错误会原样发出。

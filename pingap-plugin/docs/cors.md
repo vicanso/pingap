@@ -12,7 +12,7 @@ attaches the CORS headers to real responses.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `cors`. |
 | `path` | string | — | Regex; only matching paths get CORS treatment. Unset means all paths. |
-| `allow_origin` | string | `*` | Value for `Access-Control-Allow-Origin`. Supports `$http_origin` to mirror the request. |
+| `allow_origin` | string | `*` | Value for `Access-Control-Allow-Origin`. Supports `$http_origin` to mirror the request, in which case `Vary: Origin` is added as well and a request without an `Origin` gets no CORS headers. |
 | `allow_methods` | string | `GET, POST, PUT, PATCH, DELETE, OPTIONS` | Value for `Access-Control-Allow-Methods`. |
 | `allow_headers` | string | — | Value for `Access-Control-Allow-Headers`. |
 | `allow_credentials` | bool | `false` | Emit `Access-Control-Allow-Credentials: true`. |

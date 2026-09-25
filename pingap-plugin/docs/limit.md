@@ -16,11 +16,11 @@ Either one can be keyed by client IP, a header, a cookie or a query parameter.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `limit`. |
-| `type` | string | `rate` | `inflight` for concurrency, anything else for rate. |
-| `tag` | string | `ip` | `ip`, `header`, `cookie` or `query`. |
-| `key` | string | — | Name of the header / cookie / query parameter. Ignored when `tag = "ip"`. |
-| `max` | int | `0` | Allowed requests per `interval` (rate), or concurrent requests (inflight). |
-| `interval` | duration | `10s` | Rate window. Ignored by `inflight`. |
+| `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
+| `tag` | string | `ip` | `ip`, `header`, `cookie` or `query`. Anything else is a configuration error. |
+| `key` | string | — | Name of the header / cookie / query parameter. **Required** unless `tag = "ip"`. |
+| `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
+| `interval` | duration | `10s` | Rate window, greater than zero. Ignored by `inflight`. |
 | `weight` | int | `50` | 0–100. How much the current window counts versus the previous one. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
 
@@ -78,7 +78,7 @@ step = "proxy_upstream"
 | --- | --- |
 | Key value is missing or empty | **Not limited** — the request passes |
 | Within limit | `Continue` |
-| Over limit | `429 Too Many Requests`, body `Plugin limit, exceed limit <value>/<max>` |
+| Over limit | `429 Too Many Requests`, body `Plugin limit, exceed limit <value>/<max>`; a `rate` limiter adds `Retry-After: <interval in seconds>` |
 
 ## Usage notes
 

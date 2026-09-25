@@ -15,11 +15,11 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `limit`。 |
-| `type` | string | `rate` | `inflight` 为并发，其他为速率。 |
-| `tag` | string | `ip` | `ip`、`header`、`cookie` 或 `query`。 |
-| `key` | string | — | 请求头 / Cookie / 查询参数名。`tag = "ip"` 时忽略。 |
-| `max` | int | `0` | 每个 `interval` 允许的请求数（rate），或并发数（inflight）。 |
-| `interval` | duration | `10s` | 速率窗口。`inflight` 忽略。 |
+| `type` | string | `rate` | `rate` 或 `inflight`。其他值是配置错误。 |
+| `tag` | string | `ip` | `ip`、`header`、`cookie` 或 `query`。其他值是配置错误。 |
+| `key` | string | — | header / cookie / query 参数名。除 `tag = "ip"` 外**必填**。 |
+| `max` | int | — | **必填。**每个 `interval` 允许的请求数（rate），或并发数（inflight）。负数是配置错误。 |
+| `interval` | duration | `10s` | 速率窗口，必须大于零。`inflight` 忽略。 |
 | `weight` | int | `50` | 0–100。当前窗口相对上一窗口的权重。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
 
@@ -71,7 +71,7 @@ step = "proxy_upstream"
 | --- | --- |
 | 键值缺失或为空 | **不限流** — 请求放行 |
 | 未超限 | `Continue` |
-| 超限 | `429 Too Many Requests`，正文 `Plugin limit, exceed limit <value>/<max>` |
+| 超限 | `429 Too Many Requests`，正文 `Plugin limit, exceed limit <value>/<max>`；`rate` 限流器附带 `Retry-After: <interval 秒数>` |
 
 ## 使用说明
 

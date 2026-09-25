@@ -31,14 +31,12 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
-use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
 use tracing::error;
@@ -46,6 +44,143 @@ use tracing::error;
 const PLUGIN_ID: &str = "_jwt_";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// The token's `alg`. `typ` is optional in RFC 7519; this struct used to
+/// require it, so a token without one was refused as unsigned.
+#[derive(Debug, Default, Deserialize)]
+struct JwtHeader {
+    alg: String,
+}
+
+/// The claims a verified token is checked against; everything else is
+/// ignored. Both are numbers in the spec, and some issuers write them as
+/// floats, which a `u64` field would refuse.
+#[derive(Debug, Default, Deserialize)]
+struct Claims {
+    exp: Option<f64>,
+    nbf: Option<f64>,
+}
+
+/// The claims type for the `jsonwebtoken` paths: those verify the signature
+/// and the time claims themselves, and nothing here reads the rest.
+#[derive(Deserialize)]
+struct NoClaims {}
+
+/// Why an HMAC token was refused; the body of the 401 says which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HmacRejection {
+    Format,
+    Signature,
+    Expired,
+    NotYetValid,
+}
+
+impl HmacRejection {
+    fn message(self) -> Bytes {
+        Bytes::from_static(match self {
+            Self::Format => b"Jwt authorization format is invalid",
+            Self::Signature => b"Jwt authorization is invalid",
+            Self::Expired => b"Jwt authorization is expired",
+            Self::NotYetValid => b"Jwt authorization is not yet valid",
+        })
+    }
+}
+
+/// The token after an RFC 6750 `Bearer` scheme, which is case-insensitive;
+/// a value without the scheme is taken as the bare token.
+fn strip_bearer(value: &str) -> &str {
+    match value.split_once(' ') {
+        Some((scheme, token)) if scheme.eq_ignore_ascii_case("bearer") => {
+            token.trim_start()
+        },
+        _ => value,
+    }
+}
+
+/// Whether `signature` is the base64url of `hash`, compared in constant
+/// time; `encoded` is scratch for the encoding, sized for HMAC-SHA512.
+fn signature_matches(
+    hash: &[u8],
+    signature: &str,
+    encoded: &mut [u8; 86],
+) -> bool {
+    match URL_SAFE_NO_PAD.encode_slice(hash, encoded) {
+        Ok(len) => {
+            pingap_core::constant_time_eq(&encoded[..len], signature.as_bytes())
+        },
+        Err(_) => false,
+    }
+}
+
+/// Verifies an HMAC token: its shape, the signature under `secret` with the
+/// algorithm its header names (which must equal `pinned_alg` when that is
+/// set), then `exp` and `nbf` against `now`.
+///
+/// The signed part is a prefix of the token itself and the signature is
+/// compared as encoded bytes, so nothing here copies the token; the payload
+/// is read into the two claims rather than a full JSON tree.
+fn verify_hmac_token(
+    token: &str,
+    secret: &[u8],
+    pinned_alg: &str,
+    now: u64,
+) -> std::result::Result<(), HmacRejection> {
+    let Some((header, rest)) = token.split_once('.') else {
+        return Err(HmacRejection::Format);
+    };
+    let Some((payload, signature)) = rest.split_once('.') else {
+        return Err(HmacRejection::Format);
+    };
+    if signature.contains('.') {
+        return Err(HmacRejection::Format);
+    }
+    let jwt_header: JwtHeader = URL_SAFE_NO_PAD
+        .decode(header)
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    let alg = jwt_header.alg.as_str();
+    // An explicitly configured algorithm is pinned: a token must not
+    // downgrade HS512 to HS256 just by saying so in its own header. An
+    // unset `algorithm` keeps accepting either, since that is what existing
+    // configurations rely on.
+    if !pinned_alg.is_empty() && alg != pinned_alg {
+        return Err(HmacRejection::Signature);
+    }
+    let content = &token.as_bytes()[..header.len() + 1 + payload.len()];
+    let mut encoded = [0u8; 86];
+    let valid = match alg {
+        "HS256" => {
+            let hash = hmac_sha256::HMAC::mac(content, secret);
+            signature_matches(&hash, signature, &mut encoded)
+        },
+        "HS512" => {
+            let hash = hmac_sha512::HMAC::mac(content, secret);
+            signature_matches(&hash, signature, &mut encoded)
+        },
+        // Unknown / unsupported algorithms (including "none") are rejected
+        // rather than silently falling back to HS256.
+        _ => false,
+    };
+    if !valid {
+        return Err(HmacRejection::Signature);
+    }
+    // Signed by us or by someone holding the secret, so a payload that is
+    // not a JSON object is a broken token rather than a lenient one.
+    let claims: Claims = URL_SAFE_NO_PAD
+        .decode(payload)
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .ok_or(HmacRejection::Format)?;
+    let now = now as f64;
+    if claims.exp.is_some_and(|exp| exp < now) {
+        return Err(HmacRejection::Expired);
+    }
+    if claims.nbf.is_some_and(|nbf| nbf > now) {
+        return Err(HmacRejection::NotYetValid);
+    }
+    Ok(())
+}
 
 /// JwtAuth struct holds configuration for JWT authentication and validation.
 ///
@@ -103,10 +238,11 @@ pub struct JwtAuth {
     /// HS512 provides stronger hashing but may be slower
     algorithm: String,
 
-    /// Pre-parsed decoding key + algorithm for asymmetric verification
-    /// (RS*/ES*/PS*). `Some` when an asymmetric `algorithm` and `public_key`
-    /// are configured; HMAC algorithms leave this `None` and use `secret`.
-    decoding_key: Option<(DecodingKey, Algorithm)>,
+    /// Pre-parsed decoding key and the validation pinned to its algorithm,
+    /// for asymmetric verification (RS*/ES*/PS*). `Some` when an asymmetric
+    /// `algorithm` and `public_key` are configured; HMAC algorithms leave
+    /// this `None` and use `secret`.
+    decoding_key: Option<(DecodingKey, Validation)>,
 
     /// Remote JWKS source (`Some` when `jwks_url` is configured). Verifies
     /// asymmetric tokens against keys fetched from the issuer, selected by
@@ -132,7 +268,7 @@ pub struct JwtAuth {
 fn build_asymmetric_key(
     algorithm: &str,
     public_key: &str,
-) -> Result<Option<(DecodingKey, Algorithm)>> {
+) -> Result<Option<(DecodingKey, Validation)>> {
     let Ok(alg) = Algorithm::from_str(algorithm) else {
         // Unknown or empty algorithm -> treated as HMAC (secret) below.
         return Ok(None);
@@ -168,13 +304,46 @@ fn build_asymmetric_key(
         category: PluginCategory::Jwt.to_string(),
         message: format!("invalid public_key: {e}"),
     })?;
-    Ok(Some((key, alg)))
+    Ok(Some((key, jwks_validation(alg))))
 }
 
-/// Cached JWKS decoding keys (`kid` -> key) plus the fetch time.
+/// One key of a JWKS. `kid` is optional in RFC 7517, and a single-key set
+/// often leaves it out; such keys used to be dropped at fetch time.
+struct JwkEntry {
+    kid: Option<String>,
+    key: DecodingKey,
+}
+
+/// Cached JWKS decoding keys plus the fetch time.
 struct JwksCache {
-    keys: HashMap<String, DecodingKey>,
+    keys: Vec<JwkEntry>,
     fetched_at: Instant,
+}
+
+impl JwksCache {
+    /// The keys a token may have been signed with: those under its `kid`,
+    /// or every key when it names none.
+    fn candidates<'a>(
+        &'a self,
+        kid: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a DecodingKey> {
+        self.keys
+            .iter()
+            .filter(move |entry| {
+                kid.is_none_or(|kid| entry.kid.as_deref() == Some(kid))
+            })
+            .map(|entry| &entry.key)
+    }
+
+    fn verify(
+        &self,
+        token: &str,
+        kid: Option<&str>,
+        validation: &Validation,
+    ) -> bool {
+        self.candidates(kid)
+            .any(|key| decode::<NoClaims>(token, key, validation).is_ok())
+    }
 }
 
 /// A remote JWKS endpoint with a TTL cache, single-flight refresh and key
@@ -199,15 +368,16 @@ impl JwksSource {
             .await
             .map_err(|e| e.to_string())?;
         let set = resp.json::<JwkSet>().await.map_err(|e| e.to_string())?;
-        let mut keys = HashMap::new();
-        for jwk in &set.keys {
-            let Some(kid) = jwk.common.key_id.clone() else {
-                continue;
-            };
-            if let Ok(dk) = DecodingKey::from_jwk(jwk) {
-                keys.insert(kid, dk);
-            }
-        }
+        let keys = set
+            .keys
+            .iter()
+            .filter_map(|jwk| {
+                DecodingKey::from_jwk(jwk).ok().map(|key| JwkEntry {
+                    kid: jwk.common.key_id.clone(),
+                    key,
+                })
+            })
+            .collect();
         Ok(JwksCache {
             keys,
             fetched_at: Instant::now(),
@@ -233,19 +403,8 @@ impl JwksSource {
         }
     }
 
-    fn key_for(&self, kid: &str, allow_stale: bool) -> Option<DecodingKey> {
-        let cache = self.cache.load_full()?;
-        if !allow_stale && cache.fetched_at.elapsed() > self.ttl {
-            return None;
-        }
-        cache.keys.get(kid).cloned()
-    }
-
     async fn verify(&self, token: &str) -> bool {
         let Ok(header) = decode_header(token) else {
-            return false;
-        };
-        let Some(kid) = header.kid else {
             return false;
         };
         // Only asymmetric algorithms are accepted, so a token cannot be signed
@@ -256,20 +415,20 @@ impl JwksSource {
             return false;
         }
         let validation = jwks_validation(header.alg);
+        let kid = header.kid.as_deref();
         // Fresh cache hit: verify without touching the network.
-        if let Some(key) = self.key_for(&kid, false)
-            && decode::<serde_json::Value>(token, &key, &validation).is_ok()
+        if let Some(cache) = self.cache.load_full()
+            && cache.fetched_at.elapsed() <= self.ttl
+            && cache.verify(token, kid, &validation)
         {
             return true;
         }
         // Miss / expired / rotated kid: refresh (rate-limited), then retry with
         // whatever we have (including a stale cache if the refetch failed).
         self.refresh().await;
-        if let Some(key) = self.key_for(&kid, true) {
-            return decode::<serde_json::Value>(token, &key, &validation)
-                .is_ok();
-        }
-        false
+        self.cache
+            .load_full()
+            .is_some_and(|cache| cache.verify(token, kid, &validation))
     }
 }
 
@@ -443,15 +602,6 @@ impl JwtAuth {
     }
 }
 
-/// Header structure for JWT tokens containing algorithm and type information
-#[derive(Debug, Default, Deserialize, Clone, Serialize)]
-struct JwtHeader {
-    alg: String,
-    // spellchecker:off
-    typ: String,
-    // spellchecker:on
-}
-
 #[async_trait]
 impl Plugin for JwtAuth {
     /// Returns unique identifier for this plugin instance
@@ -484,14 +634,10 @@ impl Plugin for JwtAuth {
             return Ok(RequestPluginResult::Skipped);
         }
         let value = if let Some(key) = &self.header {
-            let value = pingap_core::get_req_header_value(req_header, key)
-                .unwrap_or_default();
-            let bearer = "Bearer ";
-            if value.starts_with(bearer) {
-                value.substring(bearer.len(), value.len())
-            } else {
-                value
-            }
+            strip_bearer(
+                pingap_core::get_req_header_value(req_header, key)
+                    .unwrap_or_default(),
+            )
         } else if let Some(key) = &self.cookie {
             pingap_core::get_cookie_value(req_header, key).unwrap_or_default()
         } else if let Some(key) = &self.query {
@@ -507,10 +653,8 @@ impl Plugin for JwtAuth {
         // Asymmetric verification: the configured algorithm is pinned (the
         // token's own `alg` header is not trusted, preventing algorithm
         // confusion), and jsonwebtoken checks the signature and `exp` together.
-        if let Some((key, alg)) = &self.decoding_key {
-            let mut validation = Validation::new(*alg);
-            validation.validate_aud = false;
-            if decode::<serde_json::Value>(value, key, &validation).is_ok() {
+        if let Some((key, validation)) = &self.decoding_key {
+            if decode::<NoClaims>(value, key, validation).is_ok() {
                 return Ok(RequestPluginResult::Continue);
             }
             if let Some(d) = self.delay {
@@ -533,64 +677,26 @@ impl Plugin for JwtAuth {
             resp.body = Bytes::from_static(b"Jwt authorization is invalid");
             return Ok(RequestPluginResult::Respond(resp));
         }
-        let arr: Vec<&str> = value.split('.').collect();
-        if arr.len() != 3 {
-            let mut resp = self.unauthorized_resp.clone();
-            resp.body =
-                Bytes::from_static(b"Jwt authorization format is invalid");
-            return Ok(RequestPluginResult::Respond(resp));
-        }
-        let jwt_header = serde_json::from_slice::<JwtHeader>(
-            &URL_SAFE_NO_PAD.decode(arr[0]).unwrap_or_default(),
-        )
-        .unwrap_or_default();
-        let content = format!("{}.{}", arr[0], arr[1]);
-        let secret = self.secret.as_bytes();
-        let valid = match jwt_header.alg.as_str() {
-            // An explicitly configured algorithm is pinned: a token must not
-            // downgrade HS512 to HS256 just by saying so in its own header.
-            // An unset `algorithm` keeps accepting either, since that is what
-            // existing configurations rely on.
-            alg if !self.algorithm.is_empty() && alg != self.algorithm => false,
-            "HS256" => {
-                let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
-                pingap_core::constant_time_eq(
-                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
-                    arr[2].as_bytes(),
-                )
+        match verify_hmac_token(
+            value,
+            self.secret.as_bytes(),
+            &self.algorithm,
+            pingap_core::now_sec(),
+        ) {
+            Ok(()) => Ok(RequestPluginResult::Continue),
+            Err(rejection) => {
+                // Only a bad signature is worth slowing down: it is the one
+                // outcome a guess can produce.
+                if rejection == HmacRejection::Signature
+                    && let Some(d) = self.delay
+                {
+                    sleep(d).await;
+                }
+                let mut resp = self.unauthorized_resp.clone();
+                resp.body = rejection.message();
+                Ok(RequestPluginResult::Respond(resp))
             },
-            "HS512" => {
-                let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-                pingap_core::constant_time_eq(
-                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
-                    arr[2].as_bytes(),
-                )
-            },
-            // Unknown / unsupported algorithms (including "none") are rejected
-            // rather than silently falling back to HS256.
-            _ => false,
-        };
-        if !valid {
-            if let Some(d) = self.delay {
-                sleep(d).await;
-            }
-            let mut resp = self.unauthorized_resp.clone();
-            resp.body = Bytes::from_static(b"Jwt authorization is invalid");
-            return Ok(RequestPluginResult::Respond(resp));
         }
-        let value: serde_json::Value = serde_json::from_slice(
-            &URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default(),
-        )
-        .unwrap_or_default();
-        if let Some(exp) = value.get("exp")
-            && exp.as_u64().unwrap_or_default() < pingap_core::now_sec()
-        {
-            let mut resp = self.unauthorized_resp.clone();
-            resp.body = Bytes::from_static(b"Jwt authorization is expired");
-            return Ok(RequestPluginResult::Respond(resp));
-        }
-
-        Ok(RequestPluginResult::Continue)
     }
 
     /// Handles responses for the token generation endpoint
@@ -900,13 +1006,9 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
 -----END PRIVATE KEY-----"#;
         // spellchecker:on
 
-        // A JWKS source with a pre-populated cache keyed by kid (no network).
-        let mut keys = HashMap::new();
-        keys.insert(
-            "kid-1".to_string(),
-            DecodingKey::from_ec_pem(public_key.as_bytes()).unwrap(),
-        );
-        let source = JwksSource {
+        // A JWKS source with a pre-populated cache (no network): the URL
+        // points nowhere, so a refetch fails and the cache stays as it is.
+        let new_source = |keys: Vec<JwkEntry>| JwksSource {
             url: "http://127.0.0.1:1/jwks".to_string(),
             ttl: Duration::from_secs(3600),
             cooldown: Duration::from_secs(10),
@@ -917,6 +1019,11 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             }))),
             refresh_lock: tokio::sync::Mutex::new(()),
         };
+        let entry = |kid: Option<&str>| JwkEntry {
+            kid: kid.map(|k| k.to_string()),
+            key: DecodingKey::from_ec_pem(public_key.as_bytes()).unwrap(),
+        };
+        let source = new_source(vec![entry(Some("kid-1"))]);
 
         let sign = |kid: Option<&str>, exp: u64| {
             let mut header = Header::new(Algorithm::ES256);
@@ -938,13 +1045,127 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         let token = sign(Some("kid-1"), pingap_core::now_sec() - 3600);
         assert_eq!(false, source.verify(&token).await);
 
-        // Unknown kid -> rejected (fresh cache has no such key).
+        // Unknown kid -> rejected (the cache has no such key).
         let token = sign(Some("kid-x"), pingap_core::now_sec() + 3600);
         assert_eq!(false, source.verify(&token).await);
 
-        // No kid at all -> rejected.
+        // A token without a kid is tried against every key.
         let token = sign(None, pingap_core::now_sec() + 3600);
+        assert_eq!(true, source.verify(&token).await);
+
+        // A key without a kid, the common single-key JWKS, is kept and
+        // used; a token naming a kid still has to find it.
+        let source = new_source(vec![entry(None)]);
+        let token = sign(None, pingap_core::now_sec() + 3600);
+        assert_eq!(true, source.verify(&token).await);
+        let token = sign(Some("kid-1"), pingap_core::now_sec() + 3600);
         assert_eq!(false, source.verify(&token).await);
+    }
+
+    /// The HMAC path, claim by claim.
+    #[test]
+    fn test_verify_hmac_token() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        let secret = b"123123";
+        let key = EncodingKey::from_secret(secret);
+        let now = pingap_core::now_sec();
+        let sign = |alg: Algorithm, claims: serde_json::Value| {
+            encode(&Header::new(alg), &claims, &key).unwrap()
+        };
+
+        assert_eq!(
+            Ok(()),
+            verify_hmac_token(
+                &sign(Algorithm::HS256, serde_json::json!({"exp": now + 60})),
+                secret,
+                "",
+                now
+            )
+        );
+        // A token without `typ` in its header is a valid token.
+        let no_typ = {
+            let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#);
+            let payload = URL_SAFE_NO_PAD.encode(r#"{"exp":9999999999}"#);
+            let content = format!("{header}.{payload}");
+            let sig = URL_SAFE_NO_PAD
+                .encode(hmac_sha256::HMAC::mac(content.as_bytes(), secret));
+            format!("{content}.{sig}")
+        };
+        assert_eq!(Ok(()), verify_hmac_token(&no_typ, secret, "", now));
+        // Float times, as some issuers write them.
+        assert_eq!(
+            Ok(()),
+            verify_hmac_token(
+                &sign(
+                    Algorithm::HS512,
+                    serde_json::json!({"exp": now as f64 + 60.5})
+                ),
+                secret,
+                "HS512",
+                now
+            )
+        );
+        assert_eq!(
+            Err(HmacRejection::Expired),
+            verify_hmac_token(
+                &sign(Algorithm::HS256, serde_json::json!({"exp": now - 1})),
+                secret,
+                "",
+                now
+            )
+        );
+        assert_eq!(
+            Err(HmacRejection::NotYetValid),
+            verify_hmac_token(
+                &sign(Algorithm::HS256, serde_json::json!({"nbf": now + 60})),
+                secret,
+                "",
+                now
+            )
+        );
+        assert_eq!(
+            Err(HmacRejection::Signature),
+            verify_hmac_token(
+                &sign(Algorithm::HS256, serde_json::json!({})),
+                b"other",
+                "",
+                now
+            )
+        );
+        // Pinned algorithm, and `none`.
+        assert_eq!(
+            Err(HmacRejection::Signature),
+            verify_hmac_token(
+                &sign(Algorithm::HS256, serde_json::json!({})),
+                secret,
+                "HS512",
+                now
+            )
+        );
+        let none = format!(
+            "{}.{}.",
+            URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#),
+            URL_SAFE_NO_PAD.encode("{}")
+        );
+        assert_eq!(
+            Err(HmacRejection::Signature),
+            verify_hmac_token(&none, secret, "", now)
+        );
+        for token in ["a.b", "a.b.c.d", ""] {
+            assert_eq!(
+                Err(HmacRejection::Format),
+                verify_hmac_token(token, secret, "", now),
+                "{token}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_strip_bearer() {
+        assert_eq!("abc", strip_bearer("Bearer abc"));
+        assert_eq!("abc", strip_bearer("bearer  abc"));
+        assert_eq!("abc", strip_bearer("abc"));
+        assert_eq!("Basic abc", strip_bearer("Basic abc"));
     }
 
     /// Tests JWT token validation functionality

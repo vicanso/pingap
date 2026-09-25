@@ -11,7 +11,7 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `cors`。 |
 | `path` | string | — | 正则；仅匹配路径应用 CORS。未设置表示所有路径。 |
-| `allow_origin` | string | `*` | `Access-Control-Allow-Origin` 的值。支持 `$http_origin` 镜像请求。 |
+| `allow_origin` | string | `*` | `Access-Control-Allow-Origin` 的值。支持 `$http_origin` 镜像请求，此时会同时加上 `Vary: Origin`，没有 `Origin` 的请求不会得到 CORS 头。 |
 | `allow_methods` | string | `GET, POST, PUT, PATCH, DELETE, OPTIONS` | `Access-Control-Allow-Methods` 的值。 |
 | `allow_headers` | string | — | `Access-Control-Allow-Headers` 的值。 |
 | `allow_credentials` | bool | `false` | 发出 `Access-Control-Allow-Credentials: true`。 |

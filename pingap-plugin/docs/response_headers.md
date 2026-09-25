@@ -16,7 +16,7 @@ context can be surfaced to the client.
 | `set_headers` | string[] | — | `Name: value` — replaces any existing value. |
 | `set_headers_not_exists` | string[] | — | `Name: value` — only set when the header is absent. |
 | `remove_headers` | string[] | — | Header names to delete. |
-| `rename_headers` | string[] | — | `Old-Name: New-Name` — moves the value. |
+| `rename_headers` | string[] | — | `Old-Name: New-Name` — moves every value of the header. |
 | `mode` | string | *(response)* | `upstream` to rewrite the upstream response header instead. |
 
 Operations always run in this order, regardless of declaration order:
@@ -86,6 +86,7 @@ An instance handles exactly one of the two — it is not both.
 - `remove_headers` and `rename_headers` names must be valid HTTP header names or
   startup fails, which `pingap -t` will report.
 - `rename_headers` appends to the destination, so renaming onto an existing
-  header produces two values rather than overwriting.
+  header produces two values rather than overwriting. A multi-valued header
+  such as `Set-Cookie` moves with all of its values.
 - A dynamic value that cannot be resolved falls back to the literal configured
   string, so a typo like `$hostnam` is emitted verbatim.

@@ -13,12 +13,11 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    Error, get_bool_conf, get_hash_key, get_step_conf_in, get_str_conf,
     get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use glob::glob;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
 use path_absolutize::Absolutize;
@@ -30,11 +29,8 @@ use pingap_core::{
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::fs::Metadata;
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -45,6 +41,41 @@ use tracing::debug;
 use urlencoding::decode;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// The smallest streaming chunk; smaller values only add syscalls.
+const MIN_CHUNK_SIZE: u64 = 4096;
+
+/// Whether an `If-None-Match` value names `etag`: `*`, or any listed tag
+/// equal to it under the weak comparison (RFC 9110 §8.8.3.2), which
+/// ignores a `W/` prefix on either side.
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    fn strip_weak(tag: &str) -> &str {
+        let tag = tag.trim();
+        tag.strip_prefix("W/").unwrap_or(tag)
+    }
+    let etag = strip_weak(etag);
+    if_none_match.trim() == "*"
+        || if_none_match
+            .split(',')
+            .any(|candidate| strip_weak(candidate) == etag)
+}
+
+/// Escapes the characters HTML gives meaning to, so a file name cannot
+/// put markup into the listing.
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
 
 /// Represents a parsed HTTP Range header
 #[derive(Debug, Clone, Copy)]
@@ -262,6 +293,17 @@ async fn get_data(
     Ok((meta, f))
 }
 
+/// The response for a file system error: a missing file is a 404, the
+/// rest (permissions, a name the file system rejects) a 500 that does not
+/// echo the error.
+fn io_error_response(err: &std::io::Error) -> HttpResponse {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        HttpResponse::not_found("Not Found")
+    } else {
+        HttpResponse::unknown_error("File access error")
+    }
+}
+
 /// Generates response headers and determines caching behavior based on file metadata
 ///
 /// # Arguments
@@ -303,11 +345,7 @@ fn get_cacheable_and_headers_from_meta(
         vec![]
     };
 
-    // Get file size (platform-specific implementation)
-    #[cfg(unix)]
-    let size = meta.size() as usize;
-    #[cfg(windows)]
-    let size = meta.file_size() as usize;
+    let size = meta.len() as usize;
 
     // Generate ETag based on file size and modification time
     if let Ok(mod_time) = meta.modified() {
@@ -348,23 +386,46 @@ impl TryFrom<&PluginConf> for Directory {
     /// - Sets appropriate defaults
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
+        let category = PluginCategory::Directory.to_string();
+        let invalid = |message: String| Error::Invalid {
+            category: category.clone(),
+            message,
+        };
+        let step = get_step_conf_in(
+            value,
+            &category,
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
-        let chunk_size = if let Ok(chunk_size) =
-            ByteSize::from_str(&get_str_conf(value, "chunk_size"))
-        {
-            chunk_size.0
-        } else {
-            4096
+        // A size string (`64kb`) or a plain byte count. Either used to be
+        // taken as the default when it did not parse, an integer included.
+        let chunk_size = match value.get("chunk_size") {
+            None => MIN_CHUNK_SIZE,
+            Some(raw) => match (raw.as_integer(), raw.as_str()) {
+                (Some(n), _) if n >= 0 => n as u64,
+                (_, Some(s)) => {
+                    ByteSize::from_str(s)
+                        .map_err(|e| {
+                            invalid(format!("invalid chunk_size: {e}"))
+                        })?
+                        .0
+                },
+                _ => {
+                    return Err(invalid(
+                        "chunk_size must be a size or a byte count".to_string(),
+                    ));
+                },
+            },
         };
-        let chunk_size = if chunk_size > 0 {
-            Some(chunk_size as usize)
-        } else {
-            None
-        };
+        let chunk_size = Some(chunk_size.max(MIN_CHUNK_SIZE) as usize);
         let max_age = get_str_conf(value, "max_age");
         let max_age = if !max_age.is_empty() {
-            Some(parse_duration(&max_age).unwrap_or_default().as_secs() as u32)
+            Some(
+                parse_duration(&max_age)
+                    .map_err(|e| invalid(format!("invalid max_age: {e}")))?
+                    .as_secs() as u32,
+            )
         } else {
             None
         };
@@ -375,10 +436,7 @@ impl TryFrom<&PluginConf> for Directory {
             None
         };
         let headers = convert_headers(&get_str_slice_conf(value, "headers"))
-            .map_err(|e| Error::Invalid {
-                category: PluginCategory::Directory.to_string(),
-                message: e.to_string(),
-            })?;
+            .map_err(|e| invalid(e.to_string()))?;
 
         let cache_private = get_bool_conf(value, "private");
         let cache_private = if cache_private { Some(true) } else { None };
@@ -402,7 +460,7 @@ impl TryFrom<&PluginConf> for Directory {
         let follow_symlinks = !value.contains_key("follow_symlinks")
             || get_bool_conf(value, "follow_symlinks");
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
             index,
@@ -415,16 +473,7 @@ impl TryFrom<&PluginConf> for Directory {
             download: get_bool_conf(value, "download"),
             follow_symlinks,
             headers: Some(headers),
-        };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Directory.to_string(),
-                message: "Directory serve plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -496,72 +545,67 @@ static IGNORE_RESPONSE: LazyLock<HttpResponse> =
         ..Default::default()
     });
 
-/// Generates HTML directory listing page for a given directory
+/// Generates the HTML directory listing page for `path`.
 ///
-/// # Arguments
-/// * `path` - Path to directory to generate listing for
-///
-/// # Returns
-/// * `Ok(String)` - HTML content for directory listing
-/// * `Err(String)` - Error message if listing cannot be generated
-///
-/// # Notes
-/// - Skips hidden files (starting with '.')
-/// - Includes file sizes and modification times
-/// - Uses WEB_HTML template for consistent styling
-fn get_autoindex_html(path: &Path) -> Result<String, String> {
-    let path = path.to_string_lossy();
-    let mut file_list_html = vec![];
-    for entry in glob(&format!("{path}/*")).map_err(|e| e.to_string())? {
-        let f = entry.map_err(|e| e.to_string())?;
-        let filepath = f.to_string_lossy();
-        let mut size = "".to_string();
-        let mut last_modified = "".to_string();
-        let mut is_file = false;
-        if f.is_file() {
-            is_file = true;
-            #[cfg(unix)]
-            let _ = f.metadata().map(|meta| {
-                size = ByteSize(meta.size()).to_string();
-                last_modified =
-                    chrono::DateTime::from_timestamp(meta.mtime(), 0)
-                        .unwrap_or_default()
-                        .to_string();
-            });
-            #[cfg(windows)]
-            let _ = f.metadata().map(|meta| {
-                size = ByteSize(meta.file_size()).to_string();
-                last_modified = chrono::DateTime::from_timestamp(
-                    meta.last_write_time() as i64,
-                    0,
-                )
-                .unwrap_or_default()
-                .to_string();
-            });
-        }
-
-        let name = f.file_name().unwrap_or_default().to_string_lossy();
+/// Entries are read asynchronously and sorted by name (a glob used to do
+/// this, synchronously, and broke on a directory whose name held a glob
+/// character). Dotfiles are skipped, names are escaped and hrefs
+/// percent-encoded, so a file called `<script>` or `a b#c` is listed as
+/// text and linked correctly.
+async fn get_autoindex_html(path: &Path) -> std::io::Result<String> {
+    let mut entries = Vec::new();
+    let mut dir = fs::read_dir(path).await?;
+    while let Some(entry) = dir.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
         if name.is_empty() || name.starts_with('.') {
             continue;
         }
+        // An entry that vanished between the listing and the stat is
+        // simply left out.
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        entries.push((name, meta));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut target = format!(
-            "./{}",
-            filepath.split('/').next_back().unwrap_or_default()
+    let mut rows = String::with_capacity(entries.len() * 200);
+    for (name, meta) in entries {
+        let is_file = meta.is_file();
+        let (size, last_modified) = if is_file {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|elapsed| elapsed.as_secs() as i64)
+                .unwrap_or_default();
+            (
+                ByteSize(meta.len()).to_string(),
+                chrono::DateTime::from_timestamp(modified, 0)
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        } else {
+            (String::new(), String::new())
+        };
+        let href = format!(
+            "./{}{}",
+            urlencoding::encode(&name),
+            if is_file { "" } else { "/" }
         );
-        if !is_file {
-            target += "/";
-        }
-        file_list_html.push(format!(
+        let _ = write!(
+            rows,
             r###"<tr>
-                <td class="name"><a href="{target}">{name}</a></td>
+                <td class="name"><a href="{href}">{}</a></td>
                 <td class="size">{size}</td>
                 <td class="lastModified">{last_modified}</td>
-            </tr>"###
-        ));
+            </tr>
+"###,
+            escape_html(&name)
+        );
     }
 
-    Ok(WEB_HTML.replace("{{CONTENT}}", &file_list_html.join("\n")))
+    Ok(WEB_HTML.replace("{{CONTENT}}", &rows))
 }
 
 #[async_trait]
@@ -598,13 +642,8 @@ impl Plugin for Directory {
             return Ok(RequestPluginResult::Skipped);
         }
         let path_str = session.req_header().uri.path();
-        let source_str = if !self.autoindex && path_str.len() <= 1 {
-            &self.index
-        } else {
-            path_str
-        };
 
-        let decoded = decode(source_str).unwrap_or(Cow::Borrowed(source_str));
+        let decoded = decode(path_str).unwrap_or(Cow::Borrowed(path_str));
         let relative_path = decoded.strip_prefix('/').unwrap_or(&decoded);
 
         let file = match self.path.join(relative_path).absolutize() {
@@ -641,23 +680,35 @@ impl Plugin for Directory {
 
         debug!(file = format!("{file:?}"), "static file serve");
 
-        if self.autoindex && file.is_dir() {
-            let resp = match get_autoindex_html(&file) {
-                Ok(html) => HttpResponse::html(html),
-                Err(e) => HttpResponse::bad_request(e.to_string()),
-            };
-            return Ok(RequestPluginResult::Respond(resp));
-        }
+        // One stat decides what the path is. A directory gets its listing
+        // when `autoindex` is on, otherwise its `index` file: that used to
+        // work for `/` alone, and `/docs/` was a 404 even with
+        // `docs/index.html` in place.
+        let file = match fs::metadata(&file).await {
+            Ok(meta) if meta.is_dir() => {
+                if self.autoindex {
+                    let resp = match get_autoindex_html(&file).await {
+                        Ok(html) => HttpResponse::html(html),
+                        Err(err) => io_error_response(&err),
+                    };
+                    return Ok(RequestPluginResult::Respond(resp));
+                }
+                file.join(self.index.trim_start_matches('/'))
+            },
+            Ok(_) => file,
+            Err(err) => {
+                return Ok(RequestPluginResult::Respond(io_error_response(
+                    &err,
+                )));
+            },
+        };
 
         let (meta, mut f) = match get_data(&file).await {
             Ok(data) => data,
             Err(err) => {
-                let resp = if err.kind() == std::io::ErrorKind::NotFound {
-                    HttpResponse::not_found("Not Found")
-                } else {
-                    HttpResponse::unknown_error("File access error")
-                };
-                return Ok(RequestPluginResult::Respond(resp));
+                return Ok(RequestPluginResult::Respond(io_error_response(
+                    &err,
+                )));
             },
         };
 
@@ -671,12 +722,35 @@ impl Plugin for Directory {
             );
         self.apply_custom_headers(&file, &mut headers);
 
+        // A client revalidating with the ETag it was given gets a 304 and
+        // no body; without this every conditional request re-sent the file.
+        let etag = headers
+            .iter()
+            .find(|(name, _)| *name == header::ETAG)
+            .and_then(|(_, value)| value.to_str().ok());
+        if let Some(etag) = etag
+            && session
+                .req_header()
+                .headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|if_none_match| etag_matches(if_none_match, etag))
+        {
+            return Ok(RequestPluginResult::Respond(HttpResponse {
+                status: StatusCode::NOT_MODIFIED,
+                max_age: if cacheable { self.max_age } else { None },
+                cache_private: self.cache_private,
+                headers: Some(headers),
+                ..Default::default()
+            }));
+        }
+
         let range_header = session
             .req_header()
             .headers
             .get(header::RANGE)
             .and_then(|v| v.to_str().ok());
-        let chunk_size = self.chunk_size.unwrap_or(4096).max(4096);
+        let chunk_size = self.chunk_size.unwrap_or(MIN_CHUNK_SIZE as usize);
 
         // handle range request
         if let Some(range_str) = range_header {
@@ -789,12 +863,168 @@ mod tests {
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt;
-    #[cfg(windows)]
-    use std::os::windows::fs::MetadataExt;
     use std::path::Path;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_etag_matches() {
+        assert_eq!(true, etag_matches(r#"W/"1-2""#, r#"W/"1-2""#));
+        assert_eq!(true, etag_matches(r#""1-2""#, r#"W/"1-2""#));
+        assert_eq!(true, etag_matches(r#""0-0", W/"1-2""#, r#"W/"1-2""#));
+        assert_eq!(true, etag_matches("*", r#"W/"1-2""#));
+        assert_eq!(false, etag_matches(r#"W/"1-3""#, r#"W/"1-2""#));
+        assert_eq!(false, etag_matches("", r#"W/"1-2""#));
+    }
+
+    #[test]
+    fn test_escape_html() {
+        assert_eq!("a &amp; b", escape_html("a & b"));
+        assert_eq!(
+            "&lt;script&gt;&quot;x&quot;&#39;",
+            escape_html("<script>\"x\"'")
+        );
+        assert_eq!("plain.txt", escape_html("plain.txt"));
+    }
+
+    async fn request(dir: &Directory, request: &str) -> HttpResponse {
+        let mock_io = Builder::new().read(request.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = dir
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        resp
+    }
+
+    fn new_directory(root: &Path, extra: &str) -> Directory {
+        Directory::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "path = \"{}\"\n{extra}",
+                root.to_string_lossy()
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// A conditional request with the ETag it was given is answered 304.
+    #[tokio::test]
+    async fn test_directory_not_modified() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), "hello").unwrap();
+        let dir = new_directory(root.path(), "max_age = \"1h\"");
+
+        let resp = request(&dir, "GET /a.txt HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        let etag = resp
+            .headers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| *name == header::ETAG)
+            .map(|(_, value)| value.to_str().unwrap().to_string())
+            .expect("an etag");
+        assert_eq!(true, etag.starts_with("W/\""), "{etag}");
+
+        let resp = request(
+            &dir,
+            &format!("GET /a.txt HTTP/1.1\r\nIf-None-Match: {etag}\r\n\r\n"),
+        )
+        .await;
+        assert_eq!(304, resp.status.as_u16());
+        assert_eq!(true, resp.body.is_empty());
+        assert_eq!(Some(3600), resp.max_age);
+
+        let resp = request(
+            &dir,
+            "GET /a.txt HTTP/1.1\r\nIf-None-Match: \"other\"\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, resp.status.as_u16());
+    }
+
+    /// A directory serves its index file at any depth when `autoindex` is
+    /// off, and a listing when it is on; listings escape and encode names.
+    #[tokio::test]
+    async fn test_directory_index_and_listing() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("docs")).unwrap();
+        std::fs::write(root.path().join("docs/index.html"), "<h1>docs</h1>")
+            .unwrap();
+        std::fs::write(root.path().join("docs/b c.txt"), "b").unwrap();
+        std::fs::write(root.path().join("docs/<a>.txt"), "a").unwrap();
+        std::fs::write(root.path().join("docs/.hidden"), "h").unwrap();
+
+        let dir = new_directory(root.path(), "");
+        let resp = request(&dir, "GET /docs/ HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(b"<h1>docs</h1>".as_ref(), resp.body.as_ref());
+        let resp = request(&dir, "GET /docs HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        let resp = request(&dir, "GET /missing/ HTTP/1.1\r\n\r\n").await;
+        assert_eq!(404, resp.status.as_u16());
+
+        let dir = new_directory(root.path(), "autoindex = true");
+        let resp = request(&dir, "GET /docs/ HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        let html = String::from_utf8(resp.body.to_vec()).unwrap();
+        // Sorted, escaped, percent-encoded, dotfiles left out.
+        let a = html.find("&lt;a&gt;.txt").expect("escaped name");
+        let b = html.find("b c.txt").expect("plain name");
+        assert_eq!(true, a < b, "{html}");
+        assert_eq!(true, html.contains("href=\"./b%20c.txt\""), "{html}");
+        assert_eq!(true, html.contains("href=\"./%3Ca%3E.txt\""), "{html}");
+        assert_eq!(false, html.contains("<a>.txt"), "{html}");
+        assert_eq!(false, html.contains(".hidden"), "{html}");
+    }
+
+    #[test]
+    fn test_directory_invalid_params() {
+        for (conf, expect) in [
+            ("chunk_size = \"lots\"", "invalid chunk_size"),
+            ("chunk_size = true", "chunk_size must be"),
+            ("max_age = \"soon\"", "invalid max_age"),
+            ("step = \"response\"", "Invalid step(response)"),
+        ] {
+            let err = Directory::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "path = \"./\"\n{conf}"
+                ))
+                .unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert_eq!(true, err.contains(expect), "{conf}: {err}");
+        }
+        // Both spellings of a size are accepted, and floored.
+        for conf in ["chunk_size = 1024", "chunk_size = \"1kb\""] {
+            let params = Directory::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "path = \"./\"\n{conf}"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(Some(4096), params.chunk_size, "{conf}");
+        }
+        let params = Directory::try_from(
+            &toml::from_str::<PluginConf>(
+                "path = \"./\"\nchunk_size = \"64kb\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(Some(64_000), params.chunk_size);
+    }
 
     #[test]
     fn test_directory_params() {
@@ -843,7 +1073,7 @@ download = true
             .unwrap(),
         );
         assert_eq!(
-            "Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step",
+            "Plugin directory invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
     }
@@ -996,7 +1226,7 @@ follow_symlinks = {follow_symlinks}
         let file = Path::new("./index.html").to_path_buf();
         let (meta, _) = get_data(&file).await.unwrap();
 
-        assert_ne!(0, meta.size());
+        assert_ne!(0, meta.len());
 
         let (cacheable, _, headers) = get_cacheable_and_headers_from_meta(
             &file,

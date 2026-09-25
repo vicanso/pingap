@@ -89,10 +89,14 @@ impl MockResponse {
 
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::Mock.to_string(),
+            message,
+        };
 
         // Extract all configuration parameters
         let path = get_str_conf(params, "path"); // Path to match (empty = match all)
-        let status = get_int_conf(params, "status") as u16; // HTTP status code
+        let status = get_int_conf(params, "status"); // HTTP status code
         let headers = get_str_slice_conf(params, "headers"); // Response headers
         let data = get_str_conf(params, "data"); // Response body
 
@@ -100,34 +104,38 @@ impl MockResponse {
         // Supports human-readable formats like "500ms", "1s", "1m"
         let delay = get_str_conf(params, "delay");
         let delay = if !delay.is_empty() {
-            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
-                category: PluginCategory::Mock.to_string(),
-                message: e.to_string(),
-            })?;
+            let d =
+                parse_duration(&delay).map_err(|e| invalid(e.to_string()))?;
             Some(d)
         } else {
             None
         };
 
-        // Construct the HTTP response with defaults
-        let mut resp = HttpResponse {
-            status: StatusCode::OK, // Default to 200 OK
+        // A mock exists to produce exactly what was configured, so a status
+        // or header that cannot be is an error rather than a 200 without
+        // headers.
+        let status = if status == 0 {
+            StatusCode::OK
+        } else {
+            u16::try_from(status)
+                .ok()
+                .and_then(|status| StatusCode::from_u16(status).ok())
+                .ok_or_else(|| invalid(format!("Invalid status({status})")))?
+        };
+        let headers = if headers.is_empty() {
+            None
+        } else {
+            Some(
+                convert_headers(&headers)
+                    .map_err(|e| invalid(format!("invalid headers: {e}")))?,
+            )
+        };
+        let resp = HttpResponse {
+            status,
+            headers,
             body: data.into(),
             ..Default::default()
         };
-
-        // Override status code if specified
-        if status > 0 {
-            resp.status =
-                StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-        }
-
-        // Add headers if specified
-        if !headers.is_empty()
-            && let Ok(headers) = convert_headers(&headers)
-        {
-            resp.headers = Some(headers);
-        }
 
         Ok(MockResponse {
             hash_value,
@@ -249,6 +257,20 @@ step = "response"
             "Plugin mock invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
+
+        // What cannot be produced is refused, not silently replaced.
+        for (conf, expect) in [
+            ("status = 99", "Invalid status(99)"),
+            ("status = 1000", "Invalid status(1000)"),
+            ("headers = [\"bad name: 1\"]", "invalid headers"),
+        ] {
+            let err =
+                MockResponse::new(&toml::from_str::<PluginConf>(conf).unwrap())
+                    .err()
+                    .unwrap()
+                    .to_string();
+            assert_eq!(true, err.contains(expect), "{conf}: {err}");
+        }
     }
 
     #[tokio::test]

@@ -96,12 +96,22 @@ impl TryFrom<&PluginConf> for CombinedAuth {
         };
         let mut auths = AHashMap::new();
         for item in authorizations.iter() {
+            // An entry that is not a table, or has no app_id, used to be
+            // skipped: the app it was meant to authorize then failed every
+            // request with "app id is invalid" and nothing said why.
             let Some(value) = item.as_table() else {
-                continue;
+                return Err(Error::Invalid {
+                    category: CATEGORY.to_string(),
+                    message: "authorizations entries must be tables"
+                        .to_string(),
+                });
             };
             let app_id = get_str_conf(value, "app_id");
             if app_id.is_empty() {
-                continue;
+                return Err(Error::Invalid {
+                    category: CATEGORY.to_string(),
+                    message: "app_id of an authorization is empty".to_string(),
+                });
             }
             let mut ip_rules = None;
             let ip_list = get_str_slice_conf(value, "ip_list");

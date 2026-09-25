@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `ua_restriction`。 |
-| `ua_list` | string[] | `[]` | 正则模式，启动时编译。 |
+| `ua_list` | string[] | `[]` | 正则模式，启动时编译成一个集合，一次扫描完成匹配。 |
 | `type` | string | `allow` | `deny` 拦截匹配的 UA；其他值仅允许匹配的 UA。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
 

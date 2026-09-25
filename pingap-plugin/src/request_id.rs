@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_int_conf, get_step_conf, get_str_conf};
+use super::{
+    Error, get_hash_key, get_int_conf_or_default, get_step_conf_in,
+    get_str_conf,
+};
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
@@ -28,6 +31,19 @@ use uuid::Uuid;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// How a fresh id is generated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdAlgorithm {
+    /// UUID v7, time-ordered.
+    Uuid,
+    /// nanoid of `size` characters, URL safe.
+    Nanoid,
+}
+
+/// The longest nanoid accepted; well past any tracing need, and a bound on
+/// what `size` can allocate per request.
+const MAX_NANOID_SIZE: i64 = 64;
+
 /// Represents a plugin that handles request ID generation and management.
 /// This plugin can either use existing request IDs from incoming requests
 /// or generate new ones using configurable algorithms.
@@ -36,10 +52,8 @@ pub struct RequestId {
     // Can be either Request (early in the pipeline) or ProxyUpstream (before forwarding)
     plugin_step: PluginStep,
 
-    // The algorithm used for generating request IDs:
-    // - "nanoid": Generates collision-resistant IDs with configurable length
-    // - Any other value: Uses UUID v7 (time-based UUID with better sequential properties)
-    algorithm: String,
+    // The algorithm used for generating request IDs
+    algorithm: IdAlgorithm,
 
     // Optional custom header name for the request ID
     // If None, defaults to X-Request-ID
@@ -76,47 +90,57 @@ impl TryFrom<&PluginConf> for RequestId {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate a unique hash key for this plugin instance based on its configuration
         let hash_value = get_hash_key(value);
-        // Extract the execution step from configuration
-        let step = get_step_conf(value, PluginStep::Request);
+        let category = PluginCategory::RequestId.to_string();
+        let invalid = |message: String| Error::Invalid {
+            category: category.clone(),
+            message,
+        };
+        // Request IDs should be set early in the pipeline: during initial
+        // request processing or just before forwarding to upstream.
+        let step = get_step_conf_in(
+            value,
+            &category,
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
         // Parse and validate the custom header name if provided
         // An empty string means use the default X-Request-Id header
         let header_name = get_str_conf(value, "header_name");
-        let header_name = if header_name.is_empty() {
-            None
-        } else {
-            // Attempt to parse the header name, ensuring it's valid HTTP header syntax
-            Some(HeaderName::from_str(&header_name).map_err(|e| {
-                Error::Invalid {
-                    category: "header_name".to_string(),
-                    message: e.to_string(),
-                }
-            })?)
+        let header_name =
+            if header_name.is_empty() {
+                None
+            } else {
+                // Attempt to parse the header name, ensuring it's valid HTTP header syntax
+                Some(HeaderName::from_str(&header_name).map_err(|e| {
+                    invalid(format!("invalid header_name: {e}"))
+                })?)
+            };
+        let algorithm = match get_str_conf(value, "algorithm").as_str() {
+            "" | "uuid" => IdAlgorithm::Uuid,
+            "nanoid" => IdAlgorithm::Nanoid,
+            other => {
+                return Err(invalid(format!(
+                    "Invalid algorithm({other}), expect uuid or nanoid"
+                )));
+            },
         };
-        let mut size = get_int_conf(value, "size") as usize;
-        if size == 0 {
-            size = 8;
+        // A negative size used to wrap through the cast into a nanoid of
+        // billions of characters, allocated on the first request.
+        let size = get_int_conf_or_default(value, "size", 8);
+        if !(1..=MAX_NANOID_SIZE).contains(&size) {
+            return Err(invalid(format!(
+                "size({size}) must be between 1 and {MAX_NANOID_SIZE}"
+            )));
         }
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             plugin_step: step,
-            algorithm: get_str_conf(value, "algorithm"),
-            size,
+            algorithm,
+            size: size as usize,
             header_name,
-        };
-
-        // Validate execution step - request IDs should be set early in the pipeline
-        // Either during initial request processing or just before forwarding to upstream
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::RequestId.to_string(),
-                message: "Request id should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -190,18 +214,13 @@ impl Plugin for RequestId {
         }
 
         // Generate new request ID based on configured algorithm
-        let id = match self.algorithm.as_str() {
-            "nanoid" => {
-                // nanoid generates shorter, URL-safe unique IDs
-                // Good for scenarios where ID length matters
-                let size = self.size;
-                nanoid!(size)
-            },
-            _ => {
-                // UUID v7 is time-based and provides good sequential properties
-                // Better for debugging and log analysis as they're naturally ordered
-                Uuid::now_v7().to_string()
-            },
+        let id = match self.algorithm {
+            // nanoid generates shorter, URL-safe unique IDs
+            // Good for scenarios where ID length matters
+            IdAlgorithm::Nanoid => nanoid!(self.size),
+            // UUID v7 is time-based and provides good sequential properties
+            // Better for debugging and log analysis as they're naturally ordered
+            IdAlgorithm::Uuid => Uuid::now_v7().to_string(),
         };
 
         // Store the generated ID in both context and request headers
@@ -238,7 +257,7 @@ size = 10
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("nanoid", params.algorithm);
+        assert_eq!(IdAlgorithm::Nanoid, params.algorithm);
         assert_eq!(10, params.size);
 
         let params = RequestId::new(
@@ -265,9 +284,29 @@ size = 10
             .unwrap(),
         );
         assert_eq!(
-            "Plugin request_id invalid, message: Request id should be executed at request or proxy upstream step",
+            "Plugin request_id invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
+
+        for (conf, expect) in [
+            ("algorithm = \"ulid\"", "Invalid algorithm(ulid)"),
+            ("size = -1", "size(-1) must be between 1 and 64"),
+            ("size = 0", "size(0) must be between"),
+            ("size = 65", "size(65) must be between"),
+            ("header_name = \"bad name\"", "invalid header_name"),
+        ] {
+            let err =
+                RequestId::new(&toml::from_str::<PluginConf>(conf).unwrap())
+                    .err()
+                    .unwrap()
+                    .to_string();
+            assert_eq!(true, err.contains(expect), "{conf}: {err}");
+        }
+        let params = RequestId::new(
+            &toml::from_str::<PluginConf>("algorithm = \"uuid\"").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(IdAlgorithm::Uuid, params.algorithm);
     }
 
     /// Tests the request handling functionality of the RequestId plugin.

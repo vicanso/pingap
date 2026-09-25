@@ -14,7 +14,7 @@ HTTP Basic 认证（RFC 7617）。适用于预发环境、内部面板，以及�
 | `delay` | duration | 无 | 失败应答前休眠时长，用于减缓暴力尝试。 |
 | `hide_credentials` | bool | `false` | 转发上游前剥离 `Authorization`。 |
 
-`authorizations` 条目在启动时校验是否为合法 base64，拼写错误会让 `pingap -t` 失败，而不是静默把所有人锁在外面。凭据按常量时间比较。
+`authorizations` 条目在启动时校验是否为合法 base64，拼写错误会让 `pingap -t` 失败，而不是静默把所有人锁在外面。凭据按常量时间比较；`Basic` scheme 按 RFC 7235 的要求不区分大小写匹配。
 
 ## 生成条目
 

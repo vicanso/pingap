@@ -24,7 +24,10 @@
 | `x-forwarded-method` | 原始 HTTP 方法 |
 | `x-forwarded-uri` | 原始路径与查询串 |
 | `x-forwarded-host` | 原始 `Host` |
+| `x-forwarded-proto` | 客户端走 TLS 时为 `https`，否则为 `http` |
 | `x-forwarded-for` | Pingap 解析的客户端 IP |
+
+无论 `request_headers` 怎么配置，`Host`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Keep-Alive`、`Proxy-Connection`、`TE`、`Trailer`、`Upgrade` 与 `Expect` 都不会转发：它们描述的是客户端连接或请求体，而这个无请求体的 `GET` 子请求并没有，否则认证服务会一直等一个不会到来的请求体。
 
 ## 示例
 
@@ -64,7 +67,9 @@ x-forwarded-for: 1.2.3.4
 | 其他状态 | 该状态码、头与正文原样回传 |
 | 不可达 / 超时 | `502 Bad Gateway`，正文 `Forward auth request failed` |
 
-回传响应会剥离 `content-length`、`transfer-encoding` 与 `connection`，因为 Pingap 会重新组帧。非法 HTTP 状态码降级为 `403`。
+回传响应会剥离 `content-length`、`transfer-encoding`、`connection` 及其他逐跳头，因为 Pingap 会重新组帧。非法 HTTP 状态码降级为 `403`。
+
+认证服务返回的重定向不会被跟随：`302` 本身就是决策，原样回传。若像普通 HTTP 客户端那样默认跟随，登录页的 `200` 就会被当成放行。
 
 ## 使用说明
 

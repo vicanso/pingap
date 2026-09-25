@@ -49,13 +49,8 @@ pub struct BasicAuth {
     /// This ensures authentication happens before request processing
     plugin_step: PluginStep,
 
-    /// List of valid credentials stored as base64 encoded "username:password" combinations
-    /// Each entry is stored as a byte vector including the "Basic " prefix
-    /// Format: "Basic base64(username:password)"
-    /// Example:
-    /// - Original: admin:password
-    /// - Base64: YWRtaW46cGFzc3dvcmQ=
-    /// - Stored: "Basic YWRtaW46cGFzc3dvcmQ="
+    /// The base64 `username:password` of every account, without the
+    /// scheme: `admin:password` is stored as `YWRtaW46cGFzc3dvcmQ=`.
     authorizations: Vec<Vec<u8>>,
 
     /// When true, removes the Authorization header after successful authentication
@@ -115,8 +110,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 category: PluginCategory::BasicAuth.to_string(),
                 source: e,
             })?;
-            // Store with "Basic " prefix for direct comparison with request headers
-            authorizations.push(format!("Basic {item}").as_bytes().to_vec());
+            authorizations.push(item.as_bytes().to_vec());
         }
 
         // Ensure at least one valid authorization is configured
@@ -126,21 +120,12 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 message: "basic authorizations can't be empty".to_string(),
             });
         }
-        let miss_authorization_headers = if let Ok(value) =
-            HeaderValue::from_str(
+        let www_authenticate = Some(vec![(
+            http::header::WWW_AUTHENTICATE,
+            HeaderValue::from_static(
                 r###"Basic realm="Access to the staging site""###,
-            ) {
-            Some(vec![(http::header::WWW_AUTHENTICATE, value)])
-        } else {
-            None
-        };
-        let unauthorized_headers = if let Ok(value) = HeaderValue::from_str(
-            r###"Basic realm="Access to the staging site""###,
-        ) {
-            Some(vec![(http::header::WWW_AUTHENTICATE, value)])
-        } else {
-            None
-        };
+            ),
+        )]);
 
         let params = Self {
             hash_value,
@@ -150,13 +135,13 @@ impl TryFrom<&PluginConf> for BasicAuth {
             authorizations,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
-                headers: miss_authorization_headers,
+                headers: www_authenticate.clone(),
                 body: Bytes::from_static(b"Authorization is missing"),
                 ..Default::default()
             },
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
-                headers: unauthorized_headers,
+                headers: www_authenticate,
                 body: Bytes::from_static(b"Invalid user or password"),
                 ..Default::default()
             },
@@ -164,6 +149,17 @@ impl TryFrom<&PluginConf> for BasicAuth {
 
         Ok(params)
     }
+}
+
+/// The credentials of a `Basic` authorization header value. The scheme is
+/// case-insensitive (RFC 7235 §2.1) and whitespace may follow it; a
+/// literal `Basic ` comparison used to turn `basic ...` away.
+fn basic_credentials(value: &[u8]) -> Option<&[u8]> {
+    let (scheme, credentials) =
+        value.split_at(value.iter().position(|b| *b == b' ')?);
+    scheme
+        .eq_ignore_ascii_case(b"basic")
+        .then(|| credentials.trim_ascii())
 }
 
 impl BasicAuth {
@@ -203,11 +199,12 @@ impl Plugin for BasicAuth {
 
         // Validate credentials against our authorized list, comparing in
         // constant time so a match position is not leaked via timing.
-        if !self
-            .authorizations
-            .iter()
-            .any(|auth| pingap_core::constant_time_eq(auth, value))
-        {
+        let authorized = basic_credentials(value).is_some_and(|credentials| {
+            self.authorizations
+                .iter()
+                .any(|auth| pingap_core::constant_time_eq(auth, credentials))
+        });
+        if !authorized {
             // If configured, apply rate limiting delay
             // This helps prevent automated brute force attempts
             if let Some(d) = self.delay {
@@ -263,7 +260,7 @@ delay = "10s"
         assert_eq!("request", params.plugin_step.to_string());
         // spellchecker:off
         assert_eq!(
-            "Basic MTIz,Basic NDU2",
+            "MTIz,NDU2",
             params
                 .authorizations
                 .iter()
@@ -352,5 +349,16 @@ hide_credentials = true
             panic!("result is not Respond");
         };
         assert_eq!(resp.status, http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// The scheme is case-insensitive and may be followed by more than one
+    /// space; another scheme is not Basic at all.
+    #[test]
+    fn test_basic_credentials() {
+        use super::basic_credentials;
+        assert_eq!(Some(&b"abc"[..]), basic_credentials(b"Basic abc"));
+        assert_eq!(Some(&b"abc"[..]), basic_credentials(b"basic  abc "));
+        assert_eq!(None, basic_credentials(b"Bearer abc"));
+        assert_eq!(None, basic_credentials(b"Basicabc"));
     }
 }

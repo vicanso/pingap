@@ -20,7 +20,9 @@ Response compression with gzip, brotli and zstd. Two modes:
 | `gzip_level` | int | `0` | 0–9. `0` disables gzip. |
 | `br_level` | int | `0` | 0–11. `0` disables brotli. |
 | `zstd_level` | int | `0` | 0–22. `0` disables zstd. |
-| `mode` | string | *(downstream)* | Set to `upstream` for the streaming compressor. |
+| `mode` | string | `response` | `response` (downstream mode) or `upstream` for the streaming compressor. Anything else is a configuration error. |
+
+Levels outside their range are clamped to it (a negative level is `0`).
 | `min_length` | int | `0` | Upstream mode only: skip responses whose `Content-Length` is below this. |
 | `decompression` | bool | absent | Presence of the key toggles decompression of compressed upstream responses. |
 
@@ -54,15 +56,24 @@ min_length = 1024
 
 The response is compressed only when **all** of these hold:
 
-1. It has no `Content-Encoding` yet.
-2. It has a `Content-Type` that is compressible: `application/json`,
+1. It has a body: HEAD answers, `1xx`, `204` and `304` are left alone, since
+   encoding nothing would still emit the format's header and footer.
+2. It has no `Content-Encoding` yet.
+3. It has a `Content-Type` that is compressible: `application/json`,
    `application/xml`, `text/html`, or any `text/*`.
-3. The client accepts one of the enabled algorithms.
-4. `min_length` is `0`, or `Content-Length` is present and at least `min_length`.
+4. The client accepts one of the enabled algorithms.
+5. `min_length` is `0`, or `Content-Length` is present and at least `min_length`.
    A response with no `Content-Length` is always compressed.
 
 When it does compress, `Content-Length` is removed, `Transfer-Encoding: chunked`
 and `Content-Encoding` are set, and the body is encoded incrementally.
+
+On the way out to the client, any response carrying `Content-Encoding` gets
+`Vary: Accept-Encoding` unless its `Vary` already names it (or `*`), so caches
+in front of Pingap keep the encodings apart. It is added at the `response` step
+rather than on the upstream response, so Pingap's own cache, which already keys
+on the chosen encoding, is not split further by every spelling of the request
+header; a cached compressed entry gets it on every hit the same way.
 
 Upstream mode also appends the chosen encoding to the cache key, so a cached
 entry is per-encoding.

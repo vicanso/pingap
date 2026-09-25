@@ -178,9 +178,14 @@ fn generate_token(key: &str) -> String {
 /// - Checks token format, expiration, and cryptographic signature
 #[inline]
 fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
-    // Split token into its components
-    let arr: Vec<&str> = value.split('.').collect();
-    if arr.len() != 3 {
+    // id.timestamp.signature; the signed part is a prefix of the token.
+    let Some((id, rest)) = value.split_once('.') else {
+        return false;
+    };
+    let Some((timestamp, signature)) = rest.split_once('.') else {
+        return false;
+    };
+    if signature.contains('.') {
         return false;
     }
 
@@ -188,10 +193,10 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     if ttl > 0 {
         let now = now_sec();
         // Parse timestamp from hex and compare with current time
-        if now
-            .saturating_sub(u64::from_str_radix(arr[1], 16).unwrap_or_default())
-            > ttl
-        {
+        let Ok(issued_at) = u64::from_str_radix(timestamp, 16) else {
+            return false;
+        };
+        if now.saturating_sub(issued_at) > ttl {
             return false;
         }
     }
@@ -201,13 +206,13 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     // 2. Creating a new signature with the secret key
     // 3. Comparing with the provided signature
     let mut hasher = Sha256::new();
-    hasher.update(format!("{}.{}", arr[0], arr[1]).as_bytes());
+    hasher.update(&value.as_bytes()[..id.len() + 1 + timestamp.len()]);
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
 
     // Constant-time comparison to avoid leaking the signature via timing.
     pingap_core::constant_time_eq(
-        arr[2].as_bytes(),
+        signature.as_bytes(),
         base64_encode(hash256).as_bytes(),
     )
 }
@@ -396,7 +401,22 @@ token_path = "/csrf-token"
         let key = "123";
         let value = generate_token(key);
         assert_eq!(true, validate_token(key, 10, &value));
+        assert_eq!(true, validate_token(key, 0, &value));
         assert_eq!(false, validate_token(key, 10, &format!("{value}:1")));
+        assert_eq!(false, validate_token(key, 10, &format!("{value}.1")));
+        assert_eq!(false, validate_token("other", 10, &value));
+        // Not our shape, or a timestamp that is not hex.
+        assert_eq!(false, validate_token(key, 10, "a.b"));
+        assert_eq!(false, validate_token(key, 10, "a.zz.c"));
+        assert_eq!(false, validate_token(key, 10, ""));
+        // Issued too long ago for the ttl.
+        let old = format!("abcdefghijkl.{:x}", now_sec() - 100);
+        let mut hasher = Sha256::new();
+        hasher.update(old.as_bytes());
+        hasher.update(key.as_bytes());
+        let old = format!("{old}.{}", base64_encode(hasher.finalize()));
+        assert_eq!(true, validate_token(key, 1000, &old));
+        assert_eq!(false, validate_token(key, 10, &old));
     }
 
     #[tokio::test]

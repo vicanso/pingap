@@ -13,7 +13,7 @@ path prefix.
 | `category` | string | — | Must be `redirect`. |
 | `http_to_https` | bool | `false` | `true` forces HTTPS; `false` forces plain HTTP. |
 | `prefix` | string | — | Path prefix to prepend. A leading `/` is added if missing; values of length ≤ 1 are ignored. |
-| `status` | int | `307` | One of `301`, `302`, `307`, `308`. Anything else becomes `307`. |
+| `status` | int | `307` | One of `301`, `302`, `303`, `307`, `308`. Anything else is a configuration error. |
 
 ## Example
 

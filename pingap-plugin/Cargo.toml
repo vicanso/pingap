@@ -33,7 +33,6 @@ ctor = { workspace = true }
 crc32fast = { workspace = true }
 dashmap = { workspace = true }
 fancy-regex = { workspace = true }
-glob = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = { workspace = true }
@@ -66,9 +65,14 @@ uuid = { workspace = true }
 
 
 [dev-dependencies]
+criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
+
+[[bench]]
+name = "bench"
+harness = false
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

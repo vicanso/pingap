@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `referer_restriction`。 |
-| `referer_list` | string[] | `[]` | 要匹配的主机。以 `*` 开头的条目按后缀匹配。 |
+| `referer_list` | string[] | `[]` | 要匹配的主机名，不区分大小写。以 `*` 开头的条目按后缀匹配。 |
 | `type` | string | `allow` | `deny` 拦截列表中的主机；其他值仅允许列表中的主机。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
 

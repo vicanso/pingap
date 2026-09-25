@@ -13,10 +13,10 @@ optional HTML directory index.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `directory`. |
 | `path` | string | — | **Required.** Root directory. `~` is expanded and the path is made absolute. |
-| `index` | string | `index.html` | File served for `/`. A leading `/` is added if missing. |
+| `index` | string | `index.html` | File served for a directory, `/` or any deeper one. A leading `/` is added if missing. |
 | `autoindex` | bool | `false` | Generate an HTML listing for directories. |
-| `chunk_size` | bytesize | `4kb` | Streaming chunk size; also the threshold above which streaming is used. Floored at 4 KB. |
-| `max_age` | duration | — | `Cache-Control: max-age=…`. Not applied to `text/html`. |
+| `chunk_size` | bytesize | `4kb` | Streaming chunk size; also the threshold above which streaming is used. A size string or a byte count; floored at 4 KB. A value that does not parse is a configuration error. |
+| `max_age` | duration | — | `Cache-Control: max-age=…`. Not applied to `text/html`. A duration that does not parse is a configuration error. |
 | `private` | bool | `false` | Add `private` to `Cache-Control`. |
 | `charset` | string | — | Appended to `Content-Type` for `text/*`. |
 | `download` | bool | `false` | Add `Content-Disposition: attachment`. |
@@ -65,6 +65,9 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 
 ## Behaviour
 
+- A request whose `If-None-Match` names the file's ETag is answered `304 Not
+  Modified` with no body (the comparison is weak, so `W/` prefixes do not
+  matter, and `*` always matches).
 - Every response carries `Accept-Ranges: bytes` and a weak ETag derived from size
   and mtime (`W/"<size hex>-<mtime hex>"`).
 - `text/html` responses are treated as non-cacheable, so `max_age` is not applied
@@ -74,7 +77,9 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
   `416` with `Content-Range: bytes */<size>`.
 - Files at or below `chunk_size` are read into memory and sent in one response;
   larger ones are streamed.
-- `autoindex` listings skip dotfiles.
+- `autoindex` listings are sorted by name and skip dotfiles; names are
+  HTML-escaped and links percent-encoded, so a file called `<script>` or
+  `a b.txt` is listed and linked correctly.
 
 ## Responses
 
@@ -88,9 +93,8 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 
 ## Usage notes
 
-- `index` is only substituted for the root path `/`, and only when `autoindex`
-  is off. A request for a subdirectory such as `/docs/` returns `404` unless
-  `autoindex` is enabled.
+- A directory request serves its `index` file at any depth when `autoindex` is
+  off (`/docs/` finds `docs/index.html`), and the listing when it is on.
 - Traversal protection is lexical by default: the joined path is normalised and
   must still start with `path`, which catches `../` but not a **symlink inside
   the served directory that points outside it**. Set `follow_symlinks = false`

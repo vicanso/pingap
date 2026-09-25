@@ -11,7 +11,7 @@ is hot-link protection for images and downloads.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `referer_restriction`. |
-| `referer_list` | string[] | `[]` | Hosts to match. An entry starting with `*` matches by suffix. |
+| `referer_list` | string[] | `[]` | Hosts to match, case-insensitively. An entry starting with `*` matches by suffix. |
 | `type` | string | `allow` | `allow` permits **only** listed hosts; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
 

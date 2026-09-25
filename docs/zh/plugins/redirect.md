@@ -12,7 +12,7 @@
 | `category` | string | — | 必须为 `redirect`。 |
 | `http_to_https` | bool | `false` | `true` 强制 HTTPS；`false` 强制明文 HTTP。 |
 | `prefix` | string | — | 要前置的路径前缀。缺失前导 `/` 时补上；长度 ≤ 1 的值忽略。 |
-| `status` | int | `307` | `301`、`302`、`307`、`308` 之一。其他值变为 `307`。 |
+| `status` | int | `307` | `301`、`302`、`303`、`307`、`308` 之一。其他值是配置错误。 |
 
 ## 示例
 

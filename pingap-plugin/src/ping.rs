@@ -56,9 +56,18 @@ impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
         let hash_value = get_hash_key(params);
+        let path = get_str_conf(params, "path");
+        // No request path is empty, so an unset `path` was a plugin that
+        // could never answer.
+        if path.is_empty() {
+            return Err(Error::Invalid {
+                category: "ping".to_string(),
+                message: "path is required".to_string(),
+            });
+        }
         Ok(Self {
             hash_value,
-            path: get_str_conf(params, "path"),
+            path,
             plugin_step: PluginStep::Request,
         })
     }
@@ -142,5 +151,11 @@ path = "/ping"
         };
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(b"pong", resp.body.as_ref());
+
+        let err = Ping::new(&toml::from_str::<PluginConf>("").unwrap())
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!("Plugin ping invalid, message: path is required", err);
     }
 }

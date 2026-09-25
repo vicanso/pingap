@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `ping`。 |
-| `path` | string | `""` | 应答的精确路径。 |
+| `path` | string | — | **必填。**应答的精确路径。 |
 
 ## 示例
 

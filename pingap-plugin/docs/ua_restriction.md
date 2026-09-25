@@ -10,7 +10,7 @@ Allow- or deny-list requests by `User-Agent`, matched with regular expressions.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `ua_restriction`. |
-| `ua_list` | string[] | `[]` | Regex patterns, compiled at startup. |
+| `ua_list` | string[] | `[]` | Regex patterns, compiled at startup into one set that is matched in a single pass. |
 | `type` | string | `allow` | `allow` permits **only** matching agents; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
 

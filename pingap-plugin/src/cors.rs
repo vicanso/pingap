@@ -42,8 +42,22 @@ pub struct Cors {
     // Pre-computed CORS headers to avoid rebuilding on every request
     // Includes: Allow-Methods, Allow-Headers, Max-Age, Allow-Credentials, Expose-Headers
     headers: Vec<HttpHeader>,
+    // The origin is taken from the request (`$http_origin`), so the answer
+    // differs per origin and caches have to be told with `Vary: Origin`.
+    vary_origin: bool,
     // Unique identifier for plugin instance, used for caching and identification
     hash_value: String,
+}
+
+/// Whether `Vary` already covers `Origin` (or everything).
+fn varies_by_origin(headers: &http::HeaderMap) -> bool {
+    headers
+        .get_all(header::VARY)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .any(|name| name == "*" || name.eq_ignore_ascii_case("origin"))
 }
 
 impl TryFrom<&PluginConf> for Cors {
@@ -164,6 +178,8 @@ impl TryFrom<&PluginConf> for Cors {
             hash_value,
             plugin_step: PluginStep::Request,
             path,
+            vary_origin: allow_origin.starts_with('$')
+                || allow_origin.starts_with(':'),
             allow_origin: format_header_value(&allow_origin)?,
             headers,
         };
@@ -185,31 +201,36 @@ impl Cors {
         Self::try_from(params)
     }
 
-    /// Generates the set of CORS headers for a request/response
-    /// Handles dynamic values like $http_origin
-    ///
-    /// # Arguments
-    /// * `session` - Current HTTP session
-    /// * `ctx` - Plugin state context
-    ///
-    /// # Returns
-    /// * `Result<Vec<HttpHeader>>` - Collection of CORS headers or error
+    /// The preflight headers: the prebuilt list plus the origin.
     #[inline]
-    fn get_headers(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-    ) -> Result<Vec<HttpHeader>> {
-        // Convert dynamic values (e.g., $http_origin) to actual values
-        let origin = convert_header_value(&self.allow_origin, session, ctx)
-            .ok_or(Error::Invalid {
-                category: PluginCategory::Cors.to_string(),
-                message: "Allow origin is invalid".to_string(),
-            })?;
-        // Clone pre-computed headers and add dynamic origin
+    fn get_headers(&self, origin: HeaderValue) -> Vec<HttpHeader> {
         let mut headers = self.headers.clone();
         headers.push((header::ACCESS_CONTROL_ALLOW_ORIGIN, origin));
-        Ok(headers)
+        if self.vary_origin {
+            headers.push((header::VARY, HeaderValue::from_static("Origin")));
+        }
+        headers
+    }
+
+    /// The `Access-Control-Allow-Origin` value for this request: the
+    /// configured one as it is, or, for `$http_origin`, the request's
+    /// origin, which is `None` when the request carries none.
+    ///
+    /// `convert_header_value` only resolves `$`/`:` values and answers
+    /// `None` for a literal, which used to be taken as a failure: every
+    /// static `allow_origin`, the default `*` included, was refused with a
+    /// 400 and only `$http_origin` ever worked.
+    #[inline]
+    fn resolve_origin(
+        &self,
+        session: &Session,
+        ctx: &Ctx,
+    ) -> Option<HeaderValue> {
+        if self.vary_origin {
+            convert_header_value(&self.allow_origin, session, ctx)
+        } else {
+            Some(self.allow_origin.clone())
+        }
     }
 }
 
@@ -250,14 +271,15 @@ impl Plugin for Cors {
         }
 
         // Handle CORS preflight (OPTIONS) requests
-        // Preflight happens before actual request to check if it's allowed
-        if http::Method::OPTIONS == session.req_header().method {
-            let headers = self
-                .get_headers(session, ctx)
-                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        // Preflight happens before actual request to check if it's allowed.
+        // A mirrored origin needs an Origin to mirror; without one this is
+        // a plain OPTIONS for the upstream.
+        if http::Method::OPTIONS == session.req_header().method
+            && let Some(origin) = self.resolve_origin(session, ctx)
+        {
             // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
-            resp.headers = Some(headers);
+            resp.headers = Some(self.get_headers(origin));
             return Ok(RequestPluginResult::Respond(resp));
         }
         Ok(RequestPluginResult::Continue)
@@ -291,12 +313,19 @@ impl Plugin for Cors {
             return Ok(ResponsePluginResult::Unchanged);
         }
 
-        // Add all configured CORS headers to the response
-        let headers = self
-            .get_headers(session, ctx)
-            .map_err(|e| pingap_core::new_internal_error(400, e))?;
-        for (name, value) in &headers {
+        // Add all configured CORS headers to the response, straight from
+        // the prebuilt list rather than through a per-response copy.
+        let Some(origin) = self.resolve_origin(session, ctx) else {
+            return Ok(ResponsePluginResult::Unchanged);
+        };
+        for (name, value) in &self.headers {
             let _ = upstream_response.insert_header(name, value);
+        }
+        let _ = upstream_response
+            .insert_header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+        // Appended, not inserted: the upstream's own `Vary` must survive.
+        if self.vary_origin && !varies_by_origin(&upstream_response.headers) {
+            let _ = upstream_response.append_header(header::VARY, "Origin");
         }
         Ok(ResponsePluginResult::Modified)
     }
@@ -379,19 +408,85 @@ max_age = "60m"
         assert_eq!(resp.status, http::StatusCode::NO_CONTENT);
 
         assert_eq!(
-            r#"[("access-control-allow-methods", "GET"), ("access-control-allow-headers", "Content-Type, X-User-Id"), ("access-control-max-age", "3600"), ("access-control-allow-credentials", "true"), ("access-control-expose-headers", "Content-Encoding, Kuma-Revision"), ("access-control-allow-origin", "https://pingap.io")]"#,
+            r#"[("access-control-allow-methods", "GET"), ("access-control-allow-headers", "Content-Type, X-User-Id"), ("access-control-max-age", "3600"), ("access-control-allow-credentials", "true"), ("access-control-expose-headers", "Content-Encoding, Kuma-Revision"), ("access-control-allow-origin", "https://pingap.io"), ("vary", "Origin")]"#,
             format!("{:?}", resp.headers.unwrap())
         );
 
+        // A mirrored origin varies the response, and the upstream's own
+        // `Vary` is kept next to it.
         let mut header = ResponseHeader::build(200, None).unwrap();
+        header.append_header("Vary", "Accept-Encoding").unwrap();
 
         cors.handle_response(&mut session, &mut Ctx::default(), &mut header)
             .await
             .unwrap();
 
         assert_eq!(
-            r#"{"access-control-allow-methods": "GET", "access-control-allow-headers": "Content-Type, X-User-Id", "access-control-max-age": "3600", "access-control-allow-credentials": "true", "access-control-expose-headers": "Content-Encoding, Kuma-Revision", "access-control-allow-origin": "https://pingap.io"}"#,
+            r#"{"vary": "Accept-Encoding", "vary": "Origin", "access-control-allow-methods": "GET", "access-control-allow-headers": "Content-Type, X-User-Id", "access-control-max-age": "3600", "access-control-allow-credentials": "true", "access-control-expose-headers": "Content-Encoding, Kuma-Revision", "access-control-allow-origin": "https://pingap.io"}"#,
             format!("{:?}", header.headers)
         );
+
+        // A fixed origin does not vary.
+        let cors = Cors::new(
+            &toml::from_str::<PluginConf>("allow_origin = \"https://a.io\"")
+                .unwrap(),
+        )
+        .unwrap();
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        cors.handle_response(&mut session, &mut Ctx::default(), &mut header)
+            .await
+            .unwrap();
+        assert_eq!(false, header.headers.contains_key("vary"));
+        assert_eq!(
+            "https://a.io",
+            header.headers.get("access-control-allow-origin").unwrap()
+        );
+
+        // The default `*` works too (a literal used to be refused), and a
+        // preflight without an Origin is left to the upstream when the
+        // origin is mirrored.
+        let cors =
+            Cors::new(&toml::from_str::<PluginConf>("").unwrap()).unwrap();
+        let mock_io = Builder::new()
+            .read(b"OPTIONS /api HTTP/1.1\r\nOrigin: https://x.io\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = cors
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("a preflight must be answered");
+        };
+        assert_eq!(
+            true,
+            format!("{:?}", resp.headers)
+                .contains(r#"("access-control-allow-origin", "*")"#)
+        );
+
+        let cors = Cors::new(
+            &toml::from_str::<PluginConf>("allow_origin = \"$http_origin\"")
+                .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new()
+            .read(b"OPTIONS /api HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = cors
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 }

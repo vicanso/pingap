@@ -12,7 +12,7 @@
 | `category` | string | — | 必须为 `sub_filter`。 |
 | `filters` | string[] | `[]` | 替换规则；见下方语法。 |
 | `path` | string | — | 请求路径上的正则。未设置表示所有路径。 |
-| `status_codes` | string | — | 逗号分隔的状态码，如 `"200,201"`。未设置表示全部。 |
+| `status_codes` | string | — | 逗号分隔的状态码，如 `"200,201"`。未设置表示全部；不是数字的项是配置错误。 |
 
 ## 规则语法
 
@@ -51,11 +51,13 @@ plugins = ["rewriteLinks"]
 
 ## 行为
 
-插件生效时会移除 `Content-Length`，改为 `Transfer-Encoding: chunked`，缓冲整段正文，在流结束时应用过滤器并输出结果。
+插件生效时会移除 `Content-Length`，改为 `Transfer-Encoding: chunked`，缓冲整段正文，在流结束时应用过滤器并输出结果。没有命中的规则不会产生拷贝。
+
+没有可改写正文的响应会原样放过：HEAD 应答、`1xx`、`204`、`304`，以及 `Content-Encoding` 不是 `identity` 的响应（压缩字节永远不会匹配）。
 
 ## 使用说明
 
 - **整段响应体先缓冲到内存**再替换。请用 `path` 与 `status_codes` 收窄范围，远离大文件或流式端点。
-- 压缩过的上游响应在此是不透明字节：上游若返回 gzip，过滤器不会匹配。请要求上游不压缩，或在本插件之后用 [`compression`](compression.md) 由 Pingap 压缩。
+- 压缩过的上游响应会被跳过而不是改写：上游若返回 gzip，过滤器永远不会匹配。请要求上游不压缩，或在本插件之后用 [`compression`](compression.md) 由 Pingap 压缩。
 - 解析失败的规则是启动错误，`pingap -t` 可捕获引号问题。模式与替换须用单引号包裹，且自身不能含单引号。
 - 替换在原始字节上进行；跨多字节 UTF-8 边界的正则匹配由正则引擎处理，但字面模式必须与正文中完全一致。

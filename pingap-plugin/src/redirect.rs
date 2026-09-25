@@ -14,11 +14,11 @@
 
 use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
 use async_trait::async_trait;
-use http::StatusCode;
-use pingap_config::PluginConf;
+use http::{HeaderValue, StatusCode, header};
+use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    convert_headers, get_host,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_host,
+    new_internal_error,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -82,11 +82,22 @@ impl Redirect {
         } else if !prefix.starts_with("/") {
             prefix = format!("/{prefix}");
         }
-        let status = match get_int_conf(params, "status") as u16 {
+        // Only a redirect status makes sense; a mistyped one used to turn
+        // into a 307 without a word.
+        let status = match get_int_conf(params, "status") {
+            0 | 307 => StatusCode::TEMPORARY_REDIRECT,
             301 => StatusCode::MOVED_PERMANENTLY,
             302 => StatusCode::FOUND,
+            303 => StatusCode::SEE_OTHER,
             308 => StatusCode::PERMANENT_REDIRECT,
-            _ => StatusCode::TEMPORARY_REDIRECT,
+            other => {
+                return Err(Error::Invalid {
+                    category: PluginCategory::Redirect.to_string(),
+                    message: format!(
+                        "Invalid status({other}), expect 301, 302, 303, 307 or 308"
+                    ),
+                });
+            },
         };
         Ok(Self {
             hash_value,
@@ -172,22 +183,21 @@ impl Plugin for Redirect {
                 self.prefix.as_str()
             };
 
-        // Build Location header with:
+        // Build Location with:
         // - Desired schema (http/https)
         // - Original host
         // - Configured prefix
         // - Original URI (path + query parameters)
-        let location = format!(
-            "Location: {schema}://{host}{prefix}{}",
+        // A host the header syntax rejects is the client's mistake.
+        let location = HeaderValue::from_str(&format!(
+            "{schema}://{host}{prefix}{}",
             session.req_header().uri
-        );
+        ))
+        .map_err(|e| new_internal_error(400, e))?;
 
-        // Return 307 Temporary Redirect
-        // Using 307 instead of 301/302 to preserve HTTP method
-        // This is important for POST/PUT/DELETE requests
         Ok(RequestPluginResult::Respond(HttpResponse {
             status: self.status,
-            headers: Some(convert_headers(&[location]).unwrap_or_default()),
+            headers: Some(vec![(header::LOCATION, location)]),
             ..Default::default()
         }))
     }
@@ -249,11 +259,33 @@ prefix = "/api"
         );
     }
 
+    #[test]
+    fn test_redirect_rejects_other_statuses() {
+        for status in [200, 304, 404, 399] {
+            let err = Redirect::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    "http_to_https = true\nstatus = {status}"
+                ))
+                .unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert_eq!(
+                format!(
+                    "Plugin redirect invalid, message: Invalid status({status}), expect 301, 302, 303, 307 or 308"
+                ),
+                err
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_redirect_with_status() {
         for (status_conf, expected_status) in [
             (301, StatusCode::MOVED_PERMANENTLY),
             (302, StatusCode::FOUND),
+            (303, StatusCode::SEE_OTHER),
             (307, StatusCode::TEMPORARY_REDIRECT),
             (308, StatusCode::PERMANENT_REDIRECT),
         ] {

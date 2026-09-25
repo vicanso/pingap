@@ -10,7 +10,7 @@ JWT 认证，支持三种校验模式，并可选用一个端点把上游响应�
 由配置的密钥字段决定模式，并按以下顺序尝试：
 
 1. **静态非对称密钥** — `algorithm` 为 `RS256` `RS384` `RS512` `PS256` `PS384` `PS512` `ES256` `ES384` 之一，且 `public_key` 为 PEM。算法被固定，令牌声明不同 `alg` 会被拒绝（防止算法混淆降级）。
-2. **远程 JWKS** — 设置了 `jwks_url`。按令牌 `kid` 选钥并固定该 JWK 的算法；仅接受非对称算法。密钥缓存 `jwks_ttl`，单飞刷新冷却为 `min(jwks_ttl, 10s)`，刷新失败可复用过期缓存。
+2. **远程 JWKS** — 设置了 `jwks_url`。按令牌 `kid` 选钥并固定令牌声明的算法；仅接受非对称算法。没有 `kid` 的令牌会逐一尝试所有密钥，没有 `kid` 的密钥（典型的单密钥 JWKS）会被保留而不是丢弃。密钥缓存 `jwks_ttl`，单飞刷新冷却为 `min(jwks_ttl, 10s)`，刷新失败可复用过期缓存。
 3. **HMAC** — 否则使用 `secret` 配合 `HS256` 或 `HS512`。
 
 ## 配置
@@ -18,7 +18,7 @@ JWT 认证，支持三种校验模式，并可选用一个端点把上游响应�
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `jwt`。 |
-| `header` | string | — | 持有令牌的头；会剥离 `Bearer ` 前缀。 |
+| `header` | string | — | 持有令牌的头；会剥离 `Bearer` scheme（不区分大小写）。 |
 | `cookie` | string | — | 持有令牌的 Cookie。 |
 | `query` | string | — | 持有令牌的查询参数。 |
 | `secret` | string | — | HMAC 共享密钥。未设置 `public_key` 或 `jwks_url` 时必填。 |
@@ -100,13 +100,14 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A…
 | Situation | Status | Body |
 | --- | --- | --- |
 | 未找到令牌 | 401 | `Jwt authorization is missing` |
-| 不是三段点分结构（HMAC 模式） | 401 | `Jwt authorization format is invalid` |
+| 不是三段点分结构，或载荷不是 JSON 对象（HMAC 模式） | 401 | `Jwt authorization format is invalid` |
 | 签名错误或不支持的 `alg` | 401（在 `delay` 之后） | `Jwt authorization is invalid` |
 | `exp` 已过期（HMAC 模式） | 401 | `Jwt authorization is expired` |
+| `nbf` 尚未到达（HMAC 模式） | 401 | `Jwt authorization is not yet valid` |
 
 ## 使用说明
 
-- 非对称与 JWKS 路径通过 `jsonwebtoken` 一并校验签名与 `exp`；不校验 `aud`。
+- 非对称与 JWKS 路径通过 `jsonwebtoken` 一并校验签名、`exp` 与 `nbf`；不校验 `aud`。HMAC 路径校验同样两个声明，整数或浮点数都接受，且不要求头部带 `typ`。`delay` 只作用于签名错误，那是唯一能靠猜测得到的结果。
 - HMAC 模式下算法取自令牌头，同时接受 `HS256` 与 `HS512`，因此仅设置 `algorithm = "HS512"` 并不会拒绝 `HS256` 令牌。`none` 及其他值会被拒绝。
 - `auth_path` 与请求路径做精确相等比较。
 - `auth_path` 下路径设计上就是未认证的——若外围 location 另有保护，请把签发路径单独拆到自己的 location。

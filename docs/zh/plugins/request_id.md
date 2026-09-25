@@ -10,8 +10,8 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `request_id`。 |
-| `algorithm` | string | `uuid` | `nanoid` 生成短 URL 安全 ID；其他表示 UUID v7。 |
-| `size` | int | `8` | 生成的 nanoid 长度。UUID 忽略。 |
+| `algorithm` | string | `uuid` | `uuid`（v7）或 `nanoid`（短 URL 安全 ID）。其他值是配置错误。 |
+| `size` | int | `8` | 生成的 nanoid 长度，1–64。UUID 忽略。 |
 | `header_name` | string | `X-Request-Id` | 读写的头名。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
 

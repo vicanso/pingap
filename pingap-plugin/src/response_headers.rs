@@ -13,6 +13,7 @@
 // limitations under the License.
 use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
+use http::HeaderValue;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::ModifiedMode;
@@ -186,7 +187,7 @@ impl ResponseHeaders {
     /// * `Ok(ResponseHeaders)` - Successfully created plugin instance
     /// * `Err(Error)` - If configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new stats plugin");
+        debug!(params = params.to_string(), "new response headers plugin");
         Self::try_from(params)
     }
 
@@ -210,15 +211,16 @@ impl ResponseHeaders {
         //    - Removes original header and moves its value to new name
         //    - If new name already exists, value is appended
 
+        // A dynamic value that does not resolve is emitted as configured.
+        let resolve = |value: &HeaderValue, session: &Session, ctx: &Ctx| {
+            convert_header_value(value, session, ctx)
+                .unwrap_or_else(|| value.clone())
+        };
+
         // Add new headers (append mode)
         for (name, value) in &self.add_headers {
-            // Try to convert any dynamic values in header
-            if let Some(value) = convert_header_value(value, session, ctx) {
-                let _ = upstream_response.append_header(name, value);
-            } else {
-                // Use original value if conversion fails
-                let _ = upstream_response.append_header(name, value);
-            }
+            let value = resolve(value, session, ctx);
+            let _ = upstream_response.append_header(name, value);
         }
 
         // Remove specified headers
@@ -228,28 +230,33 @@ impl ResponseHeaders {
 
         // Set headers (overwrite mode)
         for (name, value) in &self.set_headers {
-            if let Some(value) = convert_header_value(value, session, ctx) {
-                let _ = upstream_response.insert_header(name, value);
-            } else {
-                let _ = upstream_response.insert_header(name, value);
-            }
+            let value = resolve(value, session, ctx);
+            let _ = upstream_response.insert_header(name, value);
         }
 
         // Set headers that don't exist (conditional set)
         for (name, value) in &self.set_headers_not_exists {
             if !upstream_response.headers.contains_key(name) {
-                if let Some(value) = convert_header_value(value, session, ctx) {
-                    let _ = upstream_response.insert_header(name, value);
-                } else {
-                    let _ = upstream_response.insert_header(name, value);
-                }
+                let value = resolve(value, session, ctx);
+                let _ = upstream_response.insert_header(name, value);
             }
         }
 
-        // Rename headers (move values to new name)
+        // Rename headers: every value moves. `remove_header` hands back
+        // only the first of a multi-valued header, so renaming
+        // `Set-Cookie` used to keep one cookie and drop the rest.
         for (original_name, new_name) in &self.rename_headers {
-            if let Some(value) = upstream_response.remove_header(original_name)
-            {
+            let values: Vec<HeaderValue> = upstream_response
+                .headers
+                .get_all(original_name)
+                .iter()
+                .cloned()
+                .collect();
+            if values.is_empty() {
+                continue;
+            }
+            upstream_response.remove_header(original_name);
+            for value in values {
                 let _ = upstream_response.append_header(new_name, value);
             }
         }
@@ -425,5 +432,48 @@ set_headers_not_exists = [
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-service": "1", "x-service": "2", "x-response-id": "123", "x-tag": "userTag"} }, header_name_map: None, reason_phrase: None }"###,
             format!("{upstream_response:?}")
         )
+    }
+
+    /// Renaming moves every value of a multi-valued header.
+    #[tokio::test]
+    async fn test_rename_keeps_every_value() {
+        let response_headers = ResponseHeaders::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+rename_headers = ["Set-Cookie: X-Set-Cookie", "X-Missing: X-Other"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new().read(b"GET / HTTP/1.1\r\n\r\n").build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Set-Cookie", "a=1")
+            .unwrap();
+        upstream_response
+            .append_header("Set-Cookie", "b=2")
+            .unwrap();
+        response_headers
+            .handle_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut upstream_response,
+            )
+            .await
+            .unwrap();
+        let moved: Vec<&str> = upstream_response
+            .headers
+            .get_all("X-Set-Cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect();
+        assert_eq!(vec!["a=1", "b=2"], moved);
+        assert_eq!(false, upstream_response.headers.contains_key("Set-Cookie"));
+        assert_eq!(false, upstream_response.headers.contains_key("X-Other"));
     }
 }

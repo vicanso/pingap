@@ -11,7 +11,7 @@ through untouched.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `ping`. |
-| `path` | string | `""` | Exact path to answer. |
+| `path` | string | — | **Required.** Exact path to answer. |
 
 ## Example
 

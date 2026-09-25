@@ -17,7 +17,8 @@ dashboards and anything behind a browser where a login page is overkill.
 
 `authorizations` entries are validated as base64 at startup, so a typo fails
 `pingap -t` instead of silently locking everyone out. Credentials are compared in
-constant time.
+constant time; the `Basic` scheme is matched case-insensitively, as RFC 7235
+requires.
 
 ## Generating an entry
 

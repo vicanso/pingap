@@ -11,8 +11,8 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `mock`。 |
 | `path` | string | `""` | 要 mock 的精确路径。空则匹配 location 内**所有**路径。 |
-| `status` | int | `200` | 响应状态。非法码回退为 `200`。 |
-| `headers` | string[] | — | 响应头，格式 `Name: value`。 |
+| `status` | int | `200` | 响应状态。不在 `100`–`999` 范围内的码是配置错误。 |
+| `headers` | string[] | — | 响应头，格式 `Name: value`。非法的名称或值是配置错误。 |
 | `data` | string | `""` | 响应正文。 |
 | `delay` | duration | 无 | 应答前休眠。 |
 

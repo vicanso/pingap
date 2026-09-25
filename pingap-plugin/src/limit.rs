@@ -13,15 +13,17 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_int_conf_or_default, get_step_conf,
-    get_str_conf,
+    Error, get_hash_key, get_int_conf, get_int_conf_or_default,
+    get_step_conf_in, get_str_conf,
 };
 use async_trait::async_trait;
-use http::StatusCode;
+use http::header::RETRY_AFTER;
+use http::{HeaderValue, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Inflight, Plugin, PluginStep, Rate, RequestPluginResult,
+    Ctx, HttpHeader, HttpResponse, Inflight, Plugin, PluginStep, Rate,
+    RequestPluginResult,
 };
 use pingap_core::{
     ensure_client_ip, get_cookie_value, get_query_value, get_req_header_value,
@@ -34,7 +36,7 @@ use tracing::debug;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // LimitTag determines what value will be used as the rate limiting key
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum LimitTag {
     Ip,            // Use client IP (from X-Forwarded-For or direct connection)
     RequestHeader, // Use value from a specified HTTP request header
@@ -86,6 +88,10 @@ pub struct Limiter {
 
     /// The weight of current slot
     weight: f64,
+
+    /// `Retry-After` for a rate limiter's 429: the window length, the
+    /// soonest the budget can have moved on.
+    retry_after: Option<HttpHeader>,
 }
 
 /// Converts a plugin configuration into a Limiter instance
@@ -106,34 +112,78 @@ impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
+        let category = PluginCategory::Limit.to_string();
+        let invalid = |message: String| Error::Invalid {
+            category: category.clone(),
+            message,
+        };
+        // Limiting only makes sense before the upstream is involved.
+        let step = get_step_conf_in(
+            value,
+            &category,
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
-        // Parse the tag type from config, defaulting to IP-based limiting
+        // Every setting here decides who gets limited, so a value that is
+        // not one of the documented ones is an error rather than a silent
+        // fallback: a misspelt `tag` used to limit by ip, a misspelt `type`
+        // rate-limited, and a forgotten `max` rejected almost everything.
         let tag = match get_str_conf(value, "tag").as_str() {
+            "" | "ip" => LimitTag::Ip,
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
             "query" => LimitTag::Query,
-            _ => LimitTag::Ip,
+            other => {
+                return Err(invalid(format!(
+                    "Invalid tag({other}), expect ip, header, cookie or query"
+                )));
+            },
         };
+        let key = get_str_conf(value, "key");
+        if tag != LimitTag::Ip && key.is_empty() {
+            return Err(invalid(
+                "key is required for a header, cookie or query tag".to_string(),
+            ));
+        }
+        let is_inflight = match get_str_conf(value, "type").as_str() {
+            "" | "rate" => false,
+            "inflight" => true,
+            other => {
+                return Err(invalid(format!(
+                    "Invalid type({other}), expect rate or inflight"
+                )));
+            },
+        };
+        if !value.contains_key("max") {
+            return Err(invalid("max is required".to_string()));
+        }
+        let max = get_int_conf(value, "max");
+        if max < 0 {
+            return Err(invalid("max must not be negative".to_string()));
+        }
 
         // Parse time interval for rate limiting
         // Format examples: "10s", "1m", "2h"
         // Default: 10 seconds if not specified
         let interval = get_str_conf(value, "interval");
         let interval = if !interval.is_empty() {
-            parse_duration(&interval).map_err(|e| Error::Invalid {
-                category: PluginCategory::Limit.to_string(),
-                message: e.to_string(),
-            })?
+            parse_duration(&interval).map_err(|e| invalid(e.to_string()))?
         } else {
             Duration::from_secs(10)
         };
+        if interval.is_zero() {
+            return Err(invalid(
+                "interval must be greater than zero".to_string(),
+            ));
+        }
 
         // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
-        let mut max = get_int_conf(value, "max") as f64;
-        if get_str_conf(value, "type") == "inflight" {
+        let mut retry_after = None;
+        let mut max = max as f64;
+        if is_inflight {
             // Inflight limiter uses atomic counters to track concurrent requests
             inflight = Some(Inflight::new());
         } else {
@@ -141,33 +191,27 @@ impl TryFrom<&PluginConf> for Limiter {
             max /= interval.as_secs_f64().max(1.0);
             // Rate limiter uses time-bucketed counters
             rate = Some(Rate::new(interval));
+            retry_after = Some((
+                RETRY_AFTER,
+                HeaderValue::from(interval.as_secs().max(1)),
+            ));
         }
 
         let weight = get_int_conf_or_default(value, "weight", 50).clamp(0, 100)
             as f64
             / 100.0;
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             tag,
-            key: get_str_conf(value, "key"),
+            key,
             max,
             inflight,
             rate,
             plugin_step: step,
             weight,
-        };
-
-        // Validate plugin step - limiting only makes sense during request or upstream phases
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Limit.to_string(),
-                message: "Limit plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+            retry_after,
+        })
     }
 }
 
@@ -306,6 +350,7 @@ impl Plugin for Limiter {
             // If limit exceeded, return 429 Too Many Requests
             return Ok(RequestPluginResult::Respond(HttpResponse {
                 status: StatusCode::TOO_MANY_REQUESTS,
+                headers: self.retry_after.clone().map(|header| vec![header]),
                 body: e.to_string().into(),
                 ..Default::default()
             }));
@@ -380,9 +425,49 @@ max = 10
             .unwrap(),
         );
         assert_eq!(
-            "Plugin limit invalid, message: Limit plugin should be executed at request or proxy upstream step",
+            "Plugin limit invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
             result.err().unwrap().to_string()
         );
+
+        // Settings that decide who is limited are checked, not defaulted.
+        for (conf, expect) in [
+            (
+                "tag = \"cookies\"\nkey = \"a\"\nmax = 1",
+                "Invalid tag(cookies)",
+            ),
+            ("tag = \"header\"\nmax = 1", "key is required"),
+            ("type = \"inflght\"\nmax = 1", "Invalid type(inflght)"),
+            ("type = \"rate\"", "max is required"),
+            ("max = -1", "max must not be negative"),
+            ("max = 1\ninterval = \"0s\"", "interval must be greater"),
+        ] {
+            let err =
+                Limiter::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+                    .err()
+                    .unwrap()
+                    .to_string();
+            assert_eq!(true, err.contains(expect), "{conf}: {err}");
+        }
+
+        // A rate limiter tells the client when to come back.
+        let params = Limiter::try_from(
+            &toml::from_str::<PluginConf>("max = 10\ninterval = \"30s\"")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            Some("30"),
+            params
+                .retry_after
+                .as_ref()
+                .and_then(|(_, value)| value.to_str().ok())
+        );
+        let params = Limiter::try_from(
+            &toml::from_str::<PluginConf>("type = \"inflight\"\nmax = 10")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(true, params.retry_after.is_none());
     }
 
     #[tokio::test]
@@ -585,6 +670,13 @@ interval = "1s"
             panic!("result is not Respond");
         };
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
+        assert_eq!(
+            Some("1"),
+            resp.headers
+                .as_ref()
+                .and_then(|headers| headers.first())
+                .and_then(|(_, value)| value.to_str().ok())
+        );
 
         // wait for rate limiter to reset
         tokio::time::sleep(Duration::from_secs(1)).await;

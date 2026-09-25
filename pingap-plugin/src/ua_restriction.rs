@@ -22,7 +22,7 @@ use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
-use regex::Regex;
+use regex::RegexSet;
 use std::borrow::Cow;
 use tracing::debug;
 
@@ -64,7 +64,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 ///   used for caching and tracking plugin instances
 pub struct UaRestriction {
     plugin_step: PluginStep, // Defines when plugin runs (must be Request phase)
-    ua_list: Vec<Regex>, // List of compiled regex patterns to match User-Agents
+    /// The patterns, compiled into one set: a user agent is matched against
+    /// all of them in a single pass instead of one regex after another.
+    ua_list: RegexSet,
     restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Custom HTTP response returned when request is blocked
     hash_value: String, // Unique identifier for plugin instance, used for caching/tracking
@@ -86,21 +88,18 @@ impl TryFrom<&PluginConf> for UaRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
-        let mut ua_list = vec![];
 
-        // Parse and compile each regex pattern from the ua_list config
+        // Compile the patterns from the ua_list config into one set
         // Example config:
         // ua_list = [
         //   "go-http-client/1.1",
         //   "(Twitterspider)/(\d+)\.(\d+)"
         // ]
-        for item in get_str_slice_conf(value, "ua_list").iter() {
-            let reg = Regex::new(item).map_err(|e| Error::Invalid {
+        let ua_list = RegexSet::new(get_str_slice_conf(value, "ua_list"))
+            .map_err(|e| Error::Invalid {
                 category: "regex".to_string(),
                 message: e.to_string(),
             })?;
-            ua_list.push(reg);
-        }
 
         // Configure custom error message or use default
         let mut message = get_str_conf(value, "message");
@@ -180,17 +179,11 @@ impl Plugin for UaRestriction {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        let mut found = false;
-        // Extract and check User-Agent header against patterns
-        if let Some(value) = session.get_header(http::header::USER_AGENT) {
-            let ua = value.to_str().unwrap_or_default();
-            // Check each regex pattern until a match is found
-            for item in self.ua_list.iter() {
-                if !found && item.is_match(ua) {
-                    found = true;
-                }
-            }
-        }
+        // Extract and check User-Agent header against the pattern set
+        let found = session
+            .get_header(http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|ua| self.ua_list.is_match(ua));
 
         // Determine if request should be allowed based on mode:
         // - deny mode: block if UA matches any pattern
@@ -239,12 +232,7 @@ type = "deny"  # This config will block these user agents
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!(
             r#"go-http-client/1.1,(Twitterspider)/(\d+)\.(\d+)"#,
-            params
-                .ua_list
-                .iter()
-                .map(|item| item.to_string())
-                .collect::<Vec<String>>()
-                .join(",")
+            params.ua_list.patterns().join(",")
         );
 
         assert_eq!(RestrictionCategory::Deny, params.restriction_category);

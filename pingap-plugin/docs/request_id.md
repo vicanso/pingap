@@ -13,8 +13,8 @@ the request context for logging.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `request_id`. |
-| `algorithm` | string | `uuid` | `nanoid` for short URL-safe ids; anything else means UUID v7. |
-| `size` | int | `8` | Length of the generated nanoid. Ignored for UUID. |
+| `algorithm` | string | `uuid` | `uuid` (v7) or `nanoid` for short URL-safe ids. Anything else is a configuration error. |
+| `size` | int | `8` | Length of the generated nanoid, 1–64. Ignored for UUID. |
 | `header_name` | string | `X-Request-Id` | Header to read and write. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
 

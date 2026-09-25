@@ -16,7 +16,9 @@
 | `gzip_level` | int | `0` | 0–9。`0` 禁用 gzip。 |
 | `br_level` | int | `0` | 0–11。`0` 禁用 brotli。 |
 | `zstd_level` | int | `0` | 0–22。`0` 禁用 zstd。 |
-| `mode` | string | *(下游)* | 设为 `upstream` 使用流式压缩器。 |
+| `mode` | string | `response` | `response`（下游模式）或 `upstream`（流式压缩器）。其他值是配置错误。 |
+
+超出范围的级别会被截断到范围内（负数按 `0`）。
 | `min_length` | int | `0` | 仅上游模式：`Content-Length` 低于此值则跳过。 |
 | `decompression` | bool | 缺席 | 键存在则切换对压缩上游响应的解压。 |
 
@@ -49,12 +51,15 @@ min_length = 1024
 
 仅当**全部**满足时压缩：
 
-1. 尚无 `Content-Encoding`。
-2. `Content-Type` 可压缩：`application/json`、`application/xml`、`text/html`，或任意 `text/*`。
-3. 客户端接受已启用算法之一。
-4. `min_length` 为 `0`，或存在 `Content-Length` 且至少为 `min_length`。无 `Content-Length` 的响应总会被压缩。
+1. 有响应体：HEAD 应答、`1xx`、`204` 与 `304` 不处理，否则即便什么都不编码也会输出格式的头尾。
+2. 尚无 `Content-Encoding`。
+3. `Content-Type` 可压缩：`application/json`、`application/xml`、`text/html`，或任意 `text/*`。
+4. 客户端接受已启用算法之一。
+5. `min_length` 为 `0`，或存在 `Content-Length` 且至少为 `min_length`。无 `Content-Length` 的响应总会被压缩。
 
 压缩时移除 `Content-Length`，设置 `Transfer-Encoding: chunked` 与 `Content-Encoding`，并增量编码正文。
+
+发往客户端时，任何带 `Content-Encoding` 的响应都会加上 `Vary: Accept-Encoding`（除非 `Vary` 已包含它或 `*`），让 Pingap 前面的缓存区分不同编码。它在 `response` 步骤而非上游响应上添加，因此 Pingap 自身的缓存（已按所选编码作为键）不会被请求头的各种写法进一步拆分；缓存命中的压缩响应每次也会同样加上。
 
 上游模式还会把所选编码追加到缓存键，使缓存条目按编码区分。
 

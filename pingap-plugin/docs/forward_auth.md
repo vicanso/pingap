@@ -29,7 +29,14 @@ appended), carrying the selected original headers plus:
 | `x-forwarded-method` | Original HTTP method |
 | `x-forwarded-uri` | Original path and query |
 | `x-forwarded-host` | Original `Host` |
+| `x-forwarded-proto` | `https` when the client connected over TLS, else `http` |
 | `x-forwarded-for` | Client IP as resolved by Pingap |
+
+`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`,
+`Proxy-Connection`, `TE`, `Trailer`, `Upgrade` and `Expect` are never forwarded,
+whatever `request_headers` says: they describe the client's connection or a body
+the bodiless `GET` does not carry, and the auth service would otherwise wait for
+a body that never comes.
 
 ## Example
 
@@ -71,9 +78,13 @@ If the service answers `200` with `X-User-Id: 42`, the upstream sees
 | Any other status | That status, its headers and its body, relayed as-is |
 | Unreachable / timed out | `502 Bad Gateway`, body `Forward auth request failed` |
 
-`content-length`, `transfer-encoding` and `connection` are stripped from the
-relayed response because Pingap re-frames it. A status outside the valid HTTP
-range degrades to `403`.
+`content-length`, `transfer-encoding`, `connection` and the other hop-by-hop
+headers are stripped from the relayed response because Pingap re-frames it. A
+status outside the valid HTTP range degrades to `403`.
+
+Redirects from the auth service are never followed: a `302` is relayed as the
+decision. Following it, as an HTTP client does by default, would have turned the
+login page's `200` into an approval.
 
 ## Usage notes
 

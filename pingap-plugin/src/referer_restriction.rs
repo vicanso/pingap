@@ -23,7 +23,6 @@ use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use substring::Substring;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -83,11 +82,14 @@ impl TryFrom<&PluginConf> for RefererRestriction {
         let mut referer_list = vec![];
         let mut prefix_referer_list = vec![];
         for item in get_str_slice_conf(value, "referer_list").iter() {
-            if item.starts_with('*') {
-                prefix_referer_list
-                    .push(item.substring(1, item.len()).to_string());
+            // Host names are case-insensitive and the URL parser hands
+            // them back lowercased, so an entry written as `GitHub.com`
+            // used to match nothing.
+            let item = item.trim().to_ascii_lowercase();
+            if let Some(suffix) = item.strip_prefix('*') {
+                prefix_referer_list.push(suffix.to_string());
             } else {
-                referer_list.push(item.to_string());
+                referer_list.push(item);
             }
         }
 
@@ -180,23 +182,21 @@ impl Plugin for RefererRestriction {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
-        let mut found = false;
-        if let Some(value) = session.get_header(http::header::REFERER) {
-            let referer = value.to_str().unwrap_or_default().to_string();
-            let host = if let Ok(info) = url::Url::parse(&referer) {
-                info.host_str().unwrap_or_default().to_string()
-            } else {
-                "".to_string()
-            };
-            if self.referer_list.contains(&host) {
-                found = true;
-            } else {
-                found = self
-                    .prefix_referer_list
-                    .iter()
-                    .any(|item| host.ends_with(item));
-            }
-        }
+        // The referer's host, matched in place: no copy of the header, and
+        // none of the host.
+        let found = session
+            .get_header(http::header::REFERER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|referer| url::Url::parse(referer).ok())
+            .is_some_and(|referer| {
+                referer.host_str().is_some_and(|host| {
+                    self.referer_list.iter().any(|item| item == host)
+                        || self
+                            .prefix_referer_list
+                            .iter()
+                            .any(|item| host.ends_with(item.as_str()))
+                })
+            });
         if !self.restriction_category.allows(found) {
             return Ok(RequestPluginResult::Respond(
                 self.forbidden_resp.clone(),
@@ -234,6 +234,17 @@ type = "deny"
         )
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!(".bing.cn", params.prefix_referer_list.join(","));
+        assert_eq!("github.com", params.referer_list.join(","));
+
+        // Entries are lowercased, since hosts compare case-insensitively.
+        let params = RefererRestriction::try_from(
+            &toml::from_str::<PluginConf>(
+                "referer_list = [\"GitHub.com\", \"*.Bing.CN \"]\ntype = \"deny\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert_eq!(".bing.cn", params.prefix_referer_list.join(","));
         assert_eq!("github.com", params.referer_list.join(","));
     }

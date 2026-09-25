@@ -121,8 +121,9 @@ impl Plugin for AcceptEncoding {
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
 
-        let mut new_accept_encodings: SmallVec<[String; 3]> =
-            SmallVec::with_capacity(self.encodings.len());
+        // The kept encodings borrow the configured names; only the joined
+        // header value is built per request.
+        let mut new_accept_encodings: SmallVec<[&str; 3]> = SmallVec::new();
 
         // Filter the accepted encodings based on our supported list
         for encoding in self.encodings.iter() {
@@ -133,7 +134,7 @@ impl Plugin for AcceptEncoding {
             // Add encoding if the client actually listed it (token match, not
             // a substring: `x-gzip` must not match `gzip`).
             if accepts_encoding(accept_encoding, encoding) {
-                new_accept_encodings.push(encoding.to_string());
+                new_accept_encodings.push(encoding.as_str());
             }
         }
 

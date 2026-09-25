@@ -17,9 +17,11 @@ order:
    PEM. The configured algorithm is pinned, so a token that claims a different
    `alg` is rejected (no algorithm-confusion downgrade).
 2. **Remote JWKS** — `jwks_url` is set. The key is selected by the token's `kid`
-   and pinned to that JWK's algorithm; only asymmetric algorithms are accepted.
-   Keys are cached for `jwks_ttl`, refreshed single-flight with a cooldown of
-   `min(jwks_ttl, 10s)`, and a stale cache is reused if a refetch fails.
+   and pinned to the token's algorithm; only asymmetric algorithms are accepted.
+   A token without a `kid` is tried against every key, and a key without one (a
+   single-key JWKS, typically) is kept rather than dropped. Keys are cached for
+   `jwks_ttl`, refreshed single-flight with a cooldown of `min(jwks_ttl, 10s)`,
+   and a stale cache is reused if a refetch fails.
 3. **HMAC** — otherwise `secret` is used with `HS256` or `HS512`.
 
 ## Configuration
@@ -27,7 +29,7 @@ order:
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `jwt`. |
-| `header` | string | — | Header holding the token; a `Bearer ` prefix is stripped. |
+| `header` | string | — | Header holding the token; a `Bearer` scheme (any case) is stripped. |
 | `cookie` | string | — | Cookie holding the token. |
 | `query` | string | — | Query parameter holding the token. |
 | `secret` | string | — | HMAC shared secret. Required unless `public_key` or `jwks_url` is set. |
@@ -115,14 +117,18 @@ token that never expires.
 | Situation | Status | Body |
 | --- | --- | --- |
 | No token found | 401 | `Jwt authorization is missing` |
-| Not three dot-separated parts (HMAC mode) | 401 | `Jwt authorization format is invalid` |
+| Not three dot-separated parts, or the payload is not a JSON object (HMAC mode) | 401 | `Jwt authorization format is invalid` |
 | Bad signature, or unsupported `alg` | 401 (after `delay`) | `Jwt authorization is invalid` |
 | `exp` in the past (HMAC mode) | 401 | `Jwt authorization is expired` |
+| `nbf` in the future (HMAC mode) | 401 | `Jwt authorization is not yet valid` |
 
 ## Usage notes
 
-- The asymmetric and JWKS paths verify the signature **and** `exp` together via
-  `jsonwebtoken`; `aud` is not validated.
+- The asymmetric and JWKS paths verify the signature, `exp` and `nbf` together
+  via `jsonwebtoken`; `aud` is not validated. The HMAC path checks the same two
+  claims, accepts them as integers or floats, and does not require `typ` in the
+  header. `delay` applies only to a bad signature, the one outcome a guess can
+  produce.
 - In HMAC mode an explicitly configured `algorithm` is enforced, so an `HS512`
   configuration rejects an `HS256` token and vice versa. Leaving `algorithm`
   unset accepts either. `none` and everything else are always rejected, and an
