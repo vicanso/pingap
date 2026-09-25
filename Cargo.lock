@@ -4343,7 +4343,6 @@ dependencies = [
  "sha2",
  "smallvec",
  "snafu",
- "substring",
  "tempfile",
  "tokio",
  "tokio-test",
