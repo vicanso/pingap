@@ -35,6 +35,7 @@
 | `$remote_addr` | 客户端地址 |
 | `$remote_port` | 客户端端口 |
 | `$upstream_addr` | 所选上游地址 |
+| `$ja4` | 客户端的 JA4 TLS 指纹，需 server 设置 `ja4 = true` |
 | `$proxy_add_x_forwarded_for` | 已有 `X-Forwarded-For` 加上客户端地址 |
 | `$http_<name>` | 请求头 `<name>` 的值；下划线代表横线，`$http_user_agent` 读取的是 `User-Agent` |
 | `$<NAME>` | 环境变量 `NAME` |

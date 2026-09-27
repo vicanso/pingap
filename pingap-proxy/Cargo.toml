@@ -33,7 +33,7 @@ pingap-util = { workspace = true }
 pingora = { workspace = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

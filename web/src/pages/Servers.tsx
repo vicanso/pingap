@@ -179,6 +179,17 @@ export default function Servers() {
       options: newBooleanOptions(),
     },
     {
+      name: "ja4",
+      section: sec.tls,
+      label: serverI18n("ja4"),
+      placeholder: "",
+      tips: serverI18n("ja4Tips"),
+      defaultValue: serverConfig.ja4,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "access_log",
       section: sec.logging,
       label: serverI18n("accessLog"),

@@ -38,6 +38,7 @@ renamed in step 5 sees the result of everything before it.
 | `$remote_addr` | Client address |
 | `$remote_port` | Client port |
 | `$upstream_addr` | Selected upstream address |
+| `$ja4` | The client's JA4 TLS fingerprint, on a server with `ja4 = true` |
 | `$proxy_add_x_forwarded_for` | Existing `X-Forwarded-For` plus the client address |
 | `$http_<name>` | Value of request header `<name>`; underscores stand for dashes, so `$http_user_agent` reads `User-Agent` |
 | `$<NAME>` | Environment variable `NAME` |

@@ -943,6 +943,11 @@ pub struct ServerConf {
     /// Whether to use global certificates instead of per-server certs
     pub global_certificates: Option<bool>,
 
+    /// Compute the JA4 fingerprint of every TLS client from its
+    /// ClientHello, for `$ja4` in headers and `{:ja4}` in the access log.
+    /// Needs a TLS listener (`global_certificates`).
+    pub ja4: Option<bool>,
+
     /// Whether to enable HTTP/2 protocol support
     pub enabled_h2: Option<bool>,
 
@@ -1073,6 +1078,18 @@ impl ServerConf {
         }
 
         self.validate_h2()?;
+
+        // The fingerprint comes from the ClientHello, which only a TLS
+        // listener receives; on a plain one the option would do nothing.
+        if self.ja4.unwrap_or_default()
+            && !self.global_certificates.unwrap_or_default()
+        {
+            return Err(Error::Invalid {
+                message:
+                    "ja4 needs a TLS listener (global_certificates = true)"
+                        .to_string(),
+            });
+        }
 
         Ok(())
     }
@@ -2455,6 +2472,23 @@ h1_upgrade = "preserve"
         conf.locations = Some(vec!["lo".to_string()]);
         let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_server_ja4_conf() {
+        let conf: ServerConf = toml::from_str(
+            "addr = \"127.0.0.1:3001\"\nglobal_certificates = true\nja4 = true\n",
+        )
+        .unwrap();
+        assert_eq!(Some(true), conf.ja4);
+        assert_eq!(true, conf.validate().is_ok());
+
+        let conf: ServerConf =
+            toml::from_str("addr = \"127.0.0.1:3001\"\nja4 = true\n").unwrap();
+        assert_eq!(
+            "Invalid error ja4 needs a TLS listener (global_certificates = true)",
+            conf.validate().unwrap_err().to_string()
+        );
     }
 
     #[test]

@@ -123,8 +123,12 @@ The following tags are available for access logging:
 
 A placeholder is `{`, a name made of letters, digits and `_ - < > ~ : $`, and
 `}`; a `{` not followed by that is literal text. A missing value - an absent
-header, cookie or context field, no status yet - is rendered as `-`. A
-placeholder that names no tag is dropped.
+header or cookie, no status yet - is rendered as `-`; a context field with no
+value writes nothing. A placeholder that names no tag is dropped.
+
+On a server with `ja4 = true`, the context keys `ja4`, `ja4_r`, `ja4_o` and
+`ja4_ro` print the client's JA4 TLS fingerprint in each of its forms; see
+[pingap-proxy](../pingap-proxy/README.md#ja4-fingerprint).
 
 `format` writes straight into one pre-sized buffer: the timestamps are
 rendered digit by digit rather than through an intermediate `String`, and the

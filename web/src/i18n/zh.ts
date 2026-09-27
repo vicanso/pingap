@@ -313,6 +313,9 @@ export default {
     threadsPlaceholder: "输入服务线程数",
     threadsTips: "填 0 表示按 CPU 核数；留空则继承 basic.threads。",
     globalCertificates: "使用全局证书",
+    ja4: "JA4 指纹",
+    ja4Tips:
+      "根据客户端的 ClientHello 计算 JA4 TLS 指纹，可在请求头中用 $ja4、在访问日志中用 {:ja4} 获取。需要开启使用全局证书。",
     accessLog: "访问日志格式化",
     accessLogPlaceholder: "输入日志格式化模板",
     enabledH2: "启用http2(h2c)",

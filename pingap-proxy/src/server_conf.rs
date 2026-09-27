@@ -80,6 +80,9 @@ pub struct ServerConf {
     // False means the server is using http protocol
     pub global_certificates: bool,
 
+    // Compute the JA4 fingerprint of each TLS client (needs TLS)
+    pub ja4: bool,
+
     // Whether HTTP/2 protocol support is enabled for this server
     // The http protocol is using h2c
     pub enabled_h2: bool,
@@ -174,6 +177,7 @@ impl fmt::Display for ServerConf {
         // --- TLS ---
         writeln!(f, "  - TLS Settings:")?;
         writeln!(f, "    Global Certificates: {}", self.global_certificates)?;
+        writeln!(f, "    JA4 Fingerprint: {}", self.ja4)?;
         writeln!(
             f,
             "    Min Version: {}",
@@ -276,6 +280,7 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             locations: item.locations.unwrap_or_default(),
             threads: item.threads,
             global_certificates: item.global_certificates.unwrap_or_default(),
+            ja4: item.ja4.unwrap_or_default(),
             enabled_h2: item.enabled_h2.unwrap_or_default(),
             h2_max_concurrent_streams: item.h2_max_concurrent_streams,
             // Validated to fit u32 by pingap-config; the fallback only
@@ -353,6 +358,7 @@ mod tests {
     Downstream Write Timeout: default
   - TLS Settings:
     Global Certificates: false
+    JA4 Fingerprint: false
     Min Version: 
     Max Version: 
     Cipher List (TLS <1.3): 
@@ -385,6 +391,7 @@ mod tests {
     Downstream Write Timeout: default
   - TLS Settings:
     Global Certificates: false
+    JA4 Fingerprint: false
     Min Version: 
     Max Version: 
     Cipher List (TLS <1.3): 

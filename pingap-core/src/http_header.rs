@@ -45,6 +45,7 @@ const SERVER_ADDR_TAG: &[u8] = b"$server_addr";
 const SERVER_PORT_TAG: &[u8] = b"$server_port";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
 const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
+const JA4_TAG: &[u8] = b"$ja4";
 
 // Define static HeaderValues for HTTP and HTTPS schemes to avoid re-creation.
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
@@ -184,7 +185,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
     if buf == HOST_NAME_TAG {
         return HeaderValue::from_str(get_hostname()).unwrap_or(value);
     }
-    let request_tags: [&[u8]; 8] = [
+    let request_tags: [&[u8]; 9] = [
         HOST_TAG,
         SCHEME_TAG,
         REMOTE_ADDR_TAG,
@@ -193,6 +194,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         SERVER_PORT_TAG,
         PROXY_ADD_FORWARDED_TAG,
         UPSTREAM_ADDR_TAG,
+        JA4_TAG,
     ];
     if request_tags.contains(&buf) || buf.starts_with(b"$http_") {
         return value;
@@ -256,6 +258,11 @@ pub fn convert_header_value(
                 None
             }
         },
+        JA4_TAG => ctx
+            .conn
+            .ja4
+            .as_deref()
+            .and_then(|fingerprint| to_header_value(fingerprint.ja4())),
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
@@ -803,6 +810,42 @@ mod tests {
         );
         assert_eq!(true, value.is_some());
         assert_eq!("10.1.1.1:8001", value.unwrap().to_str().unwrap());
+
+        // `$ja4` and the log-field form `:ja4` read the connection's
+        // fingerprint; without one there is nothing to set.
+        let session = new_test_session(&[""], "/vicanso/pingap?size=1").await;
+        let mut ctx = Ctx::default();
+        for tag in ["$ja4", ":ja4"] {
+            let value = convert_header_value(
+                &HeaderValue::from_str(tag).unwrap(),
+                &session,
+                &ctx,
+            );
+            assert_eq!(true, value.is_none(), "{tag}");
+        }
+        ctx.conn.ja4 = Some(std::sync::Arc::new(
+            crate::Ja4Fingerprint::from_client_hello(
+                &crate::ja4::testing::spec_example_body(),
+            )
+            .unwrap(),
+        ));
+        for tag in ["$ja4", ":ja4"] {
+            let value = convert_header_value(
+                &HeaderValue::from_str(tag).unwrap(),
+                &session,
+                &ctx,
+            );
+            assert_eq!(
+                "t13d1516h2_8daaf6152771_e5627efa2ab1",
+                value.unwrap().to_str().unwrap(),
+                "{tag}"
+            );
+        }
+        // Never resolved as an environment variable at load time.
+        assert_eq!(
+            "$ja4",
+            resolve_static_header_value(HeaderValue::from_static("$ja4"))
+        );
 
         let session = new_test_session(
             &["Origin: https://github.com"],

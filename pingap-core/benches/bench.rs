@@ -115,8 +115,28 @@ fn bench_get_variable(c: &mut Criterion) {
         });
     });
 }
+#[allow(clippy::unwrap_used)]
+fn bench_ja4(c: &mut Criterion) {
+    use pingap_core::Ja4Fingerprint;
+    use pingap_core::ja4::testing::{client_hello_records, spec_example_body};
+    use pingap_core::ja4::{ClientHelloStatus, read_client_hello};
+    // The specification's example ClientHello, in one record.
+    let records = client_hello_records(&spec_example_body(), 16 * 1024);
+    c.bench_function("ja4 read and fingerprint client hello", |b| {
+        b.iter(|| {
+            let ClientHelloStatus::Complete(body) =
+                read_client_hello(black_box(&records))
+            else {
+                panic!("complete client hello");
+            };
+            Ja4Fingerprint::from_client_hello(&body).unwrap()
+        });
+    });
+}
+
 criterion_group!(
     benches,
+    bench_ja4,
     bench_remove_query_from_header,
     bench_get_host,
     bench_convert_header_value,

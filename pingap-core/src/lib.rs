@@ -39,6 +39,7 @@ pub fn new_internal_error(
 mod ctx;
 mod http_header;
 mod http_response;
+pub mod ja4;
 mod notification;
 mod plugin;
 mod service;
@@ -48,6 +49,7 @@ mod util;
 pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;
+pub use ja4::{Ja4Fingerprint, is_grease};
 pub use notification::*;
 pub use pingora_limits::inflight::{Guard, Inflight};
 pub use pingora_limits::rate::Rate;

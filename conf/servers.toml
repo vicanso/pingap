@@ -99,6 +99,10 @@ locations = ["lo"]
 # Default `false`
 # h1_pipelining = true
 
+# Compute the JA4 TLS fingerprint of each client, for `$ja4` in headers and
+# `{:ja4}` in the access log. Needs `global_certificates = true`.
+# ja4 = true
+
 # TCP Keep-alive idle time:
 # Controls how long a connection must be idle before TCP starts sending keep-alive probes
 # Default `none`

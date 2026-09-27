@@ -19,6 +19,7 @@ use super::tracing::{
 };
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
+use crate::ja4::{Ja4Collector, Ja4Store};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -83,7 +84,7 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Access-log lines dropped because the async logger channel was full.
 static ACCESS_LOG_DROPPED: AtomicU64 = AtomicU64::new(0);
@@ -178,6 +179,10 @@ pub struct Server {
 
     /// Whether to use global certificate store for TLS
     global_certificates: bool,
+
+    /// The JA4 fingerprints of this server's open TLS connections, filled
+    /// before each handshake; `None` unless `ja4` is enabled.
+    ja4: Option<Arc<Ja4Store>>,
 
     /// TCP socket configuration options (keepalive, TCP fastopen etc)
     tcp_socket_options: Option<TcpSocketOptions>,
@@ -410,6 +415,7 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
+            ja4: conf.ja4.then(|| Arc::new(Ja4Store::default())),
             enabled_h2: conf.enabled_h2,
             h2_max_concurrent_streams: conf.h2_max_concurrent_streams,
             h2_max_header_list_size: conf.h2_max_header_list_size,
@@ -559,6 +565,7 @@ impl Server {
         let tls_max_version = self.tls_max_version.clone();
         let h2_options = self.new_h2_options();
         let h2_idle_timeout = self.h2_idle_timeout;
+        let ja4_store = self.ja4.clone();
         #[cfg(feature = "tracing")]
         let pool_observer = self.prometheus.clone();
         let builder = ProxyServiceBuilder::new(&conf, self)
@@ -589,6 +596,20 @@ impl Server {
             http_logic.h2_options = h2_options;
         }
         lb.threads = threads;
+        // The collector reads each ClientHello before the handshake, in
+        // code pingora shares between its TLS backends. It only ever runs
+        // on TLS listeners; config validation rejects `ja4` without one.
+        if let Some(store) = ja4_store {
+            if is_tls {
+                lb.endpoints()
+                    .set_pre_tls_callback(Arc::new(Ja4Collector::new(store)));
+            } else {
+                warn!(
+                    target: LOG_TARGET,
+                    name, "ja4 needs a TLS listener, not collecting it"
+                );
+            }
+        }
         // support listen multi address
         for addr in addr.split(',').map(str::trim).filter(|a| !a.is_empty()) {
             // tls
@@ -682,6 +703,14 @@ impl Server {
             }
             ctx.conn.tls_cipher = digest_detail.tls_cipher;
             ctx.conn.tls_version = digest_detail.tls_version;
+            // The fingerprint was filed under this connection's socket
+            // digest before its handshake.
+            if let Some(store) = &self.ja4
+                && digest.ssl_digest.is_some()
+                && let Some(socket_digest) = &digest.socket_digest
+            {
+                ctx.conn.ja4 = store.get(socket_digest);
+            }
         };
         accept_request();
 

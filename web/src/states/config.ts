@@ -124,6 +124,7 @@ export interface Server {
   h1_pipelining?: boolean;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
+  ja4?: boolean;
   downstream_read_timeout?: string;
   downstream_write_timeout?: string;
   reuse_port?: boolean;

@@ -118,6 +118,7 @@ addr = "0.0.0.0:443,[::]:443"
 locations = ["api", "web"]
 threads = 4
 global_certificates = true
+ja4 = true
 enabled_h2 = true
 access_log = "combined"
 enable_server_timing = true
@@ -156,6 +157,9 @@ Notes on a few of these:
   keeps pingora's bounded defaults (100 streams, 64 KiB header list), which cap
   the memory one client connection can pin; raise them deliberately for gRPC
   fan-in or large-header clients rather than removing the bound.
+- `ja4 = true` computes the JA4 TLS fingerprint of every client; see
+  [JA4 fingerprint](#ja4-fingerprint). It needs `global_certificates = true`,
+  which config validation checks.
 - `prometheus_metrics` exposes the pull endpoint on this server; a URL value
   instead configures push mode.
 - `enable_server_timing` adds a `Server-Timing` response header built from the
@@ -172,6 +176,56 @@ Notes on a few of these:
 
   Any other name in double braces is left as literal text, and a template
   whose first character is `{` is served as `application/json`.
+
+## JA4 fingerprint
+
+With `ja4 = true` on a TLS server, pingap computes the
+[JA4](https://github.com/FoxIO-LLC/ja4) fingerprint of each client from its
+ClientHello. The fingerprint identifies the client's TLS stack, whatever its
+`User-Agent` claims:
+
+```toml
+[servers.main]
+addr = "0.0.0.0:443"
+global_certificates = true
+ja4 = true
+access_log = "{client_ip} {status} {:ja4}"
+
+[locations.api]
+upstream = "api"
+proxy_set_headers = ["X-JA4: $ja4"]
+```
+
+| Where | Name | Value |
+| --- | --- | --- |
+| Request and response headers | `$ja4` (or `:ja4`) | `JA4`, e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1` |
+| Access log | `{:ja4}` | `JA4` |
+| Access log | `{:ja4_r}` | `JA4_r`: the sorted lists instead of their hashes |
+| Access log | `{:ja4_o}` | `JA4_o`: hashed over the lists in the order the client sent them |
+| Access log | `{:ja4_ro}` | `JA4_ro`: the lists in the order sent, unhashed |
+
+How it works:
+
+- It follows FoxIO's JA4 specification, the TLS client fingerprint, which is
+  BSD 3-Clause licensed. The specification's own examples are the unit tests
+  for all four forms. The other JA4+ fingerprints are not implemented.
+- The ClientHello is read from the TCP stream before the TLS handshake, in code
+  pingora shares between its TLS backends. OpenSSL and rustls builds therefore
+  compute the same value for the same client. Every byte read is put back for
+  the handshake.
+- It never delays or rejects a connection beyond reading the ClientHello the
+  handshake needs anyway. A client with no complete ClientHello within 5
+  seconds, one larger than 16 KiB, or a malformed one simply has no
+  fingerprint. Plain HTTP connections never have one. Without a fingerprint
+  the access log field is empty, and a header set from `$ja4` falls back to
+  the literal text, like every other variable that cannot be resolved.
+- A ClientHello split over several TLS records is reassembled first. With
+  Encrypted Client Hello, the outer ClientHello is the one on the wire and the
+  one fingerprinted.
+- The fingerprint belongs to the connection. Every request on a keep-alive or
+  HTTP/2 connection carries it, and it is dropped when the connection closes.
+- The cost is one ClientHello parse and two SHA-256 hashes per new TLS
+  connection, plus one lookup per request. It is off by default.
 
 ## Per-request context
 

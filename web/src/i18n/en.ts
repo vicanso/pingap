@@ -337,6 +337,9 @@ export default {
     threadsPlaceholder: "Input the thread count of server",
     threadsTips: "0 follows CPU count. Empty inherits basic.threads.",
     globalCertificates: "Using Global Certificates",
+    ja4: "JA4 Fingerprint",
+    ja4Tips:
+      "Compute the JA4 TLS fingerprint of each client from its ClientHello, available as $ja4 in headers and {:ja4} in the access log. Needs Using Global Certificates.",
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
     enabledH2: "Enable Http2(h2c)",

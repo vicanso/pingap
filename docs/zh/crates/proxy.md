@@ -91,6 +91,7 @@ addr = "0.0.0.0:443,[::]:443"
 locations = ["api", "web"]
 threads = 4
 global_certificates = true
+ja4 = true
 enabled_h2 = true
 access_log = "combined"
 enable_server_timing = true
@@ -116,6 +117,7 @@ modules = ["grpc-web"]
 - `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
+- `ja4 = true` 为每个客户端计算 JA4 TLS 指纹，见 [JA4 指纹](#ja4-指纹)。需要 `global_certificates = true`，配置校验会检查。
 - `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。
 - `enable_server_timing` 添加由请求时序分解构建的 `Server-Timing` 响应头——便于诊断延迟来源。
 - `error_template`（在 `[basic]` 下）替换内置 `error.html`。模板在 server 启动时解析一次，每次出错填入三个占位符：
@@ -127,6 +129,39 @@ modules = ["grpc-web"]
   ```
 
   其他双花括号名称按字面文本保留；首字符为 `{` 的模板按 `application/json` 返回。
+
+## JA4 指纹
+
+在 TLS server 上设置 `ja4 = true`，pingap 会根据客户端的 ClientHello 计算 [JA4](https://github.com/FoxIO-LLC/ja4) 指纹。指纹识别的是客户端的 TLS 实现，不受它声称的 `User-Agent` 影响：
+
+```toml
+[servers.main]
+addr = "0.0.0.0:443"
+global_certificates = true
+ja4 = true
+access_log = "{client_ip} {status} {:ja4}"
+
+[locations.api]
+upstream = "api"
+proxy_set_headers = ["X-JA4: $ja4"]
+```
+
+| 位置 | 名称 | 值 |
+| --- | --- | --- |
+| 请求头与响应头 | `$ja4`（或 `:ja4`） | `JA4`，如 `t13d1516h2_8daaf6152771_e5627efa2ab1` |
+| 访问日志 | `{:ja4}` | `JA4` |
+| 访问日志 | `{:ja4_r}` | `JA4_r`：排序后的列表本身而非哈希 |
+| 访问日志 | `{:ja4_o}` | `JA4_o`：按客户端发送顺序的列表计算哈希 |
+| 访问日志 | `{:ja4_ro}` | `JA4_ro`：按发送顺序的列表，不做哈希 |
+
+实现说明：
+
+- 按 FoxIO 的 JA4 规范实现（TLS 客户端指纹，BSD 3-Clause 许可）。规范自带的样例就是四种形式的单元测试。JA4+ 的其他指纹未实现。
+- ClientHello 在 TLS 握手之前从 TCP 流读取，这段代码由 pingora 的各个 TLS 后端共用，因此 OpenSSL 与 rustls 构建对同一客户端算出的值相同。读取的每个字节都会放回给握手使用。
+- 除了读取握手本来就需要的 ClientHello，不会延迟或拒绝任何连接。5 秒内没有发完 ClientHello、超过 16 KiB 或格式错误的客户端只是没有指纹；明文 HTTP 连接永远没有指纹。没有指纹时访问日志字段为空，用 `$ja4` 设置的请求头会回退为字面文本，与其他无法解析的变量一致。
+- 被拆进多个 TLS 记录的 ClientHello 会先重组。使用 Encrypted Client Hello 时，线路上的是外层 ClientHello，指纹也按它计算。
+- 指纹属于连接：keep-alive 或 HTTP/2 连接上的每个请求都带有它，连接关闭时释放。
+- 开销是每个新 TLS 连接一次 ClientHello 解析和两次 SHA-256，外加每个请求一次查表。默认关闭。
 
 ## 每请求上下文
 

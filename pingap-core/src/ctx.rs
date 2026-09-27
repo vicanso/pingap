@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Plugin, now_ms};
+use crate::{Ja4Fingerprint, Plugin, now_ms};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -135,6 +135,9 @@ pub struct ConnectionInfo {
     pub tls_version: Option<Cow<'static, str>>,
     /// The TLS cipher used for the connection, if any.
     pub tls_cipher: Option<Cow<'static, str>>,
+    /// The JA4 fingerprint of the client's ClientHello, when the server
+    /// collects it. Shared by every request on the connection.
+    pub ja4: Option<Arc<Ja4Fingerprint>>,
     /// Indicates whether the connection was reused (e.g., HTTP keep-alive).
     pub reused: bool,
 }
@@ -411,6 +414,13 @@ pub enum CtxLogField {
     ConnectionReused,
     TlsVersion,
     TlsCipher,
+    Ja4,
+    #[strum(serialize = "ja4_r")]
+    Ja4R,
+    #[strum(serialize = "ja4_o")]
+    Ja4O,
+    #[strum(serialize = "ja4_ro")]
+    Ja4Ro,
     TlsHandshakeTime,
     TlsHandshakeTimeHuman,
     CompressionTime,
@@ -834,6 +844,26 @@ impl Ctx {
                     buf.extend(value.as_bytes());
                 }
             },
+            CtxLogField::Ja4 => {
+                if let Some(fingerprint) = &self.conn.ja4 {
+                    buf.extend(fingerprint.ja4().as_bytes());
+                }
+            },
+            CtxLogField::Ja4R => {
+                if let Some(fingerprint) = &self.conn.ja4 {
+                    buf.extend(fingerprint.ja4_r().as_bytes());
+                }
+            },
+            CtxLogField::Ja4O => {
+                if let Some(fingerprint) = &self.conn.ja4 {
+                    buf.extend(fingerprint.ja4_o().as_bytes());
+                }
+            },
+            CtxLogField::Ja4Ro => {
+                if let Some(fingerprint) = &self.conn.ja4 {
+                    buf.extend(fingerprint.ja4_ro().as_bytes());
+                }
+            },
             CtxLogField::TlsHandshakeTime => {
                 append_time!(self.timing.tls_handshake)
             },
@@ -1175,6 +1205,10 @@ mod tests {
                 CtxLogField::UpstreamConnectOffloadWaitTime,
             ),
             ("tls_version", CtxLogField::TlsVersion),
+            ("ja4", CtxLogField::Ja4),
+            ("ja4_r", CtxLogField::Ja4R),
+            ("ja4_o", CtxLogField::Ja4O),
+            ("ja4_ro", CtxLogField::Ja4Ro),
             ("compression_ratio", CtxLogField::CompressionRatio),
             ("service_time_human", CtxLogField::ServiceTimeHuman),
         ] {
@@ -1191,6 +1225,28 @@ mod tests {
         ctx.append_log_field(&mut by_field, CtxLogField::ConnectionId);
         assert_eq!(b"7", by_name.as_ref());
         assert_eq!(by_name, by_field);
+    }
+
+    /// The JA4 fields print the connection's fingerprint in each form,
+    /// and nothing when there is none.
+    #[test]
+    fn test_ja4_log_fields() {
+        let mut ctx = Ctx::new();
+        let value = |ctx: &Ctx, key: &str| {
+            let mut buf = BytesMut::new();
+            ctx.append_log_value(&mut buf, key);
+            String::from_utf8(buf.to_vec()).unwrap()
+        };
+        assert_eq!("", value(&ctx, "ja4"));
+        let fingerprint = Ja4Fingerprint::from_client_hello(
+            &crate::ja4::testing::spec_example_body(),
+        )
+        .unwrap();
+        ctx.conn.ja4 = Some(Arc::new(fingerprint.clone()));
+        assert_eq!("t13d1516h2_8daaf6152771_e5627efa2ab1", value(&ctx, "ja4"));
+        assert_eq!(fingerprint.ja4_r(), value(&ctx, "ja4_r"));
+        assert_eq!(fingerprint.ja4_o(), value(&ctx, "ja4_o"));
+        assert_eq!(fingerprint.ja4_ro(), value(&ctx, "ja4_ro"));
     }
 
     /// Tests the `append_log_value` function with a wider range of keys and edge cases.
