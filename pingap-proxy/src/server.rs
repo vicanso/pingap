@@ -239,7 +239,7 @@ pub struct ServerServices {
 }
 
 const META_DEFAULTS: CacheMetaDefaults =
-    CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 1, 1);
+    CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 0, 1);
 
 /// Whether an origin response's `Vary` names `*`, checked without building
 /// the lowercased name list.
@@ -1547,6 +1547,20 @@ impl ProxyHttp for Server {
         Ok(key)
     }
 
+    /// Permit Pingora to serve an expired entry while its lock holder
+    /// revalidates it in a background subrequest. The cache metadata still
+    /// bounds this path to the origin's `stale-while-revalidate` window.
+    fn should_serve_stale(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
+        error: Option<&pingora::Error>,
+    ) -> bool {
+        error.is_none_or(|error| {
+            error.esource() == &pingora::ErrorSource::Upstream
+        })
+    }
+
     /// Determines if and how responses should be cached.
     /// Checks:
     /// - Cache-Control headers
@@ -2559,6 +2573,54 @@ value = 'proxy_set_headers = ["name:value"]'
             )
             .unwrap();
         assert_eq!(true, result.is_cacheable());
+
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header(
+                "Cache-Control",
+                "max-age=60, stale-while-revalidate=120",
+            )
+            .unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut Ctx {
+                    cache: Some(Box::new(CacheInfo {
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let meta = result.unwrap_meta();
+        assert_eq!(120, meta.stale_while_revalidate_sec());
+        let now = std::time::SystemTime::now();
+        assert!(meta.serve_stale_while_revalidate(
+            now.checked_add(Duration::from_secs(61)).unwrap()
+        ));
+        assert!(!meta.serve_stale_while_revalidate(
+            now.checked_add(Duration::from_secs(181)).unwrap()
+        ));
+
+        let mut ctx = Ctx::default();
+        assert!(server.should_serve_stale(&mut session, &mut ctx, None));
+        let upstream_error =
+            pingora::Error::new_up(pingora::ErrorType::ConnectError);
+        assert!(server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&upstream_error)
+        ));
+        let downstream_error =
+            pingora::Error::new_down(pingora::ErrorType::ConnectionClosed);
+        assert!(!server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&downstream_error)
+        ));
 
         let mut upstream_response =
             ResponseHeader::build_no_case(200, None).unwrap();

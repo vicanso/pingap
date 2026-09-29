@@ -99,6 +99,11 @@ in a multi-instance deployment, issue the request on every node.
   unreachable and are reclaimed by eviction or the inactive sweep.
 - `lock` makes concurrent misses for the same key wait for the first one instead
   of all hitting the origin.
+- `Cache-Control: stale-while-revalidate=<seconds>` from origin is honoured;
+  entries without this directive are not served stale during revalidation.
+  After freshness expires, pingap serves stale content inside that window while
+  one lock holder revalidates against origin in background. Responses outside
+  the window wait for or perform normal revalidation.
 - Cache read/write counts are recorded into the request context and are available
   in access logs as `{:cache_lookup_time}` / `{:cache_lock_time}`.
 
