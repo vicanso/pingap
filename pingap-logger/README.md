@@ -126,8 +126,98 @@ A placeholder is `{`, a name made of letters, digits and `_ - < > ~ : $`, and
 header or cookie, no status yet - is rendered as `-`; a context field with no
 value writes nothing. A placeholder that names no tag is dropped.
 
-On a server with `ja4 = true`, the context keys `ja4`, `ja4_r`, `ja4_o` and
-`ja4_ro` print the client's JA4 TLS fingerprint in each of its forms; see
+#### Context keys
+
+`{:<context_key>}` prints a value pingap recorded while serving the request.
+The same keys work in header values as `:<context_key>`, for example
+`proxy_set_headers = ["X-Upstream: :upstream_addr"]`.
+
+| Key | Value |
+| --- | --- |
+| `connection_id` | Id of the downstream connection |
+| `connection_reused` | `true` when the downstream connection already served an earlier request |
+| `connection_time` | Age of the downstream connection |
+| `processing` | Requests the server was processing when this one arrived, itself included |
+| `location` | Name of the matched location |
+| `tls_version` | Downstream TLS version: `TLSv1.3` on an OpenSSL build, `TLSv1_3` on a rustls build |
+| `tls_cipher` | Downstream TLS cipher |
+| `tls_handshake_time` | Downstream TLS handshake, on the first request of a connection |
+| `ja4` | The client's [JA4 fingerprint](../pingap-proxy/README.md#ja4-fingerprint), e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`; needs `ja4 = true` on the server |
+| `ja4_r` | `JA4_r`: the sorted cipher and extension lists instead of their hashes |
+| `ja4_o` | `JA4_o`: hashed over the lists in the order the client sent them |
+| `ja4_ro` | `JA4_ro`: the lists in the order sent, unhashed; every other form can be computed from it |
+| `upstream_addr` | Address of the upstream backend |
+| `upstream_status` | Status the upstream answered with, `-` when there was none |
+| `upstream_reused` | `true` when the upstream connection came from the keep-alive pool |
+| `upstream_connected` | Open connections to the upstream; needs `enable_tracer` on it |
+| `upstream_connect_time` | Getting an upstream connection, pooled or new |
+| `upstream_tcp_connect_time` | TCP connect to the upstream |
+| `upstream_tls_handshake_time` | TLS handshake with the upstream |
+| `upstream_connect_offload_wait_time` | Wait for an offload thread before connecting; only with `basic.upstream_connect_offload_*` |
+| `upstream_connection_time` | Age of the upstream connection |
+| `upstream_processing_time` | From the upstream connection to the upstream's response header |
+| `upstream_response_time` | From the upstream's response header to the end of its body |
+| `compression_time` | Time spent compressing the response |
+| `compression_ratio` | Input bytes over output bytes, one decimal |
+| `cache_lookup_time` | Cache lookup |
+| `cache_lock_time` | Waiting for a cache lock |
+| `service_time` | From the start of the request to the log line |
+
+Times are milliseconds. Every key ending in `_time` has a `_human` twin that
+prints the same time readably, for example `{:upstream_response_time_human}`
+gives `12ms` or `1.2s`. A key whose value was never recorded, such as a
+cache time on an uncached request or `ja4` on a plain HTTP connection, prints
+nothing.
+
+#### Configuring a server
+
+A server's `access_log` takes one of three forms:
+
+| Value | Meaning |
+| --- | --- |
+| `tiny` | A predefined format, written to the application log |
+| `{client_ip} {status} {:ja4}` | A custom format, written to the application log; it starts with `{` |
+| `/var/log/pingap/access.log {client_ip} {status}` | A file, a space, then a predefined name or a custom format |
+
+The predefined formats are:
+
+```text
+combined  {remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}"
+common    {remote} "{method} {uri} {proto}" {status} {size_human}
+short     {remote} {method} {uri} {proto} {status} {size_human} - {latency}ms
+tiny      {method} {uri} {status} {size_human} - {latency}ms
+```
+
+The file takes the parameters of file logging described below, such as
+`rolling` and `compression`, plus `channel_buffer` and `flush_timeout`, e.g.
+`/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`. A first word
+followed by a format is always read as the file: `ACCESS {status}` writes to a
+file called `ACCESS`. Start a custom format with a tag to log to the
+application log instead.
+
+#### Logging the JA4 fingerprint
+
+Enable `ja4` on a TLS server and add `{:ja4}` to its format:
+
+```toml
+[servers.main]
+addr = "0.0.0.0:443"
+global_certificates = true
+ja4 = true
+access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {latency}ms {:tls_version} {:ja4}"
+```
+
+Each line then ends with the client's fingerprint:
+
+```text
+203.0.113.7 GET /api/items 200 12ms TLSv1.3 t13d1516h2_8daaf6152771_e5627efa2ab1
+```
+
+`{:ja4}` is the form to group and match on. Add `{:ja4_ro}` as well to keep
+the raw values for later analysis, since the hashes cannot be reversed. A
+connection without a fingerprint, plain HTTP or a ClientHello that could not
+be read, leaves the field empty. The same value can be sent upstream with
+`proxy_set_headers = ["X-JA4: $ja4"]`; see
 [pingap-proxy](../pingap-proxy/README.md#ja4-fingerprint).
 
 `format` writes straight into one pre-sized buffer: the timestamps are

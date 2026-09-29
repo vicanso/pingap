@@ -111,7 +111,83 @@ let parser = Parser::from(format);
 
 占位符由 `{`、名字（字母、数字和 `_ - < > ~ : $`）和 `}` 组成；后面不是这种形式的 `{` 是普通文本。缺失的值——不存在的请求头或 cookie、尚无状态码——输出为 `-`；没有值的上下文字段不输出任何内容。名字不对应任何标签的占位符会被丢弃。
 
-在设置了 `ja4 = true` 的 server 上，上下文键 `ja4`、`ja4_r`、`ja4_o` 与 `ja4_ro` 分别输出客户端 JA4 TLS 指纹的各种形式，见 [pingap-proxy](proxy.md#ja4-指纹)。
+#### 上下文键
+
+`{:<context_key>}` 输出 pingap 处理请求时记录的值。同样的键也能以 `:<context_key>` 的形式用在请求头的值里，例如 `proxy_set_headers = ["X-Upstream: :upstream_addr"]`。
+
+| 键 | 值 |
+| --- | --- |
+| `connection_id` | 下游连接的 ID |
+| `connection_reused` | 下游连接已处理过之前的请求时为 `true` |
+| `connection_time` | 下游连接已存在的时长 |
+| `processing` | 该请求到达时 server 正在处理的请求数，含它自己 |
+| `location` | 匹配到的 location 名称 |
+| `tls_version` | 下游 TLS 版本：OpenSSL 构建为 `TLSv1.3`，rustls 构建为 `TLSv1_3` |
+| `tls_cipher` | 下游 TLS 密码套件 |
+| `tls_handshake_time` | 下游 TLS 握手耗时，仅连接上的第一个请求有 |
+| `ja4` | 客户端的 [JA4 指纹](proxy.md#ja4-指纹)，如 `t13d1516h2_8daaf6152771_e5627efa2ab1`；需要 server 设置 `ja4 = true` |
+| `ja4_r` | `JA4_r`：排序后的密码套件与扩展列表本身，而非哈希 |
+| `ja4_o` | `JA4_o`：按客户端发送顺序的列表计算哈希 |
+| `ja4_ro` | `JA4_ro`：按发送顺序的列表，不做哈希；其他形式都能由它算出 |
+| `upstream_addr` | 上游后端地址 |
+| `upstream_status` | 上游返回的状态码，没有时为 `-` |
+| `upstream_reused` | 上游连接来自 keep-alive 连接池时为 `true` |
+| `upstream_connected` | 到该上游的已建立连接数；需要上游开启 `enable_tracer` |
+| `upstream_connect_time` | 获取上游连接的耗时，复用或新建 |
+| `upstream_tcp_connect_time` | 与上游的 TCP 连接耗时 |
+| `upstream_tls_handshake_time` | 与上游的 TLS 握手耗时 |
+| `upstream_connect_offload_wait_time` | 连接前等待卸载线程的时长；仅在开启 `basic.upstream_connect_offload_*` 时有 |
+| `upstream_connection_time` | 上游连接已存在的时长 |
+| `upstream_processing_time` | 从拿到上游连接到收到上游响应头 |
+| `upstream_response_time` | 从收到上游响应头到响应体结束 |
+| `compression_time` | 压缩响应的耗时 |
+| `compression_ratio` | 输入字节数除以输出字节数，保留一位小数 |
+| `cache_lookup_time` | 缓存查找耗时 |
+| `cache_lock_time` | 等待缓存锁的耗时 |
+| `service_time` | 从请求开始到写日志 |
+
+时间单位为毫秒。每个以 `_time` 结尾的键都有对应的 `_human` 版本，以可读形式输出同一时间，例如 `{:upstream_response_time_human}` 输出 `12ms` 或 `1.2s`。从未记录过的值不输出任何内容，比如未走缓存的请求的缓存耗时，或明文 HTTP 连接上的 `ja4`。
+
+#### 配置 server 的访问日志
+
+server 的 `access_log` 有三种写法：
+
+| 值 | 含义 |
+| --- | --- |
+| `tiny` | 预定义格式，写入应用日志 |
+| `{client_ip} {status} {:ja4}` | 自定义格式，写入应用日志；以 `{` 开头 |
+| `/var/log/pingap/access.log {client_ip} {status}` | 文件路径、一个空格，再接预定义格式名或自定义格式 |
+
+预定义格式如下：
+
+```text
+combined  {remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}"
+common    {remote} "{method} {uri} {proto}" {status} {size_human}
+short     {remote} {method} {uri} {proto} {status} {size_human} - {latency}ms
+tiny      {method} {uri} {status} {size_human} - {latency}ms
+```
+
+文件路径支持下文“文件日志”的参数，如 `rolling`、`compression`，另外还有 `channel_buffer` 与 `flush_timeout`，例如 `/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`。第一个词后面跟着格式时，这个词总会被当作文件路径：`ACCESS {status}` 会写入名为 `ACCESS` 的文件。要写入应用日志，自定义格式请以标签开头。
+
+#### 输出 JA4 指纹
+
+在 TLS server 上开启 `ja4`，并在格式中加入 `{:ja4}`：
+
+```toml
+[servers.main]
+addr = "0.0.0.0:443"
+global_certificates = true
+ja4 = true
+access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {latency}ms {:tls_version} {:ja4}"
+```
+
+每行末尾就是客户端的指纹：
+
+```text
+203.0.113.7 GET /api/items 200 12ms TLSv1.3 t13d1516h2_8daaf6152771_e5627efa2ab1
+```
+
+`{:ja4}` 用于分组与匹配。哈希无法反推原始值，如需留存供日后分析，可再加上 `{:ja4_ro}`。没有指纹的连接（明文 HTTP，或 ClientHello 无法读取）该字段为空。同一个值可以通过 `proxy_set_headers = ["X-JA4: $ja4"]` 发给上游，见 [pingap-proxy](proxy.md#ja4-指纹)。
 
 `format` 直接写入一个预估大小的缓冲区：时间戳逐位写出而不经过中间 `String`，每行的开销只剩字段本身。
 

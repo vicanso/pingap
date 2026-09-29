@@ -17,7 +17,7 @@
 - **插件** — 认证、访问控制、限流、缓存、CORS、静态文件等
 - **服务发现** — 静态列表、DNS、Docker 标签、透明代理
 - **ACME** — Let's Encrypt HTTP-01 与 DNS-01（含通配符）
-- **可观测性** — Prometheus、OpenTelemetry、访问日志、Pyroscope、Sentry
+- **可观测性** — Prometheus、OpenTelemetry、访问日志、JA4 TLS 指纹、Pyroscope、Sentry
 
 ## 快速开始（Docker）
 

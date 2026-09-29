@@ -45,6 +45,7 @@ flowchart LR
   - Native Prometheus metrics for monitoring (pull & push modes).
   - Integrated OpenTelemetry support for distributed tracing.
   - Highly customizable access logs with over 30 variables.
+  - JA4 TLS client fingerprints (`{:ja4}` in access logs, `$ja4` in upstream headers) to tell clients apart by their TLS stack, on OpenSSL and rustls builds alike.
   - Detailed performance metrics, including upstream connect time, processing time, and more.
 
 ## 🚀 Getting Started

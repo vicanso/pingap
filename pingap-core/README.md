@@ -11,7 +11,7 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 - **Request Context (`Ctx`)**: A central struct that tracks the state of each request, including timing metrics, connection details, upstream information, caching status, and custom variables. It also provides utilities for generating detailed logs and `Server-Timing` headers.
 - **Plugin System**: An extensible plugin architecture that allows developers to hook into various stages of the request/response lifecycle (`PluginStep`). This enables custom logic for authentication, rate-limiting, header modification, and more.
 - **HTTP Helpers**: A rich set of utilities for working with HTTP headers and responses:
-    - **Header Manipulation**: Parse, create, and modify HTTP headers, with support for dynamic value substitution (e.g., `$hostname`, `$remote_addr`, `$http_user_agent`).
+    - **Header Manipulation**: Parse, create, and modify HTTP headers, with support for dynamic value substitution (e.g., `$hostname`, `$ja4`, `$remote_addr`, `$http_user_agent`).
     - **Response Builders**: Fluent builders (`HttpResponseBuilder`) for easily constructing complete HTTP responses, with helpers for common types like JSON, HTML, text, and redirects.
     - **Streaming Responses**: Support for chunked responses (`HttpChunkResponse`) to efficiently stream large bodies of data.
 - **Background Task Service**: A generic service (`BackgroundTaskService`) for running periodic tasks in the background, such as health checks, data synchronization, or cleanup routines.

@@ -44,6 +44,7 @@ flowchart LR
   - 原生的 Prometheus 指标监控（支持 pull 和 push 模式）。
   - 集成 OpenTelemetry，支持分布式追踪。
   - 超过 30 种变量的高度可定制的访问日志。
+  - JA4 TLS 客户端指纹（访问日志中的 `{:ja4}`、上游请求头中的 `$ja4`），按 TLS 实现区分客户端，OpenSSL 与 rustls 构建均支持。
   - 包含上游连接、处理时间等详细的性能指标。
 
 ## 🚀 快速入门

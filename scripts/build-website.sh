@@ -54,6 +54,7 @@ rewrite_links() {
     -e 's|\(\.\./pingap-cache/README\.md\)|(../crates/cache)|g' \
     -e 's|\(\.\./\.\./pingap-plugin/README\.md[^)]*\)|(../plugins/)|g' \
     -e 's|\(\.\./pingap-plugin/README\.md[^)]*\)|(../plugins/)|g' \
+    -e 's|\((\.\./)?\.\./pingap-([a-z0-9-]+)/README\.md(#[^)]+)\)|(../crates/\2\3)|g' \
     -e 's|\(\.\./pingap-config/README\.md\)|(../crates/config)|g' \
     -e 's|\(\.\./pingap-core/README\.md\)|(../crates/core)|g' \
     -e 's|\(\.\./pingap-upstream/README\.md\)|(../crates/upstream)|g' \
@@ -260,7 +261,7 @@ features:
   - title: Automated HTTPS
     details: Let's Encrypt HTTP-01 and DNS-01 challenges, including wildcards via major DNS providers.
   - title: Observability
-    details: Prometheus metrics, OpenTelemetry traces, structured access logs, Sentry and Pyroscope.
+    details: Prometheus metrics, OpenTelemetry traces, structured access logs, JA4 TLS fingerprints, Sentry and Pyroscope.
 ---
 
 ## Quick start
@@ -482,7 +483,7 @@ features:
   - title: 自动 HTTPS
     details: Let's Encrypt HTTP-01 / DNS-01，支持主流 DNS 服务商签发通配符证书。
   - title: 可观测性
-    details: Prometheus、OpenTelemetry、访问日志、Sentry 与 Pyroscope 一站集成。
+    details: Prometheus、OpenTelemetry、访问日志、JA4 TLS 指纹、Sentry 与 Pyroscope 一站集成。
 ---
 
 ## 快速开始
