@@ -502,6 +502,23 @@ export const PLUGIN_FIELDS: Partial<
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
+    {
+      name: "ip_fail_limit",
+      label: t("basicAuthIpFailLimit"),
+      placeholder: t("basicAuthIpFailLimitPlaceholder"),
+      tips: t("basicAuthIpFailLimitTips"),
+      defaultValue: Number(conf.ip_fail_limit || 0),
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "ip_fail_window",
+      label: t("basicAuthIpFailWindow"),
+      placeholder: t("basicAuthIpFailWindowPlaceholder"),
+      defaultValue: conf.ip_fail_window as string,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
   ],
   [PluginCategory.JWT]: (conf, t) => [
     {

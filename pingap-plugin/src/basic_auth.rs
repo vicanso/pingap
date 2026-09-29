@@ -21,7 +21,10 @@ use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{
+    Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
+    RequestPluginResult, TtlLruLimit, ensure_client_ip,
+};
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -30,6 +33,13 @@ use tokio::time::sleep;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// How long failures are counted, and so the longest block, when
+/// `ip_fail_window` is not set.
+const DEFAULT_IP_FAIL_WINDOW: Duration = Duration::from_secs(5 * 60);
+/// Client IPs whose failures are tracked at once. Beyond this the least
+/// used are forgotten, which only ever lets an IP off early.
+const IP_FAIL_CAPACITY: usize = 4096;
 
 /// BasicAuth implements HTTP Basic Authentication functionality for HTTP requests.
 ///
@@ -72,6 +82,14 @@ pub struct BasicAuth {
     /// Security feature to make brute force attacks impractical
     /// Example values: "1s", "500ms", "2s"
     delay: Option<Duration>,
+
+    /// Wrong credentials counted per client IP; `None` unless
+    /// `ip_fail_limit` is set. An IP that reaches the limit is refused
+    /// until its window, which starts at its first counted failure, ends.
+    ip_fail_limit: Option<TtlLruLimit>,
+
+    /// The response to a client IP that has been blocked
+    too_many_failures_resp: HttpResponse,
 
     /// Unique hash value for the plugin instance
     /// Used for internal plugin management and caching
@@ -120,6 +138,43 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 message: "basic authorizations can't be empty".to_string(),
             });
         }
+        // Wrong passwords per client IP; 0 (the default) turns it off.
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::BasicAuth.to_string(),
+            message,
+        };
+        let ip_fail_limit = match value.get("ip_fail_limit") {
+            None => 0,
+            Some(limit) => limit
+                .as_integer()
+                .filter(|limit| *limit >= 0)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "ip_fail_limit({limit}) must be a non-negative integer"
+                    ))
+                })?,
+        };
+        let ip_fail_window = get_str_conf(value, "ip_fail_window");
+        let ip_fail_window = if ip_fail_window.is_empty() {
+            DEFAULT_IP_FAIL_WINDOW
+        } else {
+            let window = parse_duration(&ip_fail_window)
+                .map_err(|e| invalid(format!("invalid ip_fail_window: {e}")))?;
+            if window.is_zero() {
+                return Err(invalid(
+                    "ip_fail_window must be greater than zero".to_string(),
+                ));
+            }
+            window
+        };
+        let ip_fail_limit = (ip_fail_limit > 0).then(|| {
+            TtlLruLimit::new_compact(
+                IP_FAIL_CAPACITY,
+                ip_fail_window,
+                ip_fail_limit as usize,
+            )
+        });
+
         let www_authenticate = Some(vec![(
             http::header::WWW_AUTHENTICATE,
             HeaderValue::from_static(
@@ -143,6 +198,13 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 status: StatusCode::UNAUTHORIZED,
                 headers: www_authenticate,
                 body: Bytes::from_static(b"Invalid user or password"),
+                ..Default::default()
+            },
+            ip_fail_limit,
+            too_many_failures_resp: HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
+                body: Bytes::from_static(b"Forbidden, too many failures"),
                 ..Default::default()
             },
         };
@@ -181,11 +243,21 @@ impl Plugin for BasicAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         // Verify we're in the request phase - authentication must happen before processing
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
+        }
+
+        // A blocked IP is refused before its credentials are looked at, so
+        // guessing stops paying off even when a guess would be right.
+        if let Some(limit) = &self.ip_fail_limit
+            && !limit.validate(ensure_client_ip(session, ctx))
+        {
+            return Ok(RequestPluginResult::Respond(
+                self.too_many_failures_resp.clone(),
+            ));
         }
 
         // Extract and validate Authorization header
@@ -205,6 +277,11 @@ impl Plugin for BasicAuth {
                 .any(|auth| pingap_core::constant_time_eq(auth, credentials))
         });
         if !authorized {
+            // Only wrong credentials count. A missing header does not: it is
+            // how every browser starts, before the login prompt.
+            if let Some(limit) = &self.ip_fail_limit {
+                limit.inc(ensure_client_ip(session, ctx));
+            }
             // If configured, apply rate limiting delay
             // This helps prevent automated brute force attempts
             if let Some(d) = self.delay {
@@ -360,5 +437,118 @@ hide_credentials = true
         assert_eq!(Some(&b"abc"[..]), basic_credentials(b"basic  abc "));
         assert_eq!(None, basic_credentials(b"Bearer abc"));
         assert_eq!(None, basic_credentials(b"Basicabc"));
+    }
+    #[test]
+    fn test_ip_fail_limit_params() {
+        // spellchecker:off
+        let conf = |extra: &str| {
+            toml::from_str::<PluginConf>(&format!(
+                "authorizations = [\"YWRtaW46MTIzMTIz\"]\n{extra}"
+            ))
+            .unwrap()
+        };
+        // spellchecker:on
+        // Off unless asked for.
+        let params = BasicAuth::try_from(&conf("")).unwrap();
+        assert_eq!(true, params.ip_fail_limit.is_none());
+        let params = BasicAuth::try_from(&conf("ip_fail_limit = 0")).unwrap();
+        assert_eq!(true, params.ip_fail_limit.is_none());
+        let params = BasicAuth::try_from(&conf(
+            "ip_fail_limit = 3\nip_fail_window = \"10m\"",
+        ))
+        .unwrap();
+        assert_eq!(true, params.ip_fail_limit.is_some());
+
+        for (extra, expect) in [
+            ("ip_fail_limit = -1", "must be a non-negative integer"),
+            ("ip_fail_limit = \"five\"", "must be a non-negative integer"),
+            ("ip_fail_window = \"soon\"", "invalid ip_fail_window"),
+            ("ip_fail_window = \"0s\"", "must be greater than zero"),
+        ] {
+            let err =
+                BasicAuth::try_from(&conf(extra)).err().unwrap().to_string();
+            assert_eq!(true, err.contains(expect), "{extra}: {err}");
+        }
+    }
+
+    async fn request(
+        auth: &BasicAuth,
+        client_ip: &str,
+        authorization: Option<&str>,
+    ) -> RequestPluginResult {
+        let mut headers = vec![format!("X-Forwarded-For: {client_ip}")];
+        if let Some(value) = authorization {
+            headers.push(format!("Authorization: {value}"));
+        }
+        let input =
+            format!("GET / HTTP/1.1\r\n{}\r\n\r\n", headers.join("\r\n"));
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        auth.handle_request(
+            PluginStep::Request,
+            &mut session,
+            &mut Ctx::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn status(result: &RequestPluginResult) -> u16 {
+        match result {
+            RequestPluginResult::Respond(resp) => resp.status.as_u16(),
+            _ => 0,
+        }
+    }
+
+    /// After `ip_fail_limit` wrong passwords an IP is refused, correct
+    /// credentials included; a missing header does not count, and other
+    /// IPs are unaffected.
+    #[tokio::test]
+    async fn test_ip_fail_limit() {
+        // spellchecker:off
+        let good = "Basic YWRtaW46MTIzMTIz";
+        let bad = "Basic YWRtaW46MTIzMTIa";
+        // spellchecker:on
+        let auth = BasicAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "authorizations = [\"{}\"]\nip_fail_limit = 2\nip_fail_window = \"1m\"",
+                &good["Basic ".len()..]
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Two wrong passwords: still answered 401.
+        assert_eq!(401, status(&request(&auth, "1.1.1.1", Some(bad)).await));
+        assert_eq!(401, status(&request(&auth, "1.1.1.1", Some(bad)).await));
+        // Now blocked, whatever it sends.
+        let blocked = request(&auth, "1.1.1.1", Some(good)).await;
+        assert_eq!(403, status(&blocked));
+        let RequestPluginResult::Respond(resp) = blocked else {
+            panic!("a blocked ip must be answered");
+        };
+        assert_eq!(
+            b"Forbidden, too many failures".as_ref(),
+            resp.body.as_ref()
+        );
+        assert_eq!(403, status(&request(&auth, "1.1.1.1", None).await));
+
+        // Another IP is not affected.
+        assert_eq!(
+            true,
+            request(&auth, "2.2.2.2", Some(good)).await
+                == RequestPluginResult::Continue
+        );
+
+        // Missing credentials are the browser's first request, not a guess.
+        for _ in 0..5 {
+            assert_eq!(401, status(&request(&auth, "3.3.3.3", None).await));
+        }
+        assert_eq!(
+            true,
+            request(&auth, "3.3.3.3", Some(good)).await
+                == RequestPluginResult::Continue
+        );
     }
 }

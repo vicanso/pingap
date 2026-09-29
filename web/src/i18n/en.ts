@@ -744,6 +744,14 @@ export default {
     basicAuthHideCredentials: "Hide Credentials",
     basicAuthHideCredentialsPlaceholder:
       "Remove the authorization header from the request after validation",
+    basicAuthIpFailLimit: "IP Fail Limit",
+    basicAuthIpFailLimitPlaceholder:
+      "Wrong passwords per client IP before it is blocked, 0 to disable",
+    basicAuthIpFailLimitTips:
+      "Counts wrong credentials per client IP; at the limit the IP gets 403 until the window ends. Behind a proxy or CDN, set trusted proxies in Basic, or the client IP can be spoofed with X-Forwarded-For.",
+    basicAuthIpFailWindow: "IP Fail Window",
+    basicAuthIpFailWindowPlaceholder:
+      "How long failures are counted and an IP stays blocked, e.g. 10m (default 5m)",
     jwtAuthHeader: "Header",
     jwtAuthHeaderPlaceholder: "Input the name of header",
     jwtAuthQuery: "Query",
