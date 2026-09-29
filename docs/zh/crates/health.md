@@ -31,7 +31,7 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 - `read_timeout`：读超时。默认：`3s`。
 - `check_frequency`：检查间隔。默认：`10s`。
 - `success`：连续成功次数后标记健康。默认：`1`。
-- `failure`：连续失败次数后标记不健康。默认：`2`。
+- `failure`：连续失败次数后标记不健康。默认：`2`。upstream 的第一轮检查不受它约束，失败一次即标记不健康，见 [pingap-upstream](upstream.md)。
 - `reuse`：存在则 HTTP/S 检查把连接保留在 pingora 的连接池中供下次检查复用，而不是每次重新连接。
 - `tls`：存在则 gRPC 检查使用 TLS，SNI 为 URL 中的主机名。不校验证书，与 `https://`、`wss://` 一致。
 - `service`：gRPC 健康检查的服务名。
@@ -40,6 +40,8 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 无法解析的值是配置错误，不会静默回退到默认值：没有单位的时长（`check_frequency=5`）、为零的时长、`success=0` 或 `failure=0` 都会在创建 upstream 时被拒绝，`pingap -t` 会报告出来。
 
 没有配置 `health_check` 的 upstream 等同于不带参数的 `tcp://`，使用上述默认值：连续两次连接失败标记不健康，一次成功即恢复。
+
+每个后端一开始都是健康的：pingora 固定如此，也没有提供修改的方法。因此 upstream 的第一轮检查是决定性的，创建 upstream 时已经挂掉的后端会在第一次检查就被剔除，而不必等 `failure` 轮。
 
 ### 示例
 

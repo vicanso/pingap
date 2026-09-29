@@ -17,6 +17,7 @@ use crate::backend_circuit_state::{
     BackendCircuitStates, CircuitBreakerConfig,
 };
 use crate::backend_stats::{BackendStats, WindowStats};
+use crate::first_round::{FirstRound, FirstRoundHealthCheck};
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
 use crate::{LOG_TARGET, UpstreamProvider, Upstreams};
@@ -259,6 +260,10 @@ pub struct Upstream {
     /// Circuit breaker states
     #[debug("circuit_breaker_states")]
     circuit_breaker_states: Option<BackendCircuitStates>,
+
+    /// Set until the first health check round has checked a backend;
+    /// during it one failed check is enough to mark a backend unhealthy.
+    first_round: Arc<FirstRound>,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -286,6 +291,7 @@ fn update_health_check_params<S>(
     name: &str,
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
+    first_round: &Arc<FirstRound>,
 ) -> Result<LoadBalancer<S>>
 where
     S: BackendSelection + 'static,
@@ -330,7 +336,10 @@ where
     })?;
     // Configure health checking
     lb.parallel_health_check = health_check_conf.parallel_check;
-    lb.set_health_check(hc);
+    lb.set_health_check(Box::new(FirstRoundHealthCheck::new(
+        hc,
+        first_round.clone(),
+    )));
     lb.update_frequency = update_frequency;
     lb.health_check_frequency = Some(health_check_conf.check_frequency);
     Ok(lb)
@@ -348,6 +357,7 @@ fn new_load_balancer(
     name: &str,
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
+    first_round: &Arc<FirstRound>,
 ) -> Result<SelectionLb> {
     // Validate that addresses are provided
     if conf.addrs.is_empty() {
@@ -403,6 +413,7 @@ fn new_load_balancer(
                 name,
                 conf,
                 sender,
+                first_round,
             )?;
             Ok(SelectionLb::RoundRobin(lb))
         },
@@ -419,6 +430,7 @@ fn new_load_balancer(
                 name,
                 conf,
                 sender,
+                first_round,
             )?;
             Ok(SelectionLb::Consistent { lb, hash })
         },
@@ -610,7 +622,8 @@ impl Upstream {
         conf: &UpstreamConf,
         sender: Option<Arc<NotificationSender>>,
     ) -> Result<Self> {
-        let lb = new_load_balancer(name, conf, sender)?;
+        let first_round = Arc::new(FirstRound::new());
+        let lb = new_load_balancer(name, conf, sender, &first_round)?;
         let key = conf.hash_key();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
@@ -738,6 +751,7 @@ impl Upstream {
                 None
             },
             circuit_breaker_states,
+            first_round,
         };
         debug!(
             target: LOG_TARGET,
@@ -909,9 +923,18 @@ impl Upstream {
             category: "run_health_check".to_string(),
             message: e.to_string(),
         })?;
-        self.lb.run_health_check().await;
+        self.check_backends().await;
 
         Ok(())
+    }
+
+    /// Runs one health check round over the current backends. The first
+    /// round that checks a backend is decisive (see [`FirstRound`]): this
+    /// is what makes the round run before a new upstream is switched in
+    /// keep a dead backend out, whatever `failure` is set to.
+    async fn check_backends(&self) {
+        self.lb.run_health_check().await;
+        self.first_round.finish();
     }
     pub fn is_transparent(&self) -> bool {
         matches!(self.lb, SelectionLb::Transparent)
@@ -1087,7 +1110,7 @@ impl BackgroundTask for HealthCheckTask {
                     return;
                 }
                 let health_check_start_time = Instant::now();
-                up.lb.run_health_check().await;
+                up.check_backends().await;
                 debug!(
                     target: LOG_TARGET,
                     name,
@@ -1179,6 +1202,7 @@ mod tests {
         Upstream, UpstreamConf, UpstreamProvider, host_name, new_backends,
         new_load_balancer, resolve_host, split_host_port,
     };
+    use crate::first_round::FirstRound;
     use crate::new_ahash_upstreams;
     use bytesize::ByteSize;
     use pingap_core::UpstreamInstance;
@@ -1818,6 +1842,7 @@ mod tests {
                 ..Default::default()
             },
             None,
+            &Arc::new(FirstRound::new()),
         )
         .unwrap();
         let (update_frequency, health_check_frequency) =
@@ -1838,11 +1863,60 @@ mod tests {
                 ..Default::default()
             },
             None,
+            &Arc::new(FirstRound::new()),
         )
         .unwrap();
         let (update_frequency, health_check_frequency) =
             consistent.get_health_frequency();
         assert_eq!(10, update_frequency);
         assert_eq!(2, health_check_frequency);
+    }
+    /// Whether the upstream's only backend is currently ready.
+    fn only_backend_ready(up: &Upstream) -> bool {
+        let backends = up.get_backends().unwrap();
+        let set = backends.get_backend();
+        assert_eq!(1, set.len());
+        backends.ready(set.iter().next().unwrap())
+    }
+
+    /// The round run before a new upstream is switched in keeps a dead
+    /// backend out even with `failure` above 1; after that first round the
+    /// configured threshold applies again.
+    #[tokio::test]
+    async fn test_first_health_check_round_is_decisive() {
+        // A port with nothing listening on it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let up = Upstream::new(
+            "first-round",
+            &UpstreamConf {
+                addrs: vec![addr.to_string()],
+                health_check: Some(format!(
+                    "tcp://{addr}?connection_timeout=1s&failure=3"
+                )),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        // pingora starts every backend healthy.
+        assert_eq!(true, only_backend_ready(&up));
+
+        // One failed check in the first round is enough.
+        up.run_health_check().await.unwrap();
+        assert_eq!(false, only_backend_ready(&up));
+
+        // The backend comes up and recovers on the next round.
+        let listener = std::net::TcpListener::bind(addr).unwrap();
+        up.run_health_check().await.unwrap();
+        assert_eq!(true, only_backend_ready(&up));
+
+        // It goes away again: now `failure = 3` applies, so one failed
+        // round does not flip it.
+        drop(listener);
+        up.run_health_check().await.unwrap();
+        assert_eq!(true, only_backend_ready(&up));
     }
 }

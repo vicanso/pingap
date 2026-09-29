@@ -25,6 +25,10 @@
     -   **Docker**: Discover backends from Docker container labels.
 
 -   **Active Health Checking**: Periodically probes backend servers to ensure they are healthy. Unhealthy backends are automatically and temporarily removed from the load balancing pool.
+    -   pingora starts every backend healthy and offers no way to change that, so an upstream's **first round of checks is decisive**: one failed check marks a backend unhealthy, whatever `failure` is set to. After a round that checked at least one backend, `failure` applies again. A success is unaffected, since a backend that passes its first check was already healthy.
+    -   When a config change adds or modifies an upstream, that first round runs **before** pingap switches to it, so a backend that is down is out of the pool from the first request. It used to go live anyway: one failed check only brought it to 1 of the default 2 failures.
+    -   At startup the first round runs as soon as the background health check starts, alongside the first requests. Until it completes, every backend is still treated as healthy.
+    -   A round with nothing to check, because discovery has not found any backend yet, does not count as the first round.
 
 -   **Advanced Configuration**:
     -   **TLS & SNI**: Secure connections to backends with configurable TLS and Server Name Indication. A private CA bundle (`ca`, as a PEM file path, base64 or raw PEM) can replace the system trust store for one upstream, so self-signed or internal-PKI backends keep `verify_cert` on; pooled connections are keyed by that bundle, so upstreams with different CAs never share one. With the rustls backend the backend's own certificate must be a real leaf (no `CA:TRUE`), which webpki enforces and OpenSSL does not.

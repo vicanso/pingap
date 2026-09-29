@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 mod backend_circuit_state;
 mod backend_stats;
+mod first_round;
 mod hash_strategy;
 mod peer_tracer;
 mod upstream;

@@ -31,7 +31,7 @@ The following query parameters can be used to configure the health check:
 - `read_timeout`: The read timeout. Default: `3s`.
 - `check_frequency`: The interval between health checks. Default: `10s`.
 - `success`: The number of consecutive successful checks to mark the backend as healthy. Default: `1`.
-- `failure`: The number of consecutive failed checks to mark the backend as unhealthy. Default: `2`.
+- `failure`: The number of consecutive failed checks to mark the backend as unhealthy. Default: `2`. It does not apply to an upstream's first round of checks, where one failure is enough; see [pingap-upstream](../pingap-upstream/README.md).
 - `reuse`: If present, an HTTP/S check keeps its connection in pingora's pool between checks instead of connecting afresh each time.
 - `tls`: If present, a gRPC check uses TLS, with the URL host as SNI. Certificates are not verified, the same as for `https://` and `wss://`.
 - `service`: The service name for gRPC health checks.
@@ -40,6 +40,8 @@ The following query parameters can be used to configure the health check:
 A value that does not parse is a configuration error rather than a silent fallback to the default: a duration without a unit (`check_frequency=5`), a zero duration, `success=0` or `failure=0` are all rejected when the upstream is created, so `pingap -t` reports them.
 
 An upstream without a `health_check` gets `tcp://` with the defaults above: a backend is unhealthy after two failed connects and healthy again after one success.
+
+Every backend starts out healthy: pingora sets it that way and gives no means to change it. The first round of checks of an upstream is therefore decisive, so a backend that is down when its upstream is created is taken out by that first check instead of after `failure` rounds.
 
 ### Examples
 
