@@ -1552,13 +1552,20 @@ impl ProxyHttp for Server {
     /// bounds this path to the origin's `stale-while-revalidate` window.
     fn should_serve_stale(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _ctx: &mut Self::CTX,
         error: Option<&pingora::Error>,
     ) -> bool {
-        error.is_none_or(|error| {
-            error.esource() == &pingora::ErrorSource::Upstream
-        })
+        match error {
+            Some(error) => error.esource() == &pingora::ErrorSource::Upstream,
+            // Pingora 0.9 serializes the background subrequest as HTTP/1
+            // text. An HTTP/2 request line cannot be parsed back, which
+            // leaves its write lock dangling. Let the HTTP/2 lock holder
+            // revalidate in foreground until Pingora fixes that path.
+            None => {
+                !(session.is_http2() && session.cache.is_cache_lock_writer())
+            },
+        }
     }
 
     /// Determines if and how responses should be cached.
@@ -2572,7 +2579,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 },
             )
             .unwrap();
-        assert_eq!(true, result.is_cacheable());
+        assert_eq!(0, result.unwrap_meta().stale_while_revalidate_sec());
 
         let mut upstream_response =
             ResponseHeader::build_no_case(200, None).unwrap();

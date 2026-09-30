@@ -103,7 +103,11 @@ in a multi-instance deployment, issue the request on every node.
   entries without this directive are not served stale during revalidation.
   After freshness expires, pingap serves stale content inside that window while
   one lock holder revalidates against origin in background. Responses outside
-  the window wait for or perform normal revalidation.
+  the window wait for or perform normal revalidation. SWR requires a non-zero
+  `lock`; `lock = "0s"` disables it. `max_ttl` caps freshness only, not the
+  SWR window. Background revalidation passes through the normal request
+  pipeline, creates an access-log entry, updates metrics, and runs request-step
+  plugins again.
 - Cache read/write counts are recorded into the request context and are available
   in access logs as `{:cache_lookup_time}` / `{:cache_lock_time}`.
 
