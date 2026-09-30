@@ -1562,6 +1562,7 @@ impl ProxyHttp for Server {
             // text. An HTTP/2 request line cannot be parsed back, which
             // leaves its write lock dangling. Let the HTTP/2 lock holder
             // revalidate in foreground until Pingora fixes that path.
+            // Tracked upstream: https://github.com/cloudflare/pingora/issues/1033
             None => {
                 !(session.is_http2() && session.cache.is_cache_lock_writer())
             },
@@ -2612,6 +2613,9 @@ value = 'proxy_set_headers = ["name:value"]'
             now.checked_add(Duration::from_secs(181)).unwrap()
         ));
 
+        // HTTP/1.1 sessions may serve stale during revalidation. The
+        // HTTP/2 lock-writer exclusion is only exercised end-to-end: pingora
+        // exposes no public h2 Session constructor for unit tests.
         let mut ctx = Ctx::default();
         assert!(server.should_serve_stale(&mut session, &mut ctx, None));
         let upstream_error =
