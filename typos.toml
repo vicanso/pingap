@@ -4,5 +4,8 @@ extend-ignore-re = [
     "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on",
 ]
 
+[default.extend-identifiers]
+esource = "esource"
+
 [files]
 extend-exclude = ["*.md", "*.toml"]
