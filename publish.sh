@@ -18,6 +18,10 @@
 # Requires `cargo login` beforehand. Already-published crate/version pairs are
 # skipped. After each real publish the script waits until crates.io serves the
 # new version (or 5 minutes) before continuing.
+#
+# Only the root `pingap` package passes `--allow-dirty`: `make build-web`
+# rewrites gitignored `dist/` that rust-embed packs via `[package].include`.
+# Member crates do not embed `dist/` and must publish from a clean tree.
 
 set -euo pipefail
 
@@ -136,9 +140,13 @@ publish_one() {
   fi
 
   echo "Publishing ${crate}@${VERSION}..."
+  local publish_args=(--registry crates-io -p "$crate")
+  # Only the root binary embeds dist/ from build-web.
+  if [[ "$crate" == "pingap" ]]; then
+    publish_args+=(--allow-dirty)
+  fi
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    # Root `pingap` is the workspace package; members are selected with -p.
-    cargo publish --registry crates-io --dry-run -p "$crate"
+    cargo publish --dry-run "${publish_args[@]}"
     PUBLISHED=$((PUBLISHED + 1))
     return 0
   fi
@@ -146,7 +154,7 @@ publish_one() {
   log="$(mktemp)"
   # pipefail is on: capture cargo's exit via PIPESTATUS
   set +e
-  cargo publish --registry crates-io -p "$crate" 2>&1 | tee "$log"
+  cargo publish "${publish_args[@]}" 2>&1 | tee "$log"
   local cargo_rc=${PIPESTATUS[0]}
   set -e
 
