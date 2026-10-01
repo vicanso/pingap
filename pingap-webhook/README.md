@@ -111,11 +111,12 @@ let sender = WebhookNotificationSender::new(
 
 - `webhook_notifications` is an allow-list. Leaving it empty silences everything
   even when `webhook` is set — a common cause of "why am I not getting alerts".
-- `webhook`, `webhook_type` and `webhook_notifications` are hot reloaded under
-  `--autoreload` / `--autorestart`: a change applies without a restart, also to
-  notifications from upstreams, discovery and certificate checks that were
-  already running. A batch still collecting at that moment goes out with the
-  settings it was collected under.
+- `webhook`, `webhook_type`, `webhook_notifications`, `webhook_batch_window` and
+  `webhook_batch_max_events` are all hot reloaded under `--autoreload` /
+  `--autorestart`: a change applies without a restart, also to notifications
+  from upstreams, discovery and certificate checks that were already running. A
+  batch still collecting at that moment goes out with the settings it was
+  collected under.
 - Certificate expiry warnings pair with `certificates.<name>.buffer_days`, which
   controls how far ahead ACME renews; see
   [pingap-acme](../pingap-acme/README.md).

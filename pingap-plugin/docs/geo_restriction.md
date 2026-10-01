@@ -70,9 +70,11 @@ country and always continues.
 
 ## Usage notes
 
-- The GeoIP database is embedded in the binary, so lookups need no network
-  access — but the data ages with the release. Country assignments for a given IP
-  can be wrong, especially for mobile carriers, VPNs and cloud ranges.
+- The GeoIP data comes from [`tor-geoip`](https://crates.io/crates/tor-geoip)'s
+  `embedded-db` feature and is compiled into the binary, so lookups need no
+  network access — but the data ages with the crate version. Country assignments
+  for a given IP can be wrong, especially for mobile carriers, VPNs and cloud
+  ranges.
 - Client IP resolution follows `basic.trusted_proxies`; without it, a forged
   `X-Forwarded-For` picks the country. See
   [`ip_restriction`](ip_restriction.md#client-ip-resolution).

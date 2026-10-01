@@ -2,7 +2,7 @@
 
 通过 [Sentry](https://sentry.io/) 为 [Pingap](https://github.com/vicanso/pingap) 上报错误。
 
-刻意做薄：把 DSN 解析为 `sentry_core::ClientOptions`。Sentry 客户端本身由 pingora 安装，Pingap 通过 pingora 的 `sentry` feature 启用，因此代理运行时内的 panic 与错误会带堆栈被捕获，而不是只出现在日志里。
+刻意做薄：把 DSN 解析为 `sentry_core::ClientOptions`。Sentry 客户端本身由 pingora 安装，Pingap 通过 pingora 的 `sentry` feature 启用，因此代理运行时内的 panic 与错误会带堆栈被捕获，而不是只出现在日志里。`sentry-core` 需与 pingora 钉住的 `sentry = "0.36"` 同代，否则 `set_sentry_config` 的类型对不上。
 
 ## 构建
 

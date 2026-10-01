@@ -122,8 +122,8 @@ ja4 = true
 enabled_h2 = true
 access_log = "combined"
 enable_server_timing = true
-tls_min_version = "TLSv1.2"
-tls_max_version = "TLSv1.3"
+tls_min_version = "tlsv1.2"
+tls_max_version = "tlsv1.3"
 tls_cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 tls_ciphersuites = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
 prometheus_metrics = "/metrics"
@@ -146,11 +146,13 @@ Notes on a few of these:
   [pingap-certificate](../pingap-certificate/README.md). Without it the listener
   is plain HTTP, and `enabled_h2` then means h2c.
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` /
-  `tls_ciphersuites` apply only on an **OpenSSL** build. A `tls-rustls` build
-  always offers TLS 1.2/1.3 with rustls' default cipher suites; setting any of
-  those fields fails config validation at startup / `--test` / auto-restart
-  (see [pingap-certificate](../pingap-certificate/README.md)). The admin UI
-  disables the matching form fields on a rustls binary.
+  `tls_ciphersuites` apply only on an **OpenSSL** build. Version names are
+  `tlsv1.1` / `tlsv1.2` / `tlsv1.3` (case-insensitive, so `TLSv1.2` also
+  works). A `tls-rustls` build always offers TLS 1.2/1.3 with rustls' default
+  cipher suites; setting any of those fields fails config validation at
+  startup / `--test` / auto-restart (see
+  [pingap-certificate](../pingap-certificate/README.md)). The admin UI disables
+  the matching form fields on a rustls binary.
 - `h2_max_concurrent_streams`, `h2_max_header_list_size`,
   `h2_initial_window_size`, `h2_initial_connection_window_size` and
   `h2_idle_timeout` tune the downstream HTTP/2 SETTINGS of a listener. Unset

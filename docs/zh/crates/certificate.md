@@ -31,7 +31,7 @@ crate 核心是 `GlobalCertificate`：SNI 选择逻辑（精确 → 通配 → �
 
 证书存储用 `arc_swap::ArcSwap` 包装哈希表，可对整套证书做原子、无锁更新。配置变更时创建新映射并与旧映射交换，确保入站请求始终看到一致的证书视图。`update_certificates(configs, previous)` 在构建新映射时沿用配置（含文件路径所指文件内容）未变的证书，因此重载只解析、加载有变化的证书，并只上报这些名字；`parse_certificates` 是不复用任何旧证书的同一过程。
 
-OpenSSL 后端下，被 OpenSSL 拒绝的 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（或 `tlsv1.1`/`tlsv1.2`/`tlsv1.3` 以外的版本名）在构建监听器时报错，服务器不会带着与配置不同的设置启动。
+OpenSSL 后端下，被 OpenSSL 拒绝的 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（或 `tlsv1.1`/`tlsv1.2`/`tlsv1.3` 以外的版本名；大小写不敏感）在构建监听器时报错，服务器不会带着与配置不同的设置启动。
 
 ## 模块
 

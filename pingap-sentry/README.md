@@ -7,6 +7,8 @@ A deliberately thin crate: it parses a DSN into `sentry_core::ClientOptions`.
 The Sentry client itself is installed by pingora, which Pingap enables through
 pingora's `sentry` feature, so panics and errors raised inside the proxy runtime
 are captured with a stack trace rather than only appearing in the log.
+`sentry-core` must stay on the same generation as pingora's pinned
+`sentry = "0.36"`, or `set_sentry_config` will not type-check.
 
 ## Building
 

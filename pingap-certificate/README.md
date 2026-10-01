@@ -42,8 +42,9 @@ those names; `parse_certificates` is the same with nothing to reuse.
 
 Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
 `tls_max_version` that OpenSSL rejects (or a version name other than
-`tlsv1.1`/`tlsv1.2`/`tlsv1.3`) is an error when the listener is built, so the
-server does not come up with other settings than the configured ones.
+`tlsv1.1`/`tlsv1.2`/`tlsv1.3`, case-insensitive) is an error when the listener
+is built, so the server does not come up with other settings than the
+configured ones.
 
 ## Modules
 

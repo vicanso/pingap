@@ -95,8 +95,8 @@ ja4 = true
 enabled_h2 = true
 access_log = "combined"
 enable_server_timing = true
-tls_min_version = "TLSv1.2"
-tls_max_version = "TLSv1.3"
+tls_min_version = "tlsv1.2"
+tls_max_version = "tlsv1.3"
 tls_cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
 tls_ciphersuites = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
 prometheus_metrics = "/metrics"
@@ -115,7 +115,7 @@ modules = ["grpc-web"]
 
 - `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。
 - `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。
-- `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
+- `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。版本名接受 `tlsv1.1` / `tlsv1.2` / `tlsv1.3`（大小写不敏感，`TLSv1.2` 亦可）。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
 - `ja4 = true` 为每个客户端计算 JA4 TLS 指纹，见 [JA4 指纹](#ja4-指纹)。需要 `global_certificates = true`，配置校验会检查。
 - `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。
