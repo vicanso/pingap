@@ -16,6 +16,8 @@ The binary and every crate share one version, declared once in `[workspace.packa
 
 **Publishing to crates.io must go through `./publish.sh` (or `make publish`)**, never `cargo publish -p pingap` alone. The root package depends on `pingap-acme = "^<version>"` (and the other members); cargo rewrites path deps to version deps at publish time, so the matching `pingap-*` versions have to already be on crates.io. `publish.sh` publishes members in dependency order, waits until each version is fetchable, then publishes the root package. Use `./publish.sh --dry-run` to rehearse, `--members` / `--root` to publish only one half. Already-published crate/version pairs are skipped (safe to re-run after a partial failure).
 
+The root package's `[package].include` force-packs `dist/**` (gitignored admin UI assets from `make build-web`) so `rust-embed` can compile when cargo verifies the tarball. `make publish` runs `build-web` first; if you publish the root by hand, run `make build-web` yourself or verification fails with `folder '.../dist/' does not exist`.
+
 ## Common commands
 
 ```bash

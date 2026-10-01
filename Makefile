@@ -26,7 +26,9 @@ build-web:
 	rm -rf dist \
 	&& cd web \
 	&& npm install && npm run  build \
-	&& cp -rf dist ../
+	&& cp -rf dist ../ \
+	&& find dist -name .DS_Store -delete
+
 
 
 bench-all:

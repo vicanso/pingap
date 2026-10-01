@@ -9,7 +9,34 @@ description = "A reverse proxy like nginx"
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
-exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*", "docs/*"]
+# Allowlist for the crates.io tarball. `dist/**` must appear here: it is
+# gitignored (produced by `make build-web`) but `rust-embed` in
+# `src/plugin/admin.rs` needs the folder when cargo verifies the package.
+# Using `include` (not `exclude`) is what lets gitignored paths ship; run
+# `make build-web` before `cargo publish` / `./publish.sh`.
+# Leading `/` anchors each pattern at the package root — bare names like
+# `LICENSE` would otherwise match every nested copy (e.g. under node_modules).
+include = [
+    "/src/**",
+    "/build.rs",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/README_zh.md",
+    "/CHANGELOG.md",
+    "/conf/**",
+    "/dist/**",
+    "/icons/**",
+    "/benches/**",
+    "/examples/**",
+    "/packaging/**",
+    "/pingap.service",
+    "/install.sh",
+    "/entrypoint.sh",
+    "/Dockerfile",
+    "/docker-compose.yml",
+]
 readme = "./README.md"
 rust-version = "1.96"
 default-run = "pingap"
