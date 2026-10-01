@@ -12,7 +12,9 @@ Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; 
 
 The binary and every crate share one version, declared once in `[workspace.package]`; members inherit it with `version.workspace = true`. External crates and internal `pingap-*` siblings both live in `[workspace.dependencies]`; every `pingap-*` member depends on them with `{ workspace = true }` (including `dev-dependencies` and `target.'cfg(...)'.dependencies`).
 
-**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes all crates at the new version in dependency order.
+**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement.
+
+**Publishing to crates.io must go through `./publish.sh` (or `make publish`)**, never `cargo publish -p pingap` alone. The root package depends on `pingap-acme = "^<version>"` (and the other members); cargo rewrites path deps to version deps at publish time, so the matching `pingap-*` versions have to already be on crates.io. `publish.sh` publishes members in dependency order, waits until each version is fetchable, then publishes the root package. Use `./publish.sh --dry-run` to rehearse, `--members` / `--root` to publish only one half. Already-published crate/version pairs are skipped (safe to re-run after a partial failure).
 
 ## Common commands
 

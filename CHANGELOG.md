@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.15.0](https://github.com/vicanso/pingap/compare/v0.14.3..v0.15.0) - 2026-10-01
+
+### ⛰️  Features
+
+- *(cache)* Support stale revalidation - ([cdd2262](https://github.com/vicanso/pingap/commit/cdd22621185b558db4f02668b411de96d2e99764))
+- *(plugin)* Block client IPs after repeated basic_auth failures - ([a8f700e](https://github.com/vicanso/pingap/commit/a8f700e0c30d6460dbb935eedd56fab0060d1236))
+- *(proxy)* JA4 TLS client fingerprint as $ja4 and {:ja4} ([#232](https://github.com/orhun/git-cliff/issues/232)) - ([ab8b1c4](https://github.com/vicanso/pingap/commit/ab8b1c4170ace78be1efcd2b11cfbdabd5d8c1c1))
+
+### 🐛 Bug Fixes
+
+- *(acme)* Reuse the ACME account, sweep manual TXT entries, correct DNS provider details - ([67d738c](https://github.com/vicanso/pingap/commit/67d738c648ba1507fe516b2e9e2337e71ab05a0c))
+- *(cache)* Refresh h2 stale entries inline - ([e1ec42c](https://github.com/vicanso/pingap/commit/e1ec42ca3713c8bc3cefa7897cd5bbb438894b0c))
+- *(plugin)* Close auth and CORS holes, validate config, faster hot paths - ([015d3f3](https://github.com/vicanso/pingap/commit/015d3f3d4ca86448c7ca351978094fe2761b95a8))
+- *(proxy)* Keep location counters straight, classify downstream errors - ([e5ed818](https://github.com/vicanso/pingap/commit/e5ed81816793cecf1a3da4e9aaa86e8732aa3b9e))
+- *(upstream)* Make an upstream's first health check round decisive - ([adc8433](https://github.com/vicanso/pingap/commit/adc8433bec766e9c5bb843f202b347896e6f88d6))
+- Fix tls handshake ([#231](https://github.com/orhun/git-cliff/issues/231)) - ([9e15edd](https://github.com/vicanso/pingap/commit/9e15edd56d3d21a6fd2d81f9cebee68faf92af8a))
+
+### 📚 Documentation
+
+- *(proxy)* Move the error template placeholders into a code block - ([170c677](https://github.com/vicanso/pingap/commit/170c6770b657bf764a5a3aa3124e72498cbf63bc))
+- Align webhook, TLS, geo and sentry notes with current behaviour - ([ffac153](https://github.com/vicanso/pingap/commit/ffac153053b2af95e5c8a713073a738a88219bc9))
+- Document the access log context keys and how to log JA4 - ([d9f1952](https://github.com/vicanso/pingap/commit/d9f1952db539a35dc591d32946a93c7c7e0e88db))
+
+### ⚡ Performance
+
+- *(certificate)* Reuse unchanged certificates on reload, fail on bad TLS settings - ([f44ca39](https://github.com/vicanso/pingap/commit/f44ca39841d22cd5bdc48ec103434e07143ccd1b))
+- *(location)* Plain match for capture-less regexes, single-pass rewrite - ([5762a1a](https://github.com/vicanso/pingap/commit/5762a1af4502f88e7bb3e15c19c4971351c3e779))
+- *(performance)* Cache process info, stop leaking metric labels, count every request - ([99705eb](https://github.com/vicanso/pingap/commit/99705eb56cbed32b2f758e63e53d579dc4a33556))
+- *(proxy)* Parse the error template once, trim listen addresses, drop dead config code - ([add2fab](https://github.com/vicanso/pingap/commit/add2fab4cdf9e76ec6b368eb5599a66358357f49))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cache)* Link upstream pingora h2 swr issue - ([6c9fac0](https://github.com/vicanso/pingap/commit/6c9fac0a077b92c28e3a6bb2e325e433c9a67166))
+- *(plugin)* Drop the unused substring dependency - ([71c4aa9](https://github.com/vicanso/pingap/commit/71c4aa98aadecb36ca2d66bb60f58dd03be6d924))
+- Version 0.15.0 - ([f84c298](https://github.com/vicanso/pingap/commit/f84c298a17cb33b3ab9537313a96d8c8ab27b374))
+- Let typos accept pingora's esource - ([f5ee7ef](https://github.com/vicanso/pingap/commit/f5ee7ef020ba55b1338cf1896700a9dd55aa4eab))
+- Adjust change swap space - ([cc6888a](https://github.com/vicanso/pingap/commit/cc6888af4ba655362b9e394b536958be29529853))
+
+### Build
+
+- Move the Docker image to node 24 and rust 1.98.1 - ([50e7cb6](https://github.com/vicanso/pingap/commit/50e7cb6c4e1e49d44d036bc3760f3582925ebc74))
+
 ## [0.14.2](https://github.com/vicanso/pingap/compare/v0.14.1..v0.14.2) - 2026-09-12
 
 ### ⛰️  Features

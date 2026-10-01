@@ -102,9 +102,12 @@ release-pyro:
 	cargo build --profile=release-perf --features=pyro
 	ls -lh target/release-perf
 
+# Publish pingap-* then the root package in dependency order. Do not run
+# `cargo publish -p pingap` alone: crates.io must already have the matching
+# pingap-* versions or resolve fails with "candidate versions didn't match".
 publish:
 	make build-web
-	cargo publish --registry crates-io --no-verify
+	./publish.sh
 
 hooks:
 	cp hooks/* .git/hooks/
