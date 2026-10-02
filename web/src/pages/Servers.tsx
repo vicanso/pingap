@@ -194,6 +194,7 @@ export default function Servers() {
       section: sec.logging,
       label: serverI18n("accessLog"),
       placeholder: serverI18n("accessLogPlaceholder"),
+      tips: serverI18n("accessLogTips"),
       defaultValue: serverConfig.access_log,
       span: 6,
       category: ExFormItemCategory.TEXT,

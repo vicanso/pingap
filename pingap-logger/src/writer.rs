@@ -16,6 +16,7 @@ use super::file_appender::new_rolling_file_writer;
 use super::new_env_filter;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
+use super::target::{LogTarget, parse_log_target};
 use super::{Error, LOG_TARGET};
 use async_trait::async_trait;
 use bytesize::ByteSize;
@@ -387,25 +388,28 @@ pub fn logger_try_init(
     let registry = tracing_subscriber::registry().with(filter_layer);
 
     let mut log_path = None;
-    let mut log_type = "stdio";
-    let writer = if params.log.is_empty() {
-        BoxMakeWriter::new(std::io::stderr)
-    } else if params.log.starts_with("syslog://") {
+    // Unset is stderr.
+    let target = if params.log.is_empty() {
+        LogTarget::Stderr
+    } else {
+        parse_log_target(&params.log)
+    };
+    let (writer, log_type) = match target {
+        LogTarget::Stdout => (BoxMakeWriter::new(std::io::stdout), "stdout"),
+        LogTarget::Stderr => (BoxMakeWriter::new(std::io::stderr), "stderr"),
         #[cfg(unix)]
-        {
-            new_syslog_writer(&params.log)?
-        }
+        LogTarget::Syslog(value) => (new_syslog_writer(value)?, "syslog"),
         #[cfg(not(unix))]
-        {
+        LogTarget::Syslog(_) => {
             return Err(Error::Invalid {
                 message: "syslog is only supported on Unix systems".to_string(),
             });
-        }
-    } else {
-        log_type = "file";
-        let (w, dir) = new_file_writer(&params)?;
-        log_path = Some(dir);
-        w
+        },
+        LogTarget::File(_) => {
+            let (writer, dir) = new_file_writer(&params)?;
+            log_path = Some(dir);
+            (writer, "file")
+        },
     };
     let timer = tracing_subscriber::fmt::time::OffsetTime::new(
         time::UtcOffset::from_hms(hours, minutes, 0)
@@ -420,8 +424,10 @@ pub fn logger_try_init(
     let fmt_layer = if params.json {
         fmt_layer.with_ansi(false).json().boxed()
     } else {
-        // text format with color if dev
-        fmt_layer.with_ansi(is_dev).boxed()
+        // Colors in a dev build, and only on a terminal stream: in a file
+        // or a syslog message the escape codes are noise.
+        let ansi = is_dev && matches!(log_type, "stdout" | "stderr");
+        fmt_layer.with_ansi(ansi).boxed()
     };
     let subscriber: Box<dyn Subscriber + Send + Sync> =
         Box::new(registry.with(fmt_layer));

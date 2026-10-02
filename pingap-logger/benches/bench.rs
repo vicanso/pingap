@@ -107,5 +107,38 @@ fn bench_logger_format(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_logger_format);
+/// The `json` preset: every value escaped or typed, the cost over a text
+/// format of the same fields.
+#[allow(clippy::unwrap_used)]
+fn bench_logger_format_json(c: &mut Criterion) {
+    let session = get_logger_session().recv().unwrap().unwrap();
+    let ctx = Ctx {
+        state: RequestState {
+            request_id: Some("AMwBhEil".to_string()),
+            status: Some(StatusCode::OK),
+            ..Default::default()
+        },
+        conn: ConnectionInfo {
+            remote_addr: Some("10.0.0.1".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    c.bench_function("logger format json", |b| {
+        let p: Parser = "json".into();
+        b.iter(|| {
+            let _ = p.format(&session, &ctx);
+        })
+    });
+    c.bench_function("logger format text, same fields", |b| {
+        let p: Parser = "{when} {remote} {client_ip} {host} {method} {uri} \
+{proto} {status} {size} {latency} {referer} {user_agent} {request_id}"
+            .into();
+        b.iter(|| {
+            let _ = p.format(&session, &ctx);
+        })
+    });
+}
+
+criterion_group!(benches, bench_logger_format, bench_logger_format_json);
 criterion_main!(benches);

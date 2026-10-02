@@ -18,10 +18,10 @@ use pingap_core::{
     Ctx, CtxLogField, HOST_NAME_TAG, format_duration, get_hostname,
 };
 use pingap_util::format_byte_size;
-use pingora::http::ResponseHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::sync::LazyLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Enum representing different types of log tags that can be used in the logging format
 #[derive(Debug, Clone, PartialEq)]
@@ -55,25 +55,41 @@ pub enum TagCategory {
     RequestId,
 }
 
+/// Where a tag sits in a JSON format.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum JsonSlot {
+    /// Text of the format itself.
+    #[default]
+    Literal,
+    /// A placeholder inside a JSON string: its value is escaped into it.
+    InString,
+    /// A placeholder outside any string, standing for a whole JSON value:
+    /// a number, a boolean, a quoted string, or `null` when missing.
+    Value,
+}
+
 // Represents a single tag in the log format
 #[derive(Debug, Clone)]
 pub struct Tag {
     pub category: TagCategory,
     pub data: Option<String>, // Optional data associated with the tag
+    /// Only read when the format is JSON.
+    pub json: JsonSlot,
 }
 
 impl Tag {
-    fn simple(category: TagCategory) -> Self {
+    fn new(category: TagCategory, data: Option<String>) -> Self {
         Self {
             category,
-            data: None,
+            data,
+            json: JsonSlot::Literal,
         }
     }
+    fn simple(category: TagCategory) -> Self {
+        Self::new(category, None)
+    }
     fn fill(text: &str) -> Self {
-        Self {
-            category: TagCategory::Fill,
-            data: Some(text.to_string()),
-        }
+        Self::new(TagCategory::Fill, Some(text.to_string()))
     }
 }
 
@@ -82,6 +98,9 @@ pub struct Parser {
     pub needs_timestamp: bool,
     pub capacity: usize,
     pub tags: Vec<Tag>,
+    /// The format is a JSON object: values are escaped, and a missing one
+    /// is empty or `null` instead of `-`.
+    pub json: bool,
 }
 
 // Parses special tags with prefixes like ~, >, <, :, $
@@ -89,21 +108,18 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
     let key = key.strip_prefix('{')?.strip_suffix('}')?;
     let (prefix, value) = key.split_at_checked(1)?;
     match prefix {
-        "~" => Some(Tag {
-            // Cookie values
-            category: TagCategory::Cookie,
-            data: Some(value.to_string()),
-        }),
-        ">" => Some(Tag {
-            // Request headers
-            category: TagCategory::RequestHeader,
-            data: Some(value.to_string()),
-        }),
-        "<" => Some(Tag {
-            // Response headers
-            category: TagCategory::ResponseHeader,
-            data: Some(value.to_string()),
-        }),
+        // Cookie values
+        "~" => Some(Tag::new(TagCategory::Cookie, Some(value.to_string()))),
+        // Request headers
+        ">" => Some(Tag::new(
+            TagCategory::RequestHeader,
+            Some(value.to_string()),
+        )),
+        // Response headers
+        "<" => Some(Tag::new(
+            TagCategory::ResponseHeader,
+            Some(value.to_string()),
+        )),
         // Resolved here, once; an unknown name printed nothing before and
         // still does.
         ":" => value
@@ -160,6 +176,35 @@ fn is_tag_byte(b: u8) -> bool {
         || matches!(b, b'_' | b'-' | b'<' | b'>' | b'~' | b':' | b'$')
 }
 
+/// Follows JSON string boundaries through literal format text, so each
+/// placeholder knows whether it sits inside a string.
+#[derive(Default)]
+struct JsonStringState {
+    in_string: bool,
+    escaped: bool,
+}
+
+impl JsonStringState {
+    fn scan(&mut self, text: &str) {
+        for b in text.bytes() {
+            if self.escaped {
+                self.escaped = false;
+            } else if b == b'\\' && self.in_string {
+                self.escaped = true;
+            } else if b == b'"' {
+                self.in_string = !self.in_string;
+            }
+        }
+    }
+    fn slot(&self) -> JsonSlot {
+        if self.in_string {
+            JsonSlot::InString
+        } else {
+            JsonSlot::Value
+        }
+    }
+}
+
 /// Splits a format string into literal text and `{tag}` placeholders. A
 /// placeholder is `{`, one or more tag characters and `}`; a `{` that is
 /// not followed by that is literal text, as is everything outside
@@ -169,6 +214,7 @@ fn parse_tags(value: &str) -> Vec<Tag> {
     let bytes = value.as_bytes();
     let mut fill_start = 0;
     let mut pos = 0;
+    let mut json = JsonStringState::default();
     while let Some(offset) = value[pos..].find('{') {
         let start = pos + offset;
         let name_len = bytes[start + 1..]
@@ -181,9 +227,12 @@ fn parse_tags(value: &str) -> Vec<Tag> {
             continue;
         }
         if fill_start < start {
-            tags.push(Tag::fill(&value[fill_start..start]));
+            let text = &value[fill_start..start];
+            json.scan(text);
+            tags.push(Tag::fill(text));
         }
-        if let Some(tag) = parse_tag(&value[start..end]) {
+        if let Some(mut tag) = parse_tag(&value[start..end]) {
+            tag.json = json.slot();
             tags.push(tag);
         }
         fill_start = end;
@@ -195,12 +244,27 @@ fn parse_tags(value: &str) -> Vec<Tag> {
     tags
 }
 
+/// Whether `value` is a JSON object format: `{` and then a `"`, spaces
+/// allowed between them. A text format never starts that way, since `{"`
+/// opens no placeholder.
+fn is_json_format(value: &str) -> bool {
+    value
+        .trim_start()
+        .strip_prefix('{')
+        .is_some_and(|rest| rest.trim_start().starts_with('"'))
+}
+
 // Predefined log formats
 static COMBINED: &str = r###"{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}""###;
 static COMMON: &str =
     r###"{remote} "{method} {uri} {proto}" {status} {size_human}""###;
 static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size_human} - {latency}ms"###;
 static TINY: &str = r###"{method} {uri} {status} {size_human} - {latency}ms"###;
+static JSON: &str = r###"{"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host},"method":{method},"uri":{uri},"proto":{proto},"status":{status},"size":{size},"latency":{latency},"referer":{referer},"user_agent":{user_agent},"request_id":{request_id}}"###;
+
+/// The names `access_log` accepts in place of a format.
+pub const ACCESS_LOG_PRESETS: [&str; 5] =
+    ["combined", "common", "short", "tiny", "json"];
 
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
@@ -209,9 +273,24 @@ impl From<&str> for Parser {
             "common" => COMMON,
             "short" => SHORT,
             "tiny" => TINY,
+            "json" => JSON,
             _ => value,
         };
-        let tags = parse_tags(value);
+        let json = is_json_format(value);
+        let mut tags = parse_tags(value);
+        if json {
+            // `{$name}` placeholders were resolved to text while parsing,
+            // so they are escaped here, once, rather than on every line.
+            for tag in tags.iter_mut().filter(|tag| {
+                tag.category == TagCategory::Fill
+                    && tag.json != JsonSlot::Literal
+            }) {
+                let text = tag.data.take().unwrap_or_default();
+                let mut buf = BytesMut::with_capacity(text.len() + 2);
+                put_json_text(&mut buf, tag.json, text.as_bytes());
+                tag.data = Some(String::from_utf8_lossy(&buf).into_owned());
+            }
+        }
         let needs_timestamp = tags.iter().any(|t| {
             matches!(
                 t.category,
@@ -231,6 +310,7 @@ impl From<&str> for Parser {
             capacity,
             tags,
             needs_timestamp,
+            json,
         }
     }
 }
@@ -304,13 +384,365 @@ fn put_rfc3339_millis<Tz: TimeZone>(
     put_digits(buf, (offset % 3600) / 60, 2);
 }
 
-/// Appends `value`, or `-` when it is empty.
+/// Appends `value` and returns true, or returns false when it is empty.
 #[inline]
-fn put_or_empty(buf: &mut BytesMut, value: &[u8]) {
+fn put_value(buf: &mut BytesMut, value: &[u8]) -> bool {
     if value.is_empty() {
-        buf.put_slice(EMPTY_FIELD);
-    } else {
-        buf.put_slice(value);
+        return false;
+    }
+    buf.put_slice(value);
+    true
+}
+
+/// The JSON type a tag's value takes outside a string.
+#[derive(Clone, Copy, PartialEq)]
+enum JsonKind {
+    String,
+    Number,
+    Bool,
+}
+
+fn json_kind(category: &TagCategory) -> JsonKind {
+    match category {
+        TagCategory::Status
+        | TagCategory::Size
+        | TagCategory::PayloadSize
+        | TagCategory::Latency
+        | TagCategory::WhenUnix => JsonKind::Number,
+        TagCategory::Context(field) => context_json_kind(*field),
+        _ => JsonKind::String,
+    }
+}
+
+/// By field rather than by what a value looks like, so a field keeps one
+/// type across lines - a location named `404` is still a string.
+fn context_json_kind(field: CtxLogField) -> JsonKind {
+    match field {
+        CtxLogField::UpstreamReused | CtxLogField::ConnectionReused => {
+            JsonKind::Bool
+        },
+        CtxLogField::ConnectionId
+        | CtxLogField::Processing
+        | CtxLogField::UpstreamStatus
+        | CtxLogField::UpstreamConnected
+        | CtxLogField::UpstreamConnectTime
+        | CtxLogField::UpstreamProcessingTime
+        | CtxLogField::UpstreamResponseTime
+        | CtxLogField::UpstreamTcpConnectTime
+        | CtxLogField::UpstreamTlsHandshakeTime
+        | CtxLogField::UpstreamConnectOffloadWaitTime
+        | CtxLogField::UpstreamConnectionTime
+        | CtxLogField::ConnectionTime
+        | CtxLogField::TlsHandshakeTime
+        | CtxLogField::CompressionTime
+        | CtxLogField::CompressionRatio
+        | CtxLogField::CacheLookupTime
+        | CtxLogField::CacheLockTime
+        | CtxLogField::ServiceTime => JsonKind::Number,
+        _ => JsonKind::String,
+    }
+}
+
+/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?`, the shape the numeric tags print.
+/// Anything else, such as the `-` of a missing upstream status, is not a
+/// number and becomes `null`.
+fn is_json_number(value: &[u8]) -> bool {
+    let digits = value.strip_prefix(b"-").unwrap_or(value);
+    let (int, frac) = match digits.iter().position(|b| *b == b'.') {
+        Some(dot) => (&digits[..dot], Some(&digits[dot + 1..])),
+        None => (digits, None),
+    };
+    let all_digits =
+        |part: &[u8]| !part.is_empty() && part.iter().all(u8::is_ascii_digit);
+    all_digits(int)
+        && (int.len() == 1 || int[0] != b'0')
+        && frac.is_none_or(all_digits)
+}
+
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+/// The bytes that must be escaped: control characters, quote, backslash.
+const fn needs_escape(b: u8) -> bool {
+    b < 0x20 || b == b'"' || b == b'\\'
+}
+
+/// Escapes `buf[start..]` for use inside a JSON string. Valid UTF-8 with
+/// no quote, backslash or control character - nearly every value - is
+/// left alone without copying; otherwise the value is rewritten, with
+/// invalid UTF-8 replaced by U+FFFD, since a header can carry any byte.
+fn escape_json(buf: &mut BytesMut, start: usize) {
+    let value = &buf[start..];
+    // One pass for plain ASCII, the common case; UTF-8 is only validated
+    // when there is a byte above it.
+    let Some(first) =
+        value.iter().position(|b| needs_escape(*b) || !b.is_ascii())
+    else {
+        return;
+    };
+    let rest = &value[first..];
+    if !rest.iter().any(|b| needs_escape(*b))
+        && std::str::from_utf8(rest).is_ok()
+    {
+        return;
+    }
+    let raw = value.to_vec();
+    buf.truncate(start);
+    for chunk in raw.utf8_chunks() {
+        let text = chunk.valid().as_bytes();
+        let mut done = 0;
+        for (i, b) in text.iter().enumerate() {
+            let escaped: &[u8] = match b {
+                b'"' => b"\\\"",
+                b'\\' => b"\\\\",
+                b'\n' => b"\\n",
+                b'\r' => b"\\r",
+                b'\t' => b"\\t",
+                0..=0x1f => b"",
+                _ => continue,
+            };
+            buf.put_slice(&text[done..i]);
+            if escaped.is_empty() {
+                buf.put_slice(b"\\u00");
+                buf.put_u8(HEX_DIGITS[(b >> 4) as usize]);
+                buf.put_u8(HEX_DIGITS[(b & 0x0f) as usize]);
+            } else {
+                buf.put_slice(escaped);
+            }
+            done = i + 1;
+        }
+        buf.put_slice(&text[done..]);
+        if !chunk.invalid().is_empty() {
+            buf.put_slice(b"\\ufffd");
+        }
+    }
+}
+
+/// Appends `text` for its place in a JSON format: escaped inside a string,
+/// a quoted string (or `null` when empty) as a value of its own.
+fn put_json_text(buf: &mut BytesMut, slot: JsonSlot, text: &[u8]) {
+    match slot {
+        JsonSlot::Literal => buf.put_slice(text),
+        JsonSlot::InString => {
+            let start = buf.len();
+            buf.put_slice(text);
+            escape_json(buf, start);
+        },
+        JsonSlot::Value if text.is_empty() => buf.put_slice(b"null"),
+        JsonSlot::Value => {
+            buf.put_u8(b'"');
+            let start = buf.len();
+            buf.put_slice(text);
+            escape_json(buf, start);
+            buf.put_u8(b'"');
+        },
+    }
+}
+
+/// What one line's values are read from.
+struct LineSource<'a> {
+    session: &'a Session,
+    req_header: &'a RequestHeader,
+    ctx: &'a Ctx,
+    now: Option<DateTime<Utc>>,
+    latency: Option<Duration>,
+}
+
+impl LineSource<'_> {
+    /// Appends the value of `tag` and returns true, or appends nothing and
+    /// returns false when there is no value. Inlined into `format`: as a
+    /// call it cost the text format bench about 3%.
+    #[inline(always)]
+    fn put(&self, buf: &mut BytesMut, tag: &Tag) -> bool {
+        let session = self.session;
+        let ctx = self.ctx;
+        let req_header = self.req_header;
+        match &tag.category {
+            TagCategory::Fill => put_value(
+                buf,
+                tag.data.as_deref().unwrap_or_default().as_bytes(),
+            ),
+            TagCategory::Host => {
+                let host = pingap_core::get_host(req_header);
+                put_value(buf, host.unwrap_or_default().as_bytes())
+            },
+            TagCategory::Method => {
+                put_value(buf, req_header.method.as_str().as_bytes())
+            },
+            TagCategory::Path => {
+                put_value(buf, req_header.uri.path().as_bytes())
+            },
+            TagCategory::Proto => {
+                if session.is_http2() {
+                    buf.put_slice(b"HTTP/2.0");
+                } else {
+                    buf.put_slice(b"HTTP/1.1");
+                }
+                true
+            },
+            TagCategory::Query => {
+                let query = req_header.uri.query().unwrap_or_default();
+                put_value(buf, query.as_bytes())
+            },
+            TagCategory::Remote => {
+                let addr = ctx.conn.remote_addr.as_deref().unwrap_or_default();
+                put_value(buf, addr.as_bytes())
+            },
+            TagCategory::ClientIp => match &ctx.conn.client_ip {
+                Some(client_ip) => put_value(buf, client_ip.as_bytes()),
+                None => {
+                    let client_ip = pingap_core::get_client_ip(session);
+                    put_value(buf, client_ip.as_bytes())
+                },
+            },
+            TagCategory::Scheme => {
+                if ctx.conn.tls_version.is_some() {
+                    buf.put_slice(b"https");
+                } else {
+                    buf.put_slice(b"http");
+                }
+                true
+            },
+            TagCategory::Uri => {
+                let uri = req_header
+                    .uri
+                    .path_and_query()
+                    .map(|value| value.as_str())
+                    .unwrap_or_default();
+                put_value(buf, uri.as_bytes())
+            },
+            TagCategory::Referrer => {
+                put_value(buf, session.get_header_bytes("referer"))
+            },
+            TagCategory::UserAgent => {
+                put_value(buf, session.get_header_bytes("user-agent"))
+            },
+            TagCategory::When => self.now.is_some_and(|now| {
+                put_rfc3339_millis(buf, &now.with_timezone(&Local), false);
+                true
+            }),
+            TagCategory::WhenUtcIso => self.now.is_some_and(|now| {
+                put_rfc3339_millis(buf, &now, true);
+                true
+            }),
+            TagCategory::WhenUnix => self.now.is_some_and(|now| {
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(now.timestamp_millis())
+                        .as_bytes(),
+                );
+                true
+            }),
+            TagCategory::Size => {
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(session.body_bytes_sent())
+                        .as_bytes(),
+                );
+                true
+            },
+            TagCategory::SizeHuman => {
+                format_byte_size(buf, session.body_bytes_sent());
+                true
+            },
+            TagCategory::Status => ctx.state.status.is_some_and(|status| {
+                buf.put_slice(status.as_str().as_bytes());
+                true
+            }),
+            TagCategory::Latency => self.latency.is_some_and(|latency| {
+                buf.put_slice(
+                    itoa::Buffer::new().format(latency.as_millis()).as_bytes(),
+                );
+                true
+            }),
+            TagCategory::LatencyHuman => self.latency.is_some_and(|latency| {
+                format_duration(buf, latency.as_millis() as u64);
+                true
+            }),
+            TagCategory::Cookie => {
+                let value = tag.data.as_deref().and_then(|cookie| {
+                    pingap_core::get_cookie_value(req_header, cookie)
+                });
+                put_value(buf, value.unwrap_or_default().as_bytes())
+            },
+            TagCategory::RequestHeader => {
+                let value = tag
+                    .data
+                    .as_deref()
+                    .and_then(|key| req_header.headers.get(key))
+                    .map(|value| value.as_bytes())
+                    .unwrap_or_default();
+                put_value(buf, value)
+            },
+            TagCategory::ResponseHeader => {
+                let value = session
+                    .response_written()
+                    .zip(tag.data.as_deref())
+                    .and_then(|(resp_header, key)| {
+                        get_resp_header_value(resp_header, key)
+                    })
+                    .unwrap_or_default();
+                put_value(buf, value)
+            },
+            TagCategory::PayloadSize => {
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(ctx.state.payload_size)
+                        .as_bytes(),
+                );
+                true
+            },
+            TagCategory::PayloadSizeHuman => {
+                format_byte_size(buf, ctx.state.payload_size);
+                true
+            },
+            TagCategory::RequestId => {
+                let id = ctx.state.request_id.as_deref().unwrap_or_default();
+                put_value(buf, id.as_bytes())
+            },
+            TagCategory::Context(field) => {
+                let start = buf.len();
+                ctx.append_log_field(buf, *field);
+                buf.len() > start
+            },
+        }
+    }
+
+    /// Appends the value of `tag` for its place in a JSON format. Inside a
+    /// string a missing value is empty; as a value of its own it is `null`,
+    /// as is a numeric tag that printed something other than a number.
+    fn put_json(&self, buf: &mut BytesMut, tag: &Tag) {
+        let start = buf.len();
+        if tag.json != JsonSlot::Value {
+            if self.put(buf, tag) {
+                escape_json(buf, start);
+            }
+            return;
+        }
+        match json_kind(&tag.category) {
+            JsonKind::String => {
+                buf.put_u8(b'"');
+                if self.put(buf, tag) {
+                    escape_json(buf, start + 1);
+                    buf.put_u8(b'"');
+                } else {
+                    buf.truncate(start);
+                    buf.put_slice(b"null");
+                }
+            },
+            kind => {
+                let valid = self.put(buf, tag)
+                    && match kind {
+                        JsonKind::Bool => {
+                            matches!(&buf[start..], b"true" | b"false")
+                        },
+                        _ => is_json_number(&buf[start..]),
+                    };
+                if !valid {
+                    buf.truncate(start);
+                    buf.put_slice(b"null");
+                }
+            },
+        }
     }
 }
 
@@ -330,195 +762,43 @@ impl Parser {
         }
         size
     }
-    // Formats a log entry based on the session and context
+    /// Formats one access log line. In a text format a missing value is
+    /// `-` (a context field writes nothing); in a JSON format values are
+    /// escaped and a missing one is empty or `null`.
     pub fn format(&self, session: &Session, ctx: &Ctx) -> BytesMut {
-        // Better capacity estimation based on tag types and count
         let mut buf = BytesMut::with_capacity(self.capacity);
-        let req_header = session.req_header();
-
-        // Then only calculate if needed
-        let (now, instant) = if self.needs_timestamp {
-            (Some(Utc::now()), Some(Instant::now()))
+        // Only read the clocks when a tag needs them.
+        let (now, latency) = if self.needs_timestamp {
+            (
+                Some(Utc::now()),
+                Some(
+                    Instant::now()
+                        .saturating_duration_since(ctx.timing.created_at),
+                ),
+            )
         } else {
             (None, None)
         };
-        let latency_ms = || {
-            instant.map(|instant| {
-                instant.saturating_duration_since(ctx.timing.created_at)
-            })
+        let source = LineSource {
+            session,
+            req_header: session.req_header(),
+            ctx,
+            now,
+            latency,
         };
-
-        // Process each tag in the format string
         for tag in self.tags.iter() {
-            match &tag.category {
-                TagCategory::Fill => {
-                    // Static text, just append it
-                    if let Some(data) = &tag.data {
-                        buf.put_slice(data.as_bytes());
-                    }
-                },
-                TagCategory::Host => {
-                    // Add the host from request headers
-                    let host = pingap_core::get_host(req_header);
-                    put_or_empty(&mut buf, host.unwrap_or_default().as_bytes());
-                },
-                TagCategory::Method => {
-                    put_or_empty(
-                        &mut buf,
-                        req_header.method.as_str().as_bytes(),
-                    );
-                },
-                TagCategory::Path => {
-                    put_or_empty(&mut buf, req_header.uri.path().as_bytes());
-                },
-                TagCategory::Proto => {
-                    if session.is_http2() {
-                        buf.put_slice(b"HTTP/2.0");
-                    } else {
-                        buf.put_slice(b"HTTP/1.1");
-                    }
-                },
-                TagCategory::Query => {
-                    let query = req_header.uri.query().unwrap_or_default();
-                    put_or_empty(&mut buf, query.as_bytes());
-                },
-                TagCategory::Remote => {
-                    let addr =
-                        ctx.conn.remote_addr.as_deref().unwrap_or_default();
-                    put_or_empty(&mut buf, addr.as_bytes());
-                },
-                TagCategory::ClientIp => match &ctx.conn.client_ip {
-                    Some(client_ip) => {
-                        put_or_empty(&mut buf, client_ip.as_bytes());
-                    },
-                    None => {
-                        let client_ip = pingap_core::get_client_ip(session);
-                        put_or_empty(&mut buf, client_ip.as_bytes());
-                    },
-                },
-                TagCategory::Scheme => {
-                    if ctx.conn.tls_version.is_some() {
-                        buf.put_slice(b"https");
-                    } else {
-                        buf.put_slice(b"http");
-                    }
-                },
-                TagCategory::Uri => {
-                    let uri = req_header
-                        .uri
-                        .path_and_query()
-                        .map(|value| value.as_str())
-                        .unwrap_or_default();
-                    put_or_empty(&mut buf, uri.as_bytes());
-                },
-                TagCategory::Referrer => {
-                    put_or_empty(&mut buf, session.get_header_bytes("referer"));
-                },
-                TagCategory::UserAgent => {
-                    put_or_empty(
-                        &mut buf,
-                        session.get_header_bytes("user-agent"),
-                    );
-                },
-                TagCategory::When => match &now {
-                    Some(now) => put_rfc3339_millis(
-                        &mut buf,
-                        &now.with_timezone(&Local),
-                        false,
-                    ),
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                TagCategory::WhenUtcIso => match &now {
-                    Some(now) => put_rfc3339_millis(&mut buf, now, true),
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                TagCategory::WhenUnix => match &now {
-                    Some(now) => buf.put_slice(
-                        itoa::Buffer::new()
-                            .format(now.timestamp_millis())
-                            .as_bytes(),
-                    ),
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                TagCategory::Size => {
-                    buf.put_slice(
-                        itoa::Buffer::new()
-                            .format(session.body_bytes_sent())
-                            .as_bytes(),
-                    );
-                },
-                TagCategory::SizeHuman => {
-                    format_byte_size(&mut buf, session.body_bytes_sent());
-                },
-                TagCategory::Status => match &ctx.state.status {
-                    Some(status) => buf.put_slice(status.as_str().as_bytes()),
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                TagCategory::Latency => match latency_ms() {
-                    Some(latency) => buf.put_slice(
-                        itoa::Buffer::new()
-                            .format(latency.as_millis())
-                            .as_bytes(),
-                    ),
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                TagCategory::LatencyHuman => match latency_ms() {
-                    Some(latency) => {
-                        format_duration(&mut buf, latency.as_millis() as u64)
-                    },
-                    None => buf.put_slice(EMPTY_FIELD),
-                },
-                // A missing cookie is `-` like every other missing value;
-                // it used to leave the field empty.
-                TagCategory::Cookie => {
-                    let value = tag.data.as_deref().and_then(|cookie| {
-                        pingap_core::get_cookie_value(req_header, cookie)
-                    });
-                    put_or_empty(
-                        &mut buf,
-                        value.unwrap_or_default().as_bytes(),
-                    );
-                },
-                TagCategory::RequestHeader => {
-                    let value = tag
-                        .data
-                        .as_deref()
-                        .and_then(|key| req_header.headers.get(key))
-                        .map(|value| value.as_bytes())
-                        .unwrap_or_default();
-                    put_or_empty(&mut buf, value);
-                },
-                TagCategory::ResponseHeader => {
-                    let value = session
-                        .response_written()
-                        .zip(tag.data.as_deref())
-                        .and_then(|(resp_header, key)| {
-                            get_resp_header_value(resp_header, key)
-                        })
-                        .unwrap_or_default();
-                    put_or_empty(&mut buf, value);
-                },
-                TagCategory::PayloadSize => {
-                    buf.put_slice(
-                        itoa::Buffer::new()
-                            .format(ctx.state.payload_size)
-                            .as_bytes(),
-                    );
-                },
-                TagCategory::PayloadSizeHuman => {
-                    format_byte_size(&mut buf, ctx.state.payload_size);
-                },
-                TagCategory::RequestId => {
-                    let id =
-                        ctx.state.request_id.as_deref().unwrap_or_default();
-                    put_or_empty(&mut buf, id.as_bytes());
-                },
-                TagCategory::Context(field) => {
-                    ctx.append_log_field(&mut buf, *field);
-                },
-            };
+            if let TagCategory::Fill = tag.category {
+                if let Some(data) = &tag.data {
+                    buf.put_slice(data.as_bytes());
+                }
+            } else if self.json {
+                source.put_json(&mut buf, tag);
+            } else if !source.put(&mut buf, tag)
+                && !matches!(tag.category, TagCategory::Context(_))
+            {
+                buf.put_slice(EMPTY_FIELD);
+            }
         }
-
         buf
     }
 }
@@ -566,9 +846,7 @@ pub fn parse_access_log_directive(
         return default_value;
     };
 
-    if !["combined", "common", "short", "tiny"].contains(&access)
-        && !access.starts_with('{')
-    {
+    if !ACCESS_LOG_PRESETS.contains(&access) && !access.starts_with('{') {
         return default_value;
     }
 
@@ -578,7 +856,7 @@ pub fn parse_access_log_directive(
 #[cfg(test)]
 mod tests {
     use super::{
-        Parser, Tag, TagCategory, format_extra_tag, get_resp_header_value,
+        Parser, TagCategory, format_extra_tag, get_resp_header_value,
         parse_access_log_directive, parse_tags, put_rfc3339_millis,
     };
     use bytes::BytesMut;
@@ -633,165 +911,33 @@ mod tests {
     #[test]
     fn test_parse_format() {
         let tests = [
-            (
-                "{host}",
-                Tag {
-                    category: TagCategory::Host,
-                    data: None,
-                },
-            ),
-            (
-                "{method}",
-                Tag {
-                    category: TagCategory::Method,
-                    data: None,
-                },
-            ),
-            (
-                "{path}",
-                Tag {
-                    category: TagCategory::Path,
-                    data: None,
-                },
-            ),
-            (
-                "{proto}",
-                Tag {
-                    category: TagCategory::Proto,
-                    data: None,
-                },
-            ),
-            (
-                "{query}",
-                Tag {
-                    category: TagCategory::Query,
-                    data: None,
-                },
-            ),
-            (
-                "{remote}",
-                Tag {
-                    category: TagCategory::Remote,
-                    data: None,
-                },
-            ),
-            (
-                "{client_ip}",
-                Tag {
-                    category: TagCategory::ClientIp,
-                    data: None,
-                },
-            ),
-            (
-                "{scheme}",
-                Tag {
-                    category: TagCategory::Scheme,
-                    data: None,
-                },
-            ),
-            (
-                "{uri}",
-                Tag {
-                    category: TagCategory::Uri,
-                    data: None,
-                },
-            ),
-            (
-                "{referer}",
-                Tag {
-                    category: TagCategory::Referrer,
-                    data: None,
-                },
-            ),
-            (
-                "{user_agent}",
-                Tag {
-                    category: TagCategory::UserAgent,
-                    data: None,
-                },
-            ),
-            (
-                "{when}",
-                Tag {
-                    category: TagCategory::When,
-                    data: None,
-                },
-            ),
-            (
-                "{when_utc_iso}",
-                Tag {
-                    category: TagCategory::WhenUtcIso,
-                    data: None,
-                },
-            ),
-            (
-                "{when_unix}",
-                Tag {
-                    category: TagCategory::WhenUnix,
-                    data: None,
-                },
-            ),
-            (
-                "{size}",
-                Tag {
-                    category: TagCategory::Size,
-                    data: None,
-                },
-            ),
-            (
-                "{size_human}",
-                Tag {
-                    category: TagCategory::SizeHuman,
-                    data: None,
-                },
-            ),
-            (
-                "{status}",
-                Tag {
-                    category: TagCategory::Status,
-                    data: None,
-                },
-            ),
-            (
-                "{latency}",
-                Tag {
-                    category: TagCategory::Latency,
-                    data: None,
-                },
-            ),
-            (
-                "{latency_human}",
-                Tag {
-                    category: TagCategory::LatencyHuman,
-                    data: None,
-                },
-            ),
-            (
-                "{payload_size}",
-                Tag {
-                    category: TagCategory::PayloadSize,
-                    data: None,
-                },
-            ),
-            (
-                "{payload_size_human}",
-                Tag {
-                    category: TagCategory::PayloadSizeHuman,
-                    data: None,
-                },
-            ),
-            (
-                "{request_id}",
-                Tag {
-                    category: TagCategory::RequestId,
-                    data: None,
-                },
-            ),
+            ("{host}", TagCategory::Host),
+            ("{method}", TagCategory::Method),
+            ("{path}", TagCategory::Path),
+            ("{proto}", TagCategory::Proto),
+            ("{query}", TagCategory::Query),
+            ("{remote}", TagCategory::Remote),
+            ("{client_ip}", TagCategory::ClientIp),
+            ("{scheme}", TagCategory::Scheme),
+            ("{uri}", TagCategory::Uri),
+            ("{referer}", TagCategory::Referrer),
+            ("{user_agent}", TagCategory::UserAgent),
+            ("{when}", TagCategory::When),
+            ("{when_utc_iso}", TagCategory::WhenUtcIso),
+            ("{when_unix}", TagCategory::WhenUnix),
+            ("{size}", TagCategory::Size),
+            ("{size_human}", TagCategory::SizeHuman),
+            ("{status}", TagCategory::Status),
+            ("{latency}", TagCategory::Latency),
+            ("{latency_human}", TagCategory::LatencyHuman),
+            ("{payload_size}", TagCategory::PayloadSize),
+            ("{payload_size_human}", TagCategory::PayloadSizeHuman),
+            ("{request_id}", TagCategory::RequestId),
         ];
 
-        for (value, tag) in tests {
+        for (value, category) in tests {
             let p = Parser::from(value);
-            assert_eq!(tag.category, p.tags[0].category);
+            assert_eq!(category, p.tags[0].category);
         }
     }
 
@@ -866,6 +1012,130 @@ mod tests {
         let p: Parser = "{when_unix}".into();
         let log = p.format(&session, &ctx);
         assert_eq!(true, log.len() == 13);
+    }
+
+    async fn json_session(extra_headers: &[&str]) -> Session {
+        let mut headers =
+            vec!["Host: github.com", r#"User-Agent: say "hi" \ bye"#];
+        headers.extend_from_slice(extra_headers);
+        let input_header =
+            format!("GET /a?b=1 HTTP/1.1\r\n{}\r\n\r\n", headers.join("\r\n"));
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    /// Placeholders inside a string are escaped into it; outside one they
+    /// become typed values, and a missing value is `""` or `null`.
+    #[tokio::test]
+    async fn test_json_format() {
+        let session = json_session(&[]).await;
+        let ctx = Ctx {
+            conn: ConnectionInfo {
+                client_ip: Some("1.1.1.1".to_string()),
+                ..Default::default()
+            },
+            upstream: UpstreamInfo {
+                reused: true,
+                location: "404".to_string().into(),
+                ..Default::default()
+            },
+            state: RequestState {
+                status: Some(http::StatusCode::OK),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let p: Parser =
+            r#"{ "ua": "agent: {user_agent}", "ua_value": {user_agent},
+"ip": {client_ip}, "status": {status}, "size": {size},
+"referer": "{referer}", "referer_value": {referer},
+"reused": {:upstream_reused}, "upstream_status": {:upstream_status},
+"connect": {:upstream_connect_time}, "location": {:location},
+"request": "{method} {uri}", "quote\"{status}": 1 }"#
+                .into();
+        assert_eq!(true, p.json);
+        let log = p.format(&session, &ctx);
+        let value: serde_json::Value = serde_json::from_slice(&log)
+            .unwrap_or_else(|e| {
+                panic!("{e}: {}", String::from_utf8_lossy(&log))
+            });
+        assert_eq!(
+            serde_json::json!({
+                "ua": r#"agent: say "hi" \ bye"#,
+                "ua_value": r#"say "hi" \ bye"#,
+                "ip": "1.1.1.1",
+                "status": 200,
+                "size": 0,
+                "referer": "",
+                "referer_value": null,
+                "reused": true,
+                // printed as `-` when there was no upstream response
+                "upstream_status": null,
+                "connect": null,
+                // a string field stays a string even when it looks numeric
+                "location": "404",
+                "request": "GET /a?b=1",
+                "quote\"200": 1,
+            }),
+            value
+        );
+
+        // a missing status as a value is null, not `-`
+        let ctx = Ctx::default();
+        let p: Parser = r#"{"status":{status}}"#.into();
+        assert_eq!(r#"{"status":null}"#, p.format(&session, &ctx));
+    }
+
+    /// The `json` preset is one valid object per line, and works as the
+    /// format of a destination.
+    #[tokio::test]
+    async fn test_json_preset() {
+        let session = json_session(&["Referer: https://a.com/\u{e9}"]).await;
+        let ctx = Ctx::default();
+        let p: Parser = "json".into();
+        let log = p.format(&session, &ctx);
+        let value: serde_json::Value = serde_json::from_slice(&log).unwrap();
+        assert_eq!("GET", value["method"]);
+        assert_eq!("/a?b=1", value["uri"]);
+        assert_eq!("https://a.com/\u{e9}", value["referer"]);
+        assert_eq!(serde_json::Value::Null, value["request_id"]);
+        assert_eq!(true, value["latency"].is_u64());
+        assert_eq!(true, value["when"].is_string());
+
+        let (access, path) =
+            parse_access_log_directive(Some(&"stdout json".to_string()));
+        assert_eq!(Some("json".to_string()), access);
+        assert_eq!(Some("stdout".to_string()), path);
+    }
+
+    #[test]
+    fn test_escape_json() {
+        // Only the bytes from `start` on are escaped.
+        let escape = |value: &[u8]| {
+            let mut buf = BytesMut::from(&b"x"[..]);
+            buf.extend_from_slice(value);
+            super::escape_json(&mut buf, 1);
+            String::from_utf8(buf.to_vec()).unwrap()
+        };
+        assert_eq!("xplain é", escape("plain é".as_bytes()));
+        assert_eq!(r#"xa\"b\\c\n\t\u0001"#, escape(b"a\"b\\c\n\t\x01"));
+        // Invalid UTF-8 cannot go into JSON as it is: one U+FFFD per bad
+        // sequence, as `String::from_utf8_lossy` does.
+        assert_eq!("xa\\ufffd\\ufffdb", escape(b"a\xff\xfeb"));
+        // valid text after a bad byte is kept
+        assert_eq!("x\\ufffdé", escape(b"\xff\xc3\xa9"));
+    }
+
+    #[test]
+    fn test_is_json_format() {
+        assert_eq!(true, super::is_json_format(r#"{"a":{status}}"#));
+        assert_eq!(true, super::is_json_format(r#"  { "a": 1 }"#));
+        assert_eq!(false, super::is_json_format("{status} {method}"));
+        assert_eq!(false, super::is_json_format("combined"));
+        assert_eq!(false, Parser::from("tiny").json);
+        assert_eq!(true, Parser::from("json").json);
     }
 
     /// The tokenizer: digits in names, literal braces, nested and

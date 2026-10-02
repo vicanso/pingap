@@ -13,10 +13,10 @@ A flexible and powerful logging library for the Pingap project, built on the `tr
 ## Features
 
 - **Customizable Access Logs:** Easily create custom access log formats using a wide range of tags.
-- **Multiple Log Writers:** Write logs to files, syslog, or standard output/error.
+- **Multiple Log Writers:** Write logs to files, standard output/error, or syslog, local or a remote server over UDP/TCP.
 - **Log Rotation:** Automatically rotate log files on a daily, hourly, or minutely basis.
 - **Log Compression:** Compress rotated log files using `gzip` or `zstd` to save disk space.
-- **Structured Logging:** Output logs in JSON format for easy parsing and analysis.
+- **Structured Logging:** JSON application logs, and a JSON access log format with escaped, typed values.
 - **Performance-Oriented:** Designed for high-performance applications, with features like buffered writing.
 - **`log` Crate Bridge:** Records emitted through the `log` crate are captured too, so nothing is silently dropped.
 
@@ -171,13 +171,16 @@ nothing.
 
 #### Configuring a server
 
-A server's `access_log` takes one of three forms:
+A server's `access_log` is a format, optionally preceded by a destination and
+a space:
 
 | Value | Meaning |
 | --- | --- |
 | `tiny` | A predefined format, written to the application log |
 | `{client_ip} {status} {:ja4}` | A custom format, written to the application log; it starts with `{` |
-| `/var/log/pingap/access.log {client_ip} {status}` | A file, a space, then a predefined name or a custom format |
+| `/var/log/pingap/access.log {client_ip} {status}` | A file, then a predefined name or a custom format |
+| `stdout json` | Standard output; `stderr` for standard error |
+| `syslog://10.0.0.5?protocol=tcp combined` | A syslog server, one message per line |
 
 The predefined formats are:
 
@@ -186,14 +189,68 @@ combined  {remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{
 common    {remote} "{method} {uri} {proto}" {status} {size_human}
 short     {remote} {method} {uri} {proto} {status} {size_human} - {latency}ms
 tiny      {method} {uri} {status} {size_human} - {latency}ms
+json      {"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host},
+          "method":{method},"uri":{uri},"proto":{proto},"status":{status},
+          "size":{size},"latency":{latency},"referer":{referer},
+          "user_agent":{user_agent},"request_id":{request_id}}
 ```
 
-The file takes the parameters of file logging described below, such as
-`rolling` and `compression`, plus `channel_buffer` and `flush_timeout`, e.g.
-`/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`. A first word
-followed by a format is always read as the file: `ACCESS {status}` writes to a
-file called `ACCESS`. Start a custom format with a tag to log to the
-application log instead.
+(`json` is a single line; it is wrapped here to fit.)
+
+A destination is one of:
+
+- **A file**, which takes the parameters of file logging described below,
+  such as `rolling` and `compression`:
+  `/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`.
+- **`stdout` or `stderr`**, for containers that collect the standard streams.
+  `/dev/stdout` and `/dev/stderr` mean the same; as file paths they would get
+  a rotation suffix appended.
+- **A `syslog://` URL**, local or remote, with the parameters in
+  [Configuration](#configuration). Each line is one message, so a JSON format
+  arrives as one object per message.
+
+All of them also take `channel_buffer` (lines queued before new ones are
+dropped, default 1000) and `flush_timeout` (default `10s`): lines are written
+by a background task, and a file is flushed on that timer while standard
+output and error are flushed after every batch, so they can be followed live.
+
+A first word followed by a format is always read as the destination:
+`ACCESS {status}` writes to a file called `ACCESS`. Start a custom format with
+a tag to log to the application log instead.
+
+#### JSON format
+
+A format that starts with `{"` is a JSON object, and every value is made safe
+for it. A placeholder inside a string is escaped into that string; one that
+stands alone becomes a JSON value of its own:
+
+```toml
+[servers.main]
+addr = "0.0.0.0:80"
+locations = ["api"]
+access_log = 'stdout {"time":{when},"request":"{method} {uri}","status":{status},"latency":{latency},"ua":{user_agent},"upstream":{:upstream_addr},"ja4":{:ja4}}'
+```
+
+```json
+{"time":"2026-10-02T10:04:05.006+08:00","request":"GET /api/items?page=2","status":200,"latency":12,"ua":"curl/8.7.1","upstream":"10.0.0.7:8080","ja4":null}
+```
+
+| Placeholder | Becomes |
+| --- | --- |
+| Inside quotes, `"{method} {uri}"` | The text, escaped: `"` and `\` are backslashed, control characters written as `\u00XX`, invalid UTF-8 replaced with U+FFFD. A missing value is empty. |
+| Alone, a numeric tag: `{status}`, `{size}`, `{payload_size}`, `{latency}`, `{when_unix}`, and the context keys `connection_id`, `processing`, `upstream_connected`, `upstream_status`, `compression_ratio` and every `_time` key (milliseconds; the `_human` twins are strings) | A number |
+| Alone, `{:upstream_reused}` or `{:connection_reused}` | `true` or `false` |
+| Alone, any other tag | A quoted, escaped string |
+| Alone, with no value | `null`, as is a number that is not one, such as the `-` of a missing upstream status |
+
+The type of a field depends on the tag, never on the value, so a field keeps
+one type from line to line: a location named `404` is still the string
+`"404"`. A placeholder that names no tag is dropped as in any format, which
+would leave the JSON without a value, so check the names.
+
+A JSON format written to the application log is embedded in the application
+log line (and escaped again when `log_format_json` is on); send it to its own
+destination to get one object per line.
 
 #### Logging the JA4 fingerprint
 
@@ -238,12 +295,30 @@ The logger is configured via a URI-like string in the `log` field of `LoggerPara
 
   Parameters that do not parse (`rolling=monthly`, `flush_timeout=soon` on the access log, an unknown syslog `facility`) are errors at startup rather than silently the defaults.
 
-- **Syslog (Unix-only):** `"syslog:///?format=3164"`
-  - `format`: `3164` (default) or `5424`.
-  - `process`: The process name to use in syslog messages.
-  - `facility`: The syslog facility.
+- **Syslog (Unix-only):** a `syslog://` URL. Each event or access log line is
+  one message, at severity info.
 
-- **Standard I/O:** `""` (empty string) for stderr.
+  | URL | Server |
+  | --- | --- |
+  | `syslog://` or `syslog:///` | The local daemon, at `/dev/log`, `/var/run/syslog` or `/var/run/log` |
+  | `syslog:///run/rsyslog/dev.sock` | The local daemon at that socket path |
+  | `syslog://10.0.0.5` | A remote server over UDP, port 514 |
+  | `syslog://logs.example.com:1514?protocol=tcp` | A remote server over TCP; IPv6 in brackets, `syslog://[fd00::5]` |
+
+  - `format`: `3164` (default) or `5424`.
+  - `process`: The process name to use in syslog messages (default `pingap`).
+  - `facility`: The syslog facility, e.g. `LOG_LOCAL0` (default `LOG_USER`).
+  - `protocol`: `udp` (default) or `tcp`, remote servers only.
+
+  A remote host is resolved at startup, so a typo fails there. Over UDP each
+  message is a datagram, sent without waiting for anything. Over TCP messages
+  are framed by a newline (RFC 6587; a newline inside a message becomes a
+  space). The connection is made on the first message, so a server that is
+  down does not stop pingap from starting. Connecting and writing time out
+  after one second; after a failure messages are dropped for five seconds
+  before the next attempt, and each failure is reported on stderr.
+
+- **Standard I/O:** `stdout` or `stderr`; `""` (empty string) is stderr.
 
 ## Benchmarks
 

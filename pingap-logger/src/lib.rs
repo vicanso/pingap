@@ -22,6 +22,7 @@ mod async_logger;
 mod file_appender;
 #[cfg(unix)]
 mod syslog;
+mod target;
 mod writer;
 
 const LOG_TARGET: &str = "pingap::logger";

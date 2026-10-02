@@ -342,6 +342,8 @@ export default {
       "Compute the JA4 TLS fingerprint of each client from its ClientHello, available as $ja4 in headers and {:ja4} in the access log. Needs Using Global Certificates.",
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
+    accessLogTips:
+      'A preset (combined, common, short, tiny, json) or a format of {tags}; one starting with {" is a JSON object with escaped values. Without a destination it goes to the application log; otherwise put a file path, stdout, stderr or a syslog:// URL and a space first, e.g. stdout json.',
     enabledH2: "Enable Http2(h2c)",
     h2MaxConcurrentStreams: "H2 Max Concurrent Streams",
     h2MaxConcurrentStreamsPlaceholder:

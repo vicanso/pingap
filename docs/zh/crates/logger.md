@@ -13,10 +13,10 @@
 ## 功能
 
 - **可定制访问日志：** 使用丰富标签轻松创建自定义访问日志格式。
-- **多种写出器：** 写入文件、syslog 或标准输出/错误。
+- **多种写出器：** 写入文件、标准输出/错误，或 syslog（本机，或经 UDP/TCP 发往远程服务器）。
 - **日志轮转：** 按日、时或分自动轮转日志文件。
 - **日志压缩：** 用 `gzip` 或 `zstd` 压缩已轮转文件以节省磁盘。
-- **结构化日志：** 以 JSON 输出，便于解析与分析。
+- **结构化日志：** 应用日志可输出 JSON，访问日志有 JSON 格式，值会被转义并带类型。
 - **面向性能：** 为高性能应用设计，支持缓冲写入等特性。
 - **`log` crate 桥接：** 通过 `log` crate 输出的记录同样会被采集，不会被静默丢弃。
 
@@ -150,13 +150,15 @@ let parser = Parser::from(format);
 
 #### 配置 server 的访问日志
 
-server 的 `access_log` 有三种写法：
+server 的 `access_log` 是一个格式，前面可以加上输出目标和一个空格：
 
 | 值 | 含义 |
 | --- | --- |
 | `tiny` | 预定义格式，写入应用日志 |
 | `{client_ip} {status} {:ja4}` | 自定义格式，写入应用日志；以 `{` 开头 |
-| `/var/log/pingap/access.log {client_ip} {status}` | 文件路径、一个空格，再接预定义格式名或自定义格式 |
+| `/var/log/pingap/access.log {client_ip} {status}` | 文件，再接预定义格式名或自定义格式 |
+| `stdout json` | 标准输出；`stderr` 为标准错误 |
+| `syslog://10.0.0.5?protocol=tcp combined` | syslog 服务器，每行一条消息 |
 
 预定义格式如下：
 
@@ -165,9 +167,50 @@ combined  {remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{
 common    {remote} "{method} {uri} {proto}" {status} {size_human}
 short     {remote} {method} {uri} {proto} {status} {size_human} - {latency}ms
 tiny      {method} {uri} {status} {size_human} - {latency}ms
+json      {"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host},
+          "method":{method},"uri":{uri},"proto":{proto},"status":{status},
+          "size":{size},"latency":{latency},"referer":{referer},
+          "user_agent":{user_agent},"request_id":{request_id}}
 ```
 
-文件路径支持下文“文件日志”的参数，如 `rolling`、`compression`，另外还有 `channel_buffer` 与 `flush_timeout`，例如 `/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`。第一个词后面跟着格式时，这个词总会被当作文件路径：`ACCESS {status}` 会写入名为 `ACCESS` 的文件。要写入应用日志，自定义格式请以标签开头。
+（`json` 实际是一行，这里为了排版折行。）
+
+输出目标可以是：
+
+- **文件**，支持下文“文件日志”的参数，如 `rolling`、`compression`：`/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`。
+- **`stdout` 或 `stderr`**，适合由容器收集标准输出的场景。`/dev/stdout` 与 `/dev/stderr` 含义相同；若当作文件路径，它们会被加上轮转后缀。
+- **`syslog://` URL**，本机或远程，参数见下文[配置](#配置)。每行是一条消息，因此 JSON 格式会以每条消息一个对象的形式到达。
+
+它们都支持 `channel_buffer`（排队等待写出的行数，满了之后新的行会被丢弃，默认 1000）与 `flush_timeout`（默认 `10s`）：日志由后台任务写出，文件按这个间隔刷盘，标准输出与标准错误则每写完一批就刷新，便于实时查看。
+
+第一个词后面跟着格式时，这个词总会被当作输出目标：`ACCESS {status}` 会写入名为 `ACCESS` 的文件。要写入应用日志，自定义格式请以标签开头。
+
+#### JSON 格式
+
+以 `{"` 开头的格式是一个 JSON 对象，每个值都会被处理成合法的 JSON。字符串内的占位符会被转义后写进该字符串；单独出现的占位符则自成一个 JSON 值：
+
+```toml
+[servers.main]
+addr = "0.0.0.0:80"
+locations = ["api"]
+access_log = 'stdout {"time":{when},"request":"{method} {uri}","status":{status},"latency":{latency},"ua":{user_agent},"upstream":{:upstream_addr},"ja4":{:ja4}}'
+```
+
+```json
+{"time":"2026-10-02T10:04:05.006+08:00","request":"GET /api/items?page=2","status":200,"latency":12,"ua":"curl/8.7.1","upstream":"10.0.0.7:8080","ja4":null}
+```
+
+| 占位符 | 输出 |
+| --- | --- |
+| 在引号内，如 `"{method} {uri}"` | 转义后的文本：`"` 与 `\` 前加反斜杠，控制字符写作 `\u00XX`，非法 UTF-8 替换为 U+FFFD。没有值时为空 |
+| 单独出现的数值标签：`{status}`、`{size}`、`{payload_size}`、`{latency}`、`{when_unix}`，以及上下文键 `connection_id`、`processing`、`upstream_connected`、`upstream_status`、`compression_ratio` 和所有 `_time` 键（毫秒；对应的 `_human` 版本是字符串） | 数字 |
+| 单独出现的 `{:upstream_reused}` 或 `{:connection_reused}` | `true` 或 `false` |
+| 单独出现的其他标签 | 加引号并转义的字符串 |
+| 单独出现且没有值 | `null`；输出的不是数字的数值标签也是 `null`，例如没有上游响应时 `upstream_status` 的 `-` |
+
+字段的类型由标签决定，与值无关，所以同一字段在每一行的类型都相同：名为 `404` 的 location 仍是字符串 `"404"`。与其他格式一样，不是标签的占位符会被丢弃，这会让 JSON 缺少值，请检查标签名。
+
+写入应用日志的 JSON 格式会嵌在应用日志的那一行里（开启 `log_format_json` 时还会被再次转义）；要得到每行一个对象，请给它单独的输出目标。
 
 #### 输出 JA4 指纹
 
@@ -205,12 +248,23 @@ access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {la
 
   无法解析的参数（`rolling=monthly`、访问日志的 `flush_timeout=soon`、未知的 syslog `facility`）在启动时报错，而不是静默使用默认值。
 
-- **Syslog（仅 Unix）：** `"syslog:///?format=3164"`
-  - `format`：`3164`（默认）或 `5424`。
-  - `process`：syslog 消息中的进程名。
-  - `facility`：syslog facility。
+- **Syslog（仅 Unix）：** `syslog://` URL。每个事件或每行访问日志是一条消息，级别为 info。
 
-- **标准 I/O：** `""`（空字符串）表示 stderr。
+  | URL | 服务器 |
+  | --- | --- |
+  | `syslog://` 或 `syslog:///` | 本机 syslog，依次尝试 `/dev/log`、`/var/run/syslog`、`/var/run/log` |
+  | `syslog:///run/rsyslog/dev.sock` | 指定 socket 路径的本机 syslog |
+  | `syslog://10.0.0.5` | 经 UDP 的远程服务器，端口 514 |
+  | `syslog://logs.example.com:1514?protocol=tcp` | 经 TCP 的远程服务器；IPv6 地址加方括号，如 `syslog://[fd00::5]` |
+
+  - `format`：`3164`（默认）或 `5424`。
+  - `process`：syslog 消息中的进程名（默认 `pingap`）。
+  - `facility`：syslog facility，如 `LOG_LOCAL0`（默认 `LOG_USER`）。
+  - `protocol`：`udp`（默认）或 `tcp`，仅用于远程服务器。
+
+  远程主机名在启动时解析，写错会在启动时报错。UDP 下每条消息是一个数据报，发出后不等待任何回应。TCP 下消息以换行分帧（RFC 6587；消息内部的换行会被替换为空格）。连接在第一条消息时才建立，因此服务器宕机不会阻止 pingap 启动。连接与写入的超时都是一秒；失败后五秒内的消息会被丢弃，之后再重新连接，每次失败都会输出到 stderr。
+
+- **标准 I/O：** `stdout` 或 `stderr`；`""`（空字符串）表示 stderr。
 
 ## 基准
 

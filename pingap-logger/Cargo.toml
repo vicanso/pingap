@@ -42,6 +42,7 @@ ignored = ["humantime-serde"]
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 criterion = { workspace = true }

@@ -318,6 +318,8 @@ export default {
       "根据客户端的 ClientHello 计算 JA4 TLS 指纹，可在请求头中用 $ja4、在访问日志中用 {:ja4} 获取。需要开启使用全局证书。",
     accessLog: "访问日志格式化",
     accessLogPlaceholder: "输入日志格式化模板",
+    accessLogTips:
+      '预定义格式（combined、common、short、tiny、json）或由 {标签} 组成的格式；以 {" 开头的是 JSON 对象，值会被转义。不写输出目标时写入应用日志；否则在前面加上文件路径、stdout、stderr 或 syslog:// URL 和一个空格，如 stdout json。',
     enabledH2: "启用http2(h2c)",
     h2MaxConcurrentStreams: "H2最大并发流",
     h2MaxConcurrentStreamsPlaceholder:
@@ -680,7 +682,8 @@ export default {
     basicAuthHideCredentialsPlaceholder:
       "认证通过后移除请求中的Authorization请求头",
     basicAuthIpFailLimit: "IP失败次数限制",
-    basicAuthIpFailLimitPlaceholder: "同一客户端IP密码错误多少次后拦截，0为关闭",
+    basicAuthIpFailLimitPlaceholder:
+      "同一客户端IP密码错误多少次后拦截，0为关闭",
     basicAuthIpFailLimitTips:
       "按客户端IP统计密码错误次数，达到上限后该IP在窗口结束前都返回403。位于代理或CDN之后时，请在基础配置中设置可信代理，否则客户端IP可以通过X-Forwarded-For伪造。",
     basicAuthIpFailWindow: "IP失败统计窗口",

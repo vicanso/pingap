@@ -4240,6 +4240,7 @@ dependencies = [
  "pingora",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "serde_qs",
  "snafu",
  "syslog",

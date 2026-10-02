@@ -171,7 +171,8 @@ struct Args {
     /// Validate configuration without starting the server
     #[arg(short, long)]
     test: bool,
-    /// Custom log file location
+    /// Application log: a file path (with `?rolling=...` etc.), `stdout`,
+    /// `stderr` (the default) or a `syslog://` URL
     #[arg(long)]
     log: Option<String>,
     /// Admin server address for management interface
@@ -998,7 +999,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let access_logger = if let Some(log_path) = log_path {
             let r = new_access_logger(&log_path);
             let (tx, task) = r.recv()??;
-            application_log_paths.push(task.get_dir());
+            if let Some(dir) = task.get_dir() {
+                application_log_paths.push(dir);
+            }
             my_server.add_service(background_service("access_logger", task));
             Some(tx)
         } else {
