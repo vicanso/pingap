@@ -7,8 +7,9 @@ RUN apk update \
   && make build-web
 
 # Release toolchain - keep in step with the `toolchain:` pins in
-# .github/workflows/publish.yml.
-FROM rust:1.98.1 AS builder
+# .github/workflows/publish.yml. The Debian release is pinned so it moves only
+# together with the runtime stage below.
+FROM rust:1.98.1-trixie AS builder
 
 ARG BUILD_ARGS=""
 
@@ -21,7 +22,9 @@ RUN cd /pingap \
   && cargo build --release ${BUILD_ARGS} \
   && ls -lh target/release
 
-FROM ubuntu:24.04
+# Same Debian release as the builder, so the binary runs on the glibc it was
+# linked against.
+FROM debian:trixie-slim
 
 COPY --from=builder /etc/ssl /etc/ssl
 COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
