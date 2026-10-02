@@ -319,11 +319,10 @@ impl FileCache {
         if !self.has_budget() {
             return;
         }
-        let _ = self.current_size.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |cur| Some(cur.saturating_sub(len)),
-        );
+        self.current_size
+            .update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                cur.saturating_sub(len)
+            });
     }
 
     /// Accounts an object of `new_len` bytes replacing one of `old_len`.
@@ -331,11 +330,10 @@ impl FileCache {
         if !self.has_budget() {
             return;
         }
-        let _ = self.current_size.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |cur| Some(cur.saturating_sub(old_len).saturating_add(new_len)),
-        );
+        self.current_size
+            .update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                cur.saturating_sub(old_len).saturating_add(new_len)
+            });
     }
 
     /// Size of the file at `path`, when the budget needs it.
