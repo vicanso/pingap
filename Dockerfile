@@ -22,6 +22,14 @@ RUN cd /pingap \
   && cargo build --release ${BUILD_ARGS} \
   && ls -lh target/release
 
+# Opt-in variant (`--target distroless`). Keep it above the Debian stage:
+# a plain `docker build .` builds the last stage, the default image.
+FROM gcr.io/distroless/cc-debian13 AS distroless
+
+COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
+
+CMD ["pingap"]
+
 # Same Debian release as the builder, so the binary runs on the glibc it was
 # linked against.
 FROM debian:trixie-slim

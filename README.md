@@ -92,6 +92,8 @@ docker-compose up -d
 
 Your Pingap instance is now running! You can access the web admin interface at http://localhost/pingap with the credentials you set.
 
+Images built after 0.15.0 also come in a distroless variant: add `-distroless` to the tag, e.g. `latest-distroless`, `full-distroless`, `rustls-full-distroless`, or `<version>-distroless` and so on for a release. The binary is the same as in the matching regular image, on `gcr.io/distroless/cc-debian13` with no shell or package manager, so `command` must start with `pingap` as it does above.
+
 ### Install the binary via curl
 
 For Linux and macOS, you can install the latest pre-built binary to `/usr/local/bin/pingap` with one command:
