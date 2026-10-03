@@ -271,7 +271,7 @@ features:
 ```yaml
 services:
   pingap:
-    image: vicanso/pingap:latest
+    image: vicanso/pingap:latest # or latest-distroless (same binary, no shell)
     container_name: pingap-instance
     restart: always
     ports:
@@ -494,7 +494,7 @@ features:
 ```yaml
 services:
   pingap:
-    image: vicanso/pingap:latest
+    image: vicanso/pingap:latest # 也可用 latest-distroless（二进制相同，不含 shell）
     container_name: pingap-instance
     restart: always
     ports:

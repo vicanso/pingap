@@ -411,9 +411,23 @@ jobs:
             BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
           tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}-${{ matrix.features }}
           push: true
+      # Same build args as above, so the cargo build is a cache hit.
+      - name: Build and push distroless
+        id: docker_build_distroless
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: distroless
+          platforms: ${{ matrix.platform.arch }}
+          build-args: |
+            BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
+          tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}-${{ matrix.features }}-distroless
+          push: true
       - name: Image digest
         run: |
-          echo ${{ steps.docker_build.outputs.digest }}
+          echo "default: ${{ steps.docker_build.outputs.digest }}"
+          echo "distroless: ${{ steps.docker_build_distroless.outputs.digest }}"
   merge:
     runs-on: ubuntu-22.04
     strategy:
@@ -435,10 +449,16 @@ jobs:
         run: |
           if [ "${{ matrix.features }}" = "latest" ]; then
             TAGS="-t ${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
+            DISTROLESS_TAGS="-t ${{ env.IMAGE_NAME }}:${{ env.VERSION }}-distroless"
           else
             TAGS="-t ${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.features }}"
+            DISTROLESS_TAGS="-t ${{ env.IMAGE_NAME }}:${{ env.VERSION }}-${{ matrix.features }}-distroless"
           fi
           docker buildx imagetools create \
             $TAGS \
             ${{ env.IMAGE_NAME }}:amd64-${{ matrix.features }} \
             ${{ env.IMAGE_NAME }}:arm64-${{ matrix.features }}
+          docker buildx imagetools create \
+            $DISTROLESS_TAGS \
+            ${{ env.IMAGE_NAME }}:amd64-${{ matrix.features }}-distroless \
+            ${{ env.IMAGE_NAME }}:arm64-${{ matrix.features }}-distroless

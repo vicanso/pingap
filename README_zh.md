@@ -91,6 +91,8 @@ docker-compose up -d
 
 您的 Pingap 实例现已运行！您可以使用您设置的凭证，通过 http://localhost/pingap 访问 Web 管理界面。
 
+0.15.0 之后构建的镜像都有对应的 distroless 变体，在标签后加上 `-distroless` 即可，如 `latest-distroless`、`full-distroless`、`rustls-full-distroless`，发布版本则为 `<版本>-distroless` 等。二进制与对应的普通镜像完全相同，只是基础镜像换成了 `gcr.io/distroless/cc-debian13`，其中没有 shell 和包管理器，因此 `command` 必须以 `pingap` 开头（如上例所示）。
+
 
 ### 通过 curl 安装二进制
 
