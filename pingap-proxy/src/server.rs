@@ -52,7 +52,7 @@ use pingap_performance::{
 use pingap_performance::{accept_request, end_request};
 use pingap_upstream::{Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
-use pingora::cache::cache_control::CacheControl;
+use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::key::{CacheHashKey, HashBinary};
 use pingora::cache::{
@@ -96,16 +96,16 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Marks the start of a phase: the milliseconds since `started_at`, stored
+/// as `-(elapsed + 1)` so that a start is always negative, even in the
+/// request's first millisecond, and a finished latency never is.
 #[inline]
 pub fn get_start_time(started_at: &Instant) -> i32 {
-    // the offset of start time
-    let value = started_at.elapsed().as_millis() as i32;
-    if value == 0 {
-        return -1;
-    }
-    -value
+    -(started_at.elapsed().as_millis() as i32) - 1
 }
 
+/// The latency of a phase from the marker `get_start_time` left; `None`
+/// when there is no marker, including a latency that was already taken.
 #[inline]
 pub fn get_latency(started_at: &Instant, value: &Option<i32>) -> Option<i32> {
     let Some(value) = value else {
@@ -114,9 +114,19 @@ pub fn get_latency(started_at: &Instant, value: &Option<i32>) -> Option<i32> {
     if *value >= 0 {
         return None;
     }
-    let latency = started_at.elapsed().as_millis() as i32 + *value;
+    // elapsed - start, where start is `-value - 1`
+    let latency = started_at.elapsed().as_millis() as i32 + *value + 1;
 
     Some(latency)
+}
+
+/// A 1xx other than 101: an interim response such as 103 Early Hints.
+/// pingora runs the response hooks for it and then again for the final
+/// response, which is the one the status, the timings and the plugins are
+/// about.
+#[inline]
+fn is_interim_response(status: StatusCode) -> bool {
+    status.is_informational() && status != StatusCode::SWITCHING_PROTOCOLS
 }
 
 /// Core HTTP proxy server implementation that handles request processing, caching, and monitoring.
@@ -238,8 +248,21 @@ pub struct ServerServices {
     pub lb: Service<HttpProxy<Server>>,
 }
 
+/// How long a response that names no lifetime of its own stays fresh: one
+/// second, and only for the statuses RFC 9110 section 15.1 lists as
+/// heuristically cacheable. Anything else - a 5xx, a 302, a 401 - is only
+/// stored when the origin asks for it, so one client's error is not
+/// replayed to the next.
+fn default_fresh_duration(status: StatusCode) -> Option<Duration> {
+    match status.as_u16() {
+        200 | 203 | 204 | 206 | 300 | 301 | 308 | 404 | 405 | 410 | 414
+        | 501 => Some(Duration::from_secs(1)),
+        _ => None,
+    }
+}
+
 const META_DEFAULTS: CacheMetaDefaults =
-    CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 0, 1);
+    CacheMetaDefaults::new(default_fresh_duration, 0, 1);
 
 /// Whether an origin response's `Vary` names `*`, checked without building
 /// the lowercased name list.
@@ -348,6 +371,27 @@ fn classify_proxy_error(e: &pingora::Error) -> (u16, bool) {
         },
         // spellchecker:on
     }
+}
+
+/// What the error page tells the client about a failure answered with
+/// `code`.
+///
+/// A 4xx that pingap or a plugin raised carries a message written for the
+/// client: which route did not match, which limit was exceeded. Every other
+/// error describes the inside of the deployment - an upstream's address, a
+/// file path, a pingora error chain - so the page only names the status,
+/// and the error itself stays in the log line `fail_to_proxy` writes.
+fn client_error_message(e: &pingora::Error, code: u16) -> &str {
+    if (400..500).contains(&code)
+        && matches!(e.etype(), pingora::ErrorType::HTTPStatus(_))
+        && let Some(context) = &e.context
+    {
+        return context.as_str();
+    }
+    StatusCode::from_u16(code)
+        .ok()
+        .and_then(|status| status.canonical_reason())
+        .unwrap_or("Unknown Error")
 }
 
 #[derive(Clone)]
@@ -1357,7 +1401,6 @@ impl ProxyHttp for Server {
         let Some(upstream) = upstream else {
             return Err(no_available_upstream(ctx));
         };
-        ctx.upstream.upstream_instance = Some(upstream.clone());
         ctx.upstream.connected_count = upstream.connected();
         ctx.upstream.name = upstream.name.clone();
         #[cfg(feature = "tracing")]
@@ -1383,6 +1426,11 @@ impl ProxyHttp for Server {
         else {
             return Err(no_available_upstream(ctx));
         };
+        // Recorded only now that there is a peer: `new_http_peer` counts
+        // the request once it has one, and `logging` takes that count back
+        // for the instance it finds here. Recorded earlier, a request that
+        // found no backend was uncounted without ever being counted.
+        ctx.upstream.upstream_instance = Some(upstream);
         ctx.upstream.address = peer.address().to_string();
 
         // start connect to upstream
@@ -1577,7 +1625,7 @@ impl ProxyHttp for Server {
     /// - Custom cache control directives
     fn response_cache_filter(
         &self,
-        _session: &Session,
+        session: &Session,
         resp: &ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
@@ -1591,6 +1639,15 @@ impl ProxyHttp for Server {
                 "vary *",
             )));
         }
+        // A cookie is set for the client that asked. Stored, the same
+        // cookie - a session id, say - would go to everyone served from
+        // the cache. To cache such a response, remove the header first
+        // with a `response_headers` plugin in `upstream` mode.
+        if resp.headers.contains_key(http::header::SET_COOKIE) {
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom(
+                "set-cookie",
+            )));
+        }
 
         let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
             (false, None), // ctx.cache is None
@@ -1598,6 +1655,24 @@ impl ProxyHttp for Server {
         );
 
         let mut cc = CacheControl::from_resp_headers(resp);
+
+        // RFC 9111 §3.5: the response to a request with credentials is the
+        // requester's own unless the origin marks it as shareable (`public`,
+        // `s-maxage` or `must-revalidate`). Checked here, on what the
+        // origin sent: the `max_ttl` cap below adds an `s-maxage` of its
+        // own, which must not count as that permission.
+        if session
+            .req_header()
+            .headers
+            .contains_key(http::header::AUTHORIZATION)
+            && !cc
+                .as_ref()
+                .is_some_and(|c| c.allow_caching_authorized_req())
+        {
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom(
+                "authorization",
+            )));
+        }
 
         if let Some(c) = &mut cc {
             // delegate all complex validation and modification logic to the helper function
@@ -1648,6 +1723,9 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> response filter");
         defer!(debug!(target: LOG_TARGET, "<-- response filter"););
+        if is_interim_response(upstream_response.status) {
+            return Ok(());
+        }
         if session.cache.enabled() {
             crate::cache::handle_cache_headers(session, upstream_response, ctx);
         }
@@ -1672,6 +1750,9 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<()> {
         debug!(target: LOG_TARGET, "--> upstream response filter");
         defer!(debug!(target: LOG_TARGET, "<-- upstream response filter"););
+        if is_interim_response(upstream_response.status) {
+            return Ok(());
+        }
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
         #[cfg(feature = "tracing")]
         inject_telemetry_headers(ctx, upstream_response);
@@ -1841,7 +1922,7 @@ impl ProxyHttp for Server {
         let mut resp = error_response_header(code);
         let content = self.error_template.render(
             pingap_util::get_pkg_version(),
-            &e.to_string(),
+            client_error_message(e, code),
             error_type,
         );
         let buf = Bytes::from(content);
@@ -2721,6 +2802,270 @@ value = 'proxy_set_headers = ["name:value"]'
         assert_eq!(false, result.is_cacheable());
     }
 
+    /// Whether `response_cache_filter` stores a response with these
+    /// headers and status, for a request with these headers.
+    async fn is_cacheable(
+        request_headers: &[&str],
+        status: u16,
+        response_headers: &[(&'static str, &'static str)],
+        max_ttl: Option<Duration>,
+    ) -> bool {
+        let server = new_server();
+        let mut request = "GET /vicanso/pingap HTTP/1.1\r\n".to_string();
+        for header in request_headers {
+            request.push_str(header);
+            request.push_str("\r\n");
+        }
+        request.push_str("\r\n");
+        let mock_io = Builder::new().read(request.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(status, None).unwrap();
+        for (name, value) in response_headers {
+            upstream_response.append_header(*name, *value).unwrap();
+        }
+        server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut Ctx {
+                    cache: Some(Box::new(CacheInfo {
+                        max_ttl,
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .is_cacheable()
+    }
+
+    /// A response that belongs to one client is not stored for the next:
+    /// one that sets a cookie, and one to a request with credentials
+    /// unless the origin marks it shareable.
+    #[tokio::test]
+    async fn test_response_cache_filter_keeps_private_responses_out() {
+        let fresh = ("Cache-Control", "max-age=60");
+        assert_eq!(true, is_cacheable(&[], 200, &[fresh], None).await);
+
+        // Set-Cookie, whatever else the response says
+        for headers in [
+            vec![("Set-Cookie", "sid=1")],
+            vec![fresh, ("Set-Cookie", "sid=1")],
+            vec![
+                ("Cache-Control", "public, max-age=60"),
+                ("Set-Cookie", "a=1"),
+            ],
+        ] {
+            assert_eq!(
+                false,
+                is_cacheable(&[], 200, &headers, None).await,
+                "{headers:?}"
+            );
+        }
+
+        // Authorization on the request
+        let auth = ["Authorization: Bearer token"];
+        assert_eq!(false, is_cacheable(&auth, 200, &[], None).await);
+        assert_eq!(false, is_cacheable(&auth, 200, &[fresh], None).await);
+        for shareable in [
+            "public, max-age=60",
+            "s-maxage=60",
+            "max-age=60, must-revalidate",
+        ] {
+            assert_eq!(
+                true,
+                is_cacheable(&auth, 200, &[("Cache-Control", shareable)], None)
+                    .await,
+                "{shareable}"
+            );
+        }
+        // The `max_ttl` cap writes an `s-maxage` of its own; that is not
+        // the origin's permission.
+        assert_eq!(
+            false,
+            is_cacheable(
+                &auth,
+                200,
+                &[("Cache-Control", "max-age=3600")],
+                Some(Duration::from_secs(60))
+            )
+            .await
+        );
+    }
+
+    /// Without a lifetime from the origin, only the heuristically
+    /// cacheable statuses get the one second default.
+    #[tokio::test]
+    async fn test_response_cache_filter_default_freshness_by_status() {
+        for status in [200, 204, 301, 404, 410] {
+            assert_eq!(
+                true,
+                is_cacheable(&[], status, &[], None).await,
+                "{status}"
+            );
+        }
+        for status in [302, 307, 401, 403, 500, 502, 503, 504] {
+            assert_eq!(
+                false,
+                is_cacheable(&[], status, &[], None).await,
+                "{status}"
+            );
+            // the origin can still ask for it
+            assert_eq!(
+                true,
+                is_cacheable(
+                    &[],
+                    status,
+                    &[("Cache-Control", "max-age=10")],
+                    None
+                )
+                .await,
+                "{status} with max-age"
+            );
+        }
+    }
+
+    /// The timings of a phase that starts in the request's first
+    /// millisecond: it used to be marked `-1`, which read back as a
+    /// latency of -1 and was then dropped.
+    #[test]
+    fn test_start_time_and_latency() {
+        let now = Instant::now();
+        let start = get_start_time(&now);
+        assert_eq!(-1, start);
+        assert_eq!(Some(0), get_latency(&now, &Some(start)));
+
+        let earlier = now.checked_sub(Duration::from_millis(20)).unwrap();
+        let start = get_start_time(&earlier);
+        assert_eq!(true, start <= -21, "{start}");
+        let latency = get_latency(&earlier, &Some(start)).unwrap();
+        assert_eq!(true, (0..5).contains(&latency), "{latency}");
+        // 20ms after a start at 0ms
+        let latency = get_latency(&earlier, &Some(-1)).unwrap();
+        assert_eq!(true, (20..25).contains(&latency), "{latency}");
+
+        // nothing started, or already taken
+        assert_eq!(None, get_latency(&now, &None));
+        assert_eq!(None, get_latency(&now, &Some(3)));
+    }
+
+    /// 103 Early Hints goes through the response hooks before the final
+    /// response does. The status, the timings and the plugins are about
+    /// the final one.
+    #[tokio::test]
+    async fn test_interim_response_is_not_the_response() {
+        let server = new_server_from(
+            &TEST_TOML.replace(
+                "threads = 1",
+                "threads = 1\nenable_server_timing = true",
+            ),
+            None,
+        );
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.state.request_id = Some("id".to_string());
+        ctx.timing.upstream_processing =
+            Some(get_start_time(&ctx.timing.created_at));
+
+        let mut hints = ResponseHeader::build_no_case(103, None).unwrap();
+        hints
+            .append_header("Link", "</style.css>; rel=preload")
+            .unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut hints, &mut ctx)
+            .await
+            .unwrap();
+        server
+            .response_filter(&mut session, &mut hints, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(None, ctx.state.status);
+        assert_eq!(None, ctx.upstream.status);
+        // still running, and nothing of pingap's on the interim header
+        assert_eq!(true, ctx.timing.upstream_processing.unwrap() < 0);
+        assert_eq!(1, hints.headers.len());
+
+        let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut resp, &mut ctx)
+            .await
+            .unwrap();
+        server
+            .response_filter(&mut session, &mut resp, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(Some(StatusCode::OK), ctx.state.status);
+        assert_eq!(Some(StatusCode::OK), ctx.upstream.status);
+        assert_eq!(true, ctx.timing.upstream_processing.unwrap() >= 0);
+        assert_eq!(true, resp.headers.contains_key("server-timing"));
+        assert_eq!(true, resp.headers.contains_key("x-request-id"));
+
+        // 101 is the final response of an upgrade
+        let mut ctx = Ctx::default();
+        let mut switching = ResponseHeader::build_no_case(101, None).unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut switching, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(Some(StatusCode::SWITCHING_PROTOCOLS), ctx.state.status);
+    }
+
+    /// The upstream's processing count is only taken back for a request
+    /// that was counted: a 503 for want of a backend used to push it one
+    /// below the truth each time.
+    #[tokio::test]
+    async fn test_no_backend_keeps_upstream_processing_straight() {
+        // a port nothing listens on, so the health check fails
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let toml =
+            TEST_TOML.replace("127.0.0.1:5000", &format!("127.0.0.1:{port}"));
+        let server = new_server_from(&toml, None);
+        let upstream = server.upstream_provider.get("charts").unwrap();
+        async fn run(server: &Server) -> (Ctx, bool) {
+            let mock_io = Builder::new()
+                .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            let found =
+                server.upstream_peer(&mut session, &mut ctx).await.is_ok();
+            let counted = ctx.upstream.upstream_instance.is_some();
+            server.logging(&mut session, None, &mut ctx).await;
+            (ctx, found && counted)
+        }
+
+        // A request that gets a peer is counted, and uncounted when logged.
+        let (ctx, counted) = run(&server).await;
+        assert_eq!(true, counted);
+        assert_eq!(Some(0), ctx.upstream.processing_count);
+        assert_eq!(0, upstream.stats().processing);
+
+        // No backend left: 503, and nothing to take back.
+        let _ = upstream.run_health_check().await;
+        for _ in 0..3 {
+            let (ctx, counted) = run(&server).await;
+            assert_eq!(false, counted);
+            assert_eq!(None, ctx.upstream.processing_count);
+            assert_eq!("charts", &*ctx.upstream.name);
+        }
+        assert_eq!(0, upstream.stats().processing);
+    }
+
     #[test]
     fn test_cache_variance() {
         let request = |accept_encoding: Option<&str>, accept: Option<&str>| {
@@ -3054,6 +3399,95 @@ value = 'proxy_set_headers = ["name:value"]'
 
     /// A downstream read timeout is the client's slowness: 408, with the
     /// page from the template.
+    /// The page says what a 4xx was about and nothing about the inside:
+    /// an upstream failure or a 5xx only names the status.
+    #[test]
+    fn test_client_error_message() {
+        let not_found = new_internal_error(404, "No matching location, host:a");
+        assert_eq!(
+            "No matching location, host:a",
+            client_error_message(&not_found, 404)
+        );
+        let too_many = new_internal_error(429, "Too many requests");
+        assert_eq!("Too many requests", client_error_message(&too_many, 429));
+
+        // A 5xx of pingap's own: its message may quote a path or a name.
+        let unavailable =
+            new_internal_error(503, "No available upstream for api");
+        assert_eq!(
+            "Service Unavailable",
+            client_error_message(&unavailable, 503)
+        );
+        // An upstream failure carries the peer's address.
+        let connect = pingora::Error::explain(
+            pingora::ErrorType::ConnectTimedout,
+            "timeout 300ms connecting to server addr: 10.9.8.7:65001",
+        )
+        .into_up();
+        assert_eq!(
+            true,
+            connect.to_string().contains("10.9.8.7"),
+            "the error itself keeps the detail for the log"
+        );
+        assert_eq!("Bad Gateway", client_error_message(&connect, 502));
+        // A client error pingora found has no message for the client.
+        let timeout =
+            pingora::Error::new_down(pingora::ErrorType::ReadTimedout);
+        assert_eq!("Request Timeout", client_error_message(&timeout, 408));
+    }
+
+    /// What the client put in its request comes back escaped, and an
+    /// upstream failure does not show where the upstream is.
+    #[tokio::test]
+    async fn test_error_page_content() {
+        let server = new_server();
+        let page = async |e: Box<pingora::Error>| {
+            let (mut session, client) = new_duplex_session(
+                "GET /vicanso/pingap HTTP/1.1\r\nHost: example.com\r\n\r\n",
+            )
+            .await;
+            let mut ctx = Ctx::default();
+            server.fail_to_proxy(&mut session, &e, &mut ctx).await;
+            drop(session);
+            read_response(client).await
+        };
+
+        let response = page(new_internal_error(
+            404,
+            "No matching location, host:<img src=x onerror=alert(1)> path:/a\"b",
+        ))
+        .await;
+        assert_eq!(
+            true,
+            response.contains(
+                "No matching location, host:&lt;img src=x onerror=alert(1)&gt; path:/a&quot;b"
+            ),
+            "{response}"
+        );
+        assert_eq!(false, response.contains("<img"), "{response}");
+
+        let response = page(
+            pingora::Error::explain(
+                pingora::ErrorType::ConnectTimedout,
+                "timeout 300ms connecting to server addr: 10.9.8.7:65001",
+            )
+            .into_up(),
+        )
+        .await;
+        assert_eq!(
+            true,
+            response.starts_with("HTTP/1.1 502 Bad Gateway\r\n"),
+            "{response}"
+        );
+        assert_eq!(
+            true,
+            response.contains("X-Pingap-EType: ConnectTimedout\r\n"),
+            "{response}"
+        );
+        assert_eq!(true, response.contains(">Bad Gateway<"), "{response}");
+        assert_eq!(false, response.contains("10.9.8.7"), "{response}");
+    }
+
     #[tokio::test]
     async fn test_read_timeout_gets_408_page() {
         let server = new_server();

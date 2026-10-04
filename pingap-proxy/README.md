@@ -58,6 +58,11 @@ A plugin that answers at `EarlyRequest` ends the request there. pingora only
 lets a request stop at `request_filter`, so that step recognises the response
 already sent and nothing later runs on top of it.
 
+An interim response from the upstream, such as `103 Early Hints`, is passed on
+to the client as it is. The response plugins, the status in the access log and
+the metrics, and the upstream timings all belong to the final response; `101`
+counts as final, since it ends the HTTP exchange.
+
 ## Routing
 
 Locations attached to a server are sorted once, by descending weight, and the
@@ -173,11 +178,19 @@ Notes on a few of these:
   ```text
   {{version}}     the pingap version
   {{error_type}}  the pingora error type, also sent as X-Pingap-EType
-  {{content}}     the error message
+  {{content}}     the message for the client
   ```
 
   Any other name in double braces is left as literal text, and a template
   whose first character is `{` is served as `application/json`.
+
+  `{{content}}` is what the client may know. For a `4xx` that pingap or a
+  plugin raised it is the reason: the route that did not match, the limit that
+  was exceeded. For everything else, an upstream failure or a `5xx`, it is
+  only the status text, `Bad Gateway` for instance: the error itself names
+  upstream addresses and other internals, and goes to the log, not the page.
+  The values are escaped for the page, as HTML or as the inside of a JSON
+  string, since the reason can quote the request's host and path.
 
 ## JA4 fingerprint
 

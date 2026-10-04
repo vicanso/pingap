@@ -324,7 +324,7 @@ Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
 CRVQZGgOQL6WDg3tUUDXYOs=
 -----END CERTIFICATE-----"###;
         // spellchecker:on
-        let (cert, _) = parse_leaf_chain_certificates(pem, "").unwrap();
+        let (mut cert, _) = parse_leaf_chain_certificates(pem, "").unwrap();
 
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",
@@ -333,7 +333,18 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         assert_eq!(1720232616, cert.not_before);
         assert_eq!(1791253416, cert.not_after);
         assert_eq!("mkcert vicanso@tree", cert.get_issuer_common_name());
+
+        // `valid` compares with the clock, so it is checked against dates
+        // relative to now: the fixture itself expires on 2026-10-06, and
+        // asserting on that made this test fail two days before.
+        let now = pingap_core::now_sec() as i64;
+        let day = 24 * 3600;
+        cert.not_after = now + 3 * day;
         assert_eq!(true, cert.valid(2));
+        cert.not_after = now + day;
+        assert_eq!(false, cert.valid(2));
+        cert.not_after = 0;
+        assert_eq!(false, cert.valid(2));
     }
 
     #[test]

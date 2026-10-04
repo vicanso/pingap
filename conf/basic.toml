@@ -8,7 +8,8 @@
 # Error response templates, which can be configured as HTML or JSON. The following characters in the template will be replaced.
 # {{version}} - the version of the application
 # {{error_type}} - the type of the error
-# {{content}} - the content of the error
+# {{content}} - the message for the client: the reason of a 4xx pingap raised,
+#   otherwise only the status text. The error itself goes to the log.
 # Default `the content of error.html`
 # error_template = ""
 

@@ -39,14 +39,19 @@ pub(crate) fn process_cache_control(
         return Err(NoCacheReason::OriginNotCache);
     }
 
-    // max-age=0
-    if c.max_age().ok().flatten().unwrap_or_default() == 0 {
+    // The lifetime a shared cache goes by: `s-maxage`, and `max-age` only
+    // without it (RFC 9111 §5.2.2.10). An explicit zero means the response
+    // must not be served without asking the origin, so it is not stored.
+    // No lifetime at all is not zero: such a response, `public` alone for
+    // instance, gets the default like one without `Cache-Control`.
+    let fresh = c.fresh_duration();
+    if fresh.is_some_and(|fresh| fresh.is_zero()) {
         return Err(NoCacheReason::OriginNotCache);
     }
 
     // set cache max ttl
     if let Some(d) = max_ttl
-        && c.fresh_duration().unwrap_or_default() > d
+        && fresh.is_some_and(|fresh| fresh > d)
     {
         // 更新 s-maxage 的值
         let s_maxage_value =
@@ -128,4 +133,67 @@ pub(crate) fn process_cache_timing(
         return humantime::Duration::from(d).to_string();
     }
     String::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_cache_control;
+    use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
+    use pingora::http::ResponseHeader;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    fn cache_control(value: &str) -> CacheControl {
+        let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+        resp.append_header("Cache-Control", value).unwrap();
+        CacheControl::from_resp_headers(&resp).unwrap()
+    }
+
+    /// `s-maxage` is the lifetime for a shared cache and wins over
+    /// `max-age`; only an explicit zero rules the response out.
+    #[test]
+    fn test_process_cache_control() {
+        for (value, storable) in [
+            ("max-age=60", true),
+            ("s-maxage=600", true),
+            ("public, s-maxage=600", true),
+            ("max-age=0, s-maxage=600", true),
+            // no lifetime: the default applies, as without the header
+            ("public", true),
+            ("must-revalidate", true),
+            ("max-age=0", false),
+            ("s-maxage=0, max-age=600", false),
+            ("no-cache", false),
+            ("no-store", false),
+            ("private, max-age=60", false),
+        ] {
+            let mut c = cache_control(value);
+            assert_eq!(
+                storable,
+                process_cache_control(&mut c, None).is_ok(),
+                "{value}"
+            );
+        }
+    }
+
+    /// `max_ttl` shortens a longer lifetime and leaves the rest alone.
+    #[test]
+    fn test_process_cache_control_max_ttl() {
+        let max_ttl = Some(Duration::from_secs(60));
+        for (value, expected) in [
+            ("max-age=3600", Some(60)),
+            ("max-age=10, s-maxage=3600", Some(60)),
+            ("max-age=30", Some(30)),
+            ("s-maxage=30, max-age=3600", Some(30)),
+            ("public", None),
+        ] {
+            let mut c = cache_control(value);
+            process_cache_control(&mut c, max_ttl).unwrap();
+            assert_eq!(
+                expected.map(Duration::from_secs),
+                c.fresh_duration(),
+                "{value}"
+            );
+        }
+    }
 }

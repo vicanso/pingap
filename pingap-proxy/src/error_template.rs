@@ -97,7 +97,9 @@ impl ErrorTemplate {
     }
 
     /// The page for one error, built in a single pass into a buffer of the
-    /// right size.
+    /// right size. The values are escaped for the page they go into, HTML
+    /// or a JSON string: the content can quote the request (the host and
+    /// path of an unmatched route), which is the client's to choose.
     pub fn render(
         &self,
         version: &str,
@@ -108,14 +110,55 @@ impl ErrorTemplate {
             self.literal_len + version.len() + content.len() + error_type.len(),
         );
         for segment in &self.segments {
-            out.push_str(match segment {
-                Segment::Literal(text) => text,
+            let value = match segment {
+                Segment::Literal(text) => {
+                    out.push_str(text);
+                    continue;
+                },
                 Segment::Version => version,
                 Segment::Content => content,
                 Segment::ErrorType => error_type,
-            });
+            };
+            if self.json {
+                push_json_escaped(&mut out, value);
+            } else {
+                push_html_escaped(&mut out, value);
+            }
         }
         out
+    }
+}
+
+/// Appends `value` as HTML text; quotes are escaped too, so it is also
+/// safe inside an attribute value.
+fn push_html_escaped(out: &mut String, value: &str) {
+    for c in value.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Appends `value` as the inside of a JSON string.
+fn push_json_escaped(out: &mut String, value: &str) {
+    use std::fmt::Write;
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            },
+            _ => out.push(c),
+        }
     }
 }
 
@@ -123,6 +166,32 @@ impl ErrorTemplate {
 mod tests {
     use super::ErrorTemplate;
     use pretty_assertions::assert_eq;
+
+    /// A value cannot break out of the page it is put into.
+    #[test]
+    fn test_render_escapes_values() {
+        let html =
+            ErrorTemplate::new("<p class=\"{{error_type}}\">{{content}}</p>");
+        assert_eq!(false, html.is_json());
+        assert_eq!(
+            "<p class=\"a&quot;b\">host:&lt;img src=x onerror=alert(1)&gt; &amp; it&#39;s</p>",
+            html.render(
+                "1",
+                "host:<img src=x onerror=alert(1)> & it's",
+                "a\"b"
+            )
+        );
+
+        let json = ErrorTemplate::new(
+            r#"{"error":"{{content}}","type":"{{error_type}}"}"#,
+        );
+        assert_eq!(true, json.is_json());
+        let page = json.render("1", "path:/a\"b\\c\n\u{1}<x>", "NotFound");
+        assert_eq!(
+            r#"{"error":"path:/a\"b\\c\n\u0001<x>","type":"NotFound"}"#,
+            page
+        );
+    }
 
     #[test]
     fn test_render_matches_replace() {

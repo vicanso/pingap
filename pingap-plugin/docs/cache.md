@@ -86,6 +86,26 @@ in a multi-instance deployment, issue the request on every node.
 
 - Only `GET`, `HEAD` and `PURGE` are handled; every other method skips the
   plugin.
+- What is stored, and for how long, follows the origin's `Cache-Control`:
+  - A `no-store`, `no-cache` or `private` response is not stored, nor is one
+    with a lifetime of zero.
+  - The lifetime is `s-maxage` when the origin sends one and `max-age`
+    otherwise, capped by `max_ttl`.
+  - A response without a lifetime is kept for one second, provided its status
+    is one HTTP calls heuristically cacheable: 200, 203, 204, 206, 300, 301,
+    308, 404, 405, 410, 414 or 501. Any other status, a 5xx or a 302 for
+    example, is only stored when the origin gives it a lifetime.
+    `check_cache_control` goes further and stores nothing that comes without a
+    `Cache-Control` header.
+- A response that belongs to one client is never stored:
+  - One with a `Set-Cookie` header: everyone served from the cache would get
+    the same cookie. To cache such a response anyway, remove the header before
+    it is stored, with a [`response_headers`](response_headers.md) plugin in
+    `upstream` mode.
+  - One to a request with an `Authorization` header, unless the origin marks
+    it as shareable with `public`, `s-maxage` or `must-revalidate`. A
+    [`basic_auth`](basic_auth.md) plugin with `hide_credentials` removes the
+    header before this check, so a site behind it is cached as usual.
 - The cache key is derived from the request URI plus `namespace` plus the values
   of the `headers` you listed. `PURGE` builds the key for both `GET` and `HEAD`,
   so purging `/x` removes the entries created by either method. If `headers`

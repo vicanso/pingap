@@ -76,6 +76,13 @@ curl -X PURGE http://127.0.0.1:6188/*
 ## 行为
 
 - 仅处理 `GET`、`HEAD` 与 `PURGE`；其他方法跳过插件。
+- 存什么、存多久，取决于源站的 `Cache-Control`：
+  - 带 `no-store`、`no-cache` 或 `private` 的响应不存储，有效期为零的响应也不存储。
+  - 有效期优先取源站的 `s-maxage`，没有时取 `max-age`，并受 `max_ttl` 限制。
+  - 没有给出有效期的响应保留一秒，前提是其状态码属于 HTTP 定义的“可启发式缓存”的一类：200、203、204、206、300、301、308、404、405、410、414、501。其他状态码（如 5xx 或 302）只有在源站给出有效期时才存储。`check_cache_control` 更严格：没有 `Cache-Control` 头的响应一律不存储。
+- 属于某一个客户端的响应不会被存储：
+  - 带 `Set-Cookie` 头的响应：否则所有从缓存取到它的客户端都会收到同一个 cookie。确实要缓存这类响应时，用 `upstream` 模式的 [`response_headers`](response_headers.md) 插件在存储前去掉这个头。
+  - 请求带 `Authorization` 头时的响应，除非源站用 `public`、`s-maxage` 或 `must-revalidate` 标明可以共享。开启了 `hide_credentials` 的 [`basic_auth`](basic_auth.md) 插件会在这项检查之前移除该请求头，因此它保护的站点照常缓存。
 - 缓存键由请求 URI、`namespace` 与所列 `headers` 的值推导。`PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
 - 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
