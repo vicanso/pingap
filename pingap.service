@@ -13,8 +13,16 @@ User=root
 PIDFile=/run/pingap.pid
 ExecStartPre=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -t
 ExecStart=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -d --log=/var/log/pingap --autorestart
-ExecStop=/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/pingap.pid
-TimeoutStopSec=5
+# Stopping uses systemd's own signalling: SIGTERM (the default KillSignal) to
+# the main process, then SIGKILL to whatever is left after TimeoutStopSec.
+#
+# On SIGTERM pingap stops accepting connections at once and lets the requests
+# in flight finish. It then stays up for `basic.grace_period` (5m unless
+# configured) whether or not anything is left to finish, so TimeoutStopSec is
+# what ends the wait, and how long a `systemctl restart` is down. A config
+# change does not need one: --autorestart hands the listeners to the new
+# process without downtime.
+TimeoutStopSec=10
 KillMode=mixed
 
 [Install]

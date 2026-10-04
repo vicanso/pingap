@@ -53,6 +53,7 @@ docker compose up -d
 curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 # 完整特性构建: PINGAP_FULL=1 sh
 # rustls TLS 后端（Linux，含全部特性）: PINGAP_TLS=rustls sh
+# 同时安装 systemd 服务（Linux）: PINGAP_SERVICE=1 sh
 ```
 
 ### 一条命令启动 HTTPS 代理

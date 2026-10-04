@@ -57,6 +57,37 @@ if [ "${TLS_BACKEND}" = "rustls" ]; then
   FULL_SUFFIX="-rustls-full"
 fi
 
+# PINGAP_SERVICE=1 to also install a systemd service. Linux with systemd only.
+INSTALL_SERVICE="${PINGAP_SERVICE:-0}"
+
+TARGET_BIN="/usr/local/bin/pingap"
+SERVICE_UNIT="/etc/systemd/system/pingap.service"
+SERVICE_CONF_DIR="/etc/pingap/conf"
+
+# Downloads $1 to the file $2.
+fetch() {
+  if has curl; then
+    curl -sSL --fail "$1" -o "$2"
+  elif has wget; then
+    wget -q "$1" -O "$2"
+  else
+    error "curl or wget not found."
+    exit 1
+  fi
+}
+
+# Runs a command as root: as it is when already root, through sudo otherwise.
+as_root() {
+  if [ "$(id -u)" = "0" ]; then
+    "$@"
+  elif has sudo; then
+    sudo "$@"
+  else
+    error "Root permission is required (run as root or install sudo): $*"
+    return 1
+  fi
+}
+
 get_latest_release() {
   curl --silent "https://api.github.com/repos/${REPO}/releases/latest" |
     grep '"tag_name":' |
@@ -162,14 +193,7 @@ download_and_install() {
   info "Downloading pingap ${version}..."
   info "URL: ${url}"
 
-  if has curl; then
-    curl -sSL --fail "${url}" -o "${filename}"
-  elif has wget; then
-    wget -q "${url}" -O "${filename}"
-  else
-    error "curl or wget not found."
-    exit 1
-  fi
+  fetch "${url}" "${filename}"
 
   info "Extracting ${filename}..."
   extract_dir="pingap_tmp"
@@ -203,19 +227,85 @@ download_and_install() {
   if [ "${platform}" = "Windows" ]; then
     info "Windows detected. Please manually move ${binary_path} to a directory in your PATH."
   else
-    target_bin="/usr/local/bin/pingap"
-    if [ -w "$(dirname "${target_bin}")" ]; then
-      mv "${binary_path}" "${target_bin}"
+    if [ -w "$(dirname "${TARGET_BIN}")" ]; then
+      mv "${binary_path}" "${TARGET_BIN}"
     elif has sudo; then
-      sudo mv "${binary_path}" "${target_bin}"
+      sudo mv "${binary_path}" "${TARGET_BIN}"
     else
-      error "No write permission to $(dirname "${target_bin}") and sudo not available."
+      error "No write permission to $(dirname "${TARGET_BIN}") and sudo not available."
       exit 1
     fi
-    completed "Installed to ${target_bin}"
+    completed "Installed to ${TARGET_BIN}"
   fi
 
   rm -rf "${filename}" "${extract_dir}"
+}
+
+# Installs the systemd unit from the repository, pointed at the binary this
+# script installed, and the config directory the unit reads. Like the .deb it
+# neither enables nor starts the service: the shipped configuration defines no
+# server, so starting it would only produce a failed unit.
+install_service() {
+  version="$1"
+  platform="$2"
+
+  if [ "${platform}" != "Linux" ]; then
+    warn "PINGAP_SERVICE needs Linux with systemd; service not installed."
+    return 0
+  fi
+  if ! has systemctl || [ ! -d /run/systemd/system ]; then
+    warn "systemd is not running here; service not installed."
+    return 0
+  fi
+
+  info "Installing systemd service..."
+  service_tmp="pingap_service_tmp"
+  rm -rf "${service_tmp}"
+  mkdir -p "${service_tmp}"
+
+  # The unit comes from main, like this script, so the two always match; the
+  # configuration comes from the release, like the binary.
+  unit_url="https://raw.githubusercontent.com/${REPO}/main/pingap.service"
+  conf_url="https://raw.githubusercontent.com/${REPO}/${version}/conf/basic.toml"
+
+  if ! fetch "${unit_url}" "${service_tmp}/pingap.service.in"; then
+    error "Failed to download ${unit_url}"
+    rm -rf "${service_tmp}"
+    exit 1
+  fi
+  # The unit is written for the .deb, which installs the binary to /usr/sbin.
+  sed "s|/usr/sbin/pingap|${TARGET_BIN}|g" \
+    "${service_tmp}/pingap.service.in" > "${service_tmp}/pingap.service"
+  if ! grep -q "^ExecStart=${TARGET_BIN} " "${service_tmp}/pingap.service"; then
+    error "Unexpected content in ${unit_url}; service not installed."
+    rm -rf "${service_tmp}"
+    exit 1
+  fi
+
+  as_root mkdir -p "$(dirname "${SERVICE_UNIT}")" "${SERVICE_CONF_DIR}"
+  as_root cp "${service_tmp}/pingap.service" "${SERVICE_UNIT}"
+  as_root chmod 644 "${SERVICE_UNIT}"
+  completed "Installed ${SERVICE_UNIT}"
+
+  # A config directory with anything in it is the user's: leave it alone.
+  if [ -n "$(ls -A "${SERVICE_CONF_DIR}" 2>/dev/null)" ]; then
+    info "Keeping the existing configuration in ${SERVICE_CONF_DIR}"
+  elif fetch "${conf_url}" "${service_tmp}/basic.toml"; then
+    as_root cp "${service_tmp}/basic.toml" "${SERVICE_CONF_DIR}/basic.toml"
+    as_root chmod 644 "${SERVICE_CONF_DIR}/basic.toml"
+    completed "Created ${SERVICE_CONF_DIR}/basic.toml"
+  else
+    warn "Failed to download ${conf_url}; create your configuration in ${SERVICE_CONF_DIR}."
+  fi
+  rm -rf "${service_tmp}"
+
+  as_root systemctl daemon-reload
+
+  if systemctl is-active --quiet pingap 2>/dev/null; then
+    info "pingap is running. Use the new version with: sudo systemctl restart pingap"
+  else
+    info "Add your servers to ${SERVICE_CONF_DIR}, then run: sudo systemctl enable --now pingap"
+  fi
 }
 
 main() {
@@ -232,6 +322,9 @@ main() {
     info "Variant: full (all features enabled)"
   else
     info "Variant: default (set PINGAP_FULL=1 for the full-featured build)"
+  fi
+  if [ "${INSTALL_SERVICE}" = "1" ]; then
+    info "Service: systemd unit requested (PINGAP_SERVICE=1)"
   fi
 
   target="${platform}_${arch}"
@@ -251,6 +344,10 @@ main() {
   fi
 
   download_and_install "${version}" "${platform}" "${arch}"
+
+  if [ "${INSTALL_SERVICE}" = "1" ]; then
+    install_service "${version}" "${platform}"
+  fi
 }
 
 main

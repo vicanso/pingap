@@ -105,10 +105,15 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 - `PINGAP_FULL=1` —— 安装 `-full` 构建（启用所有可选特性）
 - `PINGAP_LIBC=gnu` —— Linux 上使用 glibc 构建（默认是静态链接的 musl 构建）
 - `PINGAP_TLS=rustls` —— Linux 上安装 `-rustls-full` 构建（rustls TLS 后端，启用所有可选特性，不含 OpenSSL），见 [TLS 后端](#tls-后端)
+- `PINGAP_SERVICE=1` —— 在有 systemd 的 Linux 上同时安装 `pingap` 服务：unit 文件 `/etc/systemd/system/pingap.service`，并在 `/etc/pingap/conf` 为空时放入一份初始的 `basic.toml`。服务不会被启用或启动，因为此时还没有可运行的 server
 
 ```bash
 # 安装完整特性版本
 curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_FULL=1 sh
+
+# 同时安装 systemd 服务：先把 server 配置放到 /etc/pingap/conf，再启动
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_SERVICE=1 sh
+sudo systemctl enable --now pingap
 ```
 
 支持的平台：`Linux x86_64/arm64`、`Darwin x86_64/arm64`。所有可用的构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。

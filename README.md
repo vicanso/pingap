@@ -105,10 +105,15 @@ Optional environment variables:
 - `PINGAP_FULL=1` — install the `-full` build (all optional features enabled)
 - `PINGAP_LIBC=gnu` — on Linux, use the glibc build instead of the default musl static build
 - `PINGAP_TLS=rustls` — on Linux, install the `-rustls-full` build (rustls TLS backend, all optional features, no OpenSSL); see [TLS backend](#tls-backend)
+- `PINGAP_SERVICE=1` — on Linux with systemd, also install a `pingap` service: the unit `/etc/systemd/system/pingap.service` and, when `/etc/pingap/conf` is empty, a starter `basic.toml` in it. The service is not enabled or started, since there is no server to run yet
 
 ```bash
 # Full-featured build
 curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_FULL=1 sh
+
+# With a systemd service: add your servers to /etc/pingap/conf, then start it
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_SERVICE=1 sh
+sudo systemctl enable --now pingap
 ```
 
 Supported targets: `Linux x86_64/arm64`, `Darwin x86_64/arm64`. See the [releases page](https://github.com/vicanso/pingap/releases) for all available assets.
