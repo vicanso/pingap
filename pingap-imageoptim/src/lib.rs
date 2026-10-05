@@ -121,6 +121,10 @@ impl ModifyResponseBody for ImageOptimizer {
         if !end_of_stream {
             return Ok(());
         }
+        // No body at all, the answer to a HEAD request for one.
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
         let original = self.buffer.split().freeze();
         let optimized = run_blocking(|| self.optimize(&original));
         *body = Some(match optimized {
@@ -269,8 +273,14 @@ impl Plugin for ImageOptim {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // A partial or an empty response is not an image to convert.
-        if upstream_response.status != http::StatusCode::OK {
+        // A partial or an empty response is not an image to convert, and
+        // neither are the bytes of a compressed one: decoding those can
+        // only fail, after the header has promised the new format.
+        if upstream_response.status != http::StatusCode::OK
+            || upstream_response
+                .headers
+                .contains_key(http::header::CONTENT_ENCODING)
+        {
             return Ok(ResponsePluginResult::Unchanged);
         }
         let content_type = if let Some(value) =
@@ -709,10 +719,24 @@ png_quality = 90
             (false, text("image/png"), text("100")),
             run("image/webp", 206, &png).await
         );
-        // not a format that is converted.
+        // not a format that is converted,
         assert_eq!(
             (false, text("image/gif"), None),
             run("image/webp", 200, &[("content-type", "image/gif")]).await
+        );
+        // compressed, so not the bytes of an image.
+        assert_eq!(
+            (false, text("image/png"), text("100")),
+            run(
+                "image/webp",
+                200,
+                &[
+                    ("content-type", "image/png"),
+                    ("content-length", "100"),
+                    ("content-encoding", "gzip")
+                ]
+            )
+            .await
         );
     }
 
@@ -756,6 +780,12 @@ png_quality = 90
                 "{format_type}"
             );
         }
+
+        // Nothing came, as for a HEAD request: nothing is made up.
+        let mut optimizer = new_optimizer("webp");
+        let mut body = None;
+        optimizer.handle(&session, &mut body, true).unwrap();
+        assert_eq!(None, body);
 
         // Regression: not an image after all. The body used to be empty.
         let mut optimizer = new_optimizer("webp");

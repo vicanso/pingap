@@ -26,7 +26,7 @@ cargo build --features=imageoptim
 
 Only `200` upstream responses of type `image/png` or `image/jpeg` are
 candidates. Everything else passes through untouched, and so does an image
-whose `Content-Length` is over 20 MB.
+whose `Content-Length` is over 20 MB or that comes with a `Content-Encoding`.
 
 ## Example
 

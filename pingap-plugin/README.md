@@ -34,17 +34,24 @@ A location never runs without a plugin it names:
   the built-in `pingap:*` plugins is a configuration error: `--test`, startup
   and a reload all reject it.
 - A plugin whose configuration is invalid (an unknown `category` included)
-  stops the process at startup. With `--admin` the process stays up so the
+  stops the process at startup. With `--admin` a fresh start stays up so the
   configuration can be repaired through the admin, and the locations naming
-  that plugin answer `500` until it is.
+  that plugin answer `500` until it is. A process that is to replace a running
+  one (`--upgrade`, the restart of `--autorestart`) always exits instead, and
+  the running one keeps serving.
 - On a hot reload a plugin whose new configuration is invalid keeps running
   with its previous one, and the error is logged and sent as a
   `reload_config_fail` notification. A new plugin that fails to build has
   nothing to fall back to: its locations answer `500`.
 
-The one exception is a plugin whose category this build was compiled without
-(`image_optim` outside the `imageoptim` / `full` builds). It is logged as
-unavailable and does nothing, so one configuration can be shared by both builds.
+A plugin whose category this build was compiled without is not an error by
+itself, so one configuration can be shared between builds; it is logged as
+unavailable. What a location that names it gets depends on the plugin:
+
+- `image_optim` (the `imageoptim` / `full` builds) does nothing where it is
+  missing: the image is served as it is.
+- `geo_restriction` (the `geo` feature) is access control, so a location that
+  names it is a configuration error on a build without it.
 
 Equivalent HCL and KDL forms are supported — see
 [pingap-config](../pingap-config/README.md).

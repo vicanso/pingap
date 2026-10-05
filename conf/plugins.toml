@@ -324,12 +324,12 @@ tag = "query"
 
 # The query parameter name to extract the limit key from
 # Example: If key="app_id", it will look for ?app_id=value in the URL
-# key = "app_id"
+key = "app_id"
 
 # Maximum number of concurrent requests or requests per interval
 # For inflight: Maximum concurrent requests allowed
 # For rate: Maximum requests allowed per interval
-# max = 1000
+max = 1000
 
 # Time window for rate limiting
 # Only applies when type="rate"

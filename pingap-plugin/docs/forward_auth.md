@@ -31,11 +31,12 @@ appended), carrying the selected original headers plus:
 | `x-forwarded-host` | Original `Host` |
 | `x-forwarded-proto` | `https` when the client connected over TLS, else `http` |
 | `x-forwarded-for` | Client IP as resolved by Pingap |
+| `x-real-ip` | The same client IP |
 
-These five are written by Pingap alone. A request that arrives with headers of
-the same names has them left out of the subrequest, so a client cannot have the
-auth service decide about another path, method or host than the one it is
-asking for. `x-forwarded-for` follows
+These six are written by Pingap alone. A request that arrives with headers of
+the same names has them left out of the subrequest, and so is its `Forwarded`
+header: a client cannot have the auth service decide about another path,
+method, host or address than its own. The client IP follows
 [`basic.trusted_proxies`](ip_restriction.md#client-ip-resolution) like every
 other use of the client IP.
 

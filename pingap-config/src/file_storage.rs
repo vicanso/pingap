@@ -536,6 +536,44 @@ addrs = ["127.0.0.1:5000"]
         }
     }
 
+    /// Multi-line values are what a certificate renewal saves. They have
+    /// to come back byte for byte, or the check before a save refuses the
+    /// config and the new certificate is never stored.
+    #[test]
+    fn test_multiline_values_can_be_saved_in_each_format() {
+        use super::encode_for_file;
+        use std::path::Path;
+
+        for value in [
+            "-----BEGIN CERTIFICATE-----\nMIIB\nabc=\n-----END CERTIFICATE-----\n",
+            "-----BEGIN CERTIFICATE-----\nMIIB\nabc=\n-----END CERTIFICATE-----",
+            "two\n\nblank lines between\n\n",
+            "  indented first\n    and more\nback\n",
+            "\nstarts with a newline",
+            "windows\r\nline ends\r\n",
+            "tab\tand \"quotes\" and a \\ backslash\n",
+            "EOT\nthe heredoc marker as a line\nEOT\n",
+            "a ${template} and %{directive}\nin it\n",
+        ] {
+            let mut table = toml::Table::new();
+            table.insert("tls_cert".to_string(), value.into());
+            let mut certificates = toml::Table::new();
+            certificates.insert("site".to_string(), table.into());
+            let mut root = toml::Table::new();
+            root.insert("certificates".to_string(), certificates.into());
+            let config = toml::to_string(&root).unwrap();
+            for target in ["pingap.hcl", "pingap.kdl"] {
+                let result = encode_for_file(Path::new(target), &config);
+                assert_eq!(
+                    true,
+                    result.is_ok(),
+                    "{value:?} as {target}: {:?}",
+                    result.err().map(|e| e.to_string())
+                );
+            }
+        }
+    }
+
     /// A config that does not survive the conversion is not saved.
     #[tokio::test]
     async fn test_single_file_refuses_a_lossy_save() {

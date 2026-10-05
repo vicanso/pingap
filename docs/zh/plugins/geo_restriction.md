@@ -12,6 +12,8 @@ cargo build --features=geo
 
 `geo` 刻意不纳入 `full`，因为会内嵌 GeoIP 数据库。`make lint` 会单独对该 feature 跑 clippy，避免静默腐烂。
 
+没有这个 feature 的构建上仍然可以声明该插件，只会在日志里告警；但引用它的 location 属于配置错误，`--test`、启动和热更新都会拒绝，而不是在没有限制的情况下提供服务。
+
 ## 配置
 
 | Key | Type | Default | Description |

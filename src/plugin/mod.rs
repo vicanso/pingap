@@ -263,20 +263,55 @@ pub fn new_plugin_provider() -> Arc<dyn PluginProvider> {
     PLUGIN_PROVIDER.clone()
 }
 
-/// Categories that only some builds have: `image_optim` needs the
-/// `imageoptim` feature. One config is often shared between builds, so a
-/// plugin of such a category is not an error where it is missing.
-const FEATURE_GATED_CATEGORIES: &[&str] = &["image_optim"];
+/// A plugin category that only some builds have.
+struct GatedCategory {
+    category: &'static str,
+    /// The cargo feature that brings it in.
+    feature: &'static str,
+    /// Whether a location may be served without it. An image that is not
+    /// re-encoded is still the image; a request that is not checked
+    /// against the country list is a request let through.
+    optional: bool,
+}
+
+/// One config is often shared between builds, so a plugin of one of these
+/// categories is not an error where the category is missing. What happens
+/// to the locations that name it depends on `optional`.
+const FEATURE_GATED_CATEGORIES: &[GatedCategory] = &[
+    GatedCategory {
+        category: "image_optim",
+        feature: "imageoptim",
+        optional: true,
+    },
+    GatedCategory {
+        category: "geo_restriction",
+        feature: "geo",
+        optional: false,
+    },
+];
+
+fn gated_category(category: &str) -> Option<&'static GatedCategory> {
+    FEATURE_GATED_CATEGORIES
+        .iter()
+        .find(|gated| gated.category == category)
+}
+
+/// The gated category `err` is about, when all it says is that this build
+/// was compiled without it. Any other unknown category is a mistake in the
+/// config (`basic_auht`) and has to be reported as one.
+fn unavailable_category(
+    err: &pingap_plugin::Error,
+) -> Option<&'static GatedCategory> {
+    match err {
+        pingap_plugin::Error::NotFound { category } => gated_category(category),
+        _ => None,
+    }
+}
 
 /// Whether `err` only says that this build was compiled without the
-/// plugin's category. Any other unknown category is a mistake in the config
-/// (`basic_auht`) and has to be reported as one.
+/// plugin's category.
 pub fn is_unavailable_in_build(err: &pingap_plugin::Error) -> bool {
-    matches!(
-        err,
-        pingap_plugin::Error::NotFound { category }
-            if FEATURE_GATED_CATEGORIES.contains(&category.as_str())
-    )
+    unavailable_category(err).is_some()
 }
 
 /// Stands in for a plugin whose category this build was compiled without,
@@ -302,11 +337,13 @@ pub fn validate_plugin_references(config: &PingapConfig) -> Result<()> {
         .into_iter()
         .map(|(name, _)| name)
         .collect();
+    // The admin plugin is only there when this process was given `--admin`.
+    let has_admin = get_admin_addr().is_some();
     for (location_name, location) in config.locations.iter() {
         for name in location.plugins.iter().flatten() {
             if config.plugins.contains_key(name)
                 || builtin.contains(name)
-                || name == ADMIN_SERVER_PLUGIN
+                || (has_admin && name == ADMIN_SERVER_PLUGIN)
             {
                 continue;
             }
@@ -314,6 +351,35 @@ pub fn validate_plugin_references(config: &PingapConfig) -> Result<()> {
                 category: "location".to_string(),
                 message: format!(
                     "plugin({name}) of location({location_name}) is not found"
+                ),
+            });
+        }
+    }
+    // A plugin this build can not provide and a location can not go
+    // without. Defining one is harmless, the config may be meant for
+    // another build as well; naming it in a location is not.
+    let supported = get_plugin_factory().supported_plugins();
+    for (location_name, location) in config.locations.iter() {
+        for name in location.plugins.iter().flatten() {
+            let Some(gated) = config
+                .plugins
+                .get(name)
+                .and_then(|conf| conf.get("category"))
+                .and_then(|category| category.as_str())
+                .and_then(gated_category)
+            else {
+                continue;
+            };
+            if gated.optional
+                || supported.iter().any(|item| item == gated.category)
+            {
+                continue;
+            }
+            return Err(Error::Invalid {
+                category: "location".to_string(),
+                message: format!(
+                    "plugin({name}) of location({location_name}) is a {} plugin, which needs a build with the {} feature",
+                    gated.category, gated.feature
                 ),
             });
         }
@@ -352,25 +418,40 @@ pub fn parse_plugins(
             Ok(plugin) => {
                 plugins.insert(name.clone(), plugin.clone());
             },
-            Err(e) if is_unavailable_in_build(&e) => {
-                warn!(
-                    target: LOG_TARGET,
-                    name,
-                    category,
-                    "plugin category is unavailable in this build, the plugin does nothing"
-                );
-                plugins.insert(
-                    name.clone(),
-                    Arc::new(UnavailablePlugin {
-                        hash_value: get_hash_key(conf),
-                    }),
-                );
-            },
-            Err(e) => {
-                errors.push(Error::Invalid {
-                    category,
-                    message: format!("create plugin {name} failed, {e}"),
-                });
+            Err(e) => match unavailable_category(&e) {
+                Some(gated) if gated.optional => {
+                    warn!(
+                        target: LOG_TARGET,
+                        name,
+                        category,
+                        feature = gated.feature,
+                        "plugin category is unavailable in this build, the plugin does nothing"
+                    );
+                    plugins.insert(
+                        name.clone(),
+                        Arc::new(UnavailablePlugin {
+                            hash_value: get_hash_key(conf),
+                        }),
+                    );
+                },
+                // Not loaded. A location naming it is refused by
+                // `validate_plugin_references`, and rejects its requests if
+                // it gets that far anyway.
+                Some(gated) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        name,
+                        category,
+                        feature = gated.feature,
+                        "plugin category is unavailable in this build, the plugin is not loaded"
+                    );
+                },
+                None => {
+                    errors.push(Error::Invalid {
+                        category,
+                        message: format!("create plugin {name} failed, {e}"),
+                    });
+                },
             },
         }
     }
@@ -461,6 +542,15 @@ pub fn try_init_plugins(
         }
     }
     errors.extend(new_errors);
+    // A plugin that is no longer configured stays for now. Locations are
+    // reloaded after the plugins, and until they are, one of them may still
+    // name it: taken away here, that location answered 500 in between.
+    // `remove_unconfigured_plugins` drops it once the locations are in.
+    for (name, plugin) in PLUGIN_PROVIDER.plugins.load().iter() {
+        if !plugins.contains_key(name) {
+            plugins.insert(name.clone(), plugin.clone());
+        }
+    }
     PLUGIN_PROVIDER.store(plugins);
     let error = if !errors.is_empty() {
         let error = errors
@@ -475,6 +565,31 @@ pub fn try_init_plugins(
     };
 
     (updated_plugins, error)
+}
+
+/// Drops the plugins that `configs` no longer has, the second half of a
+/// plugin reload: `try_init_plugins` keeps them until the locations that
+/// named them are gone.
+pub fn remove_unconfigured_plugins(configs: &HashMap<String, PluginConf>) {
+    let builtin: Vec<String> = get_builtin_proxy_plugins()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let configured = |name: &String| {
+        configs.contains_key(name)
+            || builtin.contains(name)
+            || name == ADMIN_SERVER_PLUGIN
+    };
+    let current = PLUGIN_PROVIDER.plugins.load();
+    if current.keys().all(configured) {
+        return;
+    }
+    let plugins: Plugins = current
+        .iter()
+        .filter(|(name, _)| configured(name))
+        .map(|(name, plugin)| (name.clone(), plugin.clone()))
+        .collect();
+    PLUGIN_PROVIDER.store(plugins);
 }
 
 #[test]
@@ -547,6 +662,24 @@ step = "response"
     // The one that never built is absent: its locations reject requests.
     assert!(PLUGIN_PROVIDER.get("test:typo").is_none());
     assert!(PLUGIN_PROVIDER.get("test:add_headers").is_some());
+
+    // A plugin taken out of the config outlives the plugin reload, for the
+    // locations that still name it, and goes once they have been reloaded.
+    let mut fewer = plugins.clone();
+    fewer.remove("test:add_headers");
+    let version = PLUGIN_PROVIDER.version();
+    let (_, error) = try_init_plugins(&fewer);
+    assert!(error.is_empty());
+    assert!(PLUGIN_PROVIDER.get("test:add_headers").is_some());
+    remove_unconfigured_plugins(&fewer);
+    assert!(PLUGIN_PROVIDER.get("test:add_headers").is_none());
+    assert!(PLUGIN_PROVIDER.get("test:mock").is_some());
+    assert!(PLUGIN_PROVIDER.get("pingap:requestId").is_some());
+    assert!(PLUGIN_PROVIDER.version() > version);
+    // Nothing to drop: the plugins are left as they are.
+    let version = PLUGIN_PROVIDER.version();
+    remove_unconfigured_plugins(&fewer);
+    assert_eq!(version, PLUGIN_PROVIDER.version());
 }
 
 #[cfg(test)]
@@ -637,6 +770,12 @@ plugins = {plugins}
             "Plugin location invalid, message: plugin(pingap:requestid) of location(app) is not found",
             validate(r#"["pingap:requestid"]"#).unwrap_err()
         );
+        // The admin plugin exists only in a process started with `--admin`,
+        // which a test is not.
+        assert_eq!(
+            "Plugin location invalid, message: plugin(pingap:admin) of location(app) is not found",
+            validate(r#"["pingap:admin"]"#).unwrap_err()
+        );
     }
 
     #[test]
@@ -645,7 +784,52 @@ plugins = {plugins}
             category: category.to_string(),
         };
         assert_eq!(true, is_unavailable_in_build(&not_found("image_optim")));
+        assert_eq!(
+            true,
+            is_unavailable_in_build(&not_found("geo_restriction"))
+        );
         // A misspelled category is a config error, not a build variant.
         assert_eq!(false, is_unavailable_in_build(&not_found("basic_auht")));
+    }
+
+    /// A gated plugin may be defined in any build. Whether a location may
+    /// name it where it is missing depends on what the location loses.
+    #[test]
+    fn test_gated_plugin_references() {
+        let validate = |category: &str, plugins: &str| {
+            let config = PingapConfig::new(
+                format!(
+                    r#"
+[plugins.gated]
+category = "{category}"
+
+[locations.app]
+plugins = {plugins}
+"#
+                )
+                .as_bytes(),
+                false,
+            )
+            .unwrap();
+            validate_plugin_references(&config).map_err(|e| e.to_string())
+        };
+        let supported = get_plugin_factory().supported_plugins();
+        let has = |category: &str| supported.iter().any(|c| c == category);
+
+        // Defined and not used: fine everywhere.
+        assert_eq!(Ok(()), validate("geo_restriction", "[]"));
+        assert_eq!(Ok(()), validate("image_optim", "[]"));
+        // Images are served as they are without the optimizer.
+        assert_eq!(Ok(()), validate("image_optim", r#"["gated"]"#));
+        // Access control is not something to go without.
+        let result = validate("geo_restriction", r#"["gated"]"#);
+        if has("geo_restriction") {
+            assert_eq!(Ok(()), result);
+        } else {
+            assert_eq!(
+                "Plugin location invalid, message: plugin(gated) of location(app) is a geo_restriction plugin, which needs a build with the geo feature",
+                result.unwrap_err()
+            );
+        }
     }
 }

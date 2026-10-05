@@ -16,6 +16,11 @@ cargo build --features=geo
 the binary. `make lint` runs a separate clippy pass over it so the feature does
 not rot unnoticed.
 
+On a build without the feature the plugin can still be declared, which only
+logs a warning, but a location that names it is a configuration error:
+`--test`, startup and a reload reject it rather than serve the location with
+no restriction.
+
 ## Configuration
 
 | Key | Type | Default | Description |

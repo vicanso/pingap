@@ -682,6 +682,10 @@ fn write_kdl_property(
                     }
                 }
                 out.push_str(&format!("{pad}}}\n"));
+            } else if arr.is_empty() && !is_always_list(key) {
+                // Nothing to write: a node without values reads back as an
+                // empty string, which is not what an empty list is. Left
+                // out, the key is simply unset.
             } else if arr.len() == 1 && !is_always_list(key) {
                 // One value on the line reads back as that value, not as a
                 // list of one: `ip_list "1.2.3.4"` came back a string, and
@@ -1066,6 +1070,11 @@ message = "denied"
 mixed = [{ name = "a" }, "b"]
 type = "deny"
 "#;
+        // An empty list is left out, for a known list field or not: it
+        // used to be written as a bare node, which reads back as "".
+        let kdl =
+            convert_toml_to_kdl(&format!("{toml_input}empty = []\n")).unwrap();
+        assert_eq!(false, kdl.contains("empty"), "{kdl}");
         let kdl = convert_toml_to_kdl(toml_input).unwrap();
         // The known list fields stay on one line.
         assert_eq!(true, kdl.contains("    plugins \"deny\"\n"), "{kdl}");

@@ -23,8 +23,6 @@ use ipnet::IpNet;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
-use std::borrow::Cow;
-use std::fmt::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -426,15 +424,19 @@ fn forwarded_client_ip<'a>(
 ) -> Option<String> {
     let mut first_proxy = None;
     for value in values.rev() {
-        // Not text: there is no telling what the entries are.
-        let Ok(value) = value.to_str() else {
-            break;
-        };
-        for item in value.rsplit(',') {
-            let item = item.trim();
+        // Entry by entry on the bytes, never the line as text. A line is
+        // text only when all of it is, and its left end is the client's to
+        // write: one byte there that is not ASCII would discard the line,
+        // and with it the address the proxy appended on the right.
+        for item in value.as_bytes().rsplit(|b| *b == b',') {
+            let item = item.trim_ascii();
             if item.is_empty() {
                 continue;
             }
+            // Not text, so not an address and not a trusted proxy.
+            let Ok(item) = std::str::from_utf8(item) else {
+                return Some(String::from_utf8_lossy(item).into_owned());
+            };
             match parse_forwarded_ip(item) {
                 Some(ip) if trusted.contains(ip) => first_proxy = Some(ip),
                 Some(ip) => return Some(ip.to_string()),
@@ -625,24 +627,41 @@ pub fn remove_query_from_header(
         }
     }
 
-    // Reconstruct the URI from its path and the new query string.
+    // The path as it was, with what is left of the query.
     let path = req_header.uri.path();
-    // Use `Cow` (Clone-on-Write) to avoid allocating a new String for the path if the query is empty.
-    let new_uri_str = if new_query.is_empty() {
-        // If the new query is empty, the new URI is just the path. Borrow it.
-        Cow::Borrowed(path)
-    } else {
-        // If the new query is not empty, build a new String. Own it.
-        let mut s = String::with_capacity(path.len() + 1 + new_query.len());
-        // `write!` is an efficient way to format into an existing String buffer.
-        let _ = write!(&mut s, "{path}?{new_query}");
-        Cow::Owned(s)
-    };
+    let mut path_and_query =
+        String::with_capacity(path.len() + 1 + new_query.len());
+    path_and_query.push_str(path);
+    if !new_query.is_empty() {
+        path_and_query.push('?');
+        path_and_query.push_str(&new_query);
+    }
 
-    // Parse the newly constructed string into a `http::Uri`.
-    let new_uri = http::Uri::from_str(&new_uri_str)?;
-    // Update the request header with the new URI.
-    req_header.set_uri(new_uri);
+    set_path_and_query(req_header, &path_and_query)
+}
+
+/// Replaces the path and query of the request, and nothing else.
+///
+/// An HTTP/2 request carries its host in the uri (`:authority`) and usually
+/// has no `Host` header. Setting a uri parsed from the path alone took the
+/// host away with it: the upstream request went out without a `Host`, and
+/// whatever asked for the request's host afterwards - the cache key, the
+/// access log - found none.
+pub fn set_path_and_query(
+    req_header: &mut RequestHeader,
+    path_and_query: &str,
+) -> Result<(), http::uri::InvalidUri> {
+    if req_header.uri.authority().is_none() {
+        req_header.set_uri(http::Uri::from_str(path_and_query)?);
+        return Ok(());
+    }
+    let path_and_query = http::uri::PathAndQuery::from_str(path_and_query)?;
+    let mut parts = req_header.uri.clone().into_parts();
+    parts.path_and_query = Some(path_and_query);
+    // Scheme and authority are those of a uri that was valid already.
+    if let Ok(uri) = http::Uri::from_parts(parts) {
+        req_header.set_uri(uri);
+    }
 
     Ok(())
 }
@@ -1069,6 +1088,22 @@ mod tests {
         assert_eq!(ip("unknown"), client_ip(&["6.6.6.6, unknown, 10.0.0.2"]));
         assert_eq!(None, client_ip(&[]));
         assert_eq!(None, client_ip(&[" , "]));
+
+        // Regression: a byte that is not ASCII, written by the client at
+        // the front of the line the proxy appends to. The whole line used
+        // to be dropped, leaving the client's own `X-Real-IP` or the
+        // proxy's address as the answer.
+        let line = HeaderValue::from_bytes(b"\xff\xfe, 9.9.9.9").unwrap();
+        assert_eq!(
+            ip("9.9.9.9"),
+            forwarded_client_ip([&line].into_iter(), &trusted)
+        );
+        let line = HeaderValue::from_bytes(b"6.6.6.6, \xff, 9.9.9.9, 10.0.0.2")
+            .unwrap();
+        assert_eq!(
+            ip("9.9.9.9"),
+            forwarded_client_ip([&line].into_iter(), &trusted)
+        );
     }
 
     #[tokio::test]
@@ -1222,6 +1257,32 @@ mod tests {
         assert_eq!(get_cookie_value(&req, "lang"), None);
         // Test for a cookie name that is a prefix of another.
         assert_eq!(get_cookie_value(&req, "the"), None);
+    }
+
+    /// Regression: an HTTP/2 request has its host in the uri. Replacing the
+    /// path, or dropping a query parameter, used to drop the host too.
+    #[test]
+    fn test_path_and_query_changes_keep_the_authority() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.set_uri(http::Uri::from_static(
+            "https://example.com/api/users?apikey=1&page=2",
+        ));
+        remove_query_from_header(&mut req, "apikey").unwrap();
+        assert_eq!("https://example.com/api/users?page=2", req.uri.to_string());
+        assert_eq!(Some("example.com"), get_host(&req));
+
+        set_path_and_query(&mut req, "/users?page=2").unwrap();
+        assert_eq!("https://example.com/users?page=2", req.uri.to_string());
+        set_path_and_query(&mut req, "/").unwrap();
+        assert_eq!("https://example.com/", req.uri.to_string());
+        // Not a path: the uri is left as it is.
+        assert_eq!(true, set_path_and_query(&mut req, "/a b").is_err());
+        assert_eq!("https://example.com/", req.uri.to_string());
+
+        // HTTP/1.1: the uri is the path and stays one.
+        let mut req = RequestHeader::build("GET", b"/api?a=1", None).unwrap();
+        set_path_and_query(&mut req, "/v2/api?a=1").unwrap();
+        assert_eq!("/v2/api?a=1", req.uri.to_string());
     }
 
     #[test]

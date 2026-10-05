@@ -880,14 +880,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (_, error) = plugin::try_init_plugins(&config.plugins);
     if !error.is_empty() {
         // A plugin that does not build is fatal: logging it and going on
-        // served its locations without it. With the admin server up the
-        // process stays, so the config can be repaired through it - the
-        // locations naming the plugin reject their requests meanwhile.
+        // served its locations without it. With the admin server up a
+        // fresh start stays, so the config can be repaired through it -
+        // the locations naming the plugin reject their requests meanwhile.
         let admin_ready = get_admin_addr().is_some()
             && new_plugin_provider()
                 .get(plugin::ADMIN_SERVER_PLUGIN)
                 .is_some();
-        if !admin_ready {
+        // Not when this process is to replace a running one. That one is
+        // serving, with the plugins it had built: exiting here leaves it
+        // in place, while taking over would trade a working site for
+        // locations that answer 500.
+        if !admin_ready || args.upgrade {
             return Err(format!("init plugins fail: {error}").into());
         }
         error!(target: LOG_TARGET, error, "init plugins fail",);

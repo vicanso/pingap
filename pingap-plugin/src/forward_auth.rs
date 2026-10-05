@@ -75,6 +75,10 @@ const FORWARDED_HEADERS: &[&str] = &[
     "x-forwarded-host",
     "x-forwarded-proto",
     "x-forwarded-for",
+    // The client's address under its other names. `X-Real-IP` is written by
+    // pingap too; `Forwarded` is only removed.
+    "x-real-ip",
+    "forwarded",
 ];
 
 fn is_listed(name: &str, list: &[&str]) -> bool {
@@ -216,7 +220,9 @@ impl Plugin for ForwardAuth {
                 .header("x-forwarded-proto", proto);
         }
         let client_ip = ensure_client_ip(session, ctx);
-        builder = builder.header("x-forwarded-for", client_ip);
+        builder = builder
+            .header("x-forwarded-for", client_ip)
+            .header("x-real-ip", client_ip);
 
         // Phase 2: call the auth service.
         let resp = match builder.send().await {
@@ -429,6 +435,8 @@ mod tests {
             "X-Forwarded-Host: trusted.example",
             "X-Forwarded-Proto: https",
             "X-Forwarded-For: 6.6.6.6",
+            "X-Real-IP: 7.7.7.7",
+            "Forwarded: for=8.8.8.8",
             "X-User-Id: 1",
             "X-User-Role: admin",
             "Cookie: session=abc",
@@ -470,6 +478,7 @@ mod tests {
             "x-forwarded-host",
             "x-forwarded-proto",
             "x-forwarded-for",
+            "x-real-ip",
         ] {
             assert_eq!(
                 1,
@@ -477,9 +486,18 @@ mod tests {
                 "{name}: {head}"
             );
         }
+        // The address is the one pingap resolved, under both names.
+        assert_eq!(true, head.contains("\r\nx-real-ip: 6.6.6.6\r\n"), "{head}");
+        assert_eq!(false, head.contains("\r\nforwarded:"), "{head}");
         // `X-Forwarded-For` is pingap's client ip. Which address that is
         // follows `basic.trusted_proxies`, the same as everywhere else.
-        for unexpected in ["/public", "options", "trusted.example"] {
+        for unexpected in [
+            "/public",
+            "options",
+            "trusted.example",
+            "7.7.7.7",
+            "8.8.8.8",
+        ] {
             assert_eq!(
                 false,
                 head.contains(unexpected),

@@ -39,7 +39,7 @@ use pingora::services::background::BackgroundService;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, error, info};
 
@@ -282,9 +282,11 @@ async fn apply_config(
                 .await;
             }
         }
+        let mut location_reload_failed = false;
         if should_reload_location {
             match try_init_locations(&new_config.locations) {
                 Err(e) => {
+                    location_reload_failed = true;
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("location reload fail: {error}",));
@@ -304,6 +306,12 @@ async fn apply_config(
                     .await;
                 },
             };
+        }
+        // The plugins this config no longer has were kept for the locations
+        // that named them. Those locations are replaced now - unless their
+        // reload failed, and then they still need the plugins.
+        if should_reload_plugin && !location_reload_failed {
+            plugin::remove_unconfigured_plugins(&new_config.plugins);
         }
         if should_reload_certificate {
             let (updated_certificates, errors) =
@@ -527,6 +535,8 @@ pub struct ConfigObserverService {
 
 const MIN_DELAY: u32 = 500;
 const MAX_DELAY: u32 = 60 * 1000;
+/// How long a watch has to last to count as one that worked.
+const WATCH_HELD: Duration = Duration::from_secs(60);
 
 pub fn new_observer_service(
     config_manager: Arc<ConfigManager>,
@@ -553,10 +563,20 @@ pub fn new_observer_service(
 
 static OBSERVER_NAME: &str = "configObserver";
 
+/// What `ConfigObserverService::next_change` came back with.
+enum WatchEvent {
+    /// A watch was started. Whatever was written while nothing was
+    /// watching has to be picked up now.
+    Started,
+    /// The watch reported a change.
+    Changed,
+    /// Nothing happened.
+    Idle,
+}
+
 impl ConfigObserverService {
-    /// Waits for the next change of the stored config, `true` when there
-    /// is one. Without a watch it starts one first, and reports that as a
-    /// change, for whatever was written while nothing was watching.
+    /// Waits for the next event of the stored config. Without a watch it
+    /// starts one first.
     ///
     /// An error is a watch that could not be started or that ended. The
     /// observer is dropped then, so the next call starts over; the caller
@@ -564,16 +584,19 @@ impl ConfigObserverService {
     async fn next_change(
         &self,
         observer: &mut Option<Observer>,
-    ) -> Result<bool, pingap_config::Error> {
+    ) -> Result<WatchEvent, pingap_config::Error> {
         let Some(current) = observer.as_mut() else {
             *observer = Some(self.config_manager.observe().await?);
-            return Ok(true);
+            return Ok(WatchEvent::Started);
         };
-        let result = current.watch().await;
-        if result.is_err() {
-            *observer = None;
+        match current.watch().await {
+            Ok(true) => Ok(WatchEvent::Changed),
+            Ok(false) => Ok(WatchEvent::Idle),
+            Err(e) => {
+                *observer = None;
+                Err(e)
+            },
         }
-        result
     }
 }
 
@@ -598,6 +621,8 @@ impl BackgroundService for ConfigObserverService {
         // service, the periodic check included, and a watch that broke
         // later was never replaced.
         let mut observer = None;
+        // When the current watch was started.
+        let mut watching_since: Option<Instant> = None;
 
         loop {
             tokio::select! {
@@ -616,13 +641,29 @@ impl BackgroundService for ConfigObserverService {
                     }
                 }
                 result = self.next_change(&mut observer) => {
-                    let delay = self.delay.load(Ordering::Relaxed);
+                    let mut delay = self.delay.load(Ordering::Relaxed);
                     match result {
-                        Ok(updated)  => {
-                            if delay > MIN_DELAY {
-                                self.delay.store(MIN_DELAY, Ordering::Relaxed);
+                        Ok(event) => {
+                            match event {
+                                // Starting a watch does not show that it
+                                // works: one that can be started and then
+                                // fails at once would come round every
+                                // 500ms, a connection and a full config
+                                // read each time, if this reset the delay.
+                                WatchEvent::Started => {
+                                    watching_since = Some(Instant::now());
+                                },
+                                // A change did come through it.
+                                WatchEvent::Changed => {
+                                    if delay > MIN_DELAY {
+                                        self.delay.store(MIN_DELAY, Ordering::Relaxed);
+                                    }
+                                },
+                                // The acknowledgement of the watch is one
+                                // of these, and proves as little.
+                                WatchEvent::Idle => {},
                             }
-                            if !updated {
+                            if matches!(event, WatchEvent::Idle) {
                                 continue;
                             }
                             // only hot reload for observe updated
@@ -634,10 +675,16 @@ impl BackgroundService for ConfigObserverService {
                                error = %e,
                                "observe updated fail"
                             );
-                            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
-                            if delay < MAX_DELAY {
-                               self.delay.store(delay * 2, Ordering::Relaxed);
+                            // A watch that held for a while was a working
+                            // one, events or not: the backoff starts over.
+                            let held = watching_since
+                                .take()
+                                .is_some_and(|since| since.elapsed() >= WATCH_HELD);
+                            if held {
+                                delay = MIN_DELAY;
                             }
+                            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                            self.delay.store((delay * 2).min(MAX_DELAY), Ordering::Relaxed);
                         }
                     }
                 }

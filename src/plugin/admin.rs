@@ -591,7 +591,9 @@ async fn handle_request_admin(
         .strip_prefix(prefix)
         .filter(|rest| rest.is_empty() || rest.starts_with('/'))
     else {
-        return Ok(Some(HttpResponse::not_found("Not Found")));
+        // Not under the prefix, so not the admin's to answer: on a server
+        // shared with an application, `/pingapple` belongs to that.
+        return Ok(None);
     };
     let mut new_path = rest.to_string();
     if !prefix.is_empty() && new_path.is_empty() {
@@ -1028,16 +1030,16 @@ mod tests {
             handle_request_admin(&admin, &mut session, &mut Ctx::default())
                 .await
                 .unwrap()
-                .unwrap()
-                .status
-                .as_u16()
+                .map(|resp| resp.status.as_u16())
         };
-        assert_eq!(307, status("/pingap").await);
-        assert_eq!(200, status("/pingap/").await);
-        assert_eq!(401, status("/pingap/api/configs").await);
-        assert_eq!(404, status("/pingap/configs/x.js").await);
-        // Shares the first characters only, it is not under the prefix.
-        assert_eq!(404, status("/pingapapi/configs").await);
+        assert_eq!(Some(307), status("/pingap").await);
+        assert_eq!(Some(200), status("/pingap/").await);
+        assert_eq!(Some(401), status("/pingap/api/configs").await);
+        assert_eq!(Some(404), status("/pingap/configs/x.js").await);
+        // Shares the first characters only: not under the prefix, and left
+        // to whatever else the server has for it.
+        assert_eq!(None, status("/pingapapi/configs").await);
+        assert_eq!(None, status("/pingapple").await);
     }
 
     #[test]

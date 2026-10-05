@@ -26,8 +26,9 @@
 | `x-forwarded-host` | 原始 `Host` |
 | `x-forwarded-proto` | 客户端走 TLS 时为 `https`，否则为 `http` |
 | `x-forwarded-for` | Pingap 解析的客户端 IP |
+| `x-real-ip` | 同一个客户端 IP |
 
-这五个头只由 Pingap 写入。请求里自带的同名头不会进入子请求，客户端无法让认证服务针对另一个路径、方法或域名做判断。`x-forwarded-for` 和其他用到客户端 IP 的地方一样，遵循 [`basic.trusted_proxies`](ip_restriction.md#客户端-ip-解析)。
+这六个头只由 Pingap 写入。请求里自带的同名头不会进入子请求，请求自带的 `Forwarded` 头也一样：客户端无法让认证服务针对另一个路径、方法、域名或地址做判断。客户端 IP 和其他用到它的地方一样，遵循 [`basic.trusted_proxies`](ip_restriction.md#客户端-ip-解析)。
 
 无论 `request_headers` 怎么配置，`Host`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Keep-Alive`、`Proxy-Connection`、`TE`、`Trailer`、`Upgrade` 与 `Expect` 都不会转发：它们描述的是客户端连接或请求体，而这个无请求体的 `GET` 子请求并没有，否则认证服务会一直等一个不会到来的请求体。
 

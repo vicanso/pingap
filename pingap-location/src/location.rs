@@ -20,7 +20,10 @@ use http::HeaderValue;
 use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
-use pingap_core::{HttpHeader, convert_headers, resolve_static_header_value};
+use pingap_core::{
+    HttpHeader, convert_headers, resolve_static_header_value,
+    set_path_and_query,
+};
 use pingap_core::{
     LocationInstance, MissingPlugin, NamedPlugin, PluginProvider,
 };
@@ -900,10 +903,8 @@ impl LocationInstance for Location {
         }
         debug!(target: LOG_TARGET, new_path, "rewrite path");
 
-        // set new uri
-        if let Err(e) =
-            new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
-        {
+        // set new uri, the host of an HTTP/2 request stays in it
+        if let Err(e) = set_path_and_query(header, &new_path) {
             error!(target: LOG_TARGET, error = %e, location = self.name.as_ref(), "new path parse fail");
         }
 
@@ -1103,6 +1104,33 @@ mod tests {
         assert_eq!(false, matched);
         assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
+    }
+
+    /// Regression: a rewrite replaced the whole uri with the new path. An
+    /// HTTP/2 request has its host there, so the host was gone afterwards:
+    /// for the upstream, and for the cache key.
+    #[test]
+    fn test_rewrite_keeps_the_authority() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("up".to_string()),
+                rewrite: Some("^/api/(.*) /$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut variables = None;
+
+        let mut h2 = RequestHeader::build("GET", b"/", None).unwrap();
+        h2.set_uri(http::Uri::from_static("https://a.test/api/me?abc=1"));
+        assert_eq!(true, lo.rewrite(&mut h2, &mut variables));
+        assert_eq!("https://a.test/me?abc=1", h2.uri.to_string());
+
+        let mut h1 =
+            RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
+        assert_eq!(true, lo.rewrite(&mut h1, &mut variables));
+        assert_eq!("/me?abc=1", h1.uri.to_string());
     }
 
     /// The resolved plugin list is shared until the provider reports a new

@@ -57,6 +57,8 @@ trusted_proxies = ["10.0.0.0/8"]
 - 经过可信代理时，`X-Forwarded-For` 从右向左读。每一级代理都会把收到请求的来源地址追加在末尾，所以属于可信代理的条目被跳过，第一个不属于可信代理的条目就是客户端。它左边的内容是该客户端自己发来的，不会被采用：从 `10.0.0.2` 收到 `X-Forwarded-For: 6.6.6.6, 9.9.9.9` 时，客户端是 `9.9.9.9`。多行 `X-Forwarded-For` 按一个列表处理，条目可以带端口（`9.9.9.9:4321`、`[2001:db8::1]:4321`）。
 - 没有 `X-Forwarded-For` 时取 `X-Real-IP`，再没有则取对端地址。
 
+可信代理自己也要配置正确：把来源地址追加到 `X-Forwarded-For`（nginx：`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`）；如果它根本不发送这个头，就要由它来设置 `X-Real-IP`。代理把这两个头按客户端发来的样子原样转发时，客户端 IP 仍然由客户端说了算。
+
 没有配置 `trusted_proxies` 时，任何来源的 `X-Forwarded-For` 的第一个条目都会被采用，只有在客户端无法直连 pingap 时才安全。
 
 ## 响应

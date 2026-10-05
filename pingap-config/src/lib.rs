@@ -84,7 +84,7 @@ impl Observer {
     /// Waits for the next configuration change, `true` when there is one.
     ///
     /// An error means this observer is finished - the watch broke, or the
-    /// server ended it - and a new one has to be created. The end of the
+    /// server closed or canceled it - and a new one has to be created. The end of the
     /// stream used to be reported as "no change": the caller asked again at
     /// once, got the same answer, and spun on one core without ever seeing
     /// another change.
@@ -98,13 +98,25 @@ impl Observer {
         let resp = stream.message().await.map_err(|e| Error::Etcd {
             source: Box::new(e),
         })?;
-        if resp.is_none() {
+        let Some(resp) = resp else {
             return Err(Error::Invalid {
                 message: "etcd watch stream is closed".to_string(),
             });
+        };
+        // The server ended the watch - no permission for the prefix, a
+        // compacted revision - and may well leave the stream open. Nothing
+        // more would ever come over it.
+        if resp.canceled() {
+            return Err(Error::Invalid {
+                message: format!(
+                    "etcd watch is canceled: {}",
+                    resp.cancel_reason()
+                ),
+            });
         }
-
-        Ok(true)
+        // The first message only acknowledges the watch; a change is a
+        // message with events in it.
+        Ok(!resp.events().is_empty())
     }
 }
 

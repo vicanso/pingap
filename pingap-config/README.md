@@ -150,7 +150,7 @@ is written as depends on where the configuration is kept:
 | --- | --- |
 | TOML, a single file or a directory | TOML |
 | A single `.hcl` or `.kdl` file | That format again. The whole file is rewritten in pingap's own layout, so comments and nesting written by hand are not kept. What is about to be written is read back first, and a configuration that would not come back the same is refused and nothing is saved. |
-| A directory of `.hcl` or `.kdl` files | Nothing: such a directory is read-only, and a change is refused with an error. Its files are laid out as their author saw fit, so there is no file one entry belongs in. Edit the files, or keep the configuration in TOML to manage it through pingap. |
+| A directory of `.hcl` or `.kdl` files | Nothing: such a directory is read-only, and a change is refused with an error. Its files are laid out as their author saw fit, so there is no file one entry belongs in. Edit the files, or keep the configuration in TOML to manage it through pingap. ACME cannot work on such a directory either: it has nowhere to store its account, tokens and certificates. |
 
 ```toml
 [upstreams.api]

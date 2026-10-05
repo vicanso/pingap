@@ -1071,6 +1071,33 @@ impl Ctx {
     }
 }
 
+/// Writes the host part of a cache key.
+///
+/// In lower case: a host name is case-insensitive, and one spelling keeps
+/// `Example.com` from caching beside `example.com`. Anything that is not a
+/// host name character is written as `%XX`. A `Host` header is whatever the
+/// client sent, and written as it came `a.com/static` followed by the path
+/// `/app.js` made the key of `a.com` and `/static/app.js`: one request
+/// could store its response under the key of another url.
+fn push_key_host(key: &mut String, host: &str) {
+    for byte in host.bytes() {
+        match byte {
+            b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'.'
+            | b'-'
+            | b'_'
+            | b':'
+            | b'['
+            | b']' => key.push(byte as char),
+            b'A'..=b'Z' => key.push(byte.to_ascii_lowercase() as char),
+            _ => {
+                let _ = write!(key, "%{byte:02X}");
+            },
+        }
+    }
+}
+
 /// Generates the cache key of a request.
 ///
 /// The primary is, in this order: the namespace, the custom keys (each
@@ -1129,11 +1156,10 @@ pub fn get_cache_key(
             key_buf.push(':');
         }
     }
-    // Then "METHOD:host/path?query". A host name is case-insensitive; one
-    // spelling keeps `Example.com` from caching beside `example.com`.
+    // Then "METHOD:host/path?query".
     key_buf.push_str(method);
     key_buf.push(':');
-    key_buf.extend(host.chars().map(|c| c.to_ascii_lowercase()));
+    push_key_host(&mut key_buf, host);
     key_buf.push_str(path);
     if let Some(query) = query {
         key_buf.push('?');
@@ -1350,6 +1376,32 @@ mod tests {
             Some("my-nsGET:other.com/path?a=1")
         );
         assert_ne!(key2.primary(), other.primary());
+        // Regression: the host is the client's to write, and must not be
+        // able to stand in for a piece of the path. These two used to have
+        // one key.
+        let odd = get_cache_key(
+            &ctx_with_ns,
+            method,
+            &h1("example.com/static", "/app.js"),
+        );
+        let plain = get_cache_key(
+            &ctx_with_ns,
+            method,
+            &h1("example.com", "/static/app.js"),
+        );
+        assert_eq!(
+            odd.primary_key_str(),
+            Some("my-nsGET:example.com%2Fstatic/app.js")
+        );
+        assert_ne!(odd.primary(), plain.primary());
+        // An escape of its own does not get it there either.
+        let escaped = get_cache_key(
+            &ctx_with_ns,
+            method,
+            &h1("example.com%2Fstatic", "/app.js"),
+        );
+        assert_ne!(odd.primary(), escaped.primary());
+
         // No host at all (HTTP/1.0).
         let bare = RequestHeader::build("GET", b"/path", None).unwrap();
         assert_eq!(

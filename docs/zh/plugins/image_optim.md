@@ -21,7 +21,7 @@ cargo build --features=imageoptim
 | `avif_quality` | int | `75` | 1–100。 |
 | `avif_speed` | int | `3` | 1–10。越高越快、文件越大。 |
 
-仅状态码为 `200`、类型为 `image/png` 或 `image/jpeg` 的上游响应是候选。其余原样透传，`Content-Length` 超过 20 MB 的图片也原样透传。
+仅状态码为 `200`、类型为 `image/png` 或 `image/jpeg` 的上游响应是候选。其余原样透传，`Content-Length` 超过 20 MB 或带有 `Content-Encoding` 的图片也原样透传。
 
 ## 示例
 

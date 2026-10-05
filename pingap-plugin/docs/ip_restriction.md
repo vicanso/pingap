@@ -69,6 +69,12 @@ With `trusted_proxies` set:
   list, and an entry may carry a port (`9.9.9.9:4321`, `[2001:db8::1]:4321`).
 - Without `X-Forwarded-For` the address is `X-Real-IP`, then the peer.
 
+The trusted proxy has to do its part: append to `X-Forwarded-For` (nginx:
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`), or, if it does
+not send that header at all, set `X-Real-IP` itself. A proxy that passes either
+header through as the client sent it leaves the client in charge of its
+address.
+
 Without `trusted_proxies` the first `X-Forwarded-For` entry is taken from
 anyone, which is only safe when no client can reach pingap directly.
 

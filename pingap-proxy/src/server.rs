@@ -1512,6 +1512,11 @@ impl ProxyHttp for Server {
         client_reused: bool,
     ) -> Box<pingora::Error> {
         let mut e = e.more_context(format!("Peer: {peer}"));
+        // A pooled connection the backend had already closed. That says
+        // nothing about its health, whether the request is retried (a GET)
+        // or not (a POST), so it is read before the retry is decided.
+        let stale_connection =
+            client_reused && matches!(e.retry, pingora::RetryType::ReusedOnly);
         if !session.req_header().method.is_idempotent()
             || session.as_ref().retry_buffer_truncated()
         {
@@ -1519,11 +1524,9 @@ impl ProxyHttp for Server {
         } else {
             e.retry.decide_reuse(client_reused);
         }
-        // Not when the request is retried: that is a reused connection the
-        // backend had already closed, which says nothing about its health.
         // Not once a response header arrived either, `on_response` has
         // counted that request.
-        if !e.retry()
+        if !stale_connection
             && e.esource() == &pingora::ErrorSource::Upstream
             && ctx.upstream.status.is_none()
             && let Some(upstream_instance) = &ctx.upstream.upstream_instance
@@ -3452,10 +3455,12 @@ value = 'proxy_set_headers = ["name:value"]'
         assert_eq!((1, false), run("GET", timeout(), None, true).await);
         // It closed a fresh connection before answering.
         assert_eq!((1, false), run("GET", closed(), None, false).await);
-        // A reused connection it had already closed: retried, says nothing.
+        // A reused connection it had already closed says nothing about the
+        // backend, retried (GET) or not (POST).
         assert_eq!((0, true), run("GET", closed(), None, true).await);
-        // Not retried for a POST, so that one is the request's outcome.
-        assert_eq!((1, false), run("POST", closed(), None, true).await);
+        assert_eq!((0, false), run("POST", closed(), None, true).await);
+        // On a fresh connection the same error is the backend's doing.
+        assert_eq!((1, false), run("POST", closed(), None, false).await);
         // The response header came, `on_response` has counted it.
         assert_eq!(
             (0, false),

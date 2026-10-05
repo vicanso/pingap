@@ -379,11 +379,17 @@ fn format_float(value: f64) -> String {
     }
 }
 
+/// `${` and `%{` start a template in a quoted HCL string. Doubling the
+/// first character writes them as they are.
+fn escape_hcl_template(s: &str) -> String {
+    s.replace("${", "$${").replace("%{", "%%{")
+}
+
 /// Convert a TOML value to its HCL attribute value representation.
 fn toml_value_to_hcl(value: &TomlValue) -> String {
     match value {
         TomlValue::String(s) => {
-            let escaped = s
+            let escaped = escape_hcl_template(s)
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"")
                 .replace('\n', "\\n")
@@ -425,8 +431,32 @@ fn hcl_indent(indent: usize) -> String {
     "    ".repeat(indent)
 }
 
+/// Whether an indented heredoc gives back exactly `s`.
+///
+/// A heredoc always ends its last line, strips the indentation its lines
+/// have in common and stops at a line that is the marker, so it only holds
+/// a string that ends with a newline and whose lines are neither blank nor
+/// indented themselves. A template sequence has no literal form in one
+/// either: the parser hands the escaped `$${` back as written. Anything
+/// else - a certificate without the final newline, for one - is written as
+/// a quoted string with escapes, which is exact. Every multi-line string
+/// used to get a heredoc, and came back with a newline added, its own
+/// indentation gone or its `\r` dropped.
+fn fits_heredoc(s: &str) -> bool {
+    s.ends_with('\n')
+        && !s.contains('\r')
+        && !s.contains("${")
+        && !s.contains("%{")
+        && s.lines().all(|line| {
+            !line.is_empty()
+                && !line.starts_with([' ', '\t'])
+                && line.trim_end() != "EOT"
+        })
+}
+
 /// Write an HCL attribute (key = value) at the given indentation level.
-/// Multiline strings use heredoc (`<<-EOT ... EOT`) for readability.
+/// A multiline string is written as a heredoc (`<<-EOT ... EOT`) for
+/// readability when that is exact, see `fits_heredoc`.
 fn write_hcl_attr(
     output: &mut String,
     key: &str,
@@ -438,7 +468,7 @@ fn write_hcl_attr(
     output.push_str(" = ");
 
     if let TomlValue::String(s) = value
-        && s.contains('\n')
+        && fits_heredoc(s)
     {
         let inner = hcl_indent(indent + 1);
         output.push_str("<<-EOT\n");

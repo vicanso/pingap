@@ -77,7 +77,10 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
             .filter_map(|item| item.as_str())
             .map(String::from) // same as .map(|s| s.to_string())
             .collect(),
-        Some(toml::Value::String(item)) => vec![item.clone()],
+        // An empty string is an empty list, not a list of one empty item.
+        Some(toml::Value::String(item)) if !item.is_empty() => {
+            vec![item.clone()]
+        },
         _ => vec![],
     }
 }
@@ -291,6 +294,7 @@ list = ["a", "b"]
 one = ["a"]
 bare = "a"
 empty = []
+blank = ""
 number = 1
 "#,
         )
@@ -299,7 +303,7 @@ number = 1
         assert_eq!(vec!["a"], get_str_slice_conf(&conf, "one"));
         // One value written without the brackets, as KDL has it.
         assert_eq!(vec!["a"], get_str_slice_conf(&conf, "bare"));
-        for key in ["empty", "number", "missing"] {
+        for key in ["empty", "blank", "number", "missing"] {
             assert_eq!(
                 true,
                 get_str_slice_conf(&conf, key).is_empty(),

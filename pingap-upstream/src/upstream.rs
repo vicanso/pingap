@@ -785,7 +785,9 @@ impl Upstream {
     ///
     /// The first few candidates settle nearly every request. When all of
     /// them are refused the selection runs again with `max_steps(number of
-    /// backends)` candidates, enough to reach every backend.
+    /// backends)` candidates, and when that finds nothing either, every
+    /// backend is asked in turn: `None` means none of them can take the
+    /// request.
     ///
     /// Stopping after the first few answered 503 while healthy backends
     /// were left. With round robin and five backends it was worse than a
@@ -811,12 +813,23 @@ impl Upstream {
         }
         // Only now, off the common path: reading the backend set takes a
         // reference on it.
-        let count = lb.backends().get_backend().len();
-        let steps = max_steps(count);
-        if steps <= FAST_SELECT_STEPS {
-            return None;
+        let backends = lb.backends();
+        let set = backends.get_backend();
+        let steps = max_steps(set.len());
+        if steps > FAST_SELECT_STEPS
+            && let Some(backend) = lb.select_with(key, steps, accept)
+        {
+            return Some(backend);
         }
-        lb.select_with(key, steps, accept)
+        // The selection above still only samples. Round robin draws from a
+        // counter it shares with every other request, so under load the
+        // candidates of one request are not consecutive and may repeat,
+        // and a walk along the hash ring can keep landing on the same
+        // backends. Whatever it missed is found by asking each backend
+        // once.
+        set.iter()
+            .find(|backend| accept(backend, backends.ready(backend)))
+            .cloned()
     }
 
     /// Creates and configures a new HTTP peer for handling requests
