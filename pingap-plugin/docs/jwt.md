@@ -21,7 +21,10 @@ order:
    A token without a `kid` is tried against every key, and a key without one (a
    single-key JWKS, typically) is kept rather than dropped. Keys are cached for
    `jwks_ttl`, refreshed single-flight with a cooldown of `min(jwks_ttl, 10s)`,
-   and a stale cache is reused if a refetch fails.
+   and a stale cache is reused if a refetch fails. The cooldown counts from
+   the last attempt whether it succeeded or not, so while the endpoint is down
+   it is asked once per cooldown and requests are answered from what is cached
+   instead of waiting on it.
 3. **HMAC** — otherwise `secret` is used with `HS256` or `HS512`.
 
 ## Configuration

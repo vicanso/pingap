@@ -292,8 +292,11 @@ impl Limiter {
             // For inflight limiting:
             // Increment counter
             // Store guard in context - when guard is dropped, counter auto-decrements
+            // Added to the others, never in place of one: a second inflight
+            // limit on the location used to drop the guard of the first,
+            // which released its count at once and so never limited.
             let (guard, value) = inflight.incr(&key, 1);
-            ctx.state.guard = Some(guard);
+            ctx.state.guards.push(guard);
             value as f64
         } else {
             0.0
@@ -492,7 +495,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.state.guard.is_some());
+        assert_eq!(1, ctx.state.guards.len());
     }
     #[tokio::test]
     async fn test_new_req_header_limiter() {
@@ -515,7 +518,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.state.guard.is_some());
+        assert_eq!(1, ctx.state.guards.len());
     }
     #[tokio::test]
     async fn test_new_query_limiter() {
@@ -538,7 +541,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.state.guard.is_some());
+        assert_eq!(1, ctx.state.guards.len());
     }
     #[tokio::test]
     async fn test_new_ip_limiter() {
@@ -559,7 +562,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.state.guard.is_some());
+        assert_eq!(1, ctx.state.guards.len());
     }
     #[tokio::test]
     async fn test_inflight_limit() {
@@ -614,6 +617,70 @@ max = 1
             .unwrap();
 
         assert_eq!(true, result == RequestPluginResult::Continue);
+    }
+
+    /// Regression: a request had room for one inflight guard. A second
+    /// inflight limit on the location took the place of the first one's
+    /// guard, which released that limiter's count while the request was
+    /// still running: the first limit never limited anything.
+    #[tokio::test]
+    async fn test_two_inflight_limits_on_one_request() {
+        let new_limiter = |tag: &str, key: &str| {
+            Limiter::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    "type = \"inflight\"\ntag = \"{tag}\"\nkey = \"{key}\"\nmax = 1"
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let by_app = new_limiter("header", "X-App");
+        let by_user = new_limiter("header", "X-User");
+        let new_session = async || {
+            let mock_io = Builder::new()
+                .read(b"GET / HTTP/1.1\r\nX-App: a\r\nX-User: u\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            session
+        };
+
+        // The first request passes both limits and holds both counts.
+        let mut session = new_session().await;
+        let mut first = Ctx::default();
+        for limiter in [&by_app, &by_user] {
+            let result = limiter
+                .handle_request(PluginStep::Request, &mut session, &mut first)
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Continue);
+        }
+        assert_eq!(2, first.state.guards.len());
+
+        // While it is running, a second one is over the first limit already.
+        let mut session = new_session().await;
+        let mut second = Ctx::default();
+        let result = by_app
+            .handle_request(PluginStep::Request, &mut session, &mut second)
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("the first limit must still be counting the first request");
+        };
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
+        drop(second);
+
+        // When the first request ends, both counts are released.
+        drop(first);
+        let mut session = new_session().await;
+        let mut third = Ctx::default();
+        for limiter in [&by_app, &by_user] {
+            let result = limiter
+                .handle_request(PluginStep::Request, &mut session, &mut third)
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Continue);
+        }
     }
 
     #[tokio::test]

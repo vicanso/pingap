@@ -92,3 +92,5 @@ step = "proxy_upstream"
   want for abuse protection.
 - `max = 0` rejects everything for `inflight` (the first request already has a
   count of 1 which is `> 0`).
+- A location can carry several limits, for example one per IP and one per API
+  key. Each counts on its own, and a request has to fit within all of them.

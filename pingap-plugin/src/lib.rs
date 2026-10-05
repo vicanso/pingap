@@ -18,6 +18,7 @@ use pingap_core::PluginStep;
 use snafu::Snafu;
 use std::fmt::Write;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Snafu)]
@@ -64,6 +65,18 @@ pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
         .get(key)
         .and_then(|v| v.as_str())
         .and_then(|s| parse_duration(s).ok())
+}
+
+/// The name one plugin instance keeps its response body handler under.
+///
+/// The handlers of a request are kept by name, and the name used to be the
+/// plugin's category. Two plugins of one category on a location then shared
+/// a single slot: the second replaced the handler of the first, and both ran
+/// the one that was left, so its rules were applied twice and the other's
+/// not at all.
+pub fn new_body_handler_id(prefix: &str) -> String {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    format!("{prefix}{}", NEXT_ID.fetch_add(1, Ordering::Relaxed))
 }
 
 /// A list of strings. One string on its own is a list of one: that is how

@@ -46,7 +46,9 @@ prefix = "/api"
 
 ## 行为
 
-当协议已符合 `http_to_https` **且** 路径已以 `prefix` 开头时，插件跳过请求。否则以 `status` 响应，`Location` 由目标协议、请求 `Host`、`prefix` 与原始 URI 构成。
+当协议已符合 `http_to_https` **且** 路径已以 `prefix` 开头时，插件跳过请求。否则以 `status` 响应，`Location` 由目标协议、请求的域名、`prefix` 与原始的路径和查询串构成。
+
+只补前缀时保留请求的端口，因为协议不变、监听也不变：`example.com:8080/users` 跳到 `http://example.com:8080/api/users`。改变协议的跳转不带端口，落到新协议的默认端口上，因为旧端口并不提供新协议。
 
 状态码选择：
 
@@ -59,6 +61,6 @@ prefix = "/api"
 
 ## 使用说明
 
-- 一旦发生重定向，`prefix` 会无条件前置。若协议不匹配但路径*已经*带前缀，发出的 `Location` 会重复（`/api/api/users`）。请把 `prefix` 用在路径本身不含该前缀的 location 上，或仅做协议跳转的服务器上不设 `prefix`。
+- 只有路径缺少 `prefix` 时才会补上，所以对已经带前缀的 URL 做协议跳转，结果仍是 `/api/users`，不会变成 `/api/api/users`。
 - “已是 HTTPS” 的判断基于 Pingap 终止的连接 TLS 状态。在 TLS 终止的负载均衡之后，每个请求都像明文 HTTP，本插件会循环——应在负载均衡处跳转，或不要在此处挂本插件。
 - `301`/`308` 会被浏览器积极缓存。先从 `307` 开始，配置验证后再改永久码。

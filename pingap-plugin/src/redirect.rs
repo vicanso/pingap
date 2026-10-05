@@ -20,6 +20,7 @@ use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_host,
     new_internal_error,
 };
+use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use tracing::debug;
@@ -164,9 +165,17 @@ impl Plugin for Redirect {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        // Extract host from request headers
-        // Fallback to empty string if not found
-        let host = get_host(session.req_header()).unwrap_or_default();
+        // The host to send the client to. A redirect that only adds the
+        // prefix stays where the request came in, port included: taking the
+        // host alone sent a request for `example.com:8080` to port 80. A
+        // change of scheme goes to the default port of the new scheme,
+        // since the port of the old one is not where the new one listens.
+        let req_header = session.req_header();
+        let host = if schema_match {
+            request_authority(req_header)
+        } else {
+            get_host(req_header).unwrap_or_default()
+        };
 
         // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };
@@ -176,22 +185,28 @@ impl Plugin for Redirect {
         // the redirect, and prepending unconditionally would produce
         // `/api/api/...`. The test matches the skip condition above so the two
         // cannot disagree.
-        let prefix =
-            if session.req_header().uri.path().starts_with(&self.prefix) {
-                ""
-            } else {
-                self.prefix.as_str()
-            };
+        let prefix = if req_header.uri.path().starts_with(&self.prefix) {
+            ""
+        } else {
+            self.prefix.as_str()
+        };
+        // Path and query only. The uri of an HTTP/2 request carries scheme
+        // and host as well, and written out whole it gave
+        // `https://example.comhttps://example.com/path`.
+        let path_and_query = req_header
+            .uri
+            .path_and_query()
+            .map(|value| value.as_str())
+            .unwrap_or("/");
 
         // Build Location with:
         // - Desired schema (http/https)
         // - Original host
         // - Configured prefix
-        // - Original URI (path + query parameters)
+        // - Original path and query parameters
         // A host the header syntax rejects is the client's mistake.
         let location = HeaderValue::from_str(&format!(
-            "{schema}://{host}{prefix}{}",
-            session.req_header().uri
+            "{schema}://{host}{prefix}{path_and_query}"
         ))
         .map_err(|e| new_internal_error(400, e))?;
 
@@ -201,6 +216,19 @@ impl Plugin for Redirect {
             ..Default::default()
         }))
     }
+}
+
+/// The host of the request as it was sent, with its port: the authority of
+/// the uri (HTTP/2), or the `Host` header.
+fn request_authority(req_header: &RequestHeader) -> &str {
+    if let Some(authority) = req_header.uri.authority() {
+        return authority.as_str();
+    }
+    req_header
+        .headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
 }
 
 register_plugin!("redirect", Redirect);
@@ -256,6 +284,97 @@ prefix = "/api"
         assert_eq!(
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
             format!("{:?}", resp.headers)
+        );
+    }
+
+    async fn location(
+        redirect: &Redirect,
+        session: &mut Session,
+    ) -> Option<String> {
+        let result = redirect
+            .handle_request(PluginStep::Request, session, &mut Ctx::default())
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            return None;
+        };
+        let headers = resp.headers.unwrap();
+        Some(headers[0].1.to_str().unwrap().to_string())
+    }
+
+    async fn h1_session(host: &str, path: &str) -> Session {
+        let input_header =
+            format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    /// Regression: the port of the request was dropped from the redirect.
+    /// When only the prefix is added the scheme stays, and so does the port.
+    #[tokio::test]
+    async fn test_redirect_keeps_the_port() {
+        let prefix_only = Redirect::new(
+            &toml::from_str::<PluginConf>("prefix = \"/api\"").unwrap(),
+        )
+        .unwrap();
+        let mut session = h1_session("github.com:8080", "/users?size=1").await;
+        assert_eq!(
+            Some("http://github.com:8080/api/users?size=1".to_string()),
+            location(&prefix_only, &mut session).await
+        );
+        let mut session = h1_session("[::1]:8080", "/users").await;
+        assert_eq!(
+            Some("http://[::1]:8080/api/users".to_string()),
+            location(&prefix_only, &mut session).await
+        );
+        // Nothing to do once the prefix is there.
+        let mut session = h1_session("github.com:8080", "/api/users").await;
+        assert_eq!(None, location(&prefix_only, &mut session).await);
+
+        // A change of scheme goes to the default port of the new scheme.
+        let to_https = Redirect::new(
+            &toml::from_str::<PluginConf>("http_to_https = true").unwrap(),
+        )
+        .unwrap();
+        let mut session = h1_session("github.com:8080", "/users").await;
+        assert_eq!(
+            Some("https://github.com/users".to_string()),
+            location(&to_https, &mut session).await
+        );
+    }
+
+    /// Regression: the uri of an HTTP/2 request has scheme and host in it,
+    /// and the whole of it was appended to the scheme and host of the
+    /// redirect.
+    #[tokio::test]
+    async fn test_redirect_http2_uri() {
+        let redirect = Redirect::new(
+            &toml::from_str::<PluginConf>(
+                "http_to_https = true\nprefix = \"/api\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = h1_session("ignored.example", "/").await;
+        session.req_header_mut().set_uri(
+            "http://github.com:8080/users?size=1"
+                .parse::<http::Uri>()
+                .unwrap(),
+        );
+        assert_eq!(
+            Some("https://github.com/api/users?size=1".to_string()),
+            location(&redirect, &mut session).await
+        );
+
+        let prefix_only = Redirect::new(
+            &toml::from_str::<PluginConf>("prefix = \"/api\"").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            Some("http://github.com:8080/api/users?size=1".to_string()),
+            location(&prefix_only, &mut session).await
         );
     }
 

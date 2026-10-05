@@ -211,6 +211,9 @@ fn verify_hmac_token(
 /// delay = "100ms"
 /// ```
 pub struct JwtAuth {
+    /// The name this instance keeps its body handler under, see
+    /// `new_body_handler_id`.
+    handler_id: String,
     /// Plugin execution step (must be Request)
     plugin_step: PluginStep,
 
@@ -356,7 +359,8 @@ struct JwksSource {
     cooldown: Duration,
     client: reqwest::Client,
     cache: ArcSwapOption<JwksCache>,
-    refresh_lock: tokio::sync::Mutex<()>,
+    /// Serializes refetches, and holds when the last one was started.
+    refresh_lock: tokio::sync::Mutex<Option<Instant>>,
 }
 
 impl JwksSource {
@@ -387,14 +391,18 @@ impl JwksSource {
     /// Refreshes the cache with single-flight + rate limiting. On fetch failure
     /// the previous cache is kept (graceful degradation).
     async fn refresh(&self) {
-        let _guard = self.refresh_lock.lock().await;
+        let mut last_attempt = self.refresh_lock.lock().await;
         // Re-check after acquiring the lock: a peer may have just refreshed, or
         // we may still be inside the cooldown window (bounds unknown-kid churn).
-        if let Some(cache) = self.cache.load_full()
-            && cache.fetched_at.elapsed() < self.cooldown
-        {
+        //
+        // The window starts at the last attempt, whether it worked or not.
+        // It used to start at the last success: while the endpoint was down
+        // nothing ever opened it, and every request waited its turn at the
+        // lock to spend the client's whole timeout on a fetch of its own.
+        if last_attempt.is_some_and(|at| at.elapsed() < self.cooldown) {
             return;
         }
+        *last_attempt = Some(Instant::now());
         match self.fetch().await {
             Ok(cache) => self.cache.store(Some(Arc::new(cache))),
             Err(e) => {
@@ -432,11 +440,14 @@ impl JwksSource {
     }
 }
 
-/// Validation pinned to the JWK's declared algorithm, enforcing signature and
-/// `exp` while ignoring `aud`.
+/// Validation pinned to the JWK's declared algorithm, enforcing signature,
+/// `exp` and `nbf` while ignoring `aud`.
 fn jwks_validation(alg: Algorithm) -> Validation {
     let mut validation = Validation::new(alg);
     validation.validate_aud = false;
+    // Off by default in the library, so a token that was not valid yet
+    // passed here while the HMAC path refused it.
+    validation.validate_nbf = true;
     validation
 }
 
@@ -483,7 +494,7 @@ fn build_jwks_source(value: &PluginConf) -> Result<Option<Arc<JwksSource>>> {
         cooldown,
         client,
         cache: ArcSwapOption::empty(),
-        refresh_lock: tokio::sync::Mutex::new(()),
+        refresh_lock: tokio::sync::Mutex::new(None),
     })))
 }
 
@@ -544,6 +555,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
 
         let params = Self {
             hash_value,
+            handler_id: crate::new_body_handler_id(PLUGIN_ID),
             plugin_step: PluginStep::Request,
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
@@ -736,7 +748,7 @@ impl Plugin for JwtAuth {
         );
 
         ctx.add_modify_body_handler(
-            PLUGIN_ID,
+            &self.handler_id,
             Box::new(Sign {
                 algorithm: self.algorithm.clone(),
                 secret: self.secret.clone(),
@@ -753,7 +765,7 @@ impl Plugin for JwtAuth {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
             modifier.handle(session, body, end_of_stream)?;
             let result = if end_of_stream {
                 ResponseBodyPluginResult::FullyReplaced
@@ -1017,7 +1029,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 keys,
                 fetched_at: Instant::now(),
             }))),
-            refresh_lock: tokio::sync::Mutex::new(()),
+            refresh_lock: tokio::sync::Mutex::new(None),
         };
         let entry = |kid: Option<&str>| JwkEntry {
             kid: kid.map(|k| k.to_string()),
@@ -1025,10 +1037,9 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         };
         let source = new_source(vec![entry(Some("kid-1"))]);
 
-        let sign = |kid: Option<&str>, exp: u64| {
+        let sign_claims = |kid: Option<&str>, claims: serde_json::Value| {
             let mut header = Header::new(Algorithm::ES256);
             header.kid = kid.map(|k| k.to_string());
-            let claims = serde_json::json!({ "sub": "u1", "exp": exp });
             encode(
                 &header,
                 &claims,
@@ -1036,6 +1047,23 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             )
             .unwrap()
         };
+        let sign = |kid: Option<&str>, exp: u64| {
+            sign_claims(kid, serde_json::json!({ "sub": "u1", "exp": exp }))
+        };
+
+        // Regression: `nbf` was not looked at on this path. A token that
+        // is not valid yet is rejected, one whose time has come is not.
+        let now = pingap_core::now_sec();
+        let not_yet = sign_claims(
+            Some("kid-1"),
+            serde_json::json!({ "exp": now + 7200, "nbf": now + 3600 }),
+        );
+        assert_eq!(false, source.verify(&not_yet).await);
+        let started = sign_claims(
+            Some("kid-1"),
+            serde_json::json!({ "exp": now + 7200, "nbf": now - 3600 }),
+        );
+        assert_eq!(true, source.verify(&started).await);
 
         // Matching kid + valid signature + not expired -> accepted.
         let token = sign(Some("kid-1"), pingap_core::now_sec() + 3600);
@@ -1063,6 +1091,46 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
     }
 
     /// The HMAC path, claim by claim.
+    /// Regression: after a refetch that failed the next request tried
+    /// again at once, and so did every request after it, one at a time,
+    /// each for as long as the endpoint took to fail.
+    #[tokio::test]
+    async fn test_jwks_refetch_cools_down_after_a_failure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // An endpoint that takes the connection and closes it.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = attempts.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::Relaxed);
+                drop(stream);
+            }
+        });
+
+        let source = JwksSource {
+            url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(3600),
+            cooldown: Duration::from_millis(300),
+            client: reqwest::Client::new(),
+            cache: ArcSwapOption::empty(),
+            refresh_lock: tokio::sync::Mutex::new(None),
+        };
+        for _ in 0..5 {
+            source.refresh().await;
+        }
+        assert_eq!(1, attempts.load(Ordering::Relaxed));
+        assert_eq!(true, source.cache.load().is_none());
+
+        // Once the window has passed the endpoint is asked again.
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        source.refresh().await;
+        assert_eq!(2, attempts.load(Ordering::Relaxed));
+    }
+
     #[test]
     fn test_verify_hmac_token() {
         use jsonwebtoken::{EncodingKey, Header, encode};

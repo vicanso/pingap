@@ -846,9 +846,12 @@ impl Plugin for Directory {
         if size <= chunk_size {
             let mut buffer = vec![0; size];
             match f.read_exact(&mut buffer).await {
+                // Only for what may be cached: an html page read in one piece
+                // used to get the `max-age` that a streamed one, and the
+                // documentation, leave out.
                 Ok(_) => Ok(RequestPluginResult::Respond(HttpResponse {
                     status: StatusCode::OK,
-                    max_age: self.max_age,
+                    max_age: if cacheable { self.max_age } else { None },
                     cache_private: self.cache_private,
                     headers: Some(headers),
                     body: buffer.into(),
@@ -936,6 +939,28 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+
+    /// Regression: `max_age` is for what may be cached. A small html file,
+    /// read in one piece, used to get it too.
+    #[tokio::test]
+    async fn test_directory_html_has_no_max_age() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("index.html"), "<html></html>")
+            .unwrap();
+        std::fs::write(root.path().join("app.js"), "let a = 1;").unwrap();
+        let dir = new_directory(root.path(), "max_age = \"1h\"");
+
+        let resp = request(&dir, "GET /index.html HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(None, resp.max_age);
+        let resp = request(&dir, "GET / HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(None, resp.max_age);
+
+        let resp = request(&dir, "GET /app.js HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(Some(3600), resp.max_age);
     }
 
     /// A conditional request with the ETag it was given is answered 304.

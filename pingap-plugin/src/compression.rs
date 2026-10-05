@@ -93,6 +93,9 @@ impl ModifyResponseBody for Compressor {
 /// Plugin for handling HTTP response compression
 /// Supports multiple compression algorithms with configurable compression levels
 pub struct Compression {
+    /// The name this instance keeps its body handler under, see
+    /// `new_body_handler_id`.
+    handler_id: String,
     // Compression levels for each algorithm (0-9 for gzip, 0-11 for brotli, 0-22 for zstd)
     gzip_level: u32,
     br_level: u32,
@@ -168,6 +171,7 @@ impl TryFrom<&PluginConf> for Compression {
 
         let params = Self {
             hash_value,
+            handler_id: crate::new_body_handler_id(PLUGIN_ID),
             gzip_level,
             br_level,
             zstd_level,
@@ -411,7 +415,7 @@ impl Plugin for Compression {
                 GZIP,
             )
         };
-        ctx.add_modify_body_handler(PLUGIN_ID, handler);
+        ctx.add_modify_body_handler(&self.handler_id, handler);
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
         Ok(ResponsePluginResult::Modified)
@@ -446,7 +450,7 @@ impl Plugin for Compression {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
             modifier.handle(session, body, end_of_stream)?;
             let result = if end_of_stream {
                 ResponseBodyPluginResult::FullyReplaced

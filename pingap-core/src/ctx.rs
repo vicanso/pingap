@@ -275,8 +275,10 @@ pub struct RequestState {
     pub status: Option<StatusCode>,
     /// The size of the request payload in bytes.
     pub payload_size: usize,
-    /// A guard for rate limiting, if applicable.
-    pub guard: Option<Guard>,
+    /// The inflight limiters this request is counted in, one guard each.
+    /// A limiter's count goes down again when its guard is dropped, at the
+    /// end of the request.
+    pub guards: Vec<Guard>,
     /// The total number of requests currently being processed by the service.
     pub processing_count: i32,
     /// The total number of requests accepted by the service.

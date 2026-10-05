@@ -39,6 +39,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// 1. Regex-based replacement (subs_filter)
 /// 2. Literal string replacement (sub_filter)
 pub struct SubFilter {
+    /// The name this instance keeps its body handler under, see
+    /// `new_body_handler_id`.
+    handler_id: String,
     /// Regex pattern that matches against request paths
     /// Only requests with matching paths will be processed by this filter
     path: Option<Regex>,
@@ -244,6 +247,7 @@ impl TryFrom<&PluginConf> for SubFilter {
             path,
             filters: filters.into(),
             hash_value,
+            handler_id: crate::new_body_handler_id(PLUGIN_ID),
             status_codes,
         })
     }
@@ -308,7 +312,7 @@ impl Plugin for SubFilter {
         );
         // Set up the response body modifier
         ctx.add_modify_body_handler(
-            PLUGIN_ID,
+            &self.handler_id,
             Box::new(SubFilterReplacer {
                 filters: self.filters.clone(),
                 buffer: BytesMut::new(),
@@ -323,7 +327,7 @@ impl Plugin for SubFilter {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
             modifier.handle(session, body, end_of_stream)?;
             let result = if end_of_stream {
                 ResponseBodyPluginResult::FullyReplaced
@@ -483,6 +487,45 @@ mod tests {
         .unwrap()
         .to_string();
         assert_eq!(true, err.contains("invalid status code(abc)"), "{err}");
+    }
+
+    /// Regression: two sub_filter plugins on one location shared one
+    /// handler slot. The second took the place of the first and then ran
+    /// twice: its rule was applied two times and the other's not at all.
+    #[tokio::test]
+    async fn test_two_sub_filters_on_one_request() {
+        let new_filter = |rule: &str| {
+            SubFilter::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "filters = [\"{rule}\"]"
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        // `a` becomes `ab`, then `b` becomes `bb`: `a` ends as `abb`.
+        let first = new_filter("sub_filter 'a' 'ab' g");
+        let second = new_filter("sub_filter 'b' 'bb' g");
+        assert_ne!(first.handler_id, second.handler_id);
+
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        for plugin in [&first, &second] {
+            let result = plugin
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap();
+            assert_eq!(ResponsePluginResult::Modified, result);
+        }
+        let mut body = Some(Bytes::from_static(b"a-b"));
+        for plugin in [&first, &second] {
+            plugin
+                .handle_response_body(&mut session, &mut ctx, &mut body, true)
+                .unwrap();
+        }
+        // It used to be `a-bbbb`: the second rule twice, the first never.
+        assert_eq!(b"abb-bb".as_ref(), body.unwrap().as_ref());
     }
 
     /// Nothing to rewrite: HEAD, 204, 304, or a compressed body.

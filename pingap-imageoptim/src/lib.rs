@@ -149,6 +149,9 @@ impl ModifyResponseBody for ImageOptimizer {
 }
 
 pub struct ImageOptim {
+    /// The name this instance keeps its body handler under, see
+    /// `new_body_handler_id`.
+    handler_id: String,
     /// A unique identifier for this plugin instance.
     /// Used for internal tracking and debugging purposes.
     hash_value: String,
@@ -214,6 +217,7 @@ impl TryFrom<&PluginConf> for ImageOptim {
         }
         Ok(Self {
             hash_value,
+            handler_id: pingap_plugin::new_body_handler_id(PLUGIN_ID),
             support_types: HashSet::from([
                 "jpeg".to_string(),
                 "png".to_string(),
@@ -347,7 +351,7 @@ impl Plugin for ImageOptim {
         let capacity = content_length.unwrap_or(8192);
 
         ctx.add_modify_body_handler(
-            PLUGIN_ID,
+            &self.handler_id,
             Box::new(ImageOptimizer {
                 image_type,
                 png_quality: self.png_quality,
@@ -370,7 +374,7 @@ impl Plugin for ImageOptim {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
             modifier.handle(session, body, end_of_stream)?;
             let result = if end_of_stream {
                 ResponseBodyPluginResult::FullyReplaced
@@ -591,7 +595,10 @@ png_quality = 90
             upstream_response.headers.get("transfer-encoding").unwrap()
         );
         assert_eq!(true, ResponsePluginResult::Modified == result);
-        assert_eq!(true, ctx.get_modify_body_handler(PLUGIN_ID).is_some());
+        assert_eq!(
+            true,
+            ctx.get_modify_body_handler(&optim.handler_id).is_some()
+        );
         // The first configured format the client accepts, as a media type.
         assert_eq!(
             "image/avif",

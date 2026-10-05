@@ -49,8 +49,14 @@ prefix = "/api"
 
 The plugin skips the request when the scheme already matches `http_to_https`
 **and** the path already starts with `prefix`. Otherwise it responds with
-`status` and a `Location` built from the target scheme, the request `Host`,
-`prefix` and the original URI.
+`status` and a `Location` built from the target scheme, the request host,
+`prefix` and the original path and query.
+
+The port of the request is kept when only the prefix is added, since the
+scheme, and so the listener, stays the same: `example.com:8080/users` goes to
+`http://example.com:8080/api/users`. A redirect that changes the scheme leaves
+the port out and lands on the default port of the new scheme, as the old port
+is not where the new scheme is served.
 
 Status choice:
 
