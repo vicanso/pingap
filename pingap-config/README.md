@@ -33,7 +33,11 @@ pub struct PingapConfig {
 | `storages` | Reusable configuration fragments referenced by `includes`; also where ACME keeps its challenge state |
 
 Every section implements `Validate`. `pingap -t` loads the configuration, runs
-all validators and exits — run it in CI and before a reload.
+all validators and exits — run it in CI and before a reload. On top of the
+validators it builds every location and every plugin the way startup does, so
+a path or host regex that does not compile, a malformed `rewrite` rule or an
+invalid plugin setting is reported there and not on the next start. It only
+reads: the configuration is left exactly as it is on disk.
 
 ## Storage backends
 
@@ -101,6 +105,9 @@ arbitrarily named files:
   directory and removed;
 - otherwise it is renamed to `<name>.toml.bak`, which the loader ignores since
   it only globs `*.toml`.
+
+Commands that only read the configuration — `--test`, `--to-hcl`, `--to-kdl`
+and `--sync` — skip the migration and load whatever layout is there.
 
 Either way the retired path is printed at startup. A directory that is already
 carrying two layouts cannot be migrated — which table should win is not

@@ -674,7 +674,11 @@ impl UpstreamConf {
             });
         }
 
-        Ok(())
+        validate_tcp_keepalive(
+            self.tcp_idle,
+            self.tcp_interval,
+            self.tcp_probe_count,
+        )
     }
 
     fn validate_max_h2_streams(&self) -> Result<()> {
@@ -1078,6 +1082,11 @@ impl ServerConf {
         }
 
         self.validate_h2()?;
+        validate_tcp_keepalive(
+            self.tcp_idle,
+            self.tcp_interval,
+            self.tcp_probe_count,
+        )?;
 
         // The fingerprint comes from the ClientHello, which only a TLS
         // listener receives; on a plain one the option would do nothing.
@@ -1267,6 +1276,45 @@ impl Validate for BasicConf {
                     .to_string(),
             });
         }
+        // The interval is the period of a timer, and a timer with a period
+        // of zero panics the moment it is created: the config check passed
+        // and the background service died at startup.
+        if let Some(value) = self.auto_restart_check_interval
+            && value < Duration::from_secs(1)
+        {
+            return Err(Error::Invalid {
+                message: "auto restart check interval should be at least 1s"
+                    .to_string(),
+            });
+        }
+        // The number of accept loops per listening socket. With none the
+        // socket is bound and nothing ever accepts on it.
+        if self.listener_tasks_per_fd == Some(0) {
+            return Err(Error::Invalid {
+                message: "listener tasks per fd should be greater than 0"
+                    .to_string(),
+            });
+        }
+        // Anything else was taken for zstd without a word.
+        if let Some(value) = &self.log_compress_algorithm
+            && !["", "gzip", "zstd"].contains(&value.as_str())
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "log compress algorithm {value} is invalid, expected gzip or zstd"
+                ),
+            });
+        }
+        // An hour of the day; past 23 the compression never ran.
+        if self
+            .log_compress_time_point_hour
+            .is_some_and(|hour| hour > 23)
+        {
+            return Err(Error::Invalid {
+                message: "log compress time point hour should be 0 to 23"
+                    .to_string(),
+            });
+        }
         // pingora only offloads when both values of a pair are set and
         // non-zero, and says nothing otherwise; refuse the half-configured
         // states instead.
@@ -1282,6 +1330,30 @@ impl Validate for BasicConf {
         )?;
         Ok(())
     }
+}
+
+/// The keepalive timings go to the kernel in whole seconds, and it refuses
+/// a zero for any of the three (`EINVAL`). An idle time or interval under
+/// one second, or a probe count of zero, passed the config check and then
+/// failed every connection the option was applied to.
+fn validate_tcp_keepalive(
+    idle: Option<Duration>,
+    interval: Option<Duration>,
+    probe_count: Option<usize>,
+) -> Result<()> {
+    for (name, value) in [("tcp idle", idle), ("tcp interval", interval)] {
+        if value.is_some_and(|value| value < Duration::from_secs(1)) {
+            return Err(Error::Invalid {
+                message: format!("{name} should be at least 1s"),
+            });
+        }
+    }
+    if probe_count == Some(0) {
+        return Err(Error::Invalid {
+            message: "tcp probe count should be greater than 0".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// An offload pool is described by two numbers that only mean something
@@ -2587,6 +2659,98 @@ restart_ready_timeout = "2m"
             "Invalid error restart ready timeout should be at least 1s",
             result.expect_err("").to_string()
         );
+    }
+
+    /// Values that used to pass the check and only fail, or silently do
+    /// nothing, in the running process.
+    #[test]
+    fn test_basic_values_that_fail_at_runtime() {
+        let invalid = |conf: &str| {
+            toml::from_str::<BasicConf>(conf)
+                .unwrap()
+                .validate()
+                .unwrap_err()
+                .to_string()
+        };
+        // A timer with a period of zero panics when it is created.
+        for value in ["0s", "500ms"] {
+            assert_eq!(
+                "Invalid error auto restart check interval should be at least 1s",
+                invalid(&format!("auto_restart_check_interval = \"{value}\""))
+            );
+        }
+        // No accept loop: the listener is bound and never answers.
+        assert_eq!(
+            "Invalid error listener tasks per fd should be greater than 0",
+            invalid("listener_tasks_per_fd = 0")
+        );
+        assert_eq!(
+            "Invalid error log compress algorithm brotli is invalid, expected gzip or zstd",
+            invalid("log_compress_algorithm = \"brotli\"")
+        );
+        assert_eq!(
+            "Invalid error log compress time point hour should be 0 to 23",
+            invalid("log_compress_time_point_hour = 24")
+        );
+
+        for conf in [
+            "auto_restart_check_interval = \"1s\"",
+            "listener_tasks_per_fd = 1",
+            "log_compress_algorithm = \"gzip\"",
+            "log_compress_algorithm = \"zstd\"",
+            "log_compress_time_point_hour = 23",
+            "log_compress_time_point_hour = 0",
+        ] {
+            let result = toml::from_str::<BasicConf>(conf).unwrap().validate();
+            assert_eq!(true, result.is_ok(), "{conf}: {result:?}");
+        }
+    }
+
+    /// The kernel takes the keepalive timings in whole seconds and refuses
+    /// a zero, so a value under one second failed every connection.
+    #[test]
+    fn test_tcp_keepalive_values() {
+        let upstream = |conf: &str| {
+            toml::from_str::<UpstreamConf>(&format!(
+                "addrs = [\"127.0.0.1:8080\"]\n{conf}"
+            ))
+            .unwrap()
+            .validate()
+            .map_err(|e| e.to_string())
+        };
+        let server = |conf: &str| {
+            toml::from_str::<ServerConf>(&format!(
+                "addr = \"127.0.0.1:8080\"\n{conf}"
+            ))
+            .unwrap()
+            .validate()
+            .map_err(|e| e.to_string())
+        };
+        for (conf, expected) in [
+            ("tcp_idle = \"500ms\"", "tcp idle should be at least 1s"),
+            ("tcp_idle = \"0s\"", "tcp idle should be at least 1s"),
+            (
+                "tcp_interval = \"999ms\"",
+                "tcp interval should be at least 1s",
+            ),
+            (
+                "tcp_probe_count = 0",
+                "tcp probe count should be greater than 0",
+            ),
+        ] {
+            let expected = Err(format!("Invalid error {expected}"));
+            assert_eq!(expected, upstream(conf), "upstream: {conf}");
+            assert_eq!(expected, server(conf), "server: {conf}");
+        }
+        for conf in [
+            "tcp_idle = \"1s\"\ntcp_interval = \"1s\"\ntcp_probe_count = 1",
+            // on its own: the other three take the kernel's defaults
+            "tcp_user_timeout = \"30s\"",
+            "tcp_idle = \"2m\"",
+        ] {
+            assert_eq!(Ok(()), upstream(conf), "upstream: {conf}");
+            assert_eq!(Ok(()), server(conf), "server: {conf}");
+        }
     }
 
     #[test]

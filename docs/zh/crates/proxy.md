@@ -116,6 +116,7 @@ modules = ["grpc-web"]
 部分说明：
 
 - `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。
+- `tcp_idle`、`tcp_interval`、`tcp_probe_count`、`tcp_user_timeout`（仅 Linux）四项只要配置了其中一项，就会对接入的连接开启 TCP keepalive。没有配置的项取内核默认值（空闲 7200s、探测间隔 75s、探测 9 次），所以 `tcp_user_timeout` 可以单独设置。空闲时间和间隔按整秒生效，至少 `1s`；探测次数至少为 1。更小的值在配置校验时被拒绝，因为内核会在每个连接上拒绝它们。
 - `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。版本名接受 `tlsv1.1` / `tlsv1.2` / `tlsv1.3`（大小写不敏感，`TLSv1.2` 亦可）。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。

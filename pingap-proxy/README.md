@@ -146,6 +146,13 @@ modules = ["grpc-web"]
 Notes on a few of these:
 
 - `addr` accepts several comma-separated listen addresses for one logical server.
+- `tcp_idle`, `tcp_interval`, `tcp_probe_count` and `tcp_user_timeout` (Linux
+  only) turn TCP keepalive on for accepted connections as soon as one of them
+  is set. Whatever is left out takes the kernel's default (7200s idle, 75s
+  between probes, 9 probes), so `tcp_user_timeout` can be set on its own. The
+  idle time and the interval are whole seconds of at least `1s` and the probe
+  count is at least 1; smaller values are refused by the config check, as the
+  kernel would refuse them on every connection.
 - `global_certificates = true` switches the listener to TLS using the dynamic,
   SNI-driven certificate store from
   [pingap-certificate](../pingap-certificate/README.md). Without it the listener

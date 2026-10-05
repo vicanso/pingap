@@ -17,7 +17,7 @@
 | `docker` | 经 Docker API 按标签查找容器 |
 | `transparent` | 无发现 — 转发到请求自身的地址 |
 
-`update_frequency` 控制 `dns` 与 `docker` 的刷新频率。
+`update_frequency` 控制 `dns` 与 `docker` 的刷新频率。刷新和健康检查共用一个 10s 的定时器，所以这个值向上取整到定时器周期的整数倍，不超过 `10s` 的值都是每 10s 刷新一次。
 
 ### Static
 

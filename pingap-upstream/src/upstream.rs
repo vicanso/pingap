@@ -33,6 +33,7 @@ use pingap_config::UpstreamConf;
 use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
+    new_tcp_keepalive,
 };
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
@@ -125,17 +126,19 @@ enum SelectionLb {
 }
 
 impl SelectionLb {
-    fn get_health_frequency(&self) -> (u64, u64) {
+    /// How often the backends are refreshed and how often they are checked.
+    /// A zero refresh period means the backends are never refreshed.
+    fn get_health_frequency(&self) -> (Duration, Duration) {
         match self {
             SelectionLb::RoundRobin(lb) => (
-                lb.update_frequency.unwrap_or_default().as_secs(),
-                lb.health_check_frequency.unwrap_or_default().as_secs(),
+                lb.update_frequency.unwrap_or_default(),
+                lb.health_check_frequency.unwrap_or_default(),
             ),
             SelectionLb::Consistent { lb, .. } => (
-                lb.update_frequency.unwrap_or_default().as_secs(),
-                lb.health_check_frequency.unwrap_or_default().as_secs(),
+                lb.update_frequency.unwrap_or_default(),
+                lb.health_check_frequency.unwrap_or_default(),
             ),
-            SelectionLb::Transparent => (0, 0),
+            SelectionLb::Transparent => (Duration::ZERO, Duration::ZERO),
         }
     }
     async fn update(&self) -> pingora::Result<()> {
@@ -650,21 +653,12 @@ impl Upstream {
             },
         };
 
-        let tcp_keepalive = if (conf.tcp_idle.is_some()
-            && conf.tcp_probe_count.is_some()
-            && conf.tcp_interval.is_some())
-            || conf.tcp_user_timeout.is_some()
-        {
-            Some(TcpKeepalive {
-                idle: conf.tcp_idle.unwrap_or_default(),
-                count: conf.tcp_probe_count.unwrap_or_default(),
-                interval: conf.tcp_interval.unwrap_or_default(),
-                #[cfg(target_os = "linux")]
-                user_timeout: conf.tcp_user_timeout.unwrap_or_default(),
-            })
-        } else {
-            None
-        };
+        let tcp_keepalive = new_tcp_keepalive(
+            conf.tcp_idle,
+            conf.tcp_interval,
+            conf.tcp_probe_count,
+            conf.tcp_user_timeout,
+        );
 
         let peer_tracer = if conf.enable_tracer.unwrap_or_default() {
             Some(UpstreamPeerTracer::new(name))
@@ -1124,17 +1118,13 @@ impl BackgroundTask for HealthCheckTask {
         // get upstream names
         let mut upstreams = self.upstream_provider.list();
         upstreams.retain(|(_, up)| !up.is_transparent());
-        let interval = self.interval.as_secs();
+        let interval = self.interval;
         // run health check for each upstream
         let jobs = upstreams.into_iter().map(|(name, up)| {
             let runtime = pingora_runtime::current_handle();
             runtime.spawn(async move {
-                let check_frequency_matched = |frequency: u64| -> bool {
-                    let mut count = (frequency / interval) as u32;
-                    if !frequency.is_multiple_of(interval) {
-                        count += 1;
-                    }
-                    check_count.is_multiple_of(count)
+                let check_frequency_matched = |frequency: Duration| -> bool {
+                    is_due(check_count, frequency, interval)
                 };
 
                 // get update frequency(update service)
@@ -1145,7 +1135,7 @@ impl BackgroundTask for HealthCheckTask {
                 // the first time should match
                 // update check
                 if check_count == 0
-                    || (update_frequency > 0
+                    || (!update_frequency.is_zero()
                         && check_frequency_matched(update_frequency))
                 {
                     let update_backend_start_time = Instant::now();
@@ -1234,6 +1224,21 @@ impl BackgroundTask for HealthCheckTask {
         }
         Ok(true)
     }
+}
+
+/// Whether something with a period of `frequency` is due on tick
+/// `check_count` of a task that ticks every `interval`.
+///
+/// The period is rounded up to whole ticks, and is never less than one. It
+/// used to be cut down to whole seconds first, which made anything under a
+/// second a period of zero ticks: a `check_frequency` of `500ms` ran the
+/// health check on the first tick and never again.
+fn is_due(check_count: u32, frequency: Duration, interval: Duration) -> bool {
+    let ticks = frequency
+        .as_millis()
+        .div_ceil(interval.as_millis().max(1))
+        .clamp(1, u32::MAX as u128) as u32;
+    check_count.is_multiple_of(ticks)
 }
 
 struct HealthCheckTask {
@@ -1912,8 +1917,8 @@ mod tests {
         .unwrap();
         let (update_frequency, health_check_frequency) =
             round_robin.get_health_frequency();
-        assert_eq!(5, update_frequency);
-        assert_eq!(3, health_check_frequency);
+        assert_eq!(Duration::from_secs(5), update_frequency);
+        assert_eq!(Duration::from_secs(3), health_check_frequency);
 
         let consistent = new_load_balancer(
             "test",
@@ -1933,8 +1938,31 @@ mod tests {
         .unwrap();
         let (update_frequency, health_check_frequency) =
             consistent.get_health_frequency();
-        assert_eq!(10, update_frequency);
-        assert_eq!(2, health_check_frequency);
+        assert_eq!(Duration::from_secs(10), update_frequency);
+        assert_eq!(Duration::from_secs(2), health_check_frequency);
+    }
+
+    /// Regression: a period under one second was a period of zero ticks,
+    /// due on the first tick only.
+    #[test]
+    fn test_is_due() {
+        let tick = Duration::from_secs(10);
+        let due = |frequency: Duration| -> Vec<u32> {
+            (0..7)
+                .filter(|count| super::is_due(*count, frequency, tick))
+                .collect()
+        };
+        let every_tick: Vec<u32> = (0..7).collect();
+        // Shorter than a tick: every tick, which is as often as it gets.
+        assert_eq!(every_tick, due(Duration::from_millis(500)));
+        assert_eq!(every_tick, due(Duration::ZERO));
+        assert_eq!(every_tick, due(Duration::from_secs(3)));
+        assert_eq!(every_tick, due(Duration::from_secs(10)));
+        // Rounded up to whole ticks.
+        assert_eq!(vec![0, 2, 4, 6], due(Duration::from_secs(11)));
+        assert_eq!(vec![0, 2, 4, 6], due(Duration::from_secs(20)));
+        assert_eq!(vec![0, 3, 6], due(Duration::from_millis(20_001)));
+        assert_eq!(vec![0, 6], due(Duration::from_secs(60)));
     }
     /// Whether the upstream's only backend is currently ready.
     fn only_backend_ready(up: &Upstream) -> bool {

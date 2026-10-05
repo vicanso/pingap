@@ -302,8 +302,13 @@ async fn migrate_config_layout(config_manager: &ConfigManager) {
     }
 }
 
+/// Loads the config on a runtime of its own. `migrate_layout` is for a
+/// process that is going to run with it; a command that only reads the
+/// config (`--test`, `--to-hcl`, `--to-kdl`, `--sync`) must leave the
+/// storage as it found it.
 fn get_config(
     config_manager: Arc<ConfigManager>,
+    migrate_layout: bool,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
@@ -315,7 +320,9 @@ fn get_config(
                     // into the current one. Failing here must not be fatal - a
                     // read only config directory holding a single old layout
                     // loads perfectly well, and used to.
-                    migrate_config_layout(&config_manager).await;
+                    if migrate_layout {
+                        migrate_config_layout(&config_manager).await;
+                    }
                     match config_manager.load_all().await {
                         Ok(config) => {
                             // TODO 原有的load config有admin模式
@@ -543,6 +550,18 @@ fn parse_arguments() -> Args {
     args
 }
 
+/// Builds each location the way startup does, so `--test` reports what only
+/// building one finds: a path or host regex that does not compile, a
+/// rewrite rule with too many parts. `PingapConfig::validate` cannot do it,
+/// the location type lives in a higher layer.
+fn validate_locations(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    for (name, conf) in config.locations.iter() {
+        pingap_location::Location::new(name, conf)
+            .map_err(|e| format!("location \"{name}\" is invalid: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Dry-runs each configured plugin through the factory so `--test` reports bad
 /// plugin configs, which `PingapConfig::validate` cannot check (the factory
 /// lives in a higher layer). A feature-gated category that was compiled out
@@ -627,7 +646,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         try_init_config_manager(&args.conf.clone().unwrap_or_default())?
     };
 
-    let r = get_config(get_config_manager()?);
+    // Checking or converting a config is not the moment to rewrite it:
+    // `pingap -t` on a directory used to split its combined file into one
+    // file per category and rename the original.
+    let read_only =
+        args.test || args.to_hcl || args.to_kdl || args.sync.is_some();
+    let r = get_config(get_config_manager()?, !read_only);
     // A broken config is fatal on its own, but not with `--admin`: the admin
     // server has to come up so the configuration can be repaired through it.
     // Starting on an empty config is indistinguishable from a healthy server
@@ -712,6 +736,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
+        validate_locations(&config)?;
         validate_plugins(&config)?;
         info!(target: LOG_TARGET, "Validate config success");
         return Ok(());

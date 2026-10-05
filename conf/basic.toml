@@ -124,7 +124,7 @@
 
 # This setting controls how often Pingap checks for configuration file changes.
 # When changes are detected, the process will automatically restart to apply the new configuration.
-# Default `90s`
+# At least `1s`. Default `90s`
 # auto_restart_check_interval = "90s"
 
 # Set the file cache directory. Format: "/path/to/cache?reading_max=1000&writing_max=200&cache_max=100&cache_file_max_size=40960"

@@ -35,7 +35,7 @@
   - **TLS & SNI**：可配置 TLS 与 SNI 的安全后端连接。可为单个上游指定私有 CA（`ca`，支持 PEM 文件路径、base64 或原始 PEM）替代系统信任库，使自签名或内部 PKI 的后端也能保持 `verify_cert` 开启；连接池同时按该 CA 分组，不同 CA 的上游不会复用同一条连接。rustls 后端下，后端自身的证书必须是真正的叶子证书（不能带 `CA:TRUE`），这是 webpki 的要求，OpenSSL 则不检查。
   - **HTTP/2 & ALPN**：支持 ALPN 协商 HTTP/1.1 或 HTTP/2，并可按上游设置流控窗口（`h2_stream_window_size`、`h2_connection_window_size`），适合高延迟链路上的大响应。
   - **连接超时**：连接、读、写与空闲超时的细粒度控制。
-  - **TCP 控制**：TCP keepalive、缓冲区大小与 TCP Fast Open 等高级选项。
+  - **TCP 控制**：TCP keepalive、缓冲区大小与 TCP Fast Open 等高级选项。`tcp_idle`、`tcp_interval`、`tcp_probe_count`、`tcp_user_timeout`（仅 Linux）只要配置了其中一项就开启 keepalive，没有配置的项取内核默认值（7200s、75s、探测 9 次），所以 `tcp_user_timeout` 可以单独使用。空闲时间和间隔至少 `1s`，探测次数在 1 到 16 之间。
   - **请求头策略**：默认按 RFC 9110 的要求，在请求到达后端前剥离 hop-by-hop 头与 `Connection` 提名的头，且只转发 WebSocket 升级。每条规则都可按上游单独放宽（`strip_hop_by_hop`、`strip_connection_nominated`、`reject_malformed_connection_nominations`、`h1_upgrade`），供仍依赖旧透传行为的后端使用，例如 Docker `attach`/`exec` 或 h2c 升级。
 
 - **熔断**：开启 `enable_backend_stats` 后统计每个后端的响应（`backend_failure_status_code` 决定哪些状态码算失败，默认所有 5xx；连接不上的请求总是算失败）。`circuit_break_max_consecutive_failures` 与 `circuit_break_max_failure_percent`（后者要在统计窗口内累计到 `circuit_break_min_requests_threshold` 个请求后才生效；两者填 `0` 即关闭该规则）任一触发即熔断：后端进入**打开**状态，在 `circuit_break_open_duration` 内被跳过，之后进入**半开**，最多放行 `circuit_break_half_open_consecutive_success_threshold` 个探测请求；连续成功这么多次则关闭熔断，失败一次则重新打开。后端接受了连接却没有给出响应的请求（读超时、响应前连接被关闭）和连接被拒绝一样算作失败；连接池里已经被后端关闭的旧连接不算。探测请求如果一直没有报告结果（例如客户端先断开了），再过一个 `circuit_break_open_duration` 就放弃它们并开始新一轮探测，后端不会一直停在半开状态。状态通过 `pingap_upstream_backend_circuit_state` 导出（0 关闭、1 打开、2 半开）。

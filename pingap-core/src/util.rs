@@ -12,8 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use pingora::protocols::l4::ext::TcpKeepalive;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// What the kernel uses for a keepalive setting that is left out (Linux'
+/// `tcp_keepalive_time`, `tcp_keepalive_intvl` and `tcp_keepalive_probes`).
+const DEFAULT_TCP_KEEPALIVE_IDLE: Duration = Duration::from_secs(7200);
+const DEFAULT_TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(75);
+const DEFAULT_TCP_KEEPALIVE_COUNT: usize = 9;
+
+/// The keepalive options of a listener or an upstream, `None` when none of
+/// the four settings is given.
+///
+/// pingora applies the four together, and the kernel refuses a zero for the
+/// idle time, the interval or the probe count. A setting that is left out
+/// therefore takes the kernel's own default. They used to be zero: giving
+/// `tcp_user_timeout` alone, which has nothing to do with the other three,
+/// made every connection fail on Linux.
+pub fn new_tcp_keepalive(
+    idle: Option<Duration>,
+    interval: Option<Duration>,
+    probe_count: Option<usize>,
+    user_timeout: Option<Duration>,
+) -> Option<TcpKeepalive> {
+    if idle.is_none()
+        && interval.is_none()
+        && probe_count.is_none()
+        && user_timeout.is_none()
+    {
+        return None;
+    }
+    Some(TcpKeepalive {
+        idle: idle.unwrap_or(DEFAULT_TCP_KEEPALIVE_IDLE),
+        interval: interval.unwrap_or(DEFAULT_TCP_KEEPALIVE_INTERVAL),
+        count: probe_count.unwrap_or(DEFAULT_TCP_KEEPALIVE_COUNT),
+        #[cfg(target_os = "linux")]
+        user_timeout: user_timeout.unwrap_or_default(),
+    })
+}
 
 // 2022-05-07: 1651852800
 const SUPER_TIMESTAMP: u64 = 1651852800;
@@ -118,5 +155,44 @@ mod tests {
     #[test]
     fn test_get_hostname() {
         assert_eq!(false, get_hostname().is_empty());
+    }
+
+    /// Regression: a setting that was left out became zero, which the
+    /// kernel refuses. `tcp_user_timeout` on its own failed every
+    /// connection on Linux.
+    #[test]
+    fn test_new_tcp_keepalive() {
+        use super::new_tcp_keepalive;
+        use std::time::Duration;
+
+        assert_eq!(true, new_tcp_keepalive(None, None, None, None).is_none());
+
+        let user_timeout = Some(Duration::from_secs(30));
+        let keepalive =
+            new_tcp_keepalive(None, None, None, user_timeout).unwrap();
+        assert_eq!(Duration::from_secs(7200), keepalive.idle);
+        assert_eq!(Duration::from_secs(75), keepalive.interval);
+        assert_eq!(9, keepalive.count);
+        #[cfg(target_os = "linux")]
+        assert_eq!(Duration::from_secs(30), keepalive.user_timeout);
+
+        // What is given is used, what is not takes the default.
+        let keepalive =
+            new_tcp_keepalive(Some(Duration::from_secs(60)), None, None, None)
+                .unwrap();
+        assert_eq!(Duration::from_secs(60), keepalive.idle);
+        assert_eq!(Duration::from_secs(75), keepalive.interval);
+        assert_eq!(9, keepalive.count);
+
+        let keepalive = new_tcp_keepalive(
+            Some(Duration::from_secs(120)),
+            Some(Duration::from_secs(10)),
+            Some(3),
+            None,
+        )
+        .unwrap();
+        assert_eq!(Duration::from_secs(120), keepalive.idle);
+        assert_eq!(Duration::from_secs(10), keepalive.interval);
+        assert_eq!(3, keepalive.count);
     }
 }

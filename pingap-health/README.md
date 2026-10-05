@@ -29,7 +29,7 @@ The following query parameters can be used to configure the health check:
 
 - `connection_timeout`: The connection timeout (e.g., `3s`, `100ms`). Default: `3s`.
 - `read_timeout`: The read timeout. Default: `3s`.
-- `check_frequency`: The interval between health checks. Default: `10s`.
+- `check_frequency`: The interval between health checks. Default: `10s`. Checks are driven by a 10s timer, and the interval is rounded up to a whole number of its ticks: `25s` checks every 30s, and anything up to `10s` checks every 10s.
 - `success`: The number of consecutive successful checks to mark the backend as healthy. Default: `1`.
 - `failure`: The number of consecutive failed checks to mark the backend as unhealthy. Default: `2`. It does not apply to an upstream's first round of checks, where one failure is enough; see [pingap-upstream](../pingap-upstream/README.md).
 - `reuse`: If present, an HTTP/S check keeps its connection in pingora's pool between checks instead of connecting afresh each time.

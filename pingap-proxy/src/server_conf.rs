@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use pingap_config::PingapConfig;
+use pingap_core::new_tcp_keepalive;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
 use std::time::Duration;
@@ -250,22 +251,13 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             error_template = ERROR_TEMPLATE.to_string();
         }
 
-        // Configure TCP keepalive only if all required parameters are present
-        let tcp_keepalive = if (item.tcp_idle.is_some()
-            && item.tcp_probe_count.is_some()
-            && item.tcp_interval.is_some())
-            || item.tcp_user_timeout.is_some()
-        {
-            Some(TcpKeepalive {
-                idle: item.tcp_idle.unwrap_or_default(),
-                count: item.tcp_probe_count.unwrap_or_default(),
-                interval: item.tcp_interval.unwrap_or_default(),
-                #[cfg(target_os = "linux")]
-                user_timeout: item.tcp_user_timeout.unwrap_or_default(),
-            })
-        } else {
-            None
-        };
+        // TCP keepalive, when any of its settings is given
+        let tcp_keepalive = new_tcp_keepalive(
+            item.tcp_idle,
+            item.tcp_interval,
+            item.tcp_probe_count,
+            item.tcp_user_timeout,
+        );
 
         // Create server configuration with all settings
         servers.push(ServerConf {

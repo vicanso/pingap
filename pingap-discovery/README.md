@@ -22,7 +22,7 @@ Selected with `discovery` in `UpstreamConf`:
 | `docker` | Look up containers by label through the Docker API |
 | `transparent` | No discovery — forward to the address from the request itself |
 
-`update_frequency` controls how often `dns` and `docker` refresh.
+`update_frequency` controls how often `dns` and `docker` refresh. The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s.
 
 ### Static
 

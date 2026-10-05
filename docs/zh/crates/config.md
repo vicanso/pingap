@@ -28,7 +28,7 @@ pub struct PingapConfig {
 | `certificates` | TLS 证书，含 ACME 设置 |
 | `storages` | 可被 `includes` 引用的可复用片段；ACME 也在此保存 challenge 状态 |
 
-每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。
+每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 location 和插件，所以编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置，都在这一步报告，而不是等到下次启动。它只读取配置，磁盘上的配置保持原样。
 
 ## 存储后端
 
@@ -69,6 +69,8 @@ etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 
 
 - 开启 `enable_history=true` 时，被清理的文件先复制进历史目录再删除；
 - 否则重命名为 `<name>.toml.bak` —— 加载时只 glob `*.toml`，所以改名即可让它不再被读取。
+
+只读取配置的命令（`--test`、`--to-hcl`、`--to-kdl`、`--sync`）不做迁移，按现有的布局加载。
 
 两种方式都会在启动时打印被清理的路径。已经同时存在两种布局的目录无法自动迁移（哪一份表应该胜出是无从判断的），此时启动会报出冲突的文件名并保持原样，交由人工合并。
 

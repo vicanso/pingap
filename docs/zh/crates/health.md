@@ -29,7 +29,7 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 
 - `connection_timeout`：连接超时（如 `3s`、`100ms`）。默认：`3s`。
 - `read_timeout`：读超时。默认：`3s`。
-- `check_frequency`：检查间隔。默认：`10s`。
+- `check_frequency`：检查间隔。默认：`10s`。检查由一个 10s 的定时器驱动，间隔向上取整到定时器周期的整数倍：`25s` 表示每 30s 检查一次，不超过 `10s` 的值都是每 10s 检查一次。
 - `success`：连续成功次数后标记健康。默认：`1`。
 - `failure`：连续失败次数后标记不健康。默认：`2`。upstream 的第一轮检查不受它约束，失败一次即标记不健康，见 [pingap-upstream](upstream.md)。
 - `reuse`：存在则 HTTP/S 检查把连接保留在 pingora 的连接池中供下次检查复用，而不是每次重新连接。
