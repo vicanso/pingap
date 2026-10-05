@@ -1,0 +1,47 @@
+name: cla
+
+# Fails until the CLA box of the pull request template is ticked, which is
+# how CLA.md says the agreement is accepted. To make it block a merge, `cla`
+# has to be a required status check of `main` (Settings -> Rules); on its own
+# it only shows a red mark.
+#
+# `pull_request_target`, not `pull_request`: the workflow then comes from
+# `main`, so a pull request cannot change it into one that passes. That is
+# safe here because nothing of the pull request is checked out or run, and
+# its description reaches the script as an environment variable, never as
+# part of the script.
+on:
+  pull_request_target:
+    # `edited` reruns the check when the box is ticked afterwards;
+    # `synchronize` gives every new commit its result.
+    types: [opened, edited, reopened, synchronize]
+
+# The check reads the event and nothing else.
+permissions: {}
+
+# The result of the latest description is the one that counts.
+concurrency:
+  group: cla-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cla:
+    # The owner's own pull requests and dependabot's have nothing to agree
+    # to. A skipped job counts as passed for a required check.
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: The CLA box is ticked
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # The English or the Chinese line of the template, as a ticked
+          # task list item. A description without the template has neither.
+          if printf '%s' "$BODY" | grep -Eq '^[[:space:]]*[-*+][[:space:]]*\[[xX]\][[:space:]].*(Contributor License Agreement|贡献者许可协议)'; then
+            echo "The CLA is accepted."
+          else
+            echo "::error::Please tick the CLA box in the pull request description (see CLA.md). The check reruns when the description is edited."
+            exit 1
+          fi
