@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AcmeDnsTask, Error};
+use super::{AcmeDnsTask, Error, split_record_name};
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
@@ -163,8 +163,7 @@ async fn add_tencent_dns_record(
     domain: &str,
     value: &str,
 ) -> Result<u64> {
-    let (rr, domain_name) =
-        domain.split_once(".").ok_or(new_error("invalid domain"))?;
+    let (rr, domain_name) = split_record_name(domain)?;
 
     let payload = serde_json::json!({
         "Domain": domain_name,
@@ -202,8 +201,7 @@ async fn delete_tencent_dns_record(
     domain: &str,
     record_id: u64,
 ) -> Result<()> {
-    let (_, domain_name) =
-        domain.split_once(".").ok_or(new_error("invalid domain"))?;
+    let (_, domain_name) = split_record_name(domain)?;
     let payload = serde_json::json!({
         "Domain": domain_name,
         "RecordId": record_id

@@ -93,6 +93,14 @@ async fn update_certificate_lets_encrypt(
     // scratch until Let's Encrypt's duplicate-certificate rate limit cut it
     // off. Checking first also means a config that cannot take the
     // certificate never burns an issuance against that rate limit.
+    //
+    // A storage that takes no writes at all comes first: a directory of hcl
+    // or kdl files is read but never written, and the lookup below misses
+    // there as well, with advice about layouts that does not apply.
+    config_manager.ensure_writable().map_err(|e| Error::Fail {
+        category: "save_config".to_string(),
+        message: e.to_string(),
+    })?;
     let cert: Option<CertificateConf> = config_manager
         .get(Category::Certificate, &params.name)
         .await
@@ -784,6 +792,33 @@ fn is_valid_challenge_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// How long one exchange with the CA, or with a dns provider, may take.
+const ACME_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// The share of one domain in the time an order's authorizations may take:
+/// the wait for its dns record (ten lookups, ten seconds apart) and the
+/// requests around it.
+const ACME_AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(150);
+
+/// Runs `future` for at most `limit`.
+///
+/// Nothing in the client sets a timeout of its own, and a connection that
+/// simply goes quiet never fails. The certificate task shares a background
+/// service with others (log flush, log compression, certificate expiry),
+/// which waits for every task before its next round: one request that
+/// hung kept all of them from ever running again.
+async fn bounded<T>(
+    category: &str,
+    limit: Duration,
+    future: impl Future<Output = T>,
+) -> Result<T> {
+    tokio::time::timeout(limit, future)
+        .await
+        .map_err(|_| Error::Fail {
+            category: category.to_string(),
+            message: format!("no answer within {}s", limit.as_secs()),
+        })
+}
+
 /// Generates a new certificate from Let's Encrypt for the given domains.
 /// The ACME protocol flow:
 /// 1. Creates/retrieves an ACME account with Let's Encrypt
@@ -817,27 +852,39 @@ async fn new_lets_encrypt(
     };
     ensure_crypto_provider();
 
-    let account =
-        load_or_create_account(&config_manager, url, production).await?;
+    let account = bounded(
+        "create_account",
+        ACME_REQUEST_TIMEOUT,
+        load_or_create_account(&config_manager, url, production),
+    )
+    .await??;
 
-    let mut order = account
-        .new_order(&NewOrder::new(
-            &domains
-                .iter()
-                .map(|item| Identifier::Dns(item.to_owned()))
-                .collect::<Vec<Identifier>>(),
-        ))
-        .await
-        .map_err(|e| Error::Instant {
-            category: "new_order".to_string(),
-            source: e,
-        })?;
+    let identifiers = domains
+        .iter()
+        .map(|item| Identifier::Dns(item.to_owned()))
+        .collect::<Vec<Identifier>>();
+    let mut order = bounded(
+        "new_order",
+        ACME_REQUEST_TIMEOUT,
+        account.new_order(&NewOrder::new(&identifiers)),
+    )
+    .await?
+    .map_err(|e| Error::Instant {
+        category: "new_order".to_string(),
+        source: e,
+    })?;
 
+    // `Ready` is an order whose authorizations are all valid already: the
+    // CA keeps a validation for a while and reuses it. There is nothing
+    // left to prove, the loop below finds every authorization valid and the
+    // order goes straight on to be finalized. Only `Pending` used to be
+    // accepted, so for as long as the CA remembered the validation every
+    // attempt failed here, ten minutes apart.
     let state = order.state();
-    if !matches!(state.status, OrderStatus::Pending) {
+    if !matches!(state.status, OrderStatus::Pending | OrderStatus::Ready) {
         return Err(Error::Fail {
             message: format!(
-                "order is not pending, status: {:?}",
+                "order is neither pending nor ready, status: {:?}",
                 state.status
             ),
             category: "order_status".to_string(),
@@ -848,7 +895,11 @@ async fn new_lets_encrypt(
     // Built on the first DNS-01 challenge and shared by the order's others.
     let mut resolver = None;
 
-    let result = (async {
+    // Every authorization may wait for its dns record to show up, on top of
+    // the CA's own validation.
+    let authorize_timeout = ACME_REQUEST_TIMEOUT * 3
+        + ACME_AUTHORIZATION_TIMEOUT * domains.len() as u32;
+    let result = bounded("authorize", authorize_timeout, async {
         let mut authorizations = order.authorizations();
         while let Some(result) = authorizations.next().await {
             let mut authz = result.map_err(|e| Error::Instant {
@@ -1051,11 +1102,16 @@ async fn new_lets_encrypt(
         }
         Ok(())
     })
-    .await;
+    .await
+    .and_then(|result| result);
 
+    // After a timeout as well: the records that were added are still there.
     for task in dns_tasks.iter() {
         // ignore done error
-        if let Err(err) = task.done().await {
+        let done = bounded("dns_done", ACME_REQUEST_TIMEOUT, task.done())
+            .await
+            .and_then(|result| result);
+        if let Err(err) = done {
             error!(
                 target: LOG_TARGET,
                 error = err.to_string(),
@@ -1066,19 +1122,24 @@ async fn new_lets_encrypt(
     result?;
 
     let private_key_pem =
-        order.finalize().await.map_err(|e| Error::Instant {
-            category: "finalize".to_string(),
-            source: e,
-        })?;
-    let cert_chain_pem = order
-        .poll_certificate(
+        bounded("finalize", ACME_REQUEST_TIMEOUT, order.finalize())
+            .await?
+            .map_err(|e| Error::Instant {
+                category: "finalize".to_string(),
+                source: e,
+            })?;
+    let cert_chain_pem = bounded(
+        "poll_certificate",
+        ACME_REQUEST_TIMEOUT * 2,
+        order.poll_certificate(
             &RetryPolicy::default().timeout(Duration::from_secs(60)),
-        )
-        .await
-        .map_err(|e| Error::Instant {
-            category: "poll_certificate".to_string(),
-            source: e,
-        })?;
+        ),
+    )
+    .await?
+    .map_err(|e| Error::Instant {
+        category: "poll_certificate".to_string(),
+        source: e,
+    })?;
 
     Ok((cert_chain_pem, private_key_pem))
 }
@@ -1126,6 +1187,56 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("panel"), "{message}");
         assert!(message.contains("could not be persisted"), "{message}");
+    }
+
+    /// A directory of hcl files is read-only, and the certificate could
+    /// not be saved: said so, before anything is asked of the CA.
+    #[tokio::test]
+    async fn test_renewal_refuses_a_read_only_storage() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("main.hcl"),
+            "certificate \"panel\" {\n  domains = \"example.com\"\n  acme = \"lets_encrypt\"\n}\n",
+        )
+        .unwrap();
+        let manager = Arc::new(
+            new_file_config_manager(dir.path().to_string_lossy().as_ref())
+                .unwrap(),
+        );
+        let message = update_certificate_lets_encrypt(
+            manager,
+            UpdateCertificateParams {
+                name: "panel".to_string(),
+                domains: vec!["example.com".to_string()],
+                buffer_days: 30,
+                dns_challenge: false,
+                dns_provider: "".to_string(),
+                dns_service_url: "".to_string(),
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(message.contains("read but not written"), "{message}");
+    }
+
+    /// An exchange that gets no answer ends, with an error that says so.
+    #[tokio::test]
+    async fn test_bounded() {
+        use super::bounded;
+        use std::time::Duration;
+
+        let result = bounded("new_order", Duration::from_millis(20), async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        })
+        .await;
+        assert_eq!(
+            "Let's Encrypt operation failed: no answer within 0s, category: new_order",
+            result.unwrap_err().to_string()
+        );
+        let result =
+            bounded("new_order", Duration::from_secs(5), async { 7 }).await;
+        assert_eq!(7, result.unwrap());
     }
 
     #[tokio::test]

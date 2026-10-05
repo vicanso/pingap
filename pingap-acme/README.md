@@ -126,6 +126,28 @@ account's private key, like a certificate entry holds its `tls_key`.
 Useful in staging or in tests, where you want the rest of the configuration to
 behave identically without contacting Let's Encrypt.
 
+## When an order does not go through
+
+An attempt is made every ten minutes for as long as a certificate is missing,
+about to expire or no longer covers its domains. A failed one is logged with
+the step it failed at and tried again on the next round.
+
+- Every exchange with the CA and with the DNS provider is bounded: a request
+  that gets no answer within a minute fails the attempt, and so does an order
+  whose validations take longer than their allowance (two and a half minutes
+  per domain, plus three). The TXT records that were added are removed either
+  way. Nothing waits on a connection that has gone quiet.
+- The CA remembers a successful validation for a while. An order made in that
+  time comes back `ready`, with nothing left to prove, and is finalized
+  directly.
+- The storage has to take writes: the account, the challenge token and the
+  certificate are all saved to it. On a configuration directory of `.hcl` or
+  `.kdl` files, which is read-only, the attempt stops before the CA is asked
+  for anything.
+- With `--autorestart`, what the ACME task writes on the way (its account, the
+  tokens) does not restart the process. The new certificate is installed in
+  place.
+
 ## Rate limits
 
 Let's Encrypt allows **5 duplicate certificates per week** for the same set of

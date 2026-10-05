@@ -190,6 +190,14 @@ async fn apply_config(
         hot_reload_config.upstreams = new_config.upstreams.clone();
         hot_reload_config.locations = new_config.locations.clone();
         hot_reload_config.plugins = new_config.plugins.clone();
+        // A storage entry does nothing by itself. What an entry includes
+        // from it is already part of that entry here, and shows up as a
+        // change of its own; the rest is what the ACME task keeps there,
+        // its account and the tokens of an order. Counted as a change that
+        // needs a restart, every token it wrote restarted the process in
+        // the middle of the order, and a certificate that kept failing did
+        // so again on each attempt, ten minutes apart.
+        hot_reload_config.storages = new_config.storages.clone();
 
         // acme will create a let's encrypt service
         // so it can't be reloaded.

@@ -217,6 +217,9 @@ impl Storage for FileStorage {
     fn support_history(&self) -> bool {
         self.history_path.is_some()
     }
+    fn ensure_writable(&self) -> Result<()> {
+        FileStorage::ensure_writable(self)
+    }
     async fn fetch(&self, key: &str) -> Result<String> {
         let target_path = self.get_target_path(key);
         if target_path.is_file() {
@@ -597,6 +600,20 @@ addrs = ["127.0.0.1:5000"]
             .to_string();
         assert_eq!(true, err.contains("without losing part of it"), "{err}");
         assert_eq!(before, std::fs::read_to_string(&file).unwrap());
+    }
+
+    /// A caller can ask before it has anything to save.
+    #[test]
+    fn test_ensure_writable() {
+        let dir = tempdir().unwrap();
+        let storage = FileStorage::new(&dir.path().to_string_lossy()).unwrap();
+        assert_eq!(true, Storage::ensure_writable(&storage).is_ok());
+        std::fs::write(dir.path().join("main.hcl"), "basic {}\n").unwrap();
+        let err = Storage::ensure_writable(&storage).unwrap_err().to_string();
+        assert_eq!(true, err.contains("read but not written"), "{err}");
+        // toml next to it: that is what gets read, and written.
+        std::fs::write(dir.path().join("basic.toml"), "[basic]\n").unwrap();
+        assert_eq!(true, Storage::ensure_writable(&storage).is_ok());
     }
 
     /// Regression: saving one entry into a directory of hcl files wrote a

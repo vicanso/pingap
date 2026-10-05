@@ -250,6 +250,9 @@ A poll fetches the raw document (`ConfigManager::load_all_raw`) and hashes it;
 parsing, validation (which resolves every static upstream address) and the diff
 only run when the document changed since the last pass, or when the last pass
 was hot-reload-only and this one may restart.
+A change that only touches `storages` never restarts the process: an entry
+there has no effect of its own, and what another entry includes from it shows
+up as a change of that entry.
 `--autoreload` swaps the configuration in place, which is what you want in
 containers. A change to a location takes effect in routing as well: the hosts
 and paths a server routes by are rebuilt whenever its locations change. `--autorestart` performs a zero-downtime graceful restart, which is

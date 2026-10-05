@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AcmeDnsTask, Error};
+use super::{AcmeDnsTask, Error, split_record_name};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
@@ -125,8 +125,7 @@ async fn add_ali_dns_record(
     value: &str,
 ) -> Result<AddRecordResponse> {
     let mut params = BTreeMap::new();
-    let (rr, domain_name) =
-        domain.split_once(".").ok_or(new_error("invalid domain"))?;
+    let (rr, domain_name) = split_record_name(domain)?;
     params.insert("Action", "AddDomainRecord".to_string());
     params.insert("DomainName", domain_name.to_string());
     params.insert("RR", rr.to_string());

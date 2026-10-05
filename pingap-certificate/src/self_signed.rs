@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LoadedCertificate;
+use super::{LOG_TARGET, LoadedCertificate};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -20,10 +20,13 @@ use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use tracing::warn;
 
 const VALIDITY_CHECK_INTERVAL: u32 = 24 * 60; // 24 hours in minutes
 const CERTIFICATE_EXPIRY_DAYS: u64 = 2;
+/// How many issued certificates are kept at a time.
+const MAX_CERTIFICATES: usize = 2048;
 const SECONDS_PER_DAY: u64 = 24 * 3600;
 
 /// Represents a self-signed certificate with usage tracking
@@ -164,12 +167,38 @@ pub fn add_self_signed_certificate(
     certificate: LoadedCertificate,
     not_after: i64,
 ) -> Arc<SelfSignedCertificate> {
+    add_certificate_within(name, certificate, not_after, MAX_CERTIFICATES)
+}
+
+/// `add_self_signed_certificate` with the number of certificates to keep.
+fn add_certificate_within(
+    name: String,
+    certificate: LoadedCertificate,
+    not_after: i64,
+    limit: usize,
+) -> Arc<SelfSignedCertificate> {
     let v = Arc::new(SelfSignedCertificate {
         certificate: Arc::new(certificate),
         not_after,
         stale: AtomicBool::new(false),
         count: AtomicU32::new(0),
     });
+    // The name comes from the client's handshake, and anyone can send as
+    // many different ones as they like. Without a limit each of them stayed
+    // in the map for a day or two, and every insert copies the map. Past
+    // the limit the certificate is still handed out, it is only not kept.
+    if SELF_SIGNED_CERTIFICATE_MAP.load().len() >= limit {
+        static LAST_WARNING: AtomicU64 = AtomicU64::new(0);
+        let now = pingap_core::now_sec();
+        if now.saturating_sub(LAST_WARNING.swap(now, Ordering::Relaxed)) >= 60 {
+            warn!(
+                target: LOG_TARGET,
+                limit,
+                "too many self signed certificates, new ones are not cached"
+            );
+        }
+        return v;
+    }
     // `rcu`, not load-modify-store: two handshakes issuing certificates at
     // the same time both keep their entry instead of one overwriting the
     // other's map.
@@ -283,5 +312,27 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
             "O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
             subject(&cert)
         );
+
+        // Regression: nothing limited how many were kept, and the name is
+        // whatever a client puts in its handshake. At the limit the
+        // certificate is still issued, it is only not kept.
+        let certificate = LoadedCertificate::from_pem(
+            &[pem.as_bytes().to_vec()],
+            key.as_bytes(),
+        )
+        .unwrap();
+        let over = nanoid::nanoid!(10);
+        let cert = super::add_certificate_within(
+            over.clone(),
+            certificate,
+            (pingap_core::now_sec() + 1000000000) as i64,
+            0,
+        );
+        assert_eq!(
+            "O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
+            subject(&cert)
+        );
+        assert_eq!(true, get_self_signed_certificate(&over).is_none());
+        assert_eq!(true, get_self_signed_certificate(&name).is_some());
     }
 }

@@ -57,6 +57,13 @@ pub trait Storage: Send + Sync {
         Ok(format!("{key} (removed)"))
     }
 
+    /// Fails when nothing can be saved to this storage, with the reason.
+    /// For a caller that is about to do something costly whose result has
+    /// to be stored.
+    fn ensure_writable(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn support_observer(&self) -> bool {
         false
     }

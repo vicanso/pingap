@@ -299,6 +299,11 @@ impl ConfigManager {
     pub fn support_observer(&self) -> bool {
         self.storage.support_observer()
     }
+    /// Fails when the storage does not take writes, see
+    /// [`Storage::ensure_writable`].
+    pub fn ensure_writable(&self) -> Result<()> {
+        self.storage.ensure_writable()
+    }
     pub async fn observe(&self) -> Result<Observer> {
         self.storage.observe().await
     }

@@ -61,6 +61,29 @@ fn get_value_from_env(value: &str) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+/// Splits the name of a record into the part inside its zone and the zone:
+/// `_acme-challenge.www.example.com` is `("_acme-challenge.www",
+/// "example.com")`.
+///
+/// The zone is the registrable domain, from the public suffix list, which is
+/// what the Cloudflare and Huawei tasks go by too. Cutting at the first dot
+/// instead named `www.example.com` as the zone: the record of any name below
+/// the registrable domain was refused by the provider, so a certificate for
+/// a subdomain could not be issued.
+pub(crate) fn split_record_name(name: &str) -> Result<(&str, &str)> {
+    let name = name.trim_end_matches('.');
+    psl::domain_str(name)
+        .filter(|zone| zone.contains('.'))
+        .and_then(|zone| {
+            let record = name.strip_suffix(zone)?.strip_suffix('.')?;
+            (!record.is_empty()).then_some((record, zone))
+        })
+        .ok_or_else(|| Error::Fail {
+            category: "dns".to_string(),
+            message: format!("invalid record name: {name}"),
+        })
+}
+
 /// Acme DNS task
 #[async_trait]
 pub trait AcmeDnsTask: Sync + Send {
@@ -81,8 +104,50 @@ pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};
 
 #[cfg(test)]
 mod tests {
-    use super::get_value_from_env;
+    use super::{get_value_from_env, split_record_name};
     use pretty_assertions::assert_eq;
+
+    /// Regression: the zone was everything after the first dot.
+    #[test]
+    fn test_split_record_name() {
+        for (name, record, zone) in [
+            (
+                "_acme-challenge.example.com",
+                "_acme-challenge",
+                "example.com",
+            ),
+            (
+                "_acme-challenge.www.example.com",
+                "_acme-challenge.www",
+                "example.com",
+            ),
+            (
+                "_acme-challenge.a.b.example.com.",
+                "_acme-challenge.a.b",
+                "example.com",
+            ),
+            // a suffix of two labels
+            (
+                "_acme-challenge.example.co.uk",
+                "_acme-challenge",
+                "example.co.uk",
+            ),
+            (
+                "_acme-challenge.www.example.com.cn",
+                "_acme-challenge.www",
+                "example.com.cn",
+            ),
+        ] {
+            assert_eq!(
+                (record, zone),
+                split_record_name(name).unwrap(),
+                "{name}"
+            );
+        }
+        for name in ["example.com", "com", "_acme-challenge.com", ""] {
+            assert_eq!(true, split_record_name(name).is_err(), "{name}");
+        }
+    }
 
     #[test]
     fn test_get_value_from_env() {
