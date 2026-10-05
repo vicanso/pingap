@@ -8,17 +8,15 @@ on:
 # workspace MSRV. test.yml proves the MSRV; this file only has to produce
 # good binaries. The two `toolchain:` pins below and the builder image in
 # the Dockerfile are one setting - move them together.
-#
-# The built-in token instead of a personal access token: it cannot expire, and
-# an expired PAT is indistinguishable from an empty release list in the upload
-# script. Nothing here triggers on `release`, so the built-in token not raising
-# workflow events costs us nothing.
 env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
   IMAGE_NAME: vicanso/pingap
 
-# Only the jobs that publish release assets get write access.
+# Only the jobs that publish release assets get write access, and only their
+# upload steps get the token. The built-in token instead of a personal access
+# token: it cannot expire, and an expired PAT is indistinguishable from an
+# empty release list in the upload script. Nothing here triggers on `release`,
+# so the built-in token not raising workflow events costs us nothing.
 permissions:
   contents: read
 
@@ -29,6 +27,8 @@ jobs:
       contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -47,6 +47,8 @@ jobs:
       - name: Install protobuf
         run: brew install protobuf
       - name: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rustc --version
           cargo build --release --target=aarch64-apple-darwin
@@ -78,6 +80,8 @@ jobs:
       contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -121,6 +125,8 @@ jobs:
           cargo deb --target x86_64-unknown-linux-musl --no-build --no-strip \
             --output ./pingap-linux-x86.deb
       - name: Upload Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
           tar -czvf pingap-linux-musl-x86-full.tar.gz pingap-linux-musl-x86-full
@@ -146,6 +152,8 @@ jobs:
       contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -189,6 +197,8 @@ jobs:
           cargo deb --target aarch64-unknown-linux-musl --no-build --no-strip \
             --output ./pingap-linux-aarch64.deb
       - name: Upload Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
           tar -czvf pingap-linux-musl-aarch64-full.tar.gz pingap-linux-musl-aarch64-full
@@ -220,6 +230,8 @@ jobs:
           - { tag: "aarch64", runs-on: "ubuntu-22.04-arm" }
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -243,6 +255,8 @@ jobs:
           ldd target/release/pingap
           mv target/release/pingap ./pingap-linux-gnu-${{ matrix.platform.tag }}-rustls-full
       - name: Upload Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}
           tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}-full
@@ -277,6 +291,8 @@ jobs:
       - name: disable git eol translation
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: setup node
         uses: actions/setup-node@v7
       - name: build-web
@@ -318,6 +334,8 @@ jobs:
         run: |
           Compress-Archive -Path pingap-windows.exe -Destination pingap-windows.exe.zip
       - name: Upload asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           ./.github/workflows/upload_asset.sh ./pingap-windows.exe.zip $GITHUB_TOKEN
