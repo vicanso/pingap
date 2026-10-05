@@ -21,8 +21,54 @@ use tracing_appender::rolling::RollingFileAppender;
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub struct RollingFileWriter {
+/// The files of one file log: the directory they are written to and the
+/// name they start with. A rolled file is `<prefix>.<date>`, or `<date>`
+/// alone for a log that was given as a directory.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LogFiles {
     pub dir: String,
+    pub prefix: String,
+}
+
+impl LogFiles {
+    /// Whether `name` is a file this log rolled, going by the name the
+    /// appender gives one: `access.log.2026-10-05`, with `-13` for hourly
+    /// and `-13-45` for minutely on the end.
+    ///
+    /// The file being written matches as well, the compression leaves it
+    /// alone by its modification time. A log that never rolls has the bare
+    /// prefix for a name and does not match.
+    pub(crate) fn is_rolled(&self, name: &str) -> bool {
+        let date = if self.prefix.is_empty() {
+            name
+        } else {
+            let Some(date) = name
+                .strip_prefix(self.prefix.as_str())
+                .and_then(|rest| rest.strip_prefix('.'))
+            else {
+                return false;
+            };
+            date
+        };
+        is_rolling_date(date)
+    }
+}
+
+/// `2026-10-05`, `2026-10-05-13` or `2026-10-05-13-45`.
+fn is_rolling_date(value: &str) -> bool {
+    let mut count = 0;
+    for (index, part) in value.split('-').enumerate() {
+        let len = if index == 0 { 4 } else { 2 };
+        if part.len() != len || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        count += 1;
+    }
+    (3..=5).contains(&count)
+}
+
+pub struct RollingFileWriter {
+    pub files: LogFiles,
     pub writer: RollingFileAppender,
 }
 
@@ -80,6 +126,7 @@ pub(crate) fn new_rolling_file_writer(
             .to_string_lossy()
             .to_string()
     };
+    let prefix = filename.clone();
     // An unknown rolling used to mean daily without a word.
     let writer = match params.rolling.as_str() {
         "minutely" => tracing_appender::rolling::minutely(dir, filename),
@@ -95,14 +142,83 @@ pub(crate) fn new_rolling_file_writer(
         },
     };
     Ok(RollingFileWriter {
-        dir: dir.to_string_lossy().to_string(),
+        files: LogFiles {
+            dir: dir.to_string_lossy().to_string(),
+            prefix,
+        },
         writer,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RollingFileWriterParams, new_rolling_file_writer};
+    use super::{LogFiles, RollingFileWriterParams, new_rolling_file_writer};
+
+    #[test]
+    fn test_log_files_is_rolled() {
+        let files = |prefix: &str| LogFiles {
+            dir: "/var/log".to_string(),
+            prefix: prefix.to_string(),
+        };
+        let log = files("access.log");
+        for name in [
+            "access.log.2026-10-05",
+            "access.log.2026-10-05-13",
+            "access.log.2026-10-05-13-45",
+        ] {
+            assert!(log.is_rolled(name), "{name}");
+        }
+        for name in [
+            // a log that never rolls
+            "access.log",
+            // already compressed
+            "access.log.2026-10-05.zst",
+            "access.log.2026-10-05.gz",
+            // other files of the same directory
+            "error.log.2026-10-05",
+            "access.log.bak",
+            "access.log.2026-10",
+            "access.log.2026-10-05-13-45-00",
+            "access.log.20261005",
+            "access.log.2026-1o-05",
+            "access.logx.2026-10-05",
+            "syslog",
+            "2026-10-05",
+            "",
+        ] {
+            assert!(!log.is_rolled(name), "{name}");
+        }
+        // Given a directory, the appender names the files by the date alone.
+        let log = files("");
+        assert!(log.is_rolled("2026-10-05"));
+        assert!(log.is_rolled("2026-10-05-13"));
+        assert!(!log.is_rolled("access.log.2026-10-05"));
+        assert!(!log.is_rolled("messages"));
+    }
+
+    #[test]
+    fn test_rolling_file_writer_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().display().to_string();
+        let writer =
+            new_rolling_file_writer(&format!("{root}/app.log?rolling=hourly"))
+                .unwrap();
+        assert_eq!(
+            LogFiles {
+                dir: root.clone(),
+                prefix: "app.log".to_string(),
+            },
+            writer.files
+        );
+        let writer = new_rolling_file_writer(&root).unwrap();
+        assert_eq!(
+            LogFiles {
+                dir: root,
+                prefix: "".to_string(),
+            },
+            writer.files
+        );
+    }
 
     #[test]
     fn test_rolling_is_validated() {

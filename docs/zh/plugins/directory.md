@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `directory`。 |
-| `path` | string | — | **必填。** 根目录。`~` 会展开，路径会转为绝对路径。 |
+| `path` | string | — | **必填**，缺少时是配置错误。根目录。`~` 会展开，路径会转为绝对路径。 |
 | `index` | string | `index.html` | 目录请求（`/` 或任意深度的子目录）提供的文件。缺失前导 `/` 时会补上。 |
 | `autoindex` | bool | `false` | 为目录生成 HTML 列表。 |
 | `chunk_size` | bytesize | `4kb` | 流式块大小；也是启用流式的阈值。可写大小字符串或字节数；下限 4 KB。无法解析的值是配置错误。 |
@@ -18,6 +18,7 @@
 | `private` | bool | `false` | 向 `Cache-Control` 添加 `private`。 |
 | `charset` | string | — | 追加到 `text/*` 的 `Content-Type`。 |
 | `download` | bool | `false` | 添加 `Content-Disposition: attachment`。 |
+| `follow_symlinks` | bool | `true` | 为 `false` 时，解析符号链接之后文件仍须位于 `path` 之下。目录的 `index` 文件按同样的规则检查。 |
 | `headers` | string[] | — | 额外响应头，格式 `Name: value`。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。 |
 
@@ -66,7 +67,7 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 - 每个响应带 `Accept-Ranges: bytes` 与由大小和 mtime 导出的弱 ETag（`W/"<size hex>-<mtime hex>"`）。
 - `text/html` 视为不可缓存，不应用 `max_age`——SPA 壳保持新鲜，而带 hash 的资源可缓存。
 - 支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffix`；多 range 只取第一个。不可满足的 range 返回 `416`，带 `Content-Range: bytes */<size>`。
-- 不大于 `chunk_size` 的文件读入内存一次发送；更大的流式发送。
+- 不大于 `chunk_size` 的文件读入内存一次发送；更大的流式发送。两种情况下响应都带 `Content-Length`，状态码与请求一致：range 请求不论范围大小都是 `206` 并带 `Content-Range`。
 - `autoindex` 列表按名称排序并跳过点文件；名称经 HTML 转义、链接经百分号编码，因此名为 `<script>` 或 `a b.txt` 的文件能正确列出并链接。
 
 ## 响应
@@ -82,6 +83,6 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 ## 使用说明
 
 - `autoindex` 关闭时，任意深度的目录请求都提供其 `index` 文件（`/docs/` 会找到 `docs/index.html`）；开启时返回列表。
-- 路径穿越防护是词法的：拼接后规范化且仍须以 `path` 开头。**服务目录内指向外部的符号链接**不会被该检查捕获，请勿服务含不可信 symlink 的树。
+- 路径穿越防护默认是词法的：拼接后规范化且仍须以 `path` 开头，可以拦住 `../`，但拦不住**服务目录内指向外部的符号链接**。设置 `follow_symlinks = false` 后还会比较解析出的真实路径，代价是每个请求多一次 `realpath`。检查针对实际要发送的文件，所以目录的 `index` 文件如果链接到目录树之外，通过 `/dir/` 访问和通过 `/dir/index.html` 访问一样会被拒绝。默认值保持 `true`，把内容链接进目录树的部署不受影响；只要目录里可能出现不是你创建的符号链接，就应当关闭。根目录本身是符号链接时两种设置都可用，因为根目录在启动时解析一次。
 - `autoindex` 会暴露文件名、大小与时间戳。非公开内容请配合 [`basic_auth`](basic_auth.md) 或 [`ip_restriction`](ip_restriction.md)。
 - 提供大媒体时把 `chunk_size` 设得远高于 4 KB；它直接控制流式时的系统调用频率。

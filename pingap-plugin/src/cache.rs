@@ -495,11 +495,8 @@ impl Plugin for Cache {
             // is part of the key); purge both so a HEAD variant cannot keep
             // answering for a url that was just purged.
             for method in [Method::GET, Method::HEAD] {
-                let key = get_cache_key(
-                    ctx,
-                    method.as_ref(),
-                    &session.req_header().uri,
-                );
+                let key =
+                    get_cache_key(ctx, method.as_ref(), session.req_header());
                 self.http_cache
                     .cache
                     .remove(&key.combined(), key.user_tag().as_bytes())

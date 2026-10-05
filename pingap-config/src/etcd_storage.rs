@@ -289,8 +289,17 @@ impl Storage for EtcdStorage {
     async fn observe(&self) -> Result<Observer> {
         // A watch can miss a change made while an earlier one is still being
         // handled, so the caller pairs it with periodic full fetches.
-        let mut c = self.client().await?.watch_client();
-        let stream = c
+        //
+        // The watch gets a connection of its own. The shared one belongs to
+        // the runtime it was opened on, and the config is first loaded on a
+        // short-lived runtime at startup: a watch started on that connection
+        // from the server's runtime failed at once, so nothing ever watched
+        // and changes in etcd were not picked up.
+        let client = Client::connect(&self.addrs, Some(self.options.clone()))
+            .await
+            .map_err(etcd_error)?;
+        let stream = client
+            .watch_client()
             .watch(
                 self.path.as_bytes(),
                 Some(WatchOptions::default().with_prefix()),
@@ -299,6 +308,7 @@ impl Storage for EtcdStorage {
             .map_err(etcd_error)?;
         Ok(Observer {
             etcd_watch_stream: Some(stream),
+            _etcd_client: Some(client),
         })
     }
 }

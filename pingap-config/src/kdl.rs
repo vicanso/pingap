@@ -33,6 +33,10 @@ fn is_always_list(field: &str) -> bool {
             | "proxy_set_headers"
             | "proxy_add_headers"
             | "webhook_notifications"
+            | "match_headers"
+            | "match_query"
+            | "match_cookies"
+            | "trusted_proxies"
     )
 }
 
@@ -103,6 +107,29 @@ fn get_node_name_arg(node: &KdlNode) -> Result<String> {
         })
 }
 
+/// One element of an `item` list. `item "a"` is the value itself; an `item`
+/// with a block or named properties is a table.
+///
+/// The plain value used to be read as a table too, an empty one, so the
+/// `item "a"` the writer produced came back as `{}`.
+fn item_node_to_toml(node: &KdlNode) -> Result<TomlValue> {
+    let plain = node.children().is_none()
+        && node.entries().iter().all(|e| e.name().is_none());
+    if !plain {
+        return Ok(TomlValue::Table(node_to_toml_map(node)?));
+    }
+    let mut values: Vec<TomlValue> = node
+        .entries()
+        .iter()
+        .map(|e| kdl_value_to_toml(e.value()))
+        .collect();
+    Ok(match values.len() {
+        0 => TomlValue::Table(TomlMap::new()),
+        1 => values.remove(0),
+        _ => TomlValue::Array(values),
+    })
+}
+
 /// Convert a child property node to a TOML value:
 /// - No args/props/children → empty string
 /// - Has children, all named `item` → Array of Tables (matches `write_kdl_property` output)
@@ -113,15 +140,12 @@ fn get_node_name_arg(node: &KdlNode) -> Result<String> {
 fn child_node_to_toml(node: &KdlNode) -> Result<TomlValue> {
     if let Some(children) = node.children() {
         let nodes = children.nodes();
-        // All-`item` children → Array of Tables (produced by write_kdl_property for table arrays)
+        // All-`item` children → an array, one element per `item`
+        // (produced by write_kdl_property).
         if !nodes.is_empty() && nodes.iter().all(|n| n.name().value() == "item")
         {
-            let arr: Result<Vec<TomlValue>> = nodes
-                .iter()
-                .map(|item_node| {
-                    Ok(TomlValue::Table(node_to_toml_map(item_node)?))
-                })
-                .collect();
+            let arr: Result<Vec<TomlValue>> =
+                nodes.iter().map(item_node_to_toml).collect();
             return Ok(TomlValue::Array(arr?));
         }
         return Ok(TomlValue::Table(node_to_toml_map(node)?));
@@ -570,13 +594,23 @@ fn kdl_escape_string(s: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+/// A float that reads back as a float: `50.0`, not `50`, which is an
+/// integer to the parser.
+fn format_float(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 {
+        format!("{value:.1}")
+    } else {
+        value.to_string()
+    }
+}
+
 /// Render a single TOML value as a KDL argument token.
 /// Arrays are rendered as space-separated tokens (for child nodes).
 fn toml_value_to_kdl_arg(value: &TomlValue) -> String {
     match value {
         TomlValue::String(s) => kdl_escape_string(s),
         TomlValue::Integer(i) => i.to_string(),
-        TomlValue::Float(f) => f.to_string(),
+        TomlValue::Float(f) => format_float(*f),
         TomlValue::Boolean(b) => format!("#{b}"), // KDL v2: #true / #false
         TomlValue::Datetime(dt) => kdl_escape_string(&dt.to_string()),
         TomlValue::Array(arr) => arr
@@ -646,6 +680,21 @@ fn write_kdl_property(
                             ));
                         },
                     }
+                }
+                out.push_str(&format!("{pad}}}\n"));
+            } else if arr.len() == 1 && !is_always_list(key) {
+                // One value on the line reads back as that value, not as a
+                // list of one: `ip_list "1.2.3.4"` came back a string, and
+                // the plugin, finding no list, had no addresses to deny.
+                // The `item` form keeps it a list. The fields of
+                // `is_always_list` are lists whatever they look like.
+                out.push_str(&format!("{pad}{key} {{\n"));
+                for elem in arr {
+                    out.push_str(&format!(
+                        "{}item {}\n",
+                        kdl_indent(indent + 1),
+                        toml_value_to_kdl_arg(elem)
+                    ));
                 }
                 out.push_str(&format!("{pad}}}\n"));
             } else {
@@ -995,6 +1044,71 @@ server "web" addr="0.0.0.0:3000" {
         let orig: toml::Value = toml::from_str(toml_simple).unwrap();
         let rt: toml::Value = toml::from_str(&toml_rt).unwrap();
         assert_eq!(orig["basic"]["rules"], rt["basic"]["rules"]);
+    }
+
+    /// Regression: a list of one value was written as `key "value"`, which
+    /// reads back as a string. An ip deny list of one address was not a
+    /// list any more after `--to-kdl`, and the plugin denied nobody.
+    #[test]
+    fn test_single_value_list_roundtrip() {
+        let toml_input = r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[locations.app]
+match_headers = ["X-Env=prod"]
+plugins = ["deny"]
+
+[plugins.deny]
+category = "ip_restriction"
+ip_list = ["1.2.3.4"]
+message = "denied"
+mixed = [{ name = "a" }, "b"]
+type = "deny"
+"#;
+        let kdl = convert_toml_to_kdl(toml_input).unwrap();
+        // The known list fields stay on one line.
+        assert_eq!(true, kdl.contains("    plugins \"deny\"\n"), "{kdl}");
+        assert_eq!(
+            true,
+            kdl.contains("    ip_list {\n        item \"1.2.3.4\"\n    }\n"),
+            "{kdl}"
+        );
+
+        let original: TomlValue = toml::from_str(toml_input).unwrap();
+        let roundtrip: TomlValue =
+            toml::from_str(&convert_kdl_to_toml(&kdl).unwrap()).unwrap();
+        assert_eq!(original, roundtrip);
+    }
+
+    /// Written by hand, the known list fields are lists with one value too.
+    #[test]
+    fn test_known_list_fields_single_value() {
+        let toml_str = convert_kdl_to_toml(
+            r#"
+basic {
+    trusted_proxies "10.0.0.0/8"
+}
+location "app" {
+    match_headers "X-Env=prod"
+    match_query "debug=1"
+    match_cookies "beta=1"
+}
+"#,
+        )
+        .unwrap();
+        let value: TomlValue = toml::from_str(&toml_str).unwrap();
+        let list = |section: &str, name: Option<&str>, key: &str| {
+            let mut current = &value[section];
+            if let Some(name) = name {
+                current = &current[name];
+            }
+            current[key].as_array().map(|arr| arr.len())
+        };
+        assert_eq!(Some(1), list("basic", None, "trusted_proxies"));
+        for key in ["match_headers", "match_query", "match_cookies"] {
+            assert_eq!(Some(1), list("locations", Some("app"), key), "{key}");
+        }
     }
 
     #[test]

@@ -21,7 +21,7 @@ global_certificates = true
 enabled_h2 = true
 ```
 
-Pingap 在 `/.well-known/acme-challenge/<token>` 自行提供 challenge。若配置中没有任何 server 监听 80，会自动添加名为 `lets encrypt` 的监听器——无需手写。
+Pingap 在 `/.well-known/acme-challenge/<token>` 自行提供 challenge。若配置中没有任何 server 监听 80，会自动添加名为 `lets encrypt` 的监听器——无需手写。这个路径只回答正在进行的验证所用的 token；其他名字一律返回 `404`，包括同一存储里其他条目的名字（ACME 账号、includes）。
 
 一条命令快速启动在无配置文件时做同样的事：
 

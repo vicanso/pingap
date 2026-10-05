@@ -21,6 +21,14 @@ plugins = ["pingPath"]
 
 同一插件可用不同配置声明多次；一个 location 可列出多个插件。插件按 `plugins` 列表中的顺序执行。
 
+location 不会在缺少它所列插件的情况下提供服务：
+
+- `plugins` 里的名字既没有在 `[plugins.*]` 下声明，也不是内置的 `pingap:*` 插件时，属于配置错误：`--test`、启动和热更新都会拒绝。
+- 插件配置无效（包括 `category` 写错）时进程启动失败。带 `--admin` 时进程保持运行，以便通过 admin 修复配置；修复之前，引用该插件的 location 返回 `500`。
+- 热更新时，新配置无效的插件继续使用原来的配置运行，错误会写入日志并以 `reload_config_fail` 通知发出。新增的插件创建失败时没有旧实例可用，引用它的 location 返回 `500`。
+
+唯一的例外是当前构建没有编译进来的插件类别（非 `imageoptim` / `full` 构建里的 `image_optim`）：日志里提示不可用，插件不做任何事，这样同一份配置可以用于两种构建。
+
 亦支持等价的 HCL / KDL 写法——见 [pingap-config](../crates/config.md)。
 
 ## 生命周期步骤

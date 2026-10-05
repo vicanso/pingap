@@ -233,6 +233,38 @@ pub trait Plugin: Sync + Send {
     }
 }
 
+/// Takes the place of a plugin that a location names but that is not loaded:
+/// the name is misspelled, or the plugin failed to build. It fails every
+/// request of that location.
+///
+/// Leaving the name out instead served the location without the plugin, and
+/// when that plugin is the authentication or the access list, a broken
+/// config turned into an open door.
+pub struct MissingPlugin {
+    name: Arc<str>,
+}
+
+impl MissingPlugin {
+    pub fn new(name: Arc<str>) -> Self {
+        Self { name }
+    }
+}
+
+#[async_trait]
+impl Plugin for MissingPlugin {
+    async fn handle_request(
+        &self,
+        _step: PluginStep,
+        _session: &mut Session,
+        _ctx: &mut Ctx,
+    ) -> pingora::Result<RequestPluginResult> {
+        Err(crate::new_internal_error(
+            500,
+            format!("plugin {} is not available", self.name),
+        ))
+    }
+}
+
 /// Plugin provider trait
 pub trait PluginProvider: Send + Sync {
     /// Get a plugin by name

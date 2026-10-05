@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file_appender::new_rolling_file_writer;
+use super::file_appender::{LogFiles, new_rolling_file_writer};
 use super::new_env_filter;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
@@ -28,7 +28,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
@@ -41,7 +41,6 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::reload::Handle;
 use tracing_subscriber::reload::Layer;
 use tracing_subscriber::{EnvFilter, Registry};
-use walkdir::WalkDir;
 
 const DEFAULT_COMPRESSION_LEVEL: u8 = 9;
 const DEFAULT_DAYS_AGO: u16 = 7;
@@ -71,6 +70,20 @@ impl Compression {
     }
 }
 
+/// Where the compressed copy of `file` goes: the extension is added to the
+/// whole name, `access.log.2026-10-05.zst`.
+///
+/// It used to replace what follows the last dot, and for a rolled log that
+/// is the date: every day of `access.log` was to become `access.log.zst`.
+/// The first one took the name, and all the others failed on it at each
+/// run, uncompressed for good.
+fn compressed_path(file: &Path, compression: Compression) -> PathBuf {
+    let mut target = file.as_os_str().to_owned();
+    target.push(".");
+    target.push(compression.ext());
+    PathBuf::from(target)
+}
+
 /// Compresses `file` next to itself as `<file>.gz` / `<file>.zst`, and
 /// returns `(compressed_size, original_size)`. Level 0 means the default
 /// (gzip: best, zstd: 9); higher levels are clamped to what the codec
@@ -80,7 +93,7 @@ fn compress_file(
     compression: Compression,
     level: u8,
 ) -> Result<(u64, u64)> {
-    let target = file.with_extension(compression.ext());
+    let target = compressed_path(file, compression);
     let mut original =
         fs::File::open(file).map_err(|e| Error::Io { source: e })?;
     let output = fs::OpenOptions::new()
@@ -89,18 +102,36 @@ fn compress_file(
         .create_new(true)
         .open(&target)
         .map_err(|e| Error::Io { source: e })?;
-    let original_size = match compression {
+    let result = compress_to(&mut original, &output, compression, level);
+    if result.is_err() {
+        // Half a file under the final name would keep the next run from
+        // creating it.
+        let _ = fs::remove_file(&target);
+    }
+    let original_size = result?;
+    let size = output.metadata().map(|m| m.len()).unwrap_or_default();
+    Ok((size, original_size))
+}
+
+/// Writes `original` compressed to `output`, returns the bytes read.
+fn compress_to(
+    original: &mut fs::File,
+    output: &fs::File,
+    compression: Compression,
+    level: u8,
+) -> Result<u64> {
+    match compression {
         Compression::Gzip => {
             let level = if level == 0 {
                 flate2::Compression::best()
             } else {
                 flate2::Compression::new(level.min(9) as u32)
             };
-            let mut encoder = GzEncoder::new(&output, level);
-            let size = io::copy(&mut original, &mut encoder)
+            let mut encoder = GzEncoder::new(output, level);
+            let size = io::copy(original, &mut encoder)
                 .map_err(|e| Error::Io { source: e })?;
             encoder.finish().map_err(|e| Error::Io { source: e })?;
-            size
+            Ok(size)
         },
         Compression::Zstd => {
             let level = if level == 0 {
@@ -108,22 +139,20 @@ fn compress_file(
             } else {
                 level.min(22)
             };
-            let mut encoder = zstd::stream::Encoder::new(&output, level as i32)
+            let mut encoder = zstd::stream::Encoder::new(output, level as i32)
                 .map_err(|e| Error::Io { source: e })?;
-            let size = io::copy(&mut original, &mut encoder)
+            let size = io::copy(original, &mut encoder)
                 .map_err(|e| Error::Io { source: e })?;
             encoder.finish().map_err(|e| Error::Io { source: e })?;
-            size
+            Ok(size)
         },
-    };
-    let size = output.metadata().map(|m| m.len()).unwrap_or_default();
-    Ok((size, original_size))
+    }
 }
 
 /// Parameters for log compression configuration
 #[derive(Debug, Clone, Default)]
 pub struct LogCompressParams {
-    dirs: Vec<String>,
+    logs: Vec<LogFiles>,
     compression: String,
     level: u8,
     days_ago: u16,
@@ -131,9 +160,9 @@ pub struct LogCompressParams {
 }
 
 impl LogCompressParams {
-    pub fn new(dirs: Vec<String>) -> Self {
+    pub fn new(logs: Vec<LogFiles>) -> Self {
         Self {
-            dirs,
+            logs,
             ..Default::default()
         }
     }
@@ -151,12 +180,17 @@ impl LogCompressParams {
     }
 }
 
-/// Compresses every log file under `dirs` that has not been modified for
-/// `days_ago` days, then removes the original. Runs on the blocking pool:
+/// Compresses the rolled files of `logs` that have not been modified for
+/// `days_ago` days, then removes the originals. Runs on the blocking pool:
 /// compressing a day of logs at level 9 takes seconds to minutes, and the
 /// background runtime this task shares with the certificate, webhook and
 /// cache tasks must not sit still for that long.
-fn compress_dirs(params: &LogCompressParams) {
+///
+/// Only files a log rolled itself are touched, see `LogFiles::is_rolled`.
+/// This used to take every file under the log's directory, subdirectories
+/// included: with the log at `/var/log/pingap.log` that was all of
+/// `/var/log`, compressed and deleted once old enough.
+fn compress_logs(params: &LogCompressParams) {
     let days_ago = if params.days_ago == 0 {
         DEFAULT_DAYS_AGO
     } else {
@@ -172,16 +206,31 @@ fn compress_dirs(params: &LogCompressParams) {
     } else {
         Compression::Zstd
     };
-    let unique_dirs: HashSet<&String> = params.dirs.iter().collect();
-    for dir in unique_dirs {
-        for entry in WalkDir::new(dir)
-            .into_iter()
+    let unique_logs: HashSet<&LogFiles> = params.logs.iter().collect();
+    for log in unique_logs {
+        let entries = match fs::read_dir(&log.dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    dir = log.dir,
+                    "read log dir fail"
+                );
+                continue;
+            },
+        };
+        // A symlink is not a file here, so nothing is followed out of the
+        // directory.
+        for entry in entries
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.file_type().is_ok_and(|kind| kind.is_file()))
         {
-            let path = entry.path();
-            let ext = path.extension().and_then(|ext| ext.to_str());
-            if ext == Some(GZIP_EXT) || ext == Some(ZSTD_EXT) {
+            if !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| log.is_rolled(name))
+            {
                 continue;
             }
             let Some(modified) =
@@ -192,9 +241,10 @@ fn compress_dirs(params: &LogCompressParams) {
             if modified > modified_before {
                 continue;
             }
+            let path = entry.path();
             let start = Instant::now();
             let file = path.display().to_string();
-            match compress_file(path, compression, params.level) {
+            match compress_file(&path, compression, params.level) {
                 Err(e) => {
                     error!(
                         target: LOG_TARGET,
@@ -213,7 +263,7 @@ fn compress_dirs(params: &LogCompressParams) {
                         "compress log success",
                     );
                     // ignore remove
-                    let _ = fs::remove_file(path);
+                    let _ = fs::remove_file(&path);
                 },
             }
         }
@@ -233,7 +283,7 @@ async fn do_compress(
         return Ok(false);
     }
     let params = params.clone();
-    tokio::task::spawn_blocking(move || compress_dirs(&params))
+    tokio::task::spawn_blocking(move || compress_logs(&params))
         .await
         .map_err(|e| ServiceError::Invalid {
             message: format!("compress log task fail: {e}"),
@@ -343,9 +393,9 @@ pub fn new_log_flush_service() -> Option<Box<dyn BackgroundTask>> {
     Some(Box::new(LogFlushTask {}))
 }
 
-fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
+fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, LogFiles)> {
     let rolling_file_writer = new_rolling_file_writer(&params.log)?;
-    let dir = rolling_file_writer.dir;
+    let files = rolling_file_writer.files;
     let writer = if params.capacity < MIN_BUFFER_CAPACITY {
         BoxMakeWriter::new(rolling_file_writer.writer)
     } else {
@@ -359,7 +409,7 @@ fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
         let _ = BUFFERED_WRITER.set(writer.clone());
         BoxMakeWriter::new(SharedWriter(writer))
     };
-    Ok((writer, dir))
+    Ok((writer, files))
 }
 
 /// Initializes the logging system with the specified configuration
@@ -368,10 +418,10 @@ fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
 /// * `params` - Logger configuration parameters
 ///
 /// # Returns
-/// Optional log path if file log is enabled
+/// The files of the log if it goes to a file
 pub fn logger_try_init(
     params: LoggerParams,
-) -> Result<(LoggerReloadHandle, Option<String>)> {
+) -> Result<(LoggerReloadHandle, Option<LogFiles>)> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
@@ -406,8 +456,8 @@ pub fn logger_try_init(
             });
         },
         LogTarget::File(_) => {
-            let (writer, dir) = new_file_writer(&params)?;
-            log_path = Some(dir);
+            let (writer, files) = new_file_writer(&params)?;
+            log_path = Some(files);
             (writer, "file")
         },
     };
@@ -492,13 +542,19 @@ mod tests {
         for (compression, ext) in
             [(Compression::Gzip, "gz"), (Compression::Zstd, "zst")]
         {
-            let file = dir.path().join(format!("app-{ext}.log"));
+            let file = dir.path().join(format!("app-{ext}.log.2026-10-05"));
             fs::write(&file, &content).unwrap();
             let (size, original_size) =
                 compress_file(&file, compression, 0).unwrap();
             assert_eq!(content.len() as u64, original_size);
             assert_eq!(true, size > 0 && size < original_size, "{ext}");
-            assert_eq!(true, file.with_extension(ext).exists());
+            // The extension is added, the date stays in the name.
+            assert_eq!(
+                true,
+                dir.path()
+                    .join(format!("app-{ext}.log.2026-10-05.{ext}"))
+                    .exists()
+            );
             // the target exists now, so a second run must not clobber it
             assert_eq!(true, compress_file(&file, compression, 0).is_err());
         }
@@ -511,13 +567,14 @@ mod tests {
     fn test_buffered_application_log_flush() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("app.log");
-        let (writer, log_dir) = new_file_writer(&LoggerParams {
+        let (writer, files) = new_file_writer(&LoggerParams {
             log: format!("{}?rolling=never", file.display()),
             capacity: 64 * 1024,
             ..Default::default()
         })
         .unwrap();
-        assert_eq!(dir.path().display().to_string(), log_dir);
+        assert_eq!(dir.path().display().to_string(), files.dir);
+        assert_eq!("app.log", files.prefix);
         assert_eq!(true, new_log_flush_service().is_some());
 
         writer.make_writer().write_all(b"buffered line\n").unwrap();
@@ -527,35 +584,83 @@ mod tests {
         assert_eq!("buffered line\n", fs::read_to_string(&file).unwrap());
     }
 
-    /// Only files older than `days_ago` (by modification time) are
-    /// compressed, and already compressed files are left alone.
+    /// Only the files a log rolled itself are compressed, once they are
+    /// older than `days_ago` by modification time. Everything else in the
+    /// directory is none of this task's business.
     #[test]
-    fn test_compress_dirs() {
+    fn test_compress_logs() {
         let dir = tempfile::tempdir().unwrap();
-        let old = dir.path().join("old.log");
-        let fresh = dir.path().join("fresh.log");
-        let done = dir.path().join("done.log.zst");
-        for file in [&old, &fresh, &done] {
-            fs::write(file, "log line\n".repeat(100)).unwrap();
-        }
+        let sub = dir.path().join("nginx");
+        fs::create_dir(&sub).unwrap();
+        let path = |name: &str| dir.path().join(name);
+
+        let old = [
+            // rolled by this log: the ones to compress
+            "access.log.2026-09-01",
+            "access.log.2026-09-02",
+            // compressed already
+            "access.log.2026-08-31.zst",
+            // not this log's: another program's files in the same directory
+            "syslog",
+            "auth.log.1",
+            "error.log.2026-09-01",
+            "nginx/access.log.2026-09-01",
+        ];
+        let fresh = ["access.log.2026-10-05"];
         let eight_days_ago = SystemTime::now() - Duration::from_secs(8 * 86400);
-        fs::File::open(&old)
-            .unwrap()
-            .set_modified(eight_days_ago)
-            .unwrap();
-        fs::File::open(&done)
-            .unwrap()
-            .set_modified(eight_days_ago)
-            .unwrap();
+        for name in old.iter().chain(fresh.iter()) {
+            fs::write(path(name), "log line\n".repeat(100)).unwrap();
+        }
+        for name in old {
+            fs::File::open(path(name))
+                .unwrap()
+                .set_modified(eight_days_ago)
+                .unwrap();
+        }
 
-        let params =
-            LogCompressParams::new(vec![dir.path().display().to_string()]);
-        compress_dirs(&params);
+        let params = LogCompressParams::new(vec![LogFiles {
+            dir: dir.path().display().to_string(),
+            prefix: "access.log".to_string(),
+        }]);
+        compress_logs(&params);
 
-        assert_eq!(false, old.exists());
-        assert_eq!(true, dir.path().join("old.zst").exists());
-        assert_eq!(true, fresh.exists());
-        assert_eq!(true, done.exists());
-        assert_eq!(false, dir.path().join("done.log.zst.zst").exists());
+        // Regression: each day keeps its own name. They all used to map to
+        // `access.log.zst`, so only the first was ever compressed.
+        for name in ["access.log.2026-09-01", "access.log.2026-09-02"] {
+            assert_eq!(false, path(name).exists(), "{name}");
+            assert_eq!(true, path(&format!("{name}.zst")).exists(), "{name}");
+        }
+        assert_eq!(false, path("access.log.zst").exists());
+        assert_eq!(false, path("access.log.2026-08-31.zst.zst").exists());
+        // Regression: the whole directory tree used to be compressed and
+        // the originals removed.
+        for name in [
+            "access.log.2026-08-31.zst",
+            "syslog",
+            "auth.log.1",
+            "error.log.2026-09-01",
+            "nginx/access.log.2026-09-01",
+            "access.log.2026-10-05",
+        ] {
+            assert_eq!(true, path(name).exists(), "{name}");
+        }
+        let mut names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into())
+            .collect();
+        names.sort();
+        assert_eq!(
+            vec![
+                "access.log.2026-08-31.zst",
+                "access.log.2026-09-01.zst",
+                "access.log.2026-09-02.zst",
+                "access.log.2026-10-05",
+                "auth.log.1",
+                "error.log.2026-09-01",
+                "nginx",
+                "syslog",
+            ],
+            names
+        );
     }
 }

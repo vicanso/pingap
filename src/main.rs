@@ -420,13 +420,16 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let (server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
 
+    // The admin plugin takes the config manager when it is built, so the
+    // manager comes first. The other way round the plugin was never created
+    // and this node answered 404 to everything.
+    let config_manager =
+        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
     let (_, error) =
         plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]));
     if !error.is_empty() {
-        error!(error, "init plugins fail",);
+        return Err(format!("init plugins fail: {error}").into());
     }
-    let config_manager =
-        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
     let opt = Opt {
@@ -542,19 +545,19 @@ fn parse_arguments() -> Args {
 
 /// Dry-runs each configured plugin through the factory so `--test` reports bad
 /// plugin configs, which `PingapConfig::validate` cannot check (the factory
-/// lives in a higher layer). A category this build does not know — e.g. a
-/// feature-gated plugin that was compiled out — is only warned about, matching
-/// runtime behaviour; any other construction error is treated as fatal.
+/// lives in a higher layer). A feature-gated category that was compiled out
+/// of this build is only warned about, matching runtime behaviour; any other
+/// construction error, an unknown category included, is treated as fatal.
 fn validate_plugins(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     let factory = pingap_plugin::get_plugin_factory();
     for (name, conf) in config.plugins.iter() {
         match factory.create(conf) {
             Ok(_) => {},
-            Err(pingap_plugin::Error::NotFound { category }) => {
+            Err(e) if plugin::is_unavailable_in_build(&e) => {
                 warn!(
                     target: LOG_TARGET,
                     name = %name,
-                    category = %category,
+                    error = %e,
                     "plugin category is unavailable in this build, skipping validation"
                 );
             },
@@ -690,6 +693,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Reject per-server TLS version/cipher settings the active backend cannot
     // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
     validate_servers_tls_for_backend(&config.servers)?;
+    plugin::validate_plugin_references(&config)?;
     // Install aws-lc-rs before ACME / any other rustls user can race to install
     // a different CryptoProvider. No-op for the OpenSSL backend.
     install_default_crypto_provider();
@@ -875,6 +879,17 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
     let (_, error) = plugin::try_init_plugins(&config.plugins);
     if !error.is_empty() {
+        // A plugin that does not build is fatal: logging it and going on
+        // served its locations without it. With the admin server up the
+        // process stays, so the config can be repaired through it - the
+        // locations naming the plugin reject their requests meanwhile.
+        let admin_ready = get_admin_addr().is_some()
+            && new_plugin_provider()
+                .get(plugin::ADMIN_SERVER_PLUGIN)
+                .is_some();
+        if !admin_ready {
+            return Err(format!("init plugins fail: {error}").into());
+        }
         error!(target: LOG_TARGET, error, "init plugins fail",);
     }
 
@@ -999,8 +1014,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         let access_logger = if let Some(log_path) = log_path {
             let r = new_access_logger(&log_path);
             let (tx, task) = r.recv()??;
-            if let Some(dir) = task.get_dir() {
-                application_log_paths.push(dir);
+            if let Some(files) = task.get_log_files() {
+                application_log_paths.push(files);
             }
             my_server.add_service(background_service("access_logger", task));
             Some(tx)

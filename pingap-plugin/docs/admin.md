@@ -17,7 +17,7 @@ the admin UI should live on an existing server behind a path prefix.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `admin`. |
 | `path` | string | `""` | URL prefix the admin UI is mounted at. A trailing `/` is stripped. |
-| `authorizations` | string[] | `[]` | Base64 of `user:password`. **Empty disables authentication entirely.** |
+| `authorizations` | string[] | `[]` | Base64 of `user:password`, both non-empty; anything else is rejected. **Empty disables authentication entirely.** |
 | `max_age` | duration | `2d` | Allowed clock skew for the signed token. |
 | `ip_fail_limit` | int | `10` | Failed attempts per IP before that IP is blocked for 5 minutes. |
 
@@ -32,6 +32,12 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 
 Equivalent environment variables: `PINGAP_ADMIN_ADDR`, `PINGAP_ADMIN_USER`,
 `PINGAP_ADMIN_PASSWORD`.
+
+The credentials are `user:password`, or the base64 of `user:password` in place
+of the user. A user without a password that is not such a base64 value
+(`--admin=root@127.0.0.1:3018`) is an error and the process does not start.
+Characters with a meaning in a URL are percent-encoded (`p%40ss` for `p@ss`),
+and the password is what they decode to.
 
 ## As a plugin
 
@@ -65,10 +71,11 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 `<unix-seconds>` must be within `max_age` of the proxy's clock, and the token is
 compared in constant time. The web UI computes this for you after login.
 
-Static assets of the login page (`/`, `*.js`, `*.css`, `*.png`) are served
-without authentication so the login screen can load. Anything under `/api` always
-requires it, so an API route cannot be reached by dressing it up with a
-static-looking suffix.
+There are two kinds of path under the admin prefix. `/api` and everything
+below it is the API and always requires the token. Every other path is a file
+of the embedded UI, served without authentication so the login screen can
+load, and answered `404` when there is no such file. An API route is only
+reachable under `/api`: `/configs/...` without the prefix is not routed to it.
 
 After `ip_fail_limit` failures an IP is refused with `403 Forbidden, too many
 failures` for 5 minutes.

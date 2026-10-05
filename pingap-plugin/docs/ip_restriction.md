@@ -56,6 +56,22 @@ straight past an allow-list.
 trusted_proxies = ["10.0.0.0/8"]
 ```
 
+With `trusted_proxies` set:
+
+- A connection that does not come from a trusted proxy is identified by its
+  peer address; its forwarded headers are ignored.
+- Through a trusted proxy, `X-Forwarded-For` is read from the right. Each proxy
+  appends the address it received the request from, so entries that are
+  trusted proxies themselves are skipped and the first one that is not is the
+  client. Whatever stands to the left of it was sent by that client and is not
+  looked at: for `X-Forwarded-For: 6.6.6.6, 9.9.9.9` arriving from `10.0.0.2`
+  the client is `9.9.9.9`. Several `X-Forwarded-For` lines are read as one
+  list, and an entry may carry a port (`9.9.9.9:4321`, `[2001:db8::1]:4321`).
+- Without `X-Forwarded-For` the address is `X-Real-IP`, then the peer.
+
+Without `trusted_proxies` the first `X-Forwarded-For` entry is taken from
+anyone, which is only safe when no client can reach pingap directly.
+
 ## Responses
 
 | Situation | Status | Body |

@@ -83,7 +83,8 @@ curl -X PURGE http://127.0.0.1:6188/*
 - 属于某一个客户端的响应不会被存储：
   - 带 `Set-Cookie` 头的响应：否则所有从缓存取到它的客户端都会收到同一个 cookie。确实要缓存这类响应时，用 `upstream` 模式的 [`response_headers`](response_headers.md) 插件在存储前去掉这个头。
   - 请求带 `Authorization` 头时的响应，除非源站用 `public`、`s-maxage` 或 `must-revalidate` 标明可以共享。开启了 `hide_credentials` 的 [`basic_auth`](basic_auth.md) 插件会在这项检查之前移除该请求头，因此它保护的站点照常缓存。
-- 缓存键由请求 URI、`namespace` 与所列 `headers` 的值推导。`PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
+- 缓存键由 `namespace`、所列 `headers` 的值、请求方法、域名、路径和查询串组成。域名取小写且不含端口，协议不在键里，所以 `http://Example.com:8080/x` 与 `https://example.com/x` 是同一个条目，HTTP/1.1 与 HTTP/2 一致；`other.com/x` 则是另一个条目。
+- `PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。它清理的是请求所发往的域名：在插件可达的任意监听上发送，并带上要清理的站点的 `Host`。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
 - 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
 - 遵循源站的 `Cache-Control: stale-while-revalidate=<seconds>`；未包含该 directive 的条目不会在重新验证时返回过期内容。新鲜期过后，在该时间窗内 pingap 立即返回旧内容，并由持有锁的一个请求在后台向源站刷新；超出时间窗则等待或执行普通重新验证。SWR 需要非零 `lock`，`lock = "0s"` 会禁用它。`max_ttl` 只限制新鲜期，不限制 SWR 时间窗。后台重新验证会走完整请求管线，产生访问日志、更新指标，并再次执行 request 步骤插件。
@@ -91,6 +92,7 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 ## 使用说明
 
+- **从 0.15.0 及更早版本升级后缓存会清空。** 到该版本为止，只有 HTTP/2 请求的键包含域名，HTTP/1.1 下同一个 `cache` 插件后面的两个站点共用条目。这些版本写入的条目在现在的键下找不到：升级后缓存从空开始，文件缓存里的旧条目留在磁盘上，由 inactive 扫描清除。
 - **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。
 - **每个进程只有一个内存后端。** 第一个请求内存缓存的 `cache` 插件创建进程级单例；第二个声明不同 `max_size` 或 `mode` 时会静默复用第一个。用 `namespace` 分隔内容，不要再声明第二个 `directory`。
 - 每个不同的 `lock` 时长会在进程生命周期内分配一把共享锁，因此重要的是不同取值的数量，而不是插件实例数。

@@ -28,6 +28,24 @@ The same plugin can be declared several times with different settings, and one
 location can list several plugins. Plugins run in the order they are listed in
 `plugins`.
 
+A location never runs without a plugin it names:
+
+- A name in `plugins` that is neither declared under `[plugins.*]` nor one of
+  the built-in `pingap:*` plugins is a configuration error: `--test`, startup
+  and a reload all reject it.
+- A plugin whose configuration is invalid (an unknown `category` included)
+  stops the process at startup. With `--admin` the process stays up so the
+  configuration can be repaired through the admin, and the locations naming
+  that plugin answer `500` until it is.
+- On a hot reload a plugin whose new configuration is invalid keeps running
+  with its previous one, and the error is logged and sent as a
+  `reload_config_fail` notification. A new plugin that fails to build has
+  nothing to fall back to: its locations answer `500`.
+
+The one exception is a plugin whose category this build was compiled without
+(`image_optim` outside the `imageoptim` / `full` builds). It is logged as
+unavailable and does nothing, so one configuration can be shared by both builds.
+
 Equivalent HCL and KDL forms are supported — see
 [pingap-config](../pingap-config/README.md).
 

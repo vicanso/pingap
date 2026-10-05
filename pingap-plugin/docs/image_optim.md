@@ -18,14 +18,15 @@ cargo build --features=imageoptim
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `image_optim`. |
-| `output_types` | string | `""` | Comma-separated target formats, e.g. `avif,webp`. |
+| `output_types` | string | `""` | Comma-separated target formats in order of preference, e.g. `avif,webp`. Each is one of `avif`, `webp`, `jpeg`, `png`; anything else is a configuration error. |
 | `png_quality` | int | `90` | 1–100. Out-of-range values reset to the default. |
 | `jpeg_quality` | int | `80` | 1–100. |
 | `avif_quality` | int | `75` | 1–100. |
 | `avif_speed` | int | `3` | 1–10. Higher is faster and larger. |
 
-Only `image/png` and `image/jpeg` upstream responses are candidates. Everything
-else passes through untouched.
+Only `200` upstream responses of type `image/png` or `image/jpeg` are
+candidates. Everything else passes through untouched, and so does an image
+whose `Content-Length` is over 20 MB.
 
 ## Example
 
@@ -57,8 +58,25 @@ the cache key — so an AVIF-capable browser and an old one get separate cache
 entries instead of poisoning each other.
 
 At `upstream_response` the response is converted when the content type is
-`image/png` or `image/jpeg` and the client accepts one of `output_types`. The
-body is then re-encoded as it streams.
+`image/png` or `image/jpeg` and the request has an `Accept` header. The target
+is the first of `output_types` the client accepts, and the image's own format
+(re-encoded at the configured quality) when it accepts none of them.
+`Content-Type` is set to the target, `image/avif` for example.
+
+The body is collected and converted once it is complete. What goes out is
+always an image:
+
+- The original is sent, as it came, when it cannot be converted: it does not
+  decode, or it is larger than 16384 pixels on a side or 40 million pixels in
+  all. The size is read from the image header before anything is decoded, so a
+  small file describing a huge image costs nothing.
+- An upstream that sends no `Content-Length` is collected up to 20 MB. Beyond
+  that the body is passed on as it arrives.
+
+In both cases the `Content-Type` has already been sent and names the target
+format, while the body is the original. Browsers go by the content of an image
+and display it; keep originals within the limits if something stricter reads
+them.
 
 ## Usage notes
 
@@ -67,6 +85,9 @@ body is then re-encoded as it streams.
   CPU profile.
 - Order matters: list the cache plugin before this one so hits are served without
   re-encoding.
+- The conversion runs on the worker thread that handles the request. With
+  `basic.work_stealing` on (the default) the thread's other connections are
+  moved to another worker for the duration; with it off they wait.
 - `avif_speed` is the main knob. `1`–`2` produce the smallest files at a cost
   that is only reasonable behind a cache; `4`–`6` is a sane live default.
 - The `Accept` check is a substring test against `image/<type>`, so

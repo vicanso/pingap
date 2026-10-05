@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::LOG_TARGET;
-use super::file_appender::new_rolling_file_writer;
+use super::file_appender::{LogFiles, new_rolling_file_writer};
 #[cfg(unix)]
 use super::syslog::{SyslogSender, new_syslog_sender};
 use super::target::{LogTarget, parse_log_target};
@@ -81,7 +81,7 @@ impl AccessLogSink {
 }
 
 pub struct AsyncLoggerTask {
-    dir: Option<String>,
+    files: Option<LogFiles>,
     path: String,
     channel_buffer: usize,
     receiver: Mutex<Option<Receiver<BytesMut>>>,
@@ -89,10 +89,10 @@ pub struct AsyncLoggerTask {
     flush_timeout: Duration,
 }
 impl AsyncLoggerTask {
-    /// The directory of a file log, for the compression task; `None` for
-    /// the other destinations.
-    pub fn get_dir(&self) -> Option<String> {
-        self.dir.clone()
+    /// The files of a file log, for the compression task; `None` for the
+    /// other destinations.
+    pub fn get_log_files(&self) -> Option<LogFiles> {
+        self.files.clone()
     }
 }
 
@@ -104,7 +104,7 @@ struct AsyncLoggerWriterParams {
     flush_timeout: Option<Duration>,
 }
 
-fn new_sink(target: &str) -> Result<(AccessLogSink, Option<String>)> {
+fn new_sink(target: &str) -> Result<(AccessLogSink, Option<LogFiles>)> {
     let invalid = |message: String| Error::Invalid {
         message: format!("{target}: {message}"),
     };
@@ -130,7 +130,7 @@ fn new_sink(target: &str) -> Result<(AccessLogSink, Option<String>)> {
                 .map_err(|e| invalid(e.to_string()))?;
             Ok((
                 AccessLogSink::File(BufWriter::new(rolling_file_writer.writer)),
-                Some(rolling_file_writer.dir),
+                Some(rolling_file_writer.files),
             ))
         },
     }
@@ -148,14 +148,14 @@ pub async fn new_async_logger(
             message: format!("access log params {target} is invalid: {e}"),
         })?;
 
-    let (sink, dir) = new_sink(target)?;
+    let (sink, files) = new_sink(target)?;
     let channel_buffer = params.channel_buffer.unwrap_or(1000);
     let flush_timeout = params.flush_timeout.unwrap_or(Duration::from_secs(10));
 
     let (tx, rx) = channel::<BytesMut>(channel_buffer);
 
     let task = AsyncLoggerTask {
-        dir,
+        files,
         channel_buffer,
         path: path.to_string(),
         receiver: Mutex::new(Some(rx)),
@@ -327,15 +327,18 @@ mod tests {
             ["stdout", "stderr", "/dev/stdout", "stdout?flush_timeout=1s"]
         {
             let (_, task) = new_async_logger(target).await.unwrap();
-            assert_eq!(None, task.get_dir(), "{target}");
+            assert_eq!(None, task.get_log_files(), "{target}");
         }
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("access.log");
         let (_, task) =
             new_async_logger(&path.to_string_lossy()).await.unwrap();
         assert_eq!(
-            Some(dir.path().to_string_lossy().to_string()),
-            task.get_dir()
+            Some(LogFiles {
+                dir: dir.path().to_string_lossy().to_string(),
+                prefix: "access.log".to_string(),
+            }),
+            task.get_log_files()
         );
     }
 

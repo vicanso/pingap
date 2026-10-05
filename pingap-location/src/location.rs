@@ -21,7 +21,9 @@ use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
 use pingap_core::{HttpHeader, convert_headers, resolve_static_header_value};
-use pingap_core::{LocationInstance, NamedPlugin, PluginProvider};
+use pingap_core::{
+    LocationInstance, MissingPlugin, NamedPlugin, PluginProvider,
+};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
@@ -596,7 +598,10 @@ impl Location {
     /// built on the first request after the location or the plugins were
     /// loaded and shared by every request after that, so the per-request
     /// cost is one atomic load and one reference count. `None` when the
-    /// location names no plugins or none of them exist.
+    /// location names no plugins.
+    ///
+    /// A name the provider does not have resolves to [`MissingPlugin`], so
+    /// the location answers 500 instead of serving without that plugin.
     #[inline]
     pub fn plugins_for(
         &self,
@@ -612,8 +617,18 @@ impl Location {
         }
         let plugins: Arc<[NamedPlugin]> = names
             .iter()
-            .filter_map(|name| {
-                provider.get(name).map(|plugin| (name.clone(), plugin))
+            .map(|name| {
+                let plugin = provider.get(name).unwrap_or_else(|| {
+                    // Once per plugin reload, not once per request.
+                    error!(
+                        target: LOG_TARGET,
+                        location = self.name.as_ref(),
+                        plugin = name.as_ref(),
+                        "plugin is not available, requests of the location are rejected"
+                    );
+                    Arc::new(MissingPlugin::new(name.clone()))
+                });
+                (name.clone(), plugin)
             })
             .collect();
         self.resolved_plugins.store(Some(Arc::new(ResolvedPlugins {
@@ -1140,9 +1155,14 @@ mod tests {
         provider.present.store(false, Ordering::Relaxed);
         assert_eq!(true, lo.plugins_for(&provider).is_some());
 
-        // A new version rebuilds the list, and nothing resolves now.
+        // A new version rebuilds the list. Nothing resolves now, and the
+        // names are not dropped: each one is held by a placeholder that
+        // fails the request, so the location is never served without them.
         provider.version.store(2, Ordering::Relaxed);
-        assert_eq!(true, lo.plugins_for(&provider).is_none());
+        let missing = lo.plugins_for(&provider).expect("placeholders");
+        assert_eq!(2, missing.len());
+        assert_eq!("a", missing[0].0.as_ref());
+        assert_eq!(false, Arc::ptr_eq(&first, &missing));
 
         // No plugin names at all: nothing to resolve, nothing cached.
         let bare = Location::new(

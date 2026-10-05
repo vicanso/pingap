@@ -76,10 +76,18 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct Observer {
     // Optional watch stream for etcd-based configuration
     etcd_watch_stream: Option<WatchStream>,
+    // The connection the stream runs on, kept for as long as the stream.
+    _etcd_client: Option<etcd_client::Client>,
 }
 
 impl Observer {
-    // Watches for configuration changes, returns true if changes detected
+    /// Waits for the next configuration change, `true` when there is one.
+    ///
+    /// An error means this observer is finished - the watch broke, or the
+    /// server ended it - and a new one has to be created. The end of the
+    /// stream used to be reported as "no change": the caller asked again at
+    /// once, got the same answer, and spun on one core without ever seeing
+    /// another change.
     pub async fn watch(&mut self) -> Result<bool> {
         let sleep_time = Duration::from_secs(30);
         // no watch stream, just sleep a moment
@@ -90,8 +98,13 @@ impl Observer {
         let resp = stream.message().await.map_err(|e| Error::Etcd {
             source: Box::new(e),
         })?;
+        if resp.is_none() {
+            return Err(Error::Invalid {
+                message: "etcd watch stream is closed".to_string(),
+            });
+        }
 
-        Ok(resp.is_some())
+        Ok(true)
     }
 }
 
@@ -187,7 +200,10 @@ fn permission_error_message(
 }
 
 /// Every `*.<ext>` file under `dir`, recursively, in glob order.
-fn list_config_files(dir: &str, ext: &str) -> Result<Vec<std::path::PathBuf>> {
+pub(crate) fn list_config_files(
+    dir: &str,
+    ext: &str,
+) -> Result<Vec<std::path::PathBuf>> {
     let pattern = format!("{dir}/**/*.{ext}");
     glob(&pattern)
         .map_err(|e| Error::Pattern {

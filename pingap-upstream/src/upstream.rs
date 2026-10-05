@@ -109,6 +109,12 @@ impl HealthObserve for BackendObserveNotification {
 // - RoundRobin: Distributes requests evenly across backends
 // - Consistent: Uses consistent hashing to map requests to backends
 // - Transparent: Passes requests through without load balancing
+/// How many candidates a backend selection looks at before it reads the
+/// size of the backend set, see `Upstream::select_backend`.
+const FAST_SELECT_STEPS: usize = 4;
+/// Candidates per backend that a consistent-hash selection may look at.
+const CONSISTENT_SELECT_STEPS_PER_BACKEND: usize = 16;
+
 enum SelectionLb {
     RoundRobin(LoadBalancer<RoundRobin>),
     Consistent {
@@ -774,6 +780,45 @@ impl Upstream {
         states.is_backend_acceptable(&backend.addr)
     }
 
+    /// Picks a backend that is healthy and not held back by its circuit
+    /// breaker.
+    ///
+    /// The first few candidates settle nearly every request. When all of
+    /// them are refused the selection runs again with `max_steps(number of
+    /// backends)` candidates, enough to reach every backend.
+    ///
+    /// Stopping after the first few answered 503 while healthy backends
+    /// were left. With round robin and five backends it was worse than a
+    /// matter of chance: a refused selection moved the shared counter on by
+    /// five, so the next request looked at the same four backends and
+    /// skipped the same fifth one, every time.
+    #[inline]
+    fn select_backend<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+        max_steps: impl Fn(usize) -> usize,
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
+        let accept = |backend: &Backend, healthy: bool| {
+            self.accept_backend(backend, healthy)
+        };
+        if let Some(backend) = lb.select_with(key, FAST_SELECT_STEPS, accept) {
+            return Some(backend);
+        }
+        // Only now, off the common path: reading the backend set takes a
+        // reference on it.
+        let count = lb.backends().get_backend().len();
+        let steps = max_steps(count);
+        if steps <= FAST_SELECT_STEPS {
+            return None;
+        }
+        lb.select_with(key, steps, accept)
+    }
+
     /// Creates and configures a new HTTP peer for handling requests
     ///
     /// # Arguments
@@ -806,17 +851,24 @@ impl Upstream {
         let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
-                let backend = lb.select_with(b"", 4, |backend, healthy| {
-                    self.accept_backend(backend, healthy)
-                })?;
+                // One more than there are backends: the first candidate
+                // comes from the weighted list and may show up again among
+                // the following ones, which walk every backend in turn.
+                let backend =
+                    self.select_backend(lb, b"", |count| count + 1)?;
                 HttpPeer::new(backend, self.tls, self.sni.clone())
             },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
                 let value = hash.get_value(session, client_ip);
+                // The candidates are the points that follow the key on the
+                // hash ring, and a backend owns many of them: the same few
+                // backends come up again and again, so it takes far more
+                // steps than backends to have looked at them all.
                 let backend =
-                    lb.select_with(value.as_bytes(), 4, |backend, healthy| {
-                        self.accept_backend(backend, healthy)
+                    self.select_backend(lb, value.as_bytes(), |count| {
+                        (count * CONSISTENT_SELECT_STEPS_PER_BACKEND)
+                            .clamp(64, 1024)
                     })?;
                 HttpPeer::new(backend, self.tls, self.sni.clone())
             },
@@ -1877,6 +1929,63 @@ mod tests {
         let set = backends.get_backend();
         assert_eq!(1, set.len());
         backends.ready(set.iter().next().unwrap())
+    }
+
+    /// Regression: with one healthy backend out of five, nearly every
+    /// request got a 503. A selection stopped after four candidates, and a
+    /// refused round-robin selection moved the counter on by five, so each
+    /// request skipped the same backend.
+    #[tokio::test]
+    async fn test_select_reaches_the_only_healthy_backend() {
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // Ports with nothing listening on them, and one that answers.
+        let dead: Vec<String> = (0..4)
+            .map(|_| {
+                let listener =
+                    std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.local_addr().unwrap().to_string()
+            })
+            .collect();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let alive = listener.local_addr().unwrap().to_string();
+
+        for algo in [None, Some("hash:url".to_string())] {
+            // The healthy backend at every position of the list.
+            for position in 0..=dead.len() {
+                let mut addrs = dead.clone();
+                addrs.insert(position, alive.clone());
+                let up = Upstream::new(
+                    "one-healthy",
+                    &UpstreamConf {
+                        addrs,
+                        algo: algo.clone(),
+                        health_check: Some(
+                            "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+                up.run_health_check().await.unwrap();
+
+                let mut client_ip = None;
+                for _ in 0..20 {
+                    let peer = up
+                        .new_http_peer(&session, &mut client_ip, false)
+                        .await
+                        .unwrap_or_else(|| {
+                            panic!("no backend, algo {algo:?} at {position}")
+                        });
+                    assert_eq!(alive, peer.address().to_string());
+                }
+            }
+        }
     }
 
     /// The round run before a new upstream is switched in keeps a dead

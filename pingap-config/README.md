@@ -140,8 +140,17 @@ concurrent admin and ACME writes cannot clobber each other.
 
 The same configuration can be written as TOML (canonical), HCL or KDL. When
 loading a directory, `.toml` files win; if there are none, `.hcl` is tried, then
-`.kdl`. HCL and KDL are converted to TOML in memory, so they are input formats
-only — everything downstream sees TOML.
+`.kdl`. HCL and KDL are converted to TOML in memory, so everything downstream
+sees TOML.
+
+What a change made through pingap (the admin, a certificate renewed by ACME)
+is written as depends on where the configuration is kept:
+
+| Kept in | A change is written as |
+| --- | --- |
+| TOML, a single file or a directory | TOML |
+| A single `.hcl` or `.kdl` file | That format again. The whole file is rewritten in pingap's own layout, so comments and nesting written by hand are not kept. What is about to be written is read back first, and a configuration that would not come back the same is refused and nothing is saved. |
+| A directory of `.hcl` or `.kdl` files | Nothing: such a directory is read-only, and a change is refused with an error. Its files are laid out as their author saw fit, so there is no file one entry belongs in. Edit the files, or keep the configuration in TOML to manage it through pingap. |
 
 ```toml
 [upstreams.api]
@@ -176,6 +185,27 @@ server "test" {
 }
 ```
 
+In KDL a node with one value is that value and a node with several is a list.
+The fields that are always lists (`addrs`, `locations`, `plugins`, `includes`,
+`modules`, `proxy_set_headers`, `proxy_add_headers`, `match_headers`,
+`match_query`, `match_cookies`, `trusted_proxies`, `webhook_notifications`)
+are lists with one value too. For any other field, a plugin's for example, a
+list of one is written with `item` children, which is also what `--to-kdl`
+produces:
+
+```text
+plugin "blockList" {
+    category "ip_restriction"
+    type "deny"
+    ip_list {
+        item "1.2.3.4"
+    }
+}
+```
+
+A plugin setting that takes a list of strings also accepts a single string in
+its place, so `ip_list "1.2.3.4"` works as well.
+
 HCL supports `$ENV:NAME` interpolation, so secrets can come from the
 environment instead of the file:
 
@@ -201,6 +231,11 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 `ConfigManager::support_observer()` decides how changes arrive:
 
 - **etcd** returns `true` and pushes changes through an `etcd_client::WatchStream`.
+  The watch runs on a connection of its own. When it breaks or the server ends
+  it, it is started again, with a delay that grows from 500ms to a minute while
+  etcd stays unreachable, and the configuration is compared once more as soon
+  as it is back. The stored configuration is also re-read every
+  `basic.auto_restart_check_interval`, watch or no watch.
 - **File** returns `false` and is polled every `basic.auto_restart_check_interval`.
 
 Both feed the same reload handle; the difference is only the delivery mechanism.
@@ -209,7 +244,8 @@ parsing, validation (which resolves every static upstream address) and the diff
 only run when the document changed since the last pass, or when the last pass
 was hot-reload-only and this one may restart.
 `--autoreload` swaps the configuration in place, which is what you want in
-containers. `--autorestart` performs a zero-downtime graceful restart, which is
+containers. A change to a location takes effect in routing as well: the hosts
+and paths a server routes by are rebuilt whenever its locations change. `--autorestart` performs a zero-downtime graceful restart, which is
 what listener-level changes need. That restart hands over on readiness: the
 replacement reports over `<upgrade_sock>.ready` the moment it is ready to take
 the listening sockets, and only then does the old process signal itself to

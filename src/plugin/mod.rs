@@ -15,7 +15,7 @@
 use crate::process::get_admin_addr;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use pingap_config::PluginConf;
+use pingap_config::{PingapConfig, PluginConf};
 use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
 use pingap_plugin::get_plugin_factory;
 // Reuse the canonical plugin-config helpers instead of keeping a second copy.
@@ -33,7 +33,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod admin;
 mod stats;
@@ -73,16 +73,30 @@ pub fn parse_admin_plugin(
     let mut addr = info.host_str().unwrap_or_default().to_string();
     addr = format!("{addr}:{}", info.port().unwrap_or(80));
 
-    let mut authorization = "".to_string();
-    if !info.username().is_empty() {
-        authorization = urlencoding::decode(info.username())
-            .unwrap_or_default()
-            .to_string();
-        // if not base64 string
-        if let Some(pass) = info.password() {
-            authorization = base64_encode(format!("{authorization}:{pass}"));
-        }
-    }
+    // The url parser keeps the user info percent-encoded. The password used
+    // to be taken in that form, so `p=ss` became `p%3Dss` and the login
+    // with the password as typed failed.
+    let decode = |value: &str| {
+        urlencoding::decode(value)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| value.to_string())
+    };
+    let user = decode(info.username());
+    let authorization = match info.password() {
+        Some(pass) => base64_encode(format!("{user}:{}", decode(pass))),
+        // No password: the user part is the base64 of `user:password`.
+        // Anything else was dropped later on, which left the admin without
+        // credentials and so without authentication (`--admin root@addr`).
+        None => {
+            if !user.is_empty() && !is_base64_credential(&user) {
+                return Err(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: "expect user:password@addr, or the base64 of user:password in place of the user".to_string(),
+                });
+            }
+            user
+        },
+    };
     let mut path = info.path().to_string();
     if path.is_empty() {
         path = "/".to_string();
@@ -92,17 +106,14 @@ pub fn parse_admin_plugin(
             .unwrap_or_default();
     let max_age = params.max_age.unwrap_or("2d".to_string());
 
-    let data = format!(
-        r#"
-    category = "admin"
-    path = "{path}"
-    authorizations = [
-        "{authorization}"
-    ]
-    max_age = "{max_age}"
-    remark = "Admin serve"
-    "#,
-    );
+    // Built as a table, not as formatted text: a `"` in the path or the
+    // user info broke the toml, and the fallback was an empty plugin config.
+    let mut conf = PluginConf::new();
+    conf.insert("category".to_string(), "admin".into());
+    conf.insert("path".to_string(), path.into());
+    conf.insert("authorizations".to_string(), vec![authorization].into());
+    conf.insert("max_age".to_string(), max_age.into());
+    conf.insert("remark".to_string(), "Admin serve".into());
     Ok((
         ServerConf {
             name: "pingap:admin".to_string(),
@@ -111,8 +122,17 @@ pub fn parse_admin_plugin(
             ..Default::default()
         },
         ADMIN_SERVER_PLUGIN.to_string(),
-        toml::from_str::<PluginConf>(&data).unwrap_or_default(),
+        conf,
     ))
+}
+
+fn is_base64_credential(value: &str) -> bool {
+    let Ok(data) = pingap_util::base64_decode(value) else {
+        return false;
+    };
+    String::from_utf8_lossy(&data)
+        .split_once(':')
+        .is_some_and(|(user, pass)| !user.is_empty() && !pass.is_empty())
 }
 
 /// Error types for plugin operations
@@ -243,16 +263,71 @@ pub fn new_plugin_provider() -> Arc<dyn PluginProvider> {
     PLUGIN_PROVIDER.clone()
 }
 
+/// Categories that only some builds have: `image_optim` needs the
+/// `imageoptim` feature. One config is often shared between builds, so a
+/// plugin of such a category is not an error where it is missing.
+const FEATURE_GATED_CATEGORIES: &[&str] = &["image_optim"];
+
+/// Whether `err` only says that this build was compiled without the
+/// plugin's category. Any other unknown category is a mistake in the config
+/// (`basic_auht`) and has to be reported as one.
+pub fn is_unavailable_in_build(err: &pingap_plugin::Error) -> bool {
+    matches!(
+        err,
+        pingap_plugin::Error::NotFound { category }
+            if FEATURE_GATED_CATEGORIES.contains(&category.as_str())
+    )
+}
+
+/// Stands in for a plugin whose category this build was compiled without,
+/// and does nothing. It keeps the name resolvable: a name that resolves to
+/// nothing makes the location reject its requests (`MissingPlugin`).
+struct UnavailablePlugin {
+    hash_value: String,
+}
+
+impl Plugin for UnavailablePlugin {
+    fn config_key(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.hash_value)
+    }
+}
+
+/// Checks that every plugin a location names exists: defined in the config,
+/// or one of the built-in `pingap:*` plugins.
+///
+/// A misspelled name used to pass `--test` and load, and the location then
+/// served without that plugin.
+pub fn validate_plugin_references(config: &PingapConfig) -> Result<()> {
+    let builtin: Vec<String> = get_builtin_proxy_plugins()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    for (location_name, location) in config.locations.iter() {
+        for name in location.plugins.iter().flatten() {
+            if config.plugins.contains_key(name)
+                || builtin.contains(name)
+                || name == ADMIN_SERVER_PLUGIN
+            {
+                continue;
+            }
+            return Err(Error::Invalid {
+                category: "location".to_string(),
+                message: format!(
+                    "plugin({name}) of location({location_name}) is not found"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Parses plugin configurations and instantiates plugin instances.
 ///
 /// # Arguments
 /// * `configs` - Vector of (name, config) tuples for plugins to initialize
 ///
 /// # Returns
-/// HashMap mapping plugin names to initialized plugin instances
-///
-/// # Errors
-/// Returns Error if plugin initialization fails
+/// The plugins that were built, and one error for each that was not.
 pub fn parse_plugins(
     configs: Vec<(String, PluginConf)>,
 ) -> (Plugins, Vec<Error>) {
@@ -277,6 +352,20 @@ pub fn parse_plugins(
             Ok(plugin) => {
                 plugins.insert(name.clone(), plugin.clone());
             },
+            Err(e) if is_unavailable_in_build(&e) => {
+                warn!(
+                    target: LOG_TARGET,
+                    name,
+                    category,
+                    "plugin category is unavailable in this build, the plugin does nothing"
+                );
+                plugins.insert(
+                    name.clone(),
+                    Arc::new(UnavailablePlugin {
+                        hash_value: get_hash_key(conf),
+                    }),
+                );
+            },
             Err(e) => {
                 errors.push(Error::Invalid {
                     category,
@@ -286,29 +375,23 @@ pub fn parse_plugins(
         }
     }
 
-    // let plugin =
-    //     get_plugin_factory()
-    //         .create(conf)
-    //         .map_err(|e| Error::Invalid {
-    //             category,
-    //             message: format!("create plugin {name} failed, {}", e),
-    //         })?;
-    // plugins.insert(name.clone(), plugin.clone());
-    // }
-
     (plugins, errors)
 }
 
 /// Initializes or updates plugins based on configuration.
 ///
+/// A plugin whose new config fails to build keeps its previous instance.
+/// Dropping it left its locations without the plugin - without the
+/// authentication, when that is what it was - for as long as the config
+/// stayed broken. A plugin that never built has no instance to keep, and
+/// the locations naming it reject their requests.
+///
 /// # Arguments
 /// * `plugins` - HashMap of plugin names to configurations
 ///
 /// # Returns
-/// Vector of plugin names that were created or updated
-///
-/// # Errors
-/// Returns Error if plugin initialization fails
+/// The names of the plugins that were created or updated, and the errors
+/// joined into one message (empty when everything built).
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
 ) -> (Vec<String>, String) {
@@ -332,7 +415,7 @@ pub fn try_init_plugins(
 
     plugin_configs.extend(get_builtin_proxy_plugins());
 
-    let mut updated_plugins = vec![];
+    let mut pending_plugins = vec![];
     let mut plugins = AHashMap::new();
     let plugin_configs: Vec<(String, PluginConf)> = plugin_configs
         .into_iter()
@@ -358,12 +441,25 @@ pub fn try_init_plugins(
             } else {
                 info!(target: LOG_TARGET, name, step, category, "plugin will be created");
             }
-            updated_plugins.push(name.to_string());
+            pending_plugins.push(name.to_string());
             true
         })
         .collect();
-    let (new_plugins, new_errors) = parse_plugins(plugin_configs);
-    plugins.extend(new_plugins);
+    let (mut new_plugins, new_errors) = parse_plugins(plugin_configs);
+    let mut updated_plugins = vec![];
+    for name in pending_plugins {
+        if let Some(plugin) = new_plugins.remove(&name) {
+            plugins.insert(name.clone(), plugin);
+            updated_plugins.push(name);
+        } else if let Some(plugin) = PLUGIN_PROVIDER.get(&name) {
+            warn!(
+                target: LOG_TARGET,
+                name,
+                "plugin reload failed, the previous instance stays in use"
+            );
+            plugins.insert(name, plugin);
+        }
+    }
     errors.extend(new_errors);
     PLUGIN_PROVIDER.store(plugins);
     let error = if !errors.is_empty() {
@@ -419,4 +515,137 @@ remove_headers = [
     ]);
     let (_, error) = try_init_plugins(&plugins);
     assert!(error.is_empty());
+
+    // A reload that breaks one plugin and adds a broken one. Same test on
+    // purpose: the provider is one global, and tests run in parallel.
+    let mock = PLUGIN_PROVIDER.get("test:mock").unwrap();
+    let mut broken = plugins.clone();
+    broken.insert(
+        "test:mock".to_string(),
+        toml::from_str::<PluginConf>(
+            r###"
+category = "mock"
+path = "/mock"
+status = 999
+data = "abc"
+step = "response"
+"###,
+        )
+        .unwrap(),
+    );
+    broken.insert(
+        "test:typo".to_string(),
+        toml::from_str::<PluginConf>(r#"category = "basic_auht""#).unwrap(),
+    );
+    let (updated, error) = try_init_plugins(&broken);
+    assert!(updated.is_empty());
+    assert!(error.contains("create plugin test:mock failed"));
+    assert!(error.contains("create plugin test:typo failed"));
+    // The plugin that was running stays, the very same instance.
+    let kept = PLUGIN_PROVIDER.get("test:mock").unwrap();
+    assert!(Arc::ptr_eq(&mock, &kept));
+    // The one that never built is absent: its locations reject requests.
+    assert!(PLUGIN_PROVIDER.get("test:typo").is_none());
+    assert!(PLUGIN_PROVIDER.get("test:add_headers").is_some());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn authorizations(conf: &PluginConf) -> Vec<String> {
+        get_str_slice_conf(conf, "authorizations")
+    }
+
+    #[test]
+    fn test_parse_admin_plugin() {
+        let (server, name, conf) =
+            parse_admin_plugin("pingap:123123@127.0.0.1:3018/pingap").unwrap();
+        assert_eq!("127.0.0.1:3018", server.addr);
+        assert_eq!(true, server.admin);
+        assert_eq!(ADMIN_SERVER_PLUGIN, name);
+        assert_eq!("/pingap", get_str_conf(&conf, "path"));
+        assert_eq!("2d", get_str_conf(&conf, "max_age"));
+        // spellchecker:off
+        assert_eq!(vec!["cGluZ2FwOjEyMzEyMw=="], authorizations(&conf));
+
+        // The base64 of `user:password` in place of the user.
+        let (_, _, conf) =
+            parse_admin_plugin("cGluZ2FwOjEyMzEyMw==@127.0.0.1:3018").unwrap();
+        assert_eq!(vec!["cGluZ2FwOjEyMzEyMw=="], authorizations(&conf));
+        // spellchecker:on
+
+        // No credentials: the documented way to run without a password.
+        let (_, _, conf) = parse_admin_plugin("127.0.0.1:3018").unwrap();
+        assert_eq!(vec![""], authorizations(&conf));
+        assert_eq!("/", get_str_conf(&conf, "path"));
+
+        // The password is what was typed, not its percent-encoded form.
+        for (addr, credential) in [
+            ("root:p=ss@127.0.0.1:3018", "root:p=ss"),
+            ("root:p%40ss@127.0.0.1:3018", "root:p@ss"),
+            ("r%40t:a b@127.0.0.1:3018", "r@t:a b"),
+        ] {
+            let (_, _, conf) = parse_admin_plugin(addr).unwrap();
+            assert_eq!(
+                vec![base64_encode(credential)],
+                authorizations(&conf),
+                "{addr}"
+            );
+        }
+
+        // A user without a password used to give an admin without
+        // authentication.
+        for addr in ["root@127.0.0.1:3018", "root:@127.0.0.1:3018"] {
+            assert_eq!(
+                "Plugin admin invalid, message: expect user:password@addr, or the base64 of user:password in place of the user",
+                parse_admin_plugin(addr).unwrap_err().to_string(),
+                "{addr}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_plugin_references() {
+        let validate = |plugins: &str| {
+            let config = PingapConfig::new(
+                format!(
+                    r#"
+[plugins.auth]
+category = "basic_auth"
+
+[locations.app]
+plugins = {plugins}
+"#
+                )
+                .as_bytes(),
+                false,
+            )
+            .unwrap();
+            validate_plugin_references(&config).map_err(|e| e.to_string())
+        };
+        assert_eq!(Ok(()), validate(r#"["auth"]"#));
+        assert_eq!(Ok(()), validate(r#"["auth", "pingap:requestId"]"#));
+        assert_eq!(Ok(()), validate("[]"));
+        assert_eq!(
+            "Plugin location invalid, message: plugin(auht) of location(app) is not found",
+            validate(r#"["auht"]"#).unwrap_err()
+        );
+        // The `pingap:` prefix alone is not enough, the name has to exist.
+        assert_eq!(
+            "Plugin location invalid, message: plugin(pingap:requestid) of location(app) is not found",
+            validate(r#"["pingap:requestid"]"#).unwrap_err()
+        );
+    }
+
+    #[test]
+    fn test_unavailable_in_build() {
+        let not_found = |category: &str| pingap_plugin::Error::NotFound {
+            category: category.to_string(),
+        };
+        assert_eq!(true, is_unavailable_in_build(&not_found("image_optim")));
+        // A misspelled category is a config error, not a build variant.
+        assert_eq!(false, is_unavailable_in_build(&not_found("basic_auht")));
+    }
 }

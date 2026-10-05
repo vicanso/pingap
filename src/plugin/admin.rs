@@ -194,11 +194,25 @@ impl TryFrom<&PluginConf> for AdminServe {
                     category: PluginCategory::BasicAuth.to_string(),
                     source: e,
                 })?;
-            if let Some((user, pass)) =
-                std::string::String::from_utf8_lossy(&data).split_once(':')
-            {
-                authorizations.push((user.to_string(), pass.to_string()));
+            // An entry that is not `user:password` used to be dropped, and
+            // an empty list means no authentication at all: a typo in the
+            // only entry silently opened the admin to everyone.
+            let text = std::string::String::from_utf8_lossy(&data);
+            let Some((user, pass)) = text.split_once(':') else {
+                return Err(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: "authorization should be base64 of user:password"
+                        .to_string(),
+                });
+            };
+            if user.is_empty() || pass.is_empty() {
+                return Err(Error::Invalid {
+                    category: "admin".to_string(),
+                    message: "authorization user and password can not be empty"
+                        .to_string(),
+                });
             }
+            authorizations.push((user.to_string(), pass.to_string()));
         }
         let mut ip_fail_limit = get_int_conf(value, "ip_fail_limit");
         if ip_fail_limit <= 0 {
@@ -267,26 +281,14 @@ impl AdminServe {
 
         Ok(serve)
     }
+    /// Checks the signed token of an API request. Only API routes come
+    /// here: what is served without a token is decided by [`api_route`], in
+    /// one place, so the exemption and the router cannot drift apart.
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if self.authorizations.is_empty() {
             return true;
         }
         let path = req_header.uri.path();
-        // The login UI's own static assets (js/css/png) and the index page must
-        // load before the user authenticates. But API routes must ALWAYS require
-        // auth: otherwise auth is bypassed by suffixing an API URL with a
-        // static-looking extension, e.g. `GET /api/configs/x.js`. The auth skip
-        // and the `/api` router use different criteria, so they must be kept
-        // mutually exclusive here.
-        let is_api = path.starts_with("/api") || path.starts_with("api/");
-        if !is_api
-            && (path.len() <= 1
-                || path.ends_with(".js")
-                || path.ends_with(".css")
-                || path.ends_with(".png"))
-        {
-            return true;
-        }
         let value =
             pingap_core::get_req_header_value(req_header, "Authorization")
                 .unwrap_or_default();
@@ -533,6 +535,31 @@ impl AdminServe {
     }
 }
 
+/// The API route of an admin path (prefix already removed): `/api/basic`
+/// gives `/basic`. `None` for everything else, which is a static file.
+///
+/// Both the authentication and the router go by this one answer. They used
+/// to decide separately - the router also took `/configs/...` without the
+/// `/api` prefix, authentication exempted any non-`/api` path ending in
+/// `.js`, `.css` or `.png` - so `GET /configs/x.js` returned the whole
+/// configuration to anyone.
+fn api_route(path: &str) -> Option<&str> {
+    let route = path.strip_prefix("/api")?;
+    (route.is_empty() || route.starts_with('/')).then_some(route)
+}
+
+fn static_file(path: &str) -> HttpResponse {
+    let mut file = path.substring(1, path.len());
+    if file.is_empty() {
+        file = "index.html";
+    }
+    EmbeddedStaticFile(
+        AdminAsset::get(file),
+        Duration::from_secs(365 * 24 * 3600),
+    )
+    .into()
+}
+
 fn get_method_path(session: &Session) -> (Method, String) {
     let req_header = session.req_header();
     let method = req_header.method.clone();
@@ -556,9 +583,18 @@ async fn handle_request_admin(
 
     let header = session.req_header_mut();
     let path = header.uri.path();
-    let mut new_path =
-        path.substring(plugin.path.len(), path.len()).to_string();
-    if plugin.path.len() > 1 && new_path.is_empty() {
+    // What is left always starts with `/`. Cutting `plugin.path` by length
+    // took the leading `/` along when the admin is mounted at `/`, and let
+    // `/pingapfoo` through for a prefix of `/pingap`.
+    let prefix = plugin.path.trim_end_matches('/');
+    let Some(rest) = path
+        .strip_prefix(prefix)
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+    else {
+        return Ok(Some(HttpResponse::not_found("Not Found")));
+    };
+    let mut new_path = rest.to_string();
+    if !prefix.is_empty() && new_path.is_empty() {
         new_path = format!("{path}/");
         if let Some(query) = header.uri.query() {
             new_path = format!("{new_path}?{query}");
@@ -573,18 +609,20 @@ async fn handle_request_admin(
     if let Ok(uri) = new_path.parse::<http::Uri>() {
         header.set_uri(uri);
     }
-    if !plugin.auth_validate(header) {
+    let (method, path) = get_method_path(session);
+    // Everything outside `/api` is an embedded file of the UI: public, and
+    // needed before the user can log in.
+    let Some(route) = api_route(&path) else {
+        return Ok(Some(static_file(&path)));
+    };
+    if !plugin.auth_validate(session.req_header()) {
         plugin.ip_fail_limit.inc(ip);
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
             ..Default::default()
         }));
     }
-    let (method, mut path) = get_method_path(session);
-    let api_prefix = "/api";
-    if path.starts_with(api_prefix) {
-        path = path.substring(api_prefix.len(), path.len()).to_string();
-    }
+    let path = route.to_string();
     let params: Vec<String> = path
         .split('/')
         .map(|item| decode(item).unwrap_or_default().to_string())
@@ -765,15 +803,7 @@ async fn handle_request_admin(
         HttpResponse::try_from_json(&infos)
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else {
-        let mut file = path.substring(1, path.len());
-        if file.is_empty() {
-            file = "index.html";
-        }
-        EmbeddedStaticFile(
-            AdminAsset::get(file),
-            Duration::from_secs(365 * 24 * 3600),
-        )
-        .into()
+        HttpResponse::not_found("Not Found")
     };
     Ok(Some(resp))
 }
@@ -813,7 +843,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdminAsset, AdminServe, EmbeddedStaticFile, handle_request_admin,
+        AdminAsset, AdminServe, EmbeddedStaticFile, api_route,
+        handle_request_admin,
     };
     use crate::config_manager::try_init_config_manager;
     use pingap_config::PluginConf;
@@ -893,7 +924,33 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_validate_skips_only_static_assets() {
+    fn test_api_route() {
+        // Static files of the UI: served without a token.
+        assert_eq!(None, api_route("/"));
+        assert_eq!(None, api_route("/assets/index.js"));
+        assert_eq!(None, api_route("/pingap.png"));
+        // Not the api: these used to reach the config handlers.
+        assert_eq!(None, api_route("/configs/x.js"));
+        assert_eq!(None, api_route("/configs/import/x.js"));
+        assert_eq!(None, api_route("/apix/configs"));
+
+        assert_eq!(Some(""), api_route("/api"));
+        assert_eq!(Some("/basic"), api_route("/api/basic"));
+        assert_eq!(Some("/configs/x.js"), api_route("/api/configs/x.js"));
+    }
+
+    async fn new_admin_session(req: &str) -> Session {
+        let mock_io = Builder::new().read(req.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    /// Regression: with a password set, `/configs/...` without the `/api`
+    /// prefix was routed to the config handlers, and a `.js` suffix skipped
+    /// authentication.
+    #[tokio::test]
+    async fn test_admin_requires_auth_for_api_only() {
         let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
         try_init_config_manager(&file.path().to_string_lossy()).unwrap();
         // spellchecker:off
@@ -910,29 +967,109 @@ mod tests {
         .unwrap();
         // spellchecker:on
 
-        // `auth_validate` runs on the path AFTER the admin prefix is stripped.
-        let auth_skipped = |path: &str| {
-            let req = pingora::http::RequestHeader::build(
-                http::Method::GET,
-                path.as_bytes(),
-                None,
-            )
-            .unwrap();
-            admin.auth_validate(&req)
+        let status = async |req: &str| {
+            let mut session = new_admin_session(req).await;
+            handle_request_admin(&admin, &mut session, &mut Ctx::default())
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .as_u16()
         };
 
-        // Genuine static assets of the login UI load without auth.
-        assert_eq!(true, auth_skipped("/"));
-        assert_eq!(true, auth_skipped("/assets/index.js"));
-        assert_eq!(true, auth_skipped("/assets/index.css"));
-        assert_eq!(true, auth_skipped("/pingap.png"));
+        // The UI loads without a token.
+        assert_eq!(200, status("GET / HTTP/1.1\r\n\r\n").await);
+        assert_eq!(200, status("GET /pingap.png HTTP/1.1\r\n\r\n").await);
+        // Not a file of the UI and not the api: nothing to serve.
+        assert_eq!(404, status("GET /configs/x.js HTTP/1.1\r\n\r\n").await);
+        assert_eq!(
+            404,
+            status("POST /configs/import/x.js HTTP/1.1\r\n\r\n").await
+        );
+        // The api always asks for the token, whatever the suffix.
+        for path in [
+            "/api/configs",
+            "/api/configs/x.js",
+            "/api/configs/upstream/x.css",
+            "/api/certificates.png",
+            "/api/basic",
+            "/api",
+        ] {
+            assert_eq!(
+                401,
+                status(&format!("GET {path} HTTP/1.1\r\n\r\n")).await,
+                "{path}"
+            );
+        }
+    }
 
-        // Regression: API routes must never be auth-skipped, even when suffixed
-        // with a static-looking extension.
-        assert_eq!(false, auth_skipped("/api/configs/anything.js"));
-        assert_eq!(false, auth_skipped("/api/configs/upstream/evil.css"));
-        assert_eq!(false, auth_skipped("/api/certificates.png"));
-        assert_eq!(false, auth_skipped("/api/basic"));
+    /// Mounted under a prefix: the prefix is removed on a segment boundary.
+    #[tokio::test]
+    async fn test_admin_path_prefix() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/pingap/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let status = async |path: &str| {
+            let mut session =
+                new_admin_session(&format!("GET {path} HTTP/1.1\r\n\r\n"))
+                    .await;
+            handle_request_admin(&admin, &mut session, &mut Ctx::default())
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .as_u16()
+        };
+        assert_eq!(307, status("/pingap").await);
+        assert_eq!(200, status("/pingap/").await);
+        assert_eq!(401, status("/pingap/api/configs").await);
+        assert_eq!(404, status("/pingap/configs/x.js").await);
+        // Shares the first characters only, it is not under the prefix.
+        assert_eq!(404, status("/pingapapi/configs").await);
+    }
+
+    #[test]
+    fn test_admin_rejects_malformed_authorization() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        let new_admin = |authorization: &str| {
+            AdminServe::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "category = \"admin\"\nauthorizations = [\"{authorization}\"]"
+                ))
+                .unwrap(),
+            )
+            .map(|admin| admin.authorizations.len())
+            .map_err(|e| e.to_string())
+        };
+        // spellchecker:off
+        // "root": valid base64, but not `user:password`. It used to be
+        // dropped, leaving no credentials and so no authentication.
+        assert_eq!(
+            "Plugin admin invalid, message: authorization should be base64 of user:password",
+            new_admin("root").unwrap_err()
+        );
+        // "root:"
+        assert_eq!(
+            "Plugin admin invalid, message: authorization user and password can not be empty",
+            new_admin("cm9vdDo=").unwrap_err()
+        );
+        assert_eq!(Ok(1), new_admin("YWRtaW46MTIzMTIz"));
+        // spellchecker:on
+        // No entry at all is the documented way to run without a password.
+        assert_eq!(Ok(0), new_admin(""));
     }
 
     /// Regression: `/config-history/{category}` without the trailing name used

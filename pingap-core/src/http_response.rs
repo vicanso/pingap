@@ -326,6 +326,8 @@ impl HttpResponse {
 pub struct HttpChunkResponse<'r, R> {
     /// A pinned, mutable reference to an async reader that provides the body data.
     pub reader: Pin<&'r mut R>,
+    /// The status of the response. Defaults to `200 OK`.
+    pub status: StatusCode,
     /// The suggested size for each data chunk. Defaults to `DEFAULT_BUF_SIZE`.
     pub chunk_size: usize,
     /// Cache control `max-age` setting for the response.
@@ -348,6 +350,7 @@ where
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
+            status: StatusCode::OK,
             chunk_size: DEFAULT_BUF_SIZE,
             max_age: None,
             headers: None,
@@ -355,12 +358,14 @@ where
         }
     }
 
-    /// Builds the `ResponseHeader` for the chunked response.
+    /// Builds the `ResponseHeader` for the streamed response.
     ///
-    /// This will include a `Transfer-Encoding: chunked` header.
+    /// The body is framed by `Content-Length` when the custom headers give
+    /// one, and by `Transfer-Encoding: chunked` otherwise. Both at once is
+    /// not a valid message, and that is what a streamed file used to get:
+    /// its length was known and sent, and `chunked` was added regardless.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
-        // Start building a 200 OK response header.
-        let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
+        let mut resp = ResponseHeader::build(self.status, Some(4))?;
         // Add any custom headers.
         if let Some(headers) = &self.headers {
             for (name, value) in headers {
@@ -368,9 +373,10 @@ where
             }
         }
 
-        // Add the mandatory `Transfer-Encoding: chunked` header.
-        let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
-        resp.insert_header(chunked.0, chunked.1)?;
+        if !resp.headers.contains_key(header::CONTENT_LENGTH) {
+            let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
+            resp.insert_header(chunked.0, chunked.1)?;
+        }
 
         // Add the `Cache-Control` header.
         let cache_control =
@@ -569,6 +575,26 @@ mod tests {
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"contont-type": "text/html", "transfer-encoding": "chunked", "cache-control": "public, max-age=3600"} }, header_name_map: Some({"contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding"), "cache-control": CaseHeaderName(b"Cache-Control")}), reason_phrase: None }"###,
             format!("{header:?}")
         );
+    }
+
+    /// A known length frames the body by itself, and the status is the one
+    /// that was set.
+    #[tokio::test]
+    async fn test_http_chunk_response_with_content_length() {
+        let mut reader = tokio_test::io::Builder::new().build();
+        let mut resp = HttpChunkResponse::new(&mut reader);
+        resp.status = StatusCode::PARTIAL_CONTENT;
+        resp.headers = Some(
+            convert_headers(&[
+                "Content-Length: 10".to_string(),
+                "Content-Range: bytes 0-9/100".to_string(),
+            ])
+            .unwrap(),
+        );
+        let header = resp.get_response_header().unwrap();
+        assert_eq!(StatusCode::PARTIAL_CONTENT, header.status);
+        assert_eq!("10", header.headers.get("content-length").unwrap());
+        assert_eq!(false, header.headers.contains_key("transfer-encoding"));
     }
 
     #[tokio::test]

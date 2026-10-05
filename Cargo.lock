@@ -4252,7 +4252,6 @@ dependencies = [
  "tracing-appender",
  "tracing-log",
  "tracing-subscriber",
- "walkdir",
  "zstd 0.14.0",
 ]
 

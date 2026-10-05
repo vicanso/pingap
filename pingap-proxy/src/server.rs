@@ -1495,6 +1495,43 @@ impl ProxyHttp for Server {
 
         Ok(())
     }
+    /// An error after the connection to the upstream was established.
+    ///
+    /// The retry decision is pingora's default one. What this adds is the
+    /// report to the backend's statistics: `fail_to_connect` covers a
+    /// backend that cannot be reached, and nothing covered one that accepts
+    /// the connection and then never answers. To the circuit breaker such a
+    /// request had no outcome at all, so the breaker neither tripped on a
+    /// hanging backend nor got an answer to the probes it sent to one.
+    fn error_while_proxy(
+        &self,
+        peer: &HttpPeer,
+        session: &mut Session,
+        e: Box<pingora::Error>,
+        ctx: &mut Self::CTX,
+        client_reused: bool,
+    ) -> Box<pingora::Error> {
+        let mut e = e.more_context(format!("Peer: {peer}"));
+        if !session.req_header().method.is_idempotent()
+            || session.as_ref().retry_buffer_truncated()
+        {
+            e.set_retry(false);
+        } else {
+            e.retry.decide_reuse(client_reused);
+        }
+        // Not when the request is retried: that is a reused connection the
+        // backend had already closed, which says nothing about its health.
+        // Not once a response header arrived either, `on_response` has
+        // counted that request.
+        if !e.retry()
+            && e.esource() == &pingora::ErrorSource::Upstream
+            && ctx.upstream.status.is_none()
+            && let Some(upstream_instance) = &ctx.upstream.upstream_instance
+        {
+            upstream_instance.on_transport_failure(&ctx.upstream.address);
+        }
+        e
+    }
     fn fail_to_connect(
         &self,
         _session: &mut Session,
@@ -1582,7 +1619,7 @@ impl ProxyHttp for Server {
         let key = get_cache_key(
             ctx,
             session.req_header().method.as_ref(),
-            &session.req_header().uri,
+            session.req_header(),
         );
         debug!(
             target: LOG_TARGET,
@@ -2194,10 +2231,14 @@ value = 'proxy_set_headers = ["name:value"]'
             .unwrap(),
         );
 
+        // Every name resolves, to a plugin that does nothing: a name that
+        // does not resolve fails the request.
+        struct NoopPlugin;
+        impl Plugin for NoopPlugin {}
         struct TmpPluginLoader {}
         impl PluginProvider for TmpPluginLoader {
             fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
-                None
+                Some(Arc::new(NoopPlugin))
             }
         }
         let plugin_provider =
@@ -2541,6 +2582,36 @@ value = 'proxy_set_headers = ["name:value"]'
         );
     }
 
+    /// Regression: a plugin that is not loaded - a misspelled name, a config
+    /// that failed to build - was left out, and the location served without
+    /// it. When that plugin is the authentication, that is an open door.
+    #[tokio::test]
+    async fn test_missing_plugin_fails_the_request() {
+        struct EmptyProvider;
+        impl PluginProvider for EmptyProvider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                None
+            }
+        }
+        let server = new_server_with(Some(Arc::new(EmptyProvider)));
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let err = server
+            .early_request_filter(&mut session, &mut Ctx::default())
+            .await
+            .unwrap_err();
+        assert_eq!(&pingora::ErrorType::HTTPStatus(500), err.etype());
+        assert_eq!(
+            true,
+            err.to_string()
+                .contains("plugin pingap:requestId is not available"),
+            "{err}"
+        );
+    }
+
     #[tokio::test]
     async fn test_no_matching_location_is_404() {
         let server = new_server();
@@ -2598,7 +2669,7 @@ value = 'proxy_set_headers = ["name:value"]'
     async fn test_cache_key_callback() {
         let server = new_server();
 
-        let headers = [""].join("\r\n");
+        let headers = ["Host: GitHub.com:8443"].join("\r\n");
         let input_header =
             format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
@@ -2618,17 +2689,14 @@ value = 'proxy_set_headers = ["name:value"]'
                 },
             )
             .unwrap();
-        // The namespace is folded into the primary (unframed, exactly as
-        // pingora 0.8.1 hashed it) and repeated in user_tag for the storage
-        // layer. The hex is what 0.8.1 produced for namespace "pingap" and
-        // primary "ss:GET:/vicanso/pingap?size=1"; an on-disk cache written
-        // by an older pingap must still be found under it.
+        // The namespace is folded into the primary (unframed) and repeated
+        // in user_tag for the storage layer. The host is part of the key
+        // over HTTP/1.1 too, in lower case and without its port.
         assert_eq!(
             key.primary_key_str(),
-            Some("pingapss:GET:/vicanso/pingap?size=1")
+            Some("pingapss:GET:github.com/vicanso/pingap?size=1")
         );
         assert_eq!(key.user_tag(), "pingap");
-        assert_eq!(key.primary(), "3f80aa94eab3b7e5b9a75482867f48cf");
         assert_eq!(key.variance(), None);
     }
 
@@ -3324,6 +3392,86 @@ value = 'proxy_set_headers = ["name:value"]'
             "{response}"
         );
         assert_eq!(true, response.ends_with("early"), "{response}");
+    }
+
+    /// A backend that takes the connection and then fails the request is
+    /// reported to its statistics, once, and only when this request is
+    /// what failed.
+    #[tokio::test]
+    async fn test_error_while_proxy_reports_to_the_backend() {
+        use pingap_core::UpstreamInstance;
+        use pingora::{Error, ErrorType, RetryType};
+
+        #[derive(Default)]
+        struct Recorder(AtomicUsize);
+        impl UpstreamInstance for Recorder {
+            fn on_transport_failure(&self, _address: &str) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+            fn on_response(&self, _address: &str, _status: StatusCode) {}
+            fn completed(&self) -> i32 {
+                0
+            }
+        }
+
+        let server = new_server();
+        let peer = HttpPeer::new("127.0.0.1:5000", false, String::new());
+        // Returns how often the failure was reported, and whether the
+        // request is retried.
+        let run = async |method: &str,
+                         e: Box<Error>,
+                         status: Option<StatusCode>,
+                         reused: bool| {
+            let mock_io = Builder::new()
+                .read(format!("{method} / HTTP/1.1\r\n\r\n").as_bytes())
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let recorder = Arc::new(Recorder::default());
+            let mut ctx = Ctx::default();
+            ctx.upstream.upstream_instance = Some(recorder.clone());
+            ctx.upstream.status = status;
+            let e = server.error_while_proxy(
+                &peer,
+                &mut session,
+                e,
+                &mut ctx,
+                reused,
+            );
+            (recorder.0.load(Ordering::Relaxed), e.retry())
+        };
+        let timeout = || Error::new(ErrorType::ReadTimedout).into_up();
+        let closed = || {
+            let mut e = Error::new(ErrorType::ConnectionClosed).into_up();
+            e.retry = RetryType::ReusedOnly;
+            e
+        };
+
+        // The backend never answered.
+        assert_eq!((1, false), run("GET", timeout(), None, false).await);
+        assert_eq!((1, false), run("GET", timeout(), None, true).await);
+        // It closed a fresh connection before answering.
+        assert_eq!((1, false), run("GET", closed(), None, false).await);
+        // A reused connection it had already closed: retried, says nothing.
+        assert_eq!((0, true), run("GET", closed(), None, true).await);
+        // Not retried for a POST, so that one is the request's outcome.
+        assert_eq!((1, false), run("POST", closed(), None, true).await);
+        // The response header came, `on_response` has counted it.
+        assert_eq!(
+            (0, false),
+            run("GET", timeout(), Some(StatusCode::OK), false).await
+        );
+        // The client's doing.
+        assert_eq!(
+            (0, false),
+            run(
+                "GET",
+                Error::new(ErrorType::ReadError).into_down(),
+                None,
+                false
+            )
+            .await
+        );
     }
 
     #[test]

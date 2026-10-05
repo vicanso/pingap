@@ -63,14 +63,24 @@ struct BreakerStateData {
     open_until: Instant,
     /// The number of probes sent in the half-open state
     probes_sent: u32,
+    /// Half-open: when the probes handed out so far are given up on and a
+    /// new round starts.
+    probes_expire_at: Instant,
 }
 
 impl BreakerStateData {
     fn new(open_duration: Duration) -> Self {
+        let now = Instant::now();
         Self {
-            open_until: Instant::now() + open_duration,
+            open_until: now + open_duration,
             probes_sent: 0,
+            probes_expire_at: now,
         }
+    }
+    /// Starts a round of probes with its first one.
+    fn start_probes(&mut self, now: Instant, round: Duration) {
+        self.probes_sent = 1;
+        self.probes_expire_at = now + round;
     }
 }
 
@@ -88,10 +98,7 @@ impl BackendCircuitState {
     fn new() -> Self {
         Self {
             current_state: AtomicU8::new(STATE_CLOSED),
-            data: Mutex::new(BreakerStateData {
-                open_until: Instant::now(),
-                probes_sent: 0,
-            }),
+            data: Mutex::new(BreakerStateData::new(Duration::ZERO)),
         }
     }
 }
@@ -169,8 +176,10 @@ impl BackendCircuitStates {
         };
 
         // The lock was successfully acquired, check the timer
-        if Instant::now() >= data.open_until {
-            data.probes_sent = 1; // Send the first probe
+        let now = Instant::now();
+        if now >= data.open_until {
+            // Send the first probe
+            data.start_probes(now, self.config.open_duration);
             state
                 .current_state
                 .store(STATE_HALF_OPEN, Ordering::Relaxed);
@@ -191,10 +200,20 @@ impl BackendCircuitStates {
             < self.config.half_open_consecutive_success_threshold
         {
             data.probes_sent += 1;
-            true // Accept (as a probe)
-        } else {
-            false // Probe count used up
+            return true; // Accept (as a probe)
         }
+        // Probe count used up. The outcomes are what moves the state on,
+        // and not every probe reports one: the client may go away while it
+        // waits, the request may be answered from somewhere else. With
+        // nothing to wait for, the backend used to stay half-open and
+        // refused for good. After one more `open_duration` the missing
+        // probes are given up on and a new round starts.
+        let now = Instant::now();
+        if now >= data.probes_expire_at {
+            data.start_probes(now, self.config.open_duration);
+            return true;
+        }
+        false
     }
 
     /// Returns the circuit state code for a backend address:
@@ -399,6 +418,44 @@ mod tests {
         assert_eq!(true, states.is_backend_acceptable(addr));
         fail();
         assert_eq!(STATE_OPEN, states.get_state_code(addr));
+    }
+
+    /// Regression: probes that never report an outcome used up the probe
+    /// count, and the backend stayed half-open and refused forever.
+    #[test]
+    fn test_half_open_recovers_from_lost_probes() {
+        let addr = "127.0.0.1:8080";
+        let stats = BackendStats::new(Duration::from_secs(60), vec![]);
+        let states = BackendCircuitStates::new(CircuitBreakerConfig {
+            max_consecutive_failures: 1,
+            max_failure_percent: 0.0,
+            min_requests_threshold: 1,
+            half_open_consecutive_success_threshold: 2,
+            open_duration: Duration::from_millis(50),
+        });
+        stats.on_transport_failure(addr);
+        states.update_state_after_request(addr, true, &stats);
+        assert_eq!(STATE_OPEN, states.get_state_code(addr));
+
+        // Both probes go out, neither reports.
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(false, states.is_backend_acceptable(addr));
+        assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
+
+        // One more open duration and a new round of probes starts.
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(false, states.is_backend_acceptable(addr));
+
+        // This round reports, and the breaker closes.
+        for _ in 0..2 {
+            stats.on_response(addr, StatusCode::OK);
+            states.update_state_after_request(addr, false, &stats);
+        }
+        assert_eq!(STATE_CLOSED, states.get_state_code(addr));
     }
 
     /// `max_failure_percent = 0` means the rate rule is off; it used to

@@ -13,10 +13,12 @@
 // limitations under the License.
 
 use crate::Error;
-use crate::hcl::convert_hcl_to_toml;
-use crate::kdl::convert_kdl_to_toml;
+use crate::hcl::{convert_hcl_to_toml, convert_toml_to_hcl};
+use crate::kdl::{convert_kdl_to_toml, convert_toml_to_kdl};
 use crate::storage::{History, Storage};
-use crate::{permission_error_message, read_all_config_files};
+use crate::{
+    list_config_files, permission_error_message, read_all_config_files,
+};
 use async_trait::async_trait;
 use glob::glob;
 use pingap_core::now_sec;
@@ -45,6 +47,67 @@ pub(crate) fn is_config_dir(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()),
         Some("toml") | Some("hcl") | Some("kdl")
     )
+}
+
+/// Drops what a config does not tell apart: an empty list and an empty
+/// table read like a key that is not there, and the hcl and kdl forms do
+/// not keep them apart either.
+fn without_empty(value: toml::Value) -> Option<toml::Value> {
+    match value {
+        toml::Value::Table(table) => {
+            let table: toml::Table = table
+                .into_iter()
+                .filter_map(|(key, value)| Some((key, without_empty(value)?)))
+                .collect();
+            (!table.is_empty()).then_some(toml::Value::Table(table))
+        },
+        toml::Value::Array(items) => {
+            let items: Vec<toml::Value> =
+                items.into_iter().filter_map(without_empty).collect();
+            (!items.is_empty()).then_some(toml::Value::Array(items))
+        },
+        other => Some(other),
+    }
+}
+
+/// `value`, a toml document, in the format of the `file` it is saved to.
+///
+/// A config kept in one `.hcl` or `.kdl` file is read by converting it to
+/// toml, and used to be saved as that toml, under the same name: after the
+/// first change made through the admin or by a certificate renewal the file
+/// no longer parsed, and the next start failed.
+///
+/// What is written is read back and compared before it replaces anything.
+/// A config that does not survive the conversion is refused instead of
+/// being saved with a part missing.
+fn encode_for_file(file: &Path, value: &str) -> Result<String> {
+    type Convert = fn(&str) -> Result<String>;
+    let (ext, to, from): (&str, Convert, Convert) =
+        match file.extension().and_then(|ext| ext.to_str()) {
+            Some("hcl") => ("hcl", convert_toml_to_hcl, convert_hcl_to_toml),
+            Some("kdl") => ("kdl", convert_toml_to_kdl, convert_kdl_to_toml),
+            _ => return Ok(value.to_string()),
+        };
+    if value.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let parse = |text: &str| {
+        toml::from_str::<toml::Value>(text)
+            .map(without_empty)
+            .map_err(|e| Error::Invalid {
+                message: format!("{}: {e}", file.display()),
+            })
+    };
+    let encoded = to(value)?;
+    if parse(value)? != parse(&from(&encoded)?)? {
+        return Err(Error::Invalid {
+            message: format!(
+                "{}: the config can not be written as {ext} without losing part of it, nothing was saved; keep the config in toml to change it through pingap",
+                file.display()
+            ),
+        });
+    }
+    Ok(encoded)
 }
 
 pub struct FileStorage {
@@ -94,6 +157,33 @@ impl FileStorage {
         } else {
             self.path.clone()
         }
+    }
+    /// Fails for a directory whose config is kept in hcl or kdl files.
+    ///
+    /// Such a directory is read as a whole, and its files are laid out as
+    /// whoever wrote them saw fit, so there is no file a change to one
+    /// entry belongs in. Writing the entry as a toml file - what used to
+    /// happen - was worse than not writing at all: toml files take
+    /// precedence when the directory is read, so that one file became the
+    /// entire config and everything in the hcl files was gone.
+    fn ensure_writable(&self) -> Result<()> {
+        if !self.is_dir {
+            return Ok(());
+        }
+        let dir = self.path.to_string_lossy();
+        if !list_config_files(&dir, "toml")?.is_empty() {
+            return Ok(());
+        }
+        for ext in ["hcl", "kdl"] {
+            if !list_config_files(&dir, ext)?.is_empty() {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "{dir} holds {ext} files, which are read but not written; change the files themselves, or keep the config in toml to change it through pingap"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
     fn convert_history_key(&self, key: &str) -> String {
         key.replace("/", "-")
@@ -170,8 +260,12 @@ impl Storage for FileStorage {
     }
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {
-        self.save_history(key).await?;
+        self.ensure_writable()?;
         let file = self.get_target_path(key);
+        // Before the history is written: a config that can not be saved
+        // leaves nothing behind.
+        let value = &encode_for_file(&file, value)?;
+        self.save_history(key).await?;
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent).await.map_err(|e| Error::Io {
                 source: e,
@@ -186,6 +280,7 @@ impl Storage for FileStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
+        self.ensure_writable()?;
         let file = self.get_target_path(key);
         match fs::remove_file(&file).await {
             Ok(()) => Ok(()),
@@ -345,6 +440,164 @@ mod tests {
                 .unwrap();
             let err = storage.fetch("").await.unwrap_err().to_string();
             assert!(err.contains(name), "{err}");
+        }
+    }
+
+    /// Regression: a config kept in one hcl or kdl file was saved as toml
+    /// under the same name, and did not load again.
+    #[tokio::test]
+    async fn test_single_file_keeps_its_format() {
+        let config = r#"
+[basic]
+log_level = "info"
+trusted_proxies = ["10.0.0.0/8"]
+
+[locations.app]
+plugins = ["deny"]
+upstream = "api"
+
+[plugins.deny]
+category = "ip_restriction"
+ip_list = ["1.2.3.4"]
+type = "deny"
+
+[servers.web]
+addr = "127.0.0.1:6188"
+locations = ["app"]
+
+[upstreams.api]
+addrs = ["127.0.0.1:5000"]
+"#;
+        let expected: toml::Value = toml::from_str(config).unwrap();
+        for ext in ["hcl", "kdl", "toml"] {
+            let dir = tempdir().unwrap();
+            let file = dir.path().join(format!("pingap.{ext}"));
+            let storage = FileStorage::new(&file.to_string_lossy()).unwrap();
+            storage.save("pingap.toml", config).await.unwrap();
+
+            let written = std::fs::read_to_string(&file).unwrap();
+            // toml only in the toml file
+            assert_eq!(ext == "toml", written.contains("[basic]"), "{ext}");
+            // and what was saved is what loads, the list of one included
+            let loaded = storage.fetch("pingap.toml").await.unwrap();
+            assert_eq!(
+                expected,
+                toml::from_str::<toml::Value>(&loaded).unwrap(),
+                "{ext}"
+            );
+            // Saving what was loaded changes nothing (toml is kept as it
+            // was given, down to the blank lines, so it is left out here).
+            if ext != "toml" {
+                storage.save("pingap.toml", &loaded).await.unwrap();
+                assert_eq!(written, std::fs::read_to_string(&file).unwrap());
+            }
+        }
+    }
+
+    /// The check before a save must not refuse a config for being a real
+    /// one: the sample configs convert to both formats and back unchanged.
+    #[test]
+    fn test_sample_configs_can_be_saved_in_each_format() {
+        use super::encode_for_file;
+        use crate::hcl::convert_hcl_to_toml;
+        use crate::kdl::convert_kdl_to_toml;
+        use std::path::Path;
+
+        let conf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../conf");
+        let read =
+            |name: &str| std::fs::read_to_string(conf.join(name)).unwrap();
+        let samples = [
+            ("test.hcl", convert_hcl_to_toml(&read("test.hcl")).unwrap()),
+            ("test.kdl", convert_kdl_to_toml(&read("test.kdl")).unwrap()),
+            (
+                "*.toml",
+                [
+                    "basic.toml",
+                    "certificates.toml",
+                    "locations.toml",
+                    "plugins.toml",
+                    "servers.toml",
+                    "upstreams.toml",
+                ]
+                .map(read)
+                .join("\n"),
+            ),
+        ];
+        for (name, config) in samples {
+            for target in ["pingap.hcl", "pingap.kdl"] {
+                let result = encode_for_file(Path::new(target), &config);
+                assert_eq!(
+                    true,
+                    result.is_ok(),
+                    "{name} as {target}: {:?}",
+                    result.err().map(|e| e.to_string())
+                );
+            }
+        }
+    }
+
+    /// A config that does not survive the conversion is not saved.
+    #[tokio::test]
+    async fn test_single_file_refuses_a_lossy_save() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("pingap.kdl");
+        let storage = FileStorage::new(&file.to_string_lossy()).unwrap();
+        storage
+            .save("pingap.toml", "[basic]\nlog_level = \"info\"")
+            .await
+            .unwrap();
+        let before = std::fs::read_to_string(&file).unwrap();
+
+        // A list of lists has no kdl form here.
+        let err = storage
+            .save(
+                "pingap.toml",
+                "[plugins.x]\ncategory = \"mock\"\nmatrix = [[1, 2], [3, 4]]",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(true, err.contains("without losing part of it"), "{err}");
+        assert_eq!(before, std::fs::read_to_string(&file).unwrap());
+    }
+
+    /// Regression: saving one entry into a directory of hcl files wrote a
+    /// toml file, and toml files win when the directory is read - that one
+    /// entry became the whole config.
+    #[tokio::test]
+    async fn test_dir_of_hcl_files_is_read_only() {
+        for (name, content) in [
+            (
+                "main.hcl",
+                "upstream \"api\" {\n  addrs = [\"127.0.0.1:5000\"]\n}\n",
+            ),
+            (
+                "main.kdl",
+                "upstream \"api\" {\n  addrs \"127.0.0.1:5000\"\n}\n",
+            ),
+        ] {
+            let dir = tempdir().unwrap();
+            std::fs::write(dir.path().join(name), content).unwrap();
+            let storage =
+                FileStorage::new(&dir.path().to_string_lossy()).unwrap();
+            let before = storage.fetch("").await.unwrap();
+            assert_eq!(true, before.contains("127.0.0.1:5000"), "{before}");
+
+            let err = storage
+                .save("plugins.toml", "[plugins.x]\ncategory = \"mock\"")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert_eq!(true, err.contains("read but not written"), "{err}");
+            let err = storage
+                .delete("upstreams.toml")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert_eq!(true, err.contains("read but not written"), "{err}");
+
+            assert_eq!(false, dir.path().join("plugins.toml").exists());
+            assert_eq!(before, storage.fetch("").await.unwrap());
         }
     }
 

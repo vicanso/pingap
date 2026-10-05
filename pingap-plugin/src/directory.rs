@@ -447,9 +447,14 @@ impl TryFrom<&PluginConf> for Directory {
         if !index.starts_with("/") {
             index = format!("/{index}");
         }
-        let path =
-            Path::new(&pingap_util::resolve_path(&get_str_conf(value, "path")))
-                .to_path_buf();
+        let path = get_str_conf(value, "path");
+        // An empty root is the prefix of every path, so the check that a
+        // file is under the root passed for anything: the plugin served the
+        // working directory, and `/../` whatever lies above it.
+        if path.is_empty() {
+            return Err(invalid("path is required".to_string()));
+        }
+        let path = Path::new(&pingap_util::resolve_path(&path)).to_path_buf();
         // Resolve the root once so the per-request check compares two canonical
         // paths and therefore sees through symlinks. A root that does not exist
         // yet keeps its literal path; the lexical check still applies.
@@ -516,6 +521,15 @@ impl Directory {
             headers.extend(arr.clone());
         }
     }
+    /// Whether `file` resolves to somewhere outside the root. Only looked
+    /// at when `follow_symlinks` is off; a path that does not resolve
+    /// cannot lead anywhere.
+    async fn escapes_root(&self, file: &Path) -> bool {
+        !self.follow_symlinks
+            && fs::canonicalize(file)
+                .await
+                .is_ok_and(|resolved| !resolved.starts_with(&self.path))
+    }
     async fn send_streaming_response(
         &self,
         session: &mut Session,
@@ -525,6 +539,10 @@ impl Directory {
     ) -> pingora::Result<RequestPluginResult> {
         let mut resp = HttpChunkResponse::new(&mut reader);
         resp.chunk_size = opt.chunk_size;
+        // The status goes on the wire, not only into the access log: a
+        // range larger than one chunk used to be answered `200 OK` with a
+        // `Content-Range`, which a client takes for the whole file.
+        resp.status = opt.status;
 
         if opt.cacheable {
             resp.max_age = self.max_age;
@@ -671,10 +689,7 @@ impl Plugin for Directory {
         // root that points outside it. Only enforce when the path resolves; a
         // path that does not exist cannot escape anywhere and is handled as a
         // 404 further down.
-        if !self.follow_symlinks
-            && let Ok(resolved) = fs::canonicalize(&file).await
-            && !resolved.starts_with(&self.path)
-        {
+        if self.escapes_root(&file).await {
             return Ok(RequestPluginResult::Respond(forbidden()));
         }
 
@@ -693,7 +708,15 @@ impl Plugin for Directory {
                     };
                     return Ok(RequestPluginResult::Respond(resp));
                 }
-                file.join(self.index.trim_start_matches('/'))
+                // The index file is a path of its own and is checked like
+                // one. The check above saw the directory only, so an
+                // `index.html` linking out of the root was served through
+                // `/dir/` while `/dir/index.html` was refused.
+                let index = file.join(self.index.trim_start_matches('/'));
+                if self.escapes_root(&index).await {
+                    return Ok(RequestPluginResult::Respond(forbidden()));
+                }
+                index
             },
             Ok(_) => file,
             Err(err) => {
@@ -1005,6 +1028,16 @@ mod tests {
             .to_string();
             assert_eq!(true, err.contains(expect), "{conf}: {err}");
         }
+        // Regression: without a root every path counted as inside it.
+        for conf in ["", "path = \"\""] {
+            let err = Directory::try_from(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert_eq!(true, err.contains("path is required"), "{conf}: {err}");
+        }
         // Both spellings of a size are accepted, and floored.
         for conf in ["chunk_size = 1024", "chunk_size = \"1kb\""] {
             let params = Directory::try_from(
@@ -1177,6 +1210,13 @@ download = true
             root.path().join("escape.txt"),
         )
         .unwrap();
+        // The index file of a directory inside the root, linking out.
+        std::fs::create_dir(root.path().join("sub")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            root.path().join("sub/index.html"),
+        )
+        .unwrap();
 
         let request = async |dir: &Directory, path: &str| {
             let input_header = format!("GET {path} HTTP/1.1\r\n\r\n");
@@ -1215,10 +1255,85 @@ follow_symlinks = {follow_symlinks}
         // links content into the tree is unaffected.
         let dir = new_directory(true);
         assert_eq!(200, request(&dir, "/escape.txt").await.status.as_u16());
+        assert_eq!(200, request(&dir, "/sub/").await.status.as_u16());
 
         let dir = new_directory(false);
         assert_eq!(200, request(&dir, "/public.txt").await.status.as_u16());
         assert_eq!(403, request(&dir, "/escape.txt").await.status.as_u16());
+        // Regression: the directory is inside the root, its index file is
+        // not. Asking for the directory used to serve it.
+        assert_eq!(403, request(&dir, "/sub/index.html").await.status.as_u16());
+        assert_eq!(403, request(&dir, "/sub/").await.status.as_u16());
+        assert_eq!(403, request(&dir, "/sub").await.status.as_u16());
+    }
+
+    /// Regression: a response too large for one chunk is streamed, and the
+    /// streamed header was always `200 OK` with `Transfer-Encoding: chunked`
+    /// on top of the `Content-Length` - for a range too, which a client
+    /// then takes for the whole file.
+    #[tokio::test]
+    async fn test_directory_streamed_response_header() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let root = tempfile::tempdir().unwrap();
+        // Three chunks of the smallest chunk size.
+        let size = 3 * MIN_CHUNK_SIZE as usize;
+        std::fs::write(root.path().join("big.bin"), vec![b'a'; size]).unwrap();
+        let dir = new_directory(root.path(), "");
+
+        let fetch = async |headers: &str| {
+            let (mut client, server) = tokio::io::duplex(1024 * 1024);
+            client
+                .write_all(
+                    format!("GET /big.bin HTTP/1.1\r\n{headers}\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut session = Session::new_h1(Box::new(server));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            dir.handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            drop(session);
+            let mut buf = vec![];
+            client.read_to_end(&mut buf).await.unwrap();
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            let (head, body) = text.split_once("\r\n\r\n").unwrap();
+            (head.to_ascii_lowercase(), body.len())
+        };
+
+        let range = 2 * MIN_CHUNK_SIZE as usize;
+        let (head, body) =
+            fetch(&format!("Range: bytes=0-{}\r\n", range - 1)).await;
+        assert_eq!(true, head.starts_with("http/1.1 206 "), "{head}");
+        assert_eq!(
+            true,
+            head.contains(&format!(
+                "content-range: bytes 0-{}/{size}",
+                range - 1
+            )),
+            "{head}"
+        );
+        assert_eq!(
+            true,
+            head.contains(&format!("content-length: {range}")),
+            "{head}"
+        );
+        assert_eq!(false, head.contains("transfer-encoding"), "{head}");
+        assert_eq!(range, body);
+
+        // The whole file: 200, and one framing as well.
+        let (head, body) = fetch("").await;
+        assert_eq!(true, head.starts_with("http/1.1 200 "), "{head}");
+        assert_eq!(
+            true,
+            head.contains(&format!("content-length: {size}")),
+            "{head}"
+        );
+        assert_eq!(false, head.contains("transfer-encoding"), "{head}");
+        assert_eq!(size, body);
     }
 
     #[tokio::test]

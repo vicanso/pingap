@@ -369,6 +369,16 @@ pub fn convert_hcl_to_toml(input: &str) -> Result<String> {
     assemble_toml(blocks)
 }
 
+/// A float that reads back as a float: `50.0`, not `50`, which is an
+/// integer to the parser.
+fn format_float(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 {
+        format!("{value:.1}")
+    } else {
+        value.to_string()
+    }
+}
+
 /// Convert a TOML value to its HCL attribute value representation.
 fn toml_value_to_hcl(value: &TomlValue) -> String {
     match value {
@@ -382,7 +392,7 @@ fn toml_value_to_hcl(value: &TomlValue) -> String {
             format!("\"{escaped}\"")
         },
         TomlValue::Integer(i) => i.to_string(),
-        TomlValue::Float(f) => f.to_string(),
+        TomlValue::Float(f) => format_float(*f),
         TomlValue::Boolean(b) => b.to_string(),
         TomlValue::Datetime(dt) => format!("\"{dt}\""),
         TomlValue::Array(arr) => {
@@ -390,7 +400,24 @@ fn toml_value_to_hcl(value: &TomlValue) -> String {
                 arr.iter().map(toml_value_to_hcl).collect();
             format!("[{}]", items.join(", "))
         },
-        TomlValue::Table(_) => "{}".to_string(),
+        // An object. This used to be written `{}` whatever was in the
+        // table, so a nested table in a plugin's config was lost.
+        TomlValue::Table(table) => {
+            if table.is_empty() {
+                return "{}".to_string();
+            }
+            let items: Vec<String> = table
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{} = {}",
+                        toml_value_to_hcl(&TomlValue::String(key.clone())),
+                        toml_value_to_hcl(value)
+                    )
+                })
+                .collect();
+            format!("{{ {} }}", items.join(", "))
+        },
     }
 }
 
@@ -1423,6 +1450,23 @@ addrs = ["127.0.0.1:8080"]
             "\"say \\\"hi\\\"\"",
             toml_value_to_hcl(&TomlValue::String("say \"hi\"".to_string()))
         );
+    }
+
+    /// Regression: a table in a value position was written as `{}`.
+    #[test]
+    fn test_toml_to_hcl_nested_tables() {
+        let toml_input = r#"
+[plugins.custom]
+category = "mock"
+options = { name = "a", "content-type" = "text/plain", nested = { level = 2 } }
+rules = [{ path = "/a", status = 200 }, { path = "/b", status = 404 }]
+empty = {}
+"#;
+        let hcl = convert_toml_to_hcl(toml_input).unwrap();
+        let original: TomlValue = toml::from_str(toml_input).unwrap();
+        let roundtrip: TomlValue =
+            toml::from_str(&convert_hcl_to_toml(&hcl).unwrap()).unwrap();
+        assert_eq!(original, roundtrip, "{hcl}");
     }
 
     #[test]

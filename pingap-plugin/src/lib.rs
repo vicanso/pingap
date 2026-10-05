@@ -66,17 +66,20 @@ pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
         .and_then(|s| parse_duration(s).ok())
 }
 
+/// A list of strings. One string on its own is a list of one: that is how
+/// a single value reads in KDL (`ip_list "1.2.3.4"`), and it used to count
+/// as no list at all, which left an allow or deny list empty without a
+/// word.
 pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| item.as_str())
-                .map(String::from) // same as .map(|s| s.to_string())
-                .collect()
-        })
-        .unwrap_or_default()
+    match value.get(key) {
+        Some(toml::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(String::from) // same as .map(|s| s.to_string())
+            .collect(),
+        Some(toml::Value::String(item)) => vec![item.clone()],
+        _ => vec![],
+    }
 }
 
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
@@ -276,8 +279,34 @@ pub use plugin::get_plugin_factory;
 
 #[cfg(test)]
 mod tests {
-    use super::accepts_encoding;
+    use super::{accepts_encoding, get_str_slice_conf};
+    use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_get_str_slice_conf() {
+        let conf: PluginConf = toml::from_str(
+            r#"
+list = ["a", "b"]
+one = ["a"]
+bare = "a"
+empty = []
+number = 1
+"#,
+        )
+        .unwrap();
+        assert_eq!(vec!["a", "b"], get_str_slice_conf(&conf, "list"));
+        assert_eq!(vec!["a"], get_str_slice_conf(&conf, "one"));
+        // One value written without the brackets, as KDL has it.
+        assert_eq!(vec!["a"], get_str_slice_conf(&conf, "bare"));
+        for key in ["empty", "number", "missing"] {
+            assert_eq!(
+                true,
+                get_str_slice_conf(&conf, key).is_empty(),
+                "{key}"
+            );
+        }
+    }
 
     #[test]
     fn test_accepts_encoding() {

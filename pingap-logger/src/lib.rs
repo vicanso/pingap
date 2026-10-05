@@ -56,4 +56,5 @@ pub fn new_env_filter(level: &str) -> EnvFilter {
 
 pub use access::*;
 pub use async_logger::*;
+pub use file_appender::LogFiles;
 pub use writer::*;

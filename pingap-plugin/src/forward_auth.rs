@@ -64,6 +64,19 @@ const RESPONSE_HEADERS_NOT_RELAYED: &[&str] = &[
     "upgrade",
 ];
 
+/// The headers that describe the original request to the auth service.
+/// pingap writes them itself, so the client's own copies are not forwarded.
+/// They used to be, in front of pingap's: a client sending
+/// `X-Forwarded-Uri: /public` had the auth service decide about a path
+/// other than the one it was asking for.
+const FORWARDED_HEADERS: &[&str] = &[
+    "x-forwarded-method",
+    "x-forwarded-uri",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-forwarded-for",
+];
+
 fn is_listed(name: &str, list: &[&str]) -> bool {
     list.iter().any(|item| item.eq_ignore_ascii_case(name))
 }
@@ -168,7 +181,9 @@ impl Plugin for ForwardAuth {
         {
             let req_header = session.req_header();
             for (name, value) in req_header.headers.iter() {
-                if is_listed(name.as_str(), REQUEST_HEADERS_NOT_FORWARDED) {
+                if is_listed(name.as_str(), REQUEST_HEADERS_NOT_FORWARDED)
+                    || is_listed(name.as_str(), FORWARDED_HEADERS)
+                {
                     continue;
                 }
                 if self.request_headers.is_empty()
@@ -238,6 +253,13 @@ impl Plugin for ForwardAuth {
                 }
             }
             let req_header = session.req_header_mut();
+            // These headers are the auth service's word to the upstream,
+            // and only its word: one it did not return is removed. Left in
+            // place, a client's own `X-User-Id: admin` reached the upstream
+            // as if the auth service had vouched for it.
+            for name in &self.add_headers {
+                req_header.remove_header(name.as_str());
+            }
             for (name, value) in to_add {
                 let _ = req_header.insert_header(name, value);
             }
@@ -381,6 +403,96 @@ mod tests {
                 "{unexpected}: {head}"
             );
         }
+    }
+
+    /// Regression: what the client says about itself is not what the auth
+    /// service is told, and not what the upstream gets on its behalf.
+    #[tokio::test]
+    async fn test_forward_auth_ignores_client_supplied_headers() {
+        // The auth service returns one of the two configured headers.
+        let (addr, received) = spawn_auth_server(
+            "HTTP/1.1 200 OK\r\nX-User-Id: 42\r\nContent-Length: 0\r\n\r\n",
+        )
+        .await;
+        let plugin = ForwardAuth::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                "category = \"forward_auth\"\nauth_url = \"http://{addr}/verify\"\nadd_headers = [\"X-User-Id\", \"X-User-Role\"]\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let input = [
+            "GET /admin HTTP/1.1",
+            "Host: example.com",
+            "X-Forwarded-Uri: /public",
+            "X-Forwarded-Method: OPTIONS",
+            "X-Forwarded-Host: trusted.example",
+            "X-Forwarded-Proto: https",
+            "X-Forwarded-For: 6.6.6.6",
+            "X-User-Id: 1",
+            "X-User-Role: admin",
+            "Cookie: session=abc",
+            "\r\n",
+        ]
+        .join("\r\n");
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
+
+        // The auth service is told about the real request, once.
+        let head = received.lock().unwrap().to_ascii_lowercase();
+        for expected in [
+            "x-forwarded-method: get",
+            "x-forwarded-uri: /admin",
+            "x-forwarded-host: example.com",
+            "x-forwarded-proto: http",
+            "cookie: session=abc",
+        ] {
+            assert_eq!(
+                true,
+                head.contains(&format!("\r\n{expected}\r\n")),
+                "{expected}: {head}"
+            );
+        }
+        for name in [
+            "x-forwarded-method",
+            "x-forwarded-uri",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-forwarded-for",
+        ] {
+            assert_eq!(
+                1,
+                head.matches(&format!("\r\n{name}:")).count(),
+                "{name}: {head}"
+            );
+        }
+        // `X-Forwarded-For` is pingap's client ip. Which address that is
+        // follows `basic.trusted_proxies`, the same as everywhere else.
+        for unexpected in ["/public", "options", "trusted.example"] {
+            assert_eq!(
+                false,
+                head.contains(unexpected),
+                "{unexpected}: {head}"
+            );
+        }
+
+        // The upstream gets what the auth service returned, and nothing in
+        // place of what it did not return.
+        let headers = &session.req_header().headers;
+        assert_eq!("42", headers.get("X-User-Id").unwrap());
+        assert_eq!(1, headers.get_all("X-User-Id").iter().count());
+        assert_eq!(None, headers.get("X-User-Role"));
     }
 
     /// Anything but 2xx is relayed: status, headers and body, minus the

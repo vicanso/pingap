@@ -106,11 +106,16 @@ in a multi-instance deployment, issue the request on every node.
     it as shareable with `public`, `s-maxage` or `must-revalidate`. A
     [`basic_auth`](basic_auth.md) plugin with `hide_credentials` removes the
     header before this check, so a site behind it is cached as usual.
-- The cache key is derived from the request URI plus `namespace` plus the values
-  of the `headers` you listed. `PURGE` builds the key for both `GET` and `HEAD`,
-  so purging `/x` removes the entries created by either method. If `headers`
-  are configured, send them on the `PURGE` request too — they are part of the
-  key.
+- The cache key is the `namespace`, the values of the `headers` you listed,
+  the method, the host, the path and the query. The host is taken in lower case
+  and without its port, and the scheme is not part of the key, so
+  `http://Example.com:8080/x` and `https://example.com/x` are one entry, over
+  HTTP/1.1 and HTTP/2 alike, while `other.com/x` is another.
+- `PURGE` builds the key for both `GET` and `HEAD`, so purging `/x` removes the
+  entries created by either method. It purges the host it is sent to: send the
+  `Host` of the site whose entry is to go, on any listener the plugin is
+  reachable through. If `headers` are configured, send them on the `PURGE`
+  request too — they are part of the key.
 - The origin's `Vary` response header is honoured: each combination of the
   request headers it names is stored as its own variant under the same key, and
   `Vary: *` makes the response uncacheable. `vary_headers` limits which headers
@@ -133,6 +138,12 @@ in a multi-instance deployment, issue the request on every node.
 
 ## Usage notes
 
+- **Upgrading from 0.15.0 or earlier empties the cache.** Up to that version
+  the host was part of the key for HTTP/2 requests only; over HTTP/1.1 two
+  sites behind one `cache` plugin shared their entries. Entries written by
+  those versions are not found under the present key: the cache starts cold
+  after the upgrade, and the old entries of a file cache stay on disk until
+  the inactive sweep removes them.
 - **`eviction` needs a bounded backend.** It is only wired up when the backend
   reports a non-zero `max_size`, which the file backend does not — so `eviction`
   is memory-only, and setting it on a file cache logs an error and is ignored.

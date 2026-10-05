@@ -12,7 +12,7 @@
 | `category` | string | — | 必须为 `forward_auth`。 |
 | `auth_url` | string | — | **必填。** 认证端点。启动时解析，拼写错误会让 `pingap -t` 失败。 |
 | `request_headers` | string[] | *(全部)* | 要转发的原始请求头。为空则转发全部。 |
-| `add_headers` | string[] | — | 成功时从认证响应复制到上游请求的头。 |
+| `add_headers` | string[] | — | 成功时从认证响应复制到上游请求的头。客户端自带的同名头不会到达上游。 |
 | `timeout` | duration | `10s` | 子请求超时。 |
 
 ## 认证服务收到什么
@@ -26,6 +26,8 @@
 | `x-forwarded-host` | 原始 `Host` |
 | `x-forwarded-proto` | 客户端走 TLS 时为 `https`，否则为 `http` |
 | `x-forwarded-for` | Pingap 解析的客户端 IP |
+
+这五个头只由 Pingap 写入。请求里自带的同名头不会进入子请求，客户端无法让认证服务针对另一个路径、方法或域名做判断。`x-forwarded-for` 和其他用到客户端 IP 的地方一样，遵循 [`basic.trusted_proxies`](ip_restriction.md#客户端-ip-解析)。
 
 无论 `request_headers` 怎么配置，`Host`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Keep-Alive`、`Proxy-Connection`、`TE`、`Trailer`、`Upgrade` 与 `Expect` 都不会转发：它们描述的是客户端连接或请求体，而这个无请求体的 `GET` 子请求并没有，否则认证服务会一直等一个不会到来的请求体。
 
@@ -63,11 +65,13 @@ x-forwarded-for: 1.2.3.4
 
 | Auth service result | Client sees |
 | --- | --- |
-| `2xx` | 请求继续；`add_headers` 复制到上游请求 |
+| `2xx` | 请求继续；按认证响应设置上游请求里的 `add_headers` |
 | 其他状态 | 该状态码、头与正文原样回传 |
 | 不可达 / 超时 | `502 Bad Gateway`，正文 `Forward auth request failed` |
 
 回传响应会剥离 `content-length`、`transfer-encoding`、`connection` 及其他逐跳头，因为 Pingap 会重新组帧。非法 HTTP 状态码降级为 `403`。
+
+`add_headers` 里列出的头代表认证服务对上游说的话，也只代表它：每个头先从请求中移除，认证响应里有才重新设置。客户端自己发送 `X-User-Id: admin` 时，不论认证服务是否返回这个头，这个值都到不了上游。
 
 认证服务返回的重定向不会被跟随：`302` 本身就是决策，原样回传。若像普通 HTTP 客户端那样默认跟随，登录页的 `200` 就会被当成放行。
 

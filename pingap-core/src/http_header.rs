@@ -25,7 +25,7 @@ use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::borrow::Cow;
 use std::fmt::Write;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -393,12 +393,56 @@ pub fn set_trusted_proxies(proxies: &Option<Vec<String>>) {
     TRUSTED_PROXIES_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-/// Returns true if the direct peer address is a configured trusted proxy.
-fn is_trusted_proxy(peer: IpAddr) -> bool {
-    TRUSTED_PROXIES
-        .load()
-        .as_ref()
-        .is_some_and(|trusted| trusted.contains(peer))
+/// An `X-Forwarded-For` entry as an address. Besides the plain form some
+/// proxies write `ip:port` or `[v6]:port`.
+fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
+    if let Ok(ip) = IpAddr::from_str(value) {
+        return Some(ip);
+    }
+    if let Ok(addr) = SocketAddr::from_str(value) {
+        return Some(addr.ip());
+    }
+    value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .and_then(|value| IpAddr::from_str(value).ok())
+}
+
+/// The client address out of the `X-Forwarded-For` lines of a request that
+/// came through a trusted proxy.
+///
+/// Each proxy appends the address it received the request from, so the list
+/// is read from the right: entries that are trusted proxies themselves are
+/// skipped, and the first one that is not is the client. Everything further
+/// left was written by that client and proves nothing - taking the first
+/// entry, as this used to, let `X-Forwarded-For: 6.6.6.6` through a trusted
+/// proxy pick the address the access rules saw.
+///
+/// When every entry is a trusted proxy the request started at one of them,
+/// and the left-most is returned.
+fn forwarded_client_ip<'a>(
+    values: impl DoubleEndedIterator<Item = &'a HeaderValue>,
+    trusted: &TrustedProxies,
+) -> Option<String> {
+    let mut first_proxy = None;
+    for value in values.rev() {
+        // Not text: there is no telling what the entries are.
+        let Ok(value) = value.to_str() else {
+            break;
+        };
+        for item in value.rsplit(',') {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            match parse_forwarded_ip(item) {
+                Some(ip) if trusted.contains(ip) => first_proxy = Some(ip),
+                Some(ip) => return Some(ip.to_string()),
+                None => return Some(item.to_string()),
+            }
+        }
+    }
+    first_proxy.map(|ip| ip.to_string())
 }
 
 /// Ensures `ctx.conn.client_ip` is populated and returns a borrowed reference.
@@ -418,8 +462,11 @@ pub fn ensure_client_ip<'a>(session: &Session, ctx: &'a mut Ctx) -> &'a str {
 ///
 /// When trusted proxies are configured, `X-Forwarded-For` / `X-Real-IP` are
 /// only honoured if the direct TCP peer is a trusted proxy; otherwise the
-/// peer's own address is returned. When no trusted proxies are configured the
-/// lookup order is:
+/// peer's own address is returned. Through a trusted proxy the address is
+/// the right-most `X-Forwarded-For` entry that is not a trusted proxy (see
+/// [`forwarded_client_ip`]), then `X-Real-IP`, then the peer.
+///
+/// When no trusted proxies are configured the lookup order is:
 /// 1. `X-Forwarded-For` (taking the first IP in the list)
 /// 2. `X-Real-IP`
 /// 3. The remote address of the direct TCP connection
@@ -429,15 +476,35 @@ pub fn get_client_ip(session: &Session) -> String {
     if TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed) {
         // Compare the address itself; formatting it only to parse it back
         // would cost an allocation per request.
-        let peer = session
+        let Some(peer) = session
             .client_addr()
             .and_then(|addr| addr.as_inet())
-            .map(|addr| addr.ip());
-        match peer {
-            Some(ip) if is_trusted_proxy(ip) => {},
-            Some(ip) => return ip.to_string(),
-            None => return String::new(),
+            .map(|addr| addr.ip())
+        else {
+            return String::new();
+        };
+        let trusted = TRUSTED_PROXIES.load();
+        let Some(trusted) =
+            trusted.as_ref().filter(|trusted| trusted.contains(peer))
+        else {
+            return peer.to_string();
+        };
+        let headers = &session.req_header().headers;
+        if let Some(ip) = forwarded_client_ip(
+            headers.get_all(HTTP_HEADER_X_FORWARDED_FOR).iter(),
+            trusted,
+        ) {
+            return ip;
         }
+        if let Some(ip) = headers
+            .get(HTTP_HEADER_X_REAL_IP)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+        {
+            return ip.to_string();
+        }
+        return peer.to_string();
     }
     // 1. Check `X-Forwarded-For`.
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
@@ -954,6 +1021,54 @@ mod tests {
         )
         .await;
         assert_eq!(get_client_ip(&session), "192.168.1.1");
+    }
+
+    #[test]
+    fn test_forwarded_client_ip() {
+        let trusted = TrustedProxies::parse(&[
+            "10.0.0.0/8".to_string(),
+            "192.168.1.1".to_string(),
+            "fd00::/8".to_string(),
+        ]);
+        let client_ip = |lines: &[&str]| {
+            let values: Vec<HeaderValue> = lines
+                .iter()
+                .map(|line| HeaderValue::from_str(line).unwrap())
+                .collect();
+            forwarded_client_ip(values.iter(), &trusted)
+        };
+        let ip = |value: &str| Some(value.to_string());
+
+        assert_eq!(ip("9.9.9.9"), client_ip(&["9.9.9.9"]));
+        // Regression: what the client wrote comes first, the address the
+        // trusted proxy saw comes last. The first one used to win.
+        assert_eq!(ip("9.9.9.9"), client_ip(&["6.6.6.6, 9.9.9.9"]));
+        assert_eq!(ip("9.9.9.9"), client_ip(&["6.6.6.6,10.1.1.1 , 9.9.9.9"]));
+        // A chain of trusted proxies is skipped from the right.
+        assert_eq!(
+            ip("9.9.9.9"),
+            client_ip(&["6.6.6.6, 9.9.9.9, 10.0.0.2, 192.168.1.1"])
+        );
+        assert_eq!(ip("2001:db8::1"), client_ip(&["2001:db8::1, fd00::2"]));
+        // Several header lines read as one list.
+        assert_eq!(
+            ip("9.9.9.9"),
+            client_ip(&["6.6.6.6", "9.9.9.9", "10.0.0.2"])
+        );
+        assert_eq!(ip("9.9.9.9"), client_ip(&["6.6.6.6, 9.9.9.9", "10.0.0.2"]));
+        // The request started at a trusted proxy: the left-most of them.
+        assert_eq!(ip("10.0.0.3"), client_ip(&["10.0.0.3, 10.0.0.2"]));
+        // With a port, as some proxies write it.
+        assert_eq!(ip("9.9.9.9"), client_ip(&["9.9.9.9:4321, 10.0.0.2:80"]));
+        assert_eq!(
+            ip("2001:db8::1"),
+            client_ip(&["[2001:db8::1]:4321, [fd00::2]"])
+        );
+        // Not an address: not a trusted proxy either, so that is the answer
+        // and nothing to its left is looked at.
+        assert_eq!(ip("unknown"), client_ip(&["6.6.6.6, unknown, 10.0.0.2"]));
+        assert_eq!(None, client_ip(&[]));
+        assert_eq!(None, client_ip(&[" , "]));
     }
 
     #[tokio::test]

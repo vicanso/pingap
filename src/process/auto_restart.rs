@@ -26,7 +26,7 @@ use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
     CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-    CATEGORY_UPSTREAM, ConfigManager, PingapConfig, PingapTomlConfig,
+    CATEGORY_UPSTREAM, ConfigManager, Observer, PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -130,6 +130,7 @@ async fn apply_config(
 ) -> Result<bool, Box<dyn std::error::Error>> {
     new_config.validate()?;
     validate_servers_tls_for_backend(&new_config.servers)?;
+    plugin::validate_plugin_references(new_config)?;
     let current_config: PingapConfig =
         config_manager.get_current_config().as_ref().clone();
 
@@ -255,29 +256,8 @@ async fn apply_config(
                 },
             };
         }
-        if should_reload_location {
-            match try_init_locations(&new_config.locations) {
-                Err(e) => {
-                    let error = e.to_string();
-                    reload_fail_messages
-                        .push(format!("location reload fail: {error}",));
-                    error!(
-                        target: LOG_TARGET,
-                        error, "reload location fail"
-                    );
-                },
-                Ok(updated_locations) => {
-                    info!(target: LOG_TARGET, "reload location success");
-                    send_notification(NotificationData {
-                        category: "reload_config".to_string(),
-                        level: NotificationLevel::Info,
-                        message: format_message("Location", updated_locations),
-                        ..Default::default()
-                    })
-                    .await;
-                },
-            };
-        }
+        // Plugins before locations: a location resolves its plugins by name,
+        // and a name that is not loaded yet rejects the request.
         if should_reload_plugin {
             let (updated_plugins, error) =
                 plugin::try_init_plugins(&new_config.plugins);
@@ -301,6 +281,29 @@ async fn apply_config(
                 })
                 .await;
             }
+        }
+        if should_reload_location {
+            match try_init_locations(&new_config.locations) {
+                Err(e) => {
+                    let error = e.to_string();
+                    reload_fail_messages
+                        .push(format!("location reload fail: {error}",));
+                    error!(
+                        target: LOG_TARGET,
+                        error, "reload location fail"
+                    );
+                },
+                Ok(updated_locations) => {
+                    info!(target: LOG_TARGET, "reload location success");
+                    send_notification(NotificationData {
+                        category: "reload_config".to_string(),
+                        level: NotificationLevel::Info,
+                        message: format_message("Location", updated_locations),
+                        ..Default::default()
+                    })
+                    .await;
+                },
+            };
         }
         if should_reload_certificate {
             let (updated_certificates, errors) =
@@ -328,7 +331,14 @@ async fn apply_config(
                 .await;
             }
         }
-        if should_reload_server_location {
+        // A server's routes are an index built from its locations: which
+        // hosts each one answers for, and in what order they are tried.
+        // The index is rebuilt when the locations themselves change too,
+        // not only when a server's list of them does. Left alone, it kept
+        // routing by the hosts, paths and weights of before: a location
+        // moved to another host answered 404 on the old host and on the
+        // new one.
+        if should_reload_server_location || should_reload_location {
             match try_init_server_locations(
                 &new_config.servers,
                 &new_config.locations,
@@ -347,16 +357,21 @@ async fn apply_config(
                         target: LOG_TARGET,
                         "reload server location success"
                     );
-                    send_notification(NotificationData {
-                        category: "reload_config".to_string(),
-                        level: NotificationLevel::Info,
-                        message: format_message(
-                            "Server Location",
-                            updated_servers,
-                        ),
-                        ..Default::default()
-                    })
-                    .await;
+                    // The servers whose list of locations changed. A
+                    // rebuild for a location's own change has none, and
+                    // that change was reported above.
+                    if should_reload_server_location {
+                        send_notification(NotificationData {
+                            category: "reload_config".to_string(),
+                            level: NotificationLevel::Info,
+                            message: format_message(
+                                "Server Location",
+                                updated_servers,
+                            ),
+                            ..Default::default()
+                        })
+                        .await;
+                    }
                 },
             };
         }
@@ -538,6 +553,30 @@ pub fn new_observer_service(
 
 static OBSERVER_NAME: &str = "configObserver";
 
+impl ConfigObserverService {
+    /// Waits for the next change of the stored config, `true` when there
+    /// is one. Without a watch it starts one first, and reports that as a
+    /// change, for whatever was written while nothing was watching.
+    ///
+    /// An error is a watch that could not be started or that ended. The
+    /// observer is dropped then, so the next call starts over; the caller
+    /// waits in between.
+    async fn next_change(
+        &self,
+        observer: &mut Option<Observer>,
+    ) -> Result<bool, pingap_config::Error> {
+        let Some(current) = observer.as_mut() else {
+            *observer = Some(self.config_manager.observe().await?);
+            return Ok(true);
+        };
+        let result = current.watch().await;
+        if result.is_err() {
+            *observer = None;
+        }
+        result
+    }
+}
+
 #[async_trait]
 impl BackgroundService for ConfigObserverService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
@@ -554,17 +593,11 @@ impl BackgroundService for ConfigObserverService {
         );
         let mut period = interval(self.interval);
 
-        let mut observer = match self.config_manager.observe().await {
-            Ok(observer) => observer,
-            Err(e) => {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    "create storage observe fail"
-                );
-                return;
-            },
-        };
+        // Created by `next_change`, and created again whenever the watch
+        // ends. It used to be created here, once: a failure ended the whole
+        // service, the periodic check included, and a watch that broke
+        // later was never replaced.
+        let mut observer = None;
 
         loop {
             tokio::select! {
@@ -582,7 +615,7 @@ impl BackgroundService for ConfigObserverService {
                         );
                     }
                 }
-                result = observer.watch() => {
+                result = self.next_change(&mut observer) => {
                     let delay = self.delay.load(Ordering::Relaxed);
                     match result {
                         Ok(updated)  => {

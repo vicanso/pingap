@@ -546,22 +546,22 @@ pub async fn handle_lets_encrypt(
             return Ok(true);
         }
 
-        let value: Option<StorageConf> = config_manager
-            .get(Category::Storage, token)
-            .await
-            .map_err(|e| {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    token,
-                    "load http-01 token fail"
-                );
-                pingora::Error::because(
-                    pingora::ErrorType::HTTPStatus(500),
-                    e.to_string(),
-                    pingora::Error::new(pingora::ErrorType::InternalError),
-                )
-            })?;
+        let value =
+            load_http_01_token(&config_manager, token)
+                .await
+                .map_err(|e| {
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        token,
+                        "load http-01 token fail"
+                    );
+                    pingora::Error::because(
+                        pingora::ErrorType::HTTPStatus(500),
+                        e.to_string(),
+                        pingora::Error::new(pingora::ErrorType::InternalError),
+                    )
+                })?;
         // The validation request normally comes from the CA; the address
         // tells scanner probes and misrouted requests apart from real ones.
         let remote_addr = pingap_core::get_remote_addr(session)
@@ -596,13 +596,33 @@ pub async fn handle_lets_encrypt(
         );
         HttpResponse {
             status: StatusCode::OK,
-            body: value.value.into(),
+            body: value.into(),
             ..Default::default()
         }
         .send(session)
         .await?;
         Ok(true)
     }
+}
+
+/// The key authorization stored for an http-01 `token`, `None` when there
+/// is no such token.
+///
+/// The request path only picks a name, and the storage holds more than
+/// tokens: the ACME account credentials, the includes, whatever was added
+/// through the admin. Only an entry stored as a token is answered, going by
+/// the remark every token carries. Without that check
+/// `/.well-known/acme-challenge/lets_encrypt_account` handed out the
+/// account key on port 80.
+async fn load_http_01_token(
+    config_manager: &ConfigManager,
+    token: &str,
+) -> Result<Option<String>, pingap_config::Error> {
+    let value: Option<StorageConf> =
+        config_manager.get(Category::Storage, token).await?;
+    Ok(value
+        .filter(|conf| conf.remark.as_deref() == Some(HTTP_01_TOKEN_REMARK))
+        .map(|conf| conf.value))
 }
 
 /// The storage entry the ACME account credentials live in, one per CA
@@ -1191,6 +1211,54 @@ mod tests {
 
         // Nothing left to do on the next run.
         assert_eq!(0, clear_stale_http_tokens(&manager, now).await.unwrap());
+    }
+
+    /// Regression: the challenge endpoint answered with any storage entry
+    /// the token happened to name, the ACME account credentials included.
+    #[tokio::test]
+    async fn test_load_http_01_token_only_serves_tokens() {
+        use super::{
+            ACCOUNT_REMARK, HTTP_01_TOKEN_REMARK, account_storage_name,
+            load_http_01_token,
+        };
+        use pingap_config::{Category, StorageConf};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        let entry = |value: &str, remark: Option<&str>| StorageConf {
+            category: "config".to_string(),
+            value: value.to_string(),
+            secret: None,
+            remark: remark.map(|remark| remark.to_string()),
+            created_at: None,
+        };
+        for (name, conf) in [
+            ("token", entry("key-auth", Some(HTTP_01_TOKEN_REMARK))),
+            (
+                account_storage_name(true),
+                entry("account-key", Some(ACCOUNT_REMARK)),
+            ),
+            ("include", entry("secret", None)),
+            ("user-data", entry("secret", Some("my secret"))),
+        ] {
+            manager
+                .update(Category::Storage, name, &conf)
+                .await
+                .unwrap();
+        }
+
+        let load = async |name: &str| {
+            load_http_01_token(&manager, name).await.unwrap()
+        };
+        assert_eq!(Some("key-auth".to_string()), load("token").await);
+        assert_eq!(None, load(account_storage_name(true)).await);
+        assert_eq!(None, load("include").await);
+        assert_eq!(None, load("user-data").await);
+        assert_eq!(None, load("unknown").await);
     }
 
     #[test]

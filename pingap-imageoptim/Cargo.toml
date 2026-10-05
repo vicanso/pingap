@@ -33,10 +33,11 @@ pingap-plugin = { workspace = true }
 pingora = { workspace = true }
 rgb = { workspace = true }
 snafu = { workspace = true }
+# `block_in_place`, which only the multi-thread runtime has
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }

@@ -13,7 +13,7 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `admin`。 |
 | `path` | string | `""` | 管理 UI 挂载的 URL 前缀。尾部 `/` 会去掉。 |
-| `authorizations` | string[] | `[]` | `user:password` 的 Base64。**为空则完全禁用认证。** |
+| `authorizations` | string[] | `[]` | `user:password` 的 Base64，用户名和密码都不能为空，其他内容会被拒绝。**为空则完全禁用认证。** |
 | `max_age` | duration | `2d` | 签名令牌允许的时钟偏差。 |
 | `ip_fail_limit` | int | `10` | 每 IP 失败次数上限，之后封锁 5 分钟。 |
 
@@ -27,6 +27,8 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 ```
 
 等价环境变量：`PINGAP_ADMIN_ADDR`、`PINGAP_ADMIN_USER`、`PINGAP_ADMIN_PASSWORD`。
+
+凭证写成 `user:password`，或者在用户名的位置写 `user:password` 的 Base64。只有用户名、没有密码，且用户名又不是这样的 Base64 值时（`--admin=root@127.0.0.1:3018`）是错误，进程不会启动。在 URL 里有特殊含义的字符用百分号编码（`p@ss` 写成 `p%40ss`），密码取解码后的值。
 
 ## 作为插件
 
@@ -59,7 +61,7 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 
 `<unix-seconds>` 须在代理时钟的 `max_age` 内，令牌按常量时间比较。Web UI 在登录后为你计算。
 
-登录页静态资源（`/`、`*.js`、`*.css`、`*.png`）无需认证以便加载登录屏。`/api` 下一律需要认证，因此无法用看起来像静态后缀的路径绕过 API。
+admin 前缀下的路径分两类。`/api` 及其下的路径是接口，一律需要令牌。其余路径都是内嵌界面的文件，无需认证即可访问（登录页要靠它们加载），没有对应文件时返回 `404`。接口只能通过 `/api` 访问：不带该前缀的 `/configs/...` 不会被当成接口处理。
 
 达到 `ip_fail_limit` 次失败后，该 IP 会收到 `403 Forbidden, too many failures` 并封锁 5 分钟。
 

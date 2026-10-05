@@ -242,7 +242,7 @@ access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {la
   - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`，其他值会被拒绝。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
   - `compression`：`gzip` 或 `zstd`。
   - `level`：压缩级别。
-  - `days_ago`：已轮转文件超过这么多天未被**修改**后压缩（默认 7 天），压缩后删除原文件。
+  - `days_ago`：已轮转文件超过这么多天未被**修改**后压缩（默认 7 天），压缩后删除原文件。压缩文件的名字是原文件的完整名字加上扩展名，如 `file.log.2026-10-05.zst`（或 `.gz`）。只处理这份日志自己轮转出来的文件，也就是日志所在目录里名为 `file.log.YYYY-MM-DD[-HH[-MM]]` 的文件：目录里的其他文件、子目录，以及 `rolling=never` 的日志都不会被处理。
   - `time_point_hour`：运行压缩任务的小时。压缩在阻塞线程池上执行，压大文件不会拖住其他后台任务。
   - `capacity`（`LoggerParams`，pingap 里对应 `basic.log_buffered_size`）：不小于 4096 字节时文件经该大小的缓冲区写入。缓冲日志由 `new_log_flush_service()` 返回的任务（pingap 中每分钟一次）和 `flush_application_log()` 刷盘，后者 pingap 在退出前调用；否则安静的服务器上最后几行会一直留在缓冲区，退出前的几行则会丢失。
 

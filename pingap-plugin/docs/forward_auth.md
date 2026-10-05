@@ -16,7 +16,7 @@ work.
 | `category` | string | — | Must be `forward_auth`. |
 | `auth_url` | string | — | **Required.** Auth endpoint. Parsed at startup, so typos fail `pingap -t`. |
 | `request_headers` | string[] | *(all)* | Which original request headers to forward. Empty forwards everything. |
-| `add_headers` | string[] | — | Headers copied from the auth response onto the upstream request on success. |
+| `add_headers` | string[] | — | Headers copied from the auth response onto the upstream request on success. The client's own headers of these names never reach the upstream. |
 | `timeout` | duration | `10s` | Per-subrequest timeout. |
 
 ## What the auth service receives
@@ -31,6 +31,13 @@ appended), carrying the selected original headers plus:
 | `x-forwarded-host` | Original `Host` |
 | `x-forwarded-proto` | `https` when the client connected over TLS, else `http` |
 | `x-forwarded-for` | Client IP as resolved by Pingap |
+
+These five are written by Pingap alone. A request that arrives with headers of
+the same names has them left out of the subrequest, so a client cannot have the
+auth service decide about another path, method or host than the one it is
+asking for. `x-forwarded-for` follows
+[`basic.trusted_proxies`](ip_restriction.md#client-ip-resolution) like every
+other use of the client IP.
 
 `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`,
 `Proxy-Connection`, `TE`, `Trailer`, `Upgrade` and `Expect` are never forwarded,
@@ -74,13 +81,19 @@ If the service answers `200` with `X-User-Id: 42`, the upstream sees
 
 | Auth service result | Client sees |
 | --- | --- |
-| `2xx` | Request proceeds; `add_headers` are copied onto the upstream request |
+| `2xx` | Request proceeds; `add_headers` are set on the upstream request from the auth response |
 | Any other status | That status, its headers and its body, relayed as-is |
 | Unreachable / timed out | `502 Bad Gateway`, body `Forward auth request failed` |
 
 `content-length`, `transfer-encoding`, `connection` and the other hop-by-hop
 headers are stripped from the relayed response because Pingap re-frames it. A
 status outside the valid HTTP range degrades to `403`.
+
+The headers named in `add_headers` carry the auth service's word to the
+upstream, and nothing else does: each of them is removed from the request
+first, then set from the auth response when the response has it. A client that
+sends `X-User-Id: admin` itself does not get that value through, whether the
+auth service returns the header or not.
 
 Redirects from the auth service are never followed: a `302` is relayed as the
 decision. Following it, as an HTTP client does by default, would have turned the

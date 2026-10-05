@@ -12,7 +12,7 @@ optional HTML directory index.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `directory`. |
-| `path` | string | — | **Required.** Root directory. `~` is expanded and the path is made absolute. |
+| `path` | string | — | **Required**; a plugin without it is a configuration error. Root directory. `~` is expanded and the path is made absolute. |
 | `index` | string | `index.html` | File served for a directory, `/` or any deeper one. A leading `/` is added if missing. |
 | `autoindex` | bool | `false` | Generate an HTML listing for directories. |
 | `chunk_size` | bytesize | `4kb` | Streaming chunk size; also the threshold above which streaming is used. A size string or a byte count; floored at 4 KB. A value that does not parse is a configuration error. |
@@ -20,7 +20,7 @@ optional HTML directory index.
 | `private` | bool | `false` | Add `private` to `Cache-Control`. |
 | `charset` | string | — | Appended to `Content-Type` for `text/*`. |
 | `download` | bool | `false` | Add `Content-Disposition: attachment`. |
-| `follow_symlinks` | bool | `true` | When `false`, a file must still be under `path` once symlinks are resolved. |
+| `follow_symlinks` | bool | `true` | When `false`, a file must still be under `path` once symlinks are resolved. The `index` file of a directory is checked the same way. |
 | `headers` | string[] | — | Extra response headers as `Name: value`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. |
 
@@ -76,7 +76,9 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
   first range of a multi-range request is honoured. An unsatisfiable range gets
   `416` with `Content-Range: bytes */<size>`.
 - Files at or below `chunk_size` are read into memory and sent in one response;
-  larger ones are streamed.
+  larger ones are streamed. Either way the response has a `Content-Length` and
+  the status of the request: `206` with `Content-Range` for a range, whatever
+  its size.
 - `autoindex` listings are sorted by name and skip dotfiles; names are
   HTML-escaped and links percent-encoded, so a file called `<script>` or
   `a b.txt` is listed and linked correctly.
@@ -99,10 +101,12 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
   must still start with `path`, which catches `../` but not a **symlink inside
   the served directory that points outside it**. Set `follow_symlinks = false`
   to also compare the resolved real path, at the cost of one extra `realpath`
-  per request. The default stays `true` so that deployments which link content
-  into the tree keep working; turn it off whenever the directory can contain
-  symlinks you did not create. A symlinked *root* works either way, since the
-  root is resolved once at startup.
+  per request. The check covers the file that is actually served, so a
+  directory whose `index` file links out of the tree is refused through `/dir/`
+  as it is through `/dir/index.html`. The default stays `true` so that
+  deployments which link content into the tree keep working; turn it off
+  whenever the directory can contain symlinks you did not create. A symlinked
+  *root* works either way, since the root is resolved once at startup.
 - `autoindex` reveals file names, sizes and timestamps. Combine with
   [`basic_auth`](basic_auth.md) or [`ip_restriction`](ip_restriction.md) for
   anything non-public.

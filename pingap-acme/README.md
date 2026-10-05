@@ -28,7 +28,10 @@ enabled_h2 = true
 
 Pingap serves the challenge on `/.well-known/acme-challenge/<token>` itself. If
 no server in the configuration listens on port 80, one named `lets encrypt` is
-added automatically for the duration — you do not need to declare it.
+added automatically for the duration — you do not need to declare it. Only the
+tokens of a running validation are answered there; any other name is a `404`,
+including the names of the other entries kept in the same storage (the ACME
+account, includes).
 
 The one-command quick start does the same thing with no config file at all:
 

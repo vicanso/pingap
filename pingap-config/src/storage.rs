@@ -72,6 +72,7 @@ pub trait Storage: Send + Sync {
     async fn observe(&self) -> Result<Observer> {
         Ok(Observer {
             etcd_watch_stream: None,
+            _etcd_client: None,
         })
     }
 }

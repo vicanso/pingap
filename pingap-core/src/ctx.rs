@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Ja4Fingerprint, Plugin, now_ms};
+use crate::{Ja4Fingerprint, Plugin, get_host, now_ms};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
-use http::Uri;
 use http::{HeaderName, HeaderValue};
 #[cfg(feature = "tracing")]
 use opentelemetry::{
@@ -1072,44 +1071,55 @@ impl Ctx {
     }
 }
 
-/// Generates a cache key from the request method, URI and state context.
-/// The key includes an optional namespace and other key components if configured in the context.
+/// Generates the cache key of a request.
+///
+/// The primary is, in this order: the namespace, the custom keys (each
+/// followed by `:`), the method, `:`, the host in lower case without its
+/// port, then the path and the query. `user_tag` is the namespace.
+///
+/// The host is part of the key whatever the protocol. It used to come from
+/// the request uri alone, which carries it in HTTP/2 but not in HTTP/1.1:
+/// two domains behind one cache plugin answered with each other's pages
+/// over HTTP/1.1, and a `PURGE` sent over one protocol missed what the other
+/// had stored. Scheme and port are left out on purpose, so a `PURGE` sent
+/// to an internal plain-http listener with the right `Host` clears what the
+/// public https listener cached.
 ///
 /// # Arguments
 /// * `ctx` - The Ctx context containing cache configuration.
 /// * `method` - The HTTP method as a string.
-/// * `uri` - The request URI.
-///
-/// Returns: A CacheKey whose primary is the namespace, custom keys (if any),
-/// method and URI concatenated, and whose `user_tag` is the namespace.
-pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
+/// * `header` - The request the key is for: its host, path and query.
+pub fn get_cache_key(
+    ctx: &Ctx,
+    method: &str,
+    header: &RequestHeader,
+) -> CacheKey {
     let Some(cache_info) = &ctx.cache else {
         // Return an empty key if cache is not configured for this context.
         return CacheKey::new("", "");
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
-    // Size the buffer from the URI's parts and write the URI straight into
-    // it, rather than rendering it to a String first and copying that.
-    // Keep full-URI semantics so existing cache keys stay stable across upgrades.
-    let uri_len = uri.scheme_str().map_or(0, |scheme| scheme.len() + 3)
-        + uri
-            .authority()
-            .map_or(0, |authority| authority.as_str().len())
-        + uri.path().len()
-        + uri.query().map_or(0, |query| query.len() + 1);
+    let host = get_host(header).unwrap_or_default();
+    let path = header.uri.path();
+    let query = header.uri.query();
     // pingora's CacheKey used to take the namespace as its own argument and
     // hashed `namespace ++ primary` as one unframed byte string. That argument
     // is gone, so the namespace is written straight in front of the primary
-    // here: the hash comes out byte-identical and an on-disk cache filled by
-    // an older pingap stays warm across the upgrade. The storage layer still
-    // partitions by namespace, so it also travels in `user_tag`, which is
-    // carried alongside the key but never hashed.
+    // here. The storage layer still partitions by namespace, so it also
+    // travels in `user_tag`, which is carried alongside the key but never
+    // hashed.
     let keys_len = cache_info
         .keys
         .as_ref()
         .map_or(0, |keys| keys.iter().map(|s| s.len() + 1).sum::<usize>());
     let mut key_buf = String::with_capacity(
-        namespace.len() + keys_len + method.len() + 1 + uri_len,
+        namespace.len()
+            + keys_len
+            + method.len()
+            + 1
+            + host.len()
+            + path.len()
+            + query.map_or(0, |query| query.len() + 1),
     );
     key_buf.push_str(namespace);
     // Custom key components first, each followed by ':'.
@@ -1119,10 +1129,16 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
             key_buf.push(':');
         }
     }
-    // Then "METHOD:URI".
+    // Then "METHOD:host/path?query". A host name is case-insensitive; one
+    // spelling keeps `Example.com` from caching beside `example.com`.
     key_buf.push_str(method);
     key_buf.push(':');
-    let _ = write!(&mut key_buf, "{uri}");
+    key_buf.extend(host.chars().map(|c| c.to_ascii_lowercase()));
+    key_buf.push_str(path);
+    if let Some(query) = query {
+        key_buf.push('?');
+        key_buf.push_str(query);
+    }
 
     CacheKey::new(key_buf, namespace)
 }
@@ -1132,6 +1148,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use bytes::BytesMut;
+    use http::Uri;
     use pingora::cache::key::CacheHashKey;
     use pingora::protocols::tls::SslDigest;
     use pingora::protocols::tls::SslDigestExtension;
@@ -1283,11 +1300,20 @@ mod tests {
     #[test]
     fn test_get_cache_key() {
         let method = "GET";
-        let uri = Uri::from_static("https://example.com/path");
+        // HTTP/2: the host is in the uri.
+        let mut h2 = RequestHeader::build("GET", b"/", None).unwrap();
+        h2.set_uri(Uri::from_static("https://example.com/path?a=1"));
+        // HTTP/1.1: the uri is the path, the host is a header.
+        let h1 = |host: &str, path: &str| {
+            let mut header =
+                RequestHeader::build("GET", path.as_bytes(), None).unwrap();
+            header.insert_header("Host", host).unwrap();
+            header
+        };
 
         // Case 1: No cache info in context.
         let ctx_no_cache = Ctx::new();
-        let key1 = get_cache_key(&ctx_no_cache, method, &uri);
+        let key1 = get_cache_key(&ctx_no_cache, method, &h2);
         assert_eq!(key1.user_tag, "");
         assert_eq!(key1.primary_key_str(), Some(""));
 
@@ -1297,16 +1323,39 @@ mod tests {
             namespace: Some("my-ns".to_string()),
             ..Default::default()
         }));
-        let key2 = get_cache_key(&ctx_with_ns, method, &uri);
+        let key2 = get_cache_key(&ctx_with_ns, method, &h2);
         assert_eq!(key2.user_tag, "my-ns");
         assert_eq!(
             key2.primary_key_str(),
-            Some("my-nsGET:https://example.com/path")
+            Some("my-nsGET:example.com/path?a=1")
         );
-        // The hex pingora 0.8.1 produced for namespace "my-ns" and primary
-        // "GET:https://example.com/path". If this changes, every entry an
-        // older pingap wrote to disk becomes unreachable after an upgrade.
-        assert_eq!(key2.primary(), "3f45c68799da5997559d474ba4b5775c");
+        // Changing what goes into the key makes every entry an older
+        // pingap wrote to disk unreachable after the upgrade, so the hash
+        // of a known key is pinned here.
+        assert_eq!(key2.primary(), "8fe845e5498004cd81203be9074a8e68");
+
+        // The same request over HTTP/1.1 is the same entry, whatever the
+        // spelling of the host and whichever port it came in on.
+        for host in ["example.com", "Example.COM", "example.com:8443"] {
+            let key =
+                get_cache_key(&ctx_with_ns, method, &h1(host, "/path?a=1"));
+            assert_eq!(key2.primary(), key.primary(), "{host}");
+        }
+        // Regression: another host is another entry. Over HTTP/1.1 the host
+        // used to be missing from the key.
+        let other =
+            get_cache_key(&ctx_with_ns, method, &h1("other.com", "/path?a=1"));
+        assert_eq!(
+            other.primary_key_str(),
+            Some("my-nsGET:other.com/path?a=1")
+        );
+        assert_ne!(key2.primary(), other.primary());
+        // No host at all (HTTP/1.0).
+        let bare = RequestHeader::build("GET", b"/path", None).unwrap();
+        assert_eq!(
+            get_cache_key(&ctx_with_ns, method, &bare).primary_key_str(),
+            Some("my-nsGET:/path")
+        );
 
         // Case 3: Cache info with namespace and multiple keys.
         let mut ctx_with_keys = Ctx::new();
@@ -1315,11 +1364,11 @@ mod tests {
             keys: Some(vec!["user-123".to_string(), "desktop".to_string()]),
             ..Default::default()
         }));
-        let key3 = get_cache_key(&ctx_with_keys, method, &uri);
+        let key3 = get_cache_key(&ctx_with_keys, method, &h2);
         assert_eq!(key3.user_tag, "my-ns");
         assert_eq!(
             key3.primary_key_str(),
-            Some("my-nsuser-123:desktop:GET:https://example.com/path")
+            Some("my-nsuser-123:desktop:GET:example.com/path?a=1")
         );
     }
 
@@ -1414,13 +1463,11 @@ mod tests {
 
         let mut ctx = Ctx::new();
         ctx.cache.get_or_insert_default();
-        let key = get_cache_key(
-            &ctx,
-            "GET",
-            &Uri::from_static("https://example.com/path"),
-        );
+        let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+        header.set_uri(Uri::from_static("https://example.com/path"));
+        let key = get_cache_key(&ctx, "GET", &header);
         assert_eq!(key.user_tag, "");
-        assert_eq!(key.primary_key_str(), Some("GET:https://example.com/path"));
+        assert_eq!(key.primary_key_str(), Some("GET:example.com/path"));
     }
 
     #[test]

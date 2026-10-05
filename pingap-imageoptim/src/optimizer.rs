@@ -15,16 +15,24 @@
 use image::ImageEncoder;
 use image::codecs::avif;
 use image::codecs::webp;
-use image::{ImageFormat, RgbaImage, load};
+use image::{ImageFormat, ImageReader, Limits, RgbaImage};
 use lodepng::Bitmap;
 use rgb::{ComponentBytes, RGBA8};
 use snafu::{ResultExt, Snafu};
 use std::{ffi::OsStr, io::Cursor};
 
+/// The longest side of an image that is converted.
+pub(crate) const MAX_DIMENSION: u32 = 16_384;
+/// The most pixels of an image that is converted: an 8K frame fits, and
+/// decoded it takes 160MB at four bytes a pixel.
+pub(crate) const MAX_PIXELS: u64 = 40_000_000;
+
 #[derive(Debug, Snafu)]
 pub enum ImageError {
     #[snafu(display("Image format is not supported"))]
     NotSupported,
+    #[snafu(display("Image is too large, {width}x{height}"))]
+    TooLarge { width: u32, height: u32 },
     #[snafu(display(
         "Handle image fail, category:{category}, message:{source}"
     ))]
@@ -87,12 +95,39 @@ impl From<RgbaImage> for ImageInfo {
     }
 }
 
+/// Decodes `data` into pixels.
+///
+/// The size is read from the header and checked before anything is
+/// decoded. A few kilobytes of png can describe an image of gigabytes, and
+/// decoding it took the memory for all of them; a side beyond what jpeg
+/// can hold made the jpeg encoder give up by panicking, which a release
+/// build turns into an abort of the whole process.
 pub(crate) fn load_image(data: &[u8], ext: &str) -> Result<ImageInfo> {
     let format = image::guess_format(data).or_else(|_| {
         ImageFormat::from_extension(OsStr::new(ext))
             .ok_or(ImageError::NotSupported)
     })?;
-    let di = load(Cursor::new(&data), format).context(ImageSnafu {
+    let (width, height) = ImageReader::with_format(Cursor::new(data), format)
+        .into_dimensions()
+        .context(ImageSnafu {
+            category: "load_image",
+        })?;
+    if width == 0
+        || height == 0
+        || width > MAX_DIMENSION
+        || height > MAX_DIMENSION
+        || width as u64 * height as u64 > MAX_PIXELS
+    {
+        return Err(ImageError::TooLarge { width, height });
+    }
+    let mut reader = ImageReader::with_format(Cursor::new(data), format);
+    // The decoder's own working memory, on top of the pixels.
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DIMENSION);
+    limits.max_image_height = Some(MAX_DIMENSION);
+    limits.max_alloc = Some(MAX_PIXELS * 8);
+    reader.limits(limits);
+    let di = reader.decode().context(ImageSnafu {
         category: "load_image",
     })?;
     Ok(di.to_rgba8().into())
@@ -246,6 +281,65 @@ mod tests {
             assert_eq!(4, info.width, "{ext}");
             assert_eq!(3, info.height, "{ext}");
         }
+    }
+
+    /// Regression: the size in the header is checked before the pixels are
+    /// decoded. A small file describing a huge image used to be decoded in
+    /// full.
+    #[test]
+    fn test_oversized_image_is_refused() {
+        // A png that announces 60000x60000 and has next to no data: 14GB
+        // of pixels if anything went on to decode it.
+        let chunk = |kind: &[u8; 4], data: &[u8]| {
+            let mut body = kind.to_vec();
+            body.extend_from_slice(data);
+            let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+            chunk.extend_from_slice(&body);
+            chunk.extend_from_slice(&crc32(&body).to_be_bytes());
+            chunk
+        };
+        let mut ihdr = 60_000u32.to_be_bytes().to_vec();
+        ihdr.extend_from_slice(&60_000u32.to_be_bytes());
+        // 8 bit rgba, default compression, filter and interlace
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend(chunk(b"IHDR", &ihdr));
+        // an empty zlib stream
+        png.extend(chunk(b"IDAT", &[0x78, 0x9c, 0x03, 0, 0, 0, 0, 1]));
+        png.extend(chunk(b"IEND", &[]));
+
+        let err = load_image(&png, "png").err().unwrap().to_string();
+        assert_eq!("Image is too large, 60000x60000", err);
+
+        // One pixel over the longest side, and a real image this time.
+        let width = MAX_DIMENSION + 1;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &vec![0u8; width as usize],
+                width,
+                1,
+                image::ExtendedColorType::L8,
+            )
+            .unwrap();
+        let err = load_image(&png, "png").err().unwrap().to_string();
+        assert_eq!(format!("Image is too large, {width}x1"), err);
+    }
+
+    /// The crc of a png chunk.
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xffff_ffffu32;
+        for byte in data {
+            crc ^= *byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
     }
 
     /// avif is the encoder that keeps rav1e - and therefore paste
