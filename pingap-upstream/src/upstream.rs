@@ -25,6 +25,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytesize::ByteSize;
+use dashmap::DashSet;
 use derive_more::Debug;
 use futures_util::FutureExt;
 use http::StatusCode;
@@ -1119,10 +1120,30 @@ impl BackgroundTask for HealthCheckTask {
         let mut upstreams = self.upstream_provider.list();
         upstreams.retain(|(_, up)| !up.is_transparent());
         let interval = self.interval;
-        // run health check for each upstream
-        let jobs = upstreams.into_iter().map(|(name, up)| {
+        // Run the health check of each upstream, each as a task of its
+        // own, and do not wait for them. The round used to end when the
+        // slowest was done: an upstream whose backends all ran into the
+        // check timeout held up the next round of every other upstream,
+        // their service discovery included, for as long as it took.
+        // What a slow upstream holds up now is itself: while its round is
+        // still going on it is not given another.
+        for (name, up) in upstreams {
+            if !self.running.insert(name.clone()) {
+                debug!(
+                    target: LOG_TARGET,
+                    name,
+                    "health check of the last round is still running, skip"
+                );
+                continue;
+            }
+            let done = RoundDone {
+                running: self.running.clone(),
+                name: name.clone(),
+            };
             let runtime = pingora_runtime::current_handle();
             runtime.spawn(async move {
+                // On every way out of the task, a panic included.
+                let _done = done;
                 let check_frequency_matched = |frequency: Duration| -> bool {
                     is_due(check_count, frequency, interval)
                 };
@@ -1175,9 +1196,8 @@ impl BackgroundTask for HealthCheckTask {
                     ),
                     "health check is done"
                 );
-            })
-        });
-        futures::future::join_all(jobs).await;
+            });
+        }
 
         // each 10 times, check unhealthy upstreams
         if check_count % 10 == 1 {
@@ -1246,6 +1266,20 @@ struct HealthCheckTask {
     sender: Option<Arc<NotificationSender>>,
     unhealthy_upstreams: ArcSwap<Vec<String>>,
     upstream_provider: Arc<dyn UpstreamProvider>,
+    /// The upstreams whose round is still going on.
+    running: Arc<DashSet<String>>,
+}
+
+/// Takes an upstream out of the running set when its round ends.
+struct RoundDone {
+    running: Arc<DashSet<String>>,
+    name: String,
+}
+
+impl Drop for RoundDone {
+    fn drop(&mut self) {
+        self.running.remove(&self.name);
+    }
 }
 
 pub fn new_upstream_health_check_task(
@@ -1258,6 +1292,7 @@ pub fn new_upstream_health_check_task(
         sender,
         unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
         upstream_provider,
+        running: Arc::new(DashSet::new()),
     });
     let name = "upstream_health_check";
     let mut service =
@@ -1306,6 +1341,92 @@ mod tests {
                 self.upstream.clone(),
             )]
         }
+    }
+
+    /// Regression: a round of the health check task ended when the slowest
+    /// upstream was done, so one whose backends ran into the timeout held
+    /// up the checks and the service discovery of all the others.
+    #[tokio::test]
+    async fn test_slow_upstream_does_not_hold_up_the_round() {
+        use super::HealthCheckTask;
+        use pingap_core::BackgroundTask;
+        use std::time::Instant;
+
+        struct Provider(Vec<Arc<Upstream>>);
+        impl UpstreamProvider for Provider {
+            fn get(&self, name: &str) -> Option<Arc<Upstream>> {
+                self.0.iter().find(|up| up.name.as_ref() == name).cloned()
+            }
+            fn list(&self) -> Vec<(String, Arc<Upstream>)> {
+                self.0
+                    .iter()
+                    .map(|up| (up.name.to_string(), up.clone()))
+                    .collect()
+            }
+        }
+
+        // Takes the connection and never answers: the http check of this
+        // upstream runs until its read timeout.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let silent_addr = silent.local_addr().unwrap().to_string();
+        // Nobody listens there: its tcp check fails at once.
+        let closed_addr = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().to_string()
+        };
+        let new_upstream = |name: &str, addr: &str, health_check: String| {
+            Arc::new(
+                Upstream::new(
+                    name,
+                    &UpstreamConf {
+                        addrs: vec![addr.to_string()],
+                        health_check: Some(health_check),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap(),
+            )
+        };
+        let task = HealthCheckTask {
+            interval: Duration::from_secs(10),
+            sender: None,
+            unhealthy_upstreams: Default::default(),
+            upstream_provider: Arc::new(Provider(vec![
+                new_upstream(
+                    "slow",
+                    &silent_addr,
+                    format!(
+                        "http://{silent_addr}/ping?connection_timeout=1s&read_timeout=2s"
+                    ),
+                ),
+                new_upstream(
+                    "fast",
+                    &closed_addr,
+                    format!("tcp://{closed_addr}?connection_timeout=1s"),
+                ),
+            ])),
+            running: Default::default(),
+        };
+
+        let start = Instant::now();
+        task.execute(0).await.unwrap();
+        assert_eq!(true, start.elapsed() < Duration::from_millis(500));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // The fast one is done, the slow one still at it.
+        assert_eq!(false, task.running.contains("fast"));
+        assert_eq!(true, task.running.contains("slow"));
+
+        // The next round leaves the slow one alone and checks the other.
+        let start = Instant::now();
+        task.execute(1).await.unwrap();
+        assert_eq!(true, start.elapsed() < Duration::from_millis(500));
+        assert_eq!(1, task.running.iter().filter(|n| **n == "slow").count());
+
+        // Its round ends with the timeout, and it is free for the next.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert_eq!(true, task.running.is_empty());
+        drop(silent);
     }
 
     #[test]

@@ -77,46 +77,36 @@ pub(crate) fn handle_cache_headers(
     let _ = upstream_response.insert_header("x-cache-status", cache_status);
 
     // process lookup duration
-    let lookup_duration_str = process_cache_timing(
-        session.cache.lookup_duration(),
+    let lookup_duration = session.cache.lookup_duration();
+    process_cache_timing(
+        lookup_duration,
         "x-cache-lookup",
         upstream_response,
         &mut ctx.timing.cache_lookup,
     );
 
     // process lock duration
-    let lock_duration_str = process_cache_timing(
-        session.cache.lock_duration(),
+    let lock_duration = session.cache.lock_duration();
+    process_cache_timing(
+        lock_duration,
         "x-cache-lock",
         upstream_response,
         &mut ctx.timing.cache_lock,
     );
 
-    #[cfg(not(feature = "tracing"))]
-    {
-        let _ = lookup_duration_str;
-        let _ = lock_duration_str;
-    }
-
     // (optional) process OpenTelemetry
     #[cfg(feature = "tracing")]
-    update_otel_cache_attrs(
-        ctx,
-        cache_status,
-        lookup_duration_str,
-        lock_duration_str,
-    );
+    update_otel_cache_attrs(ctx, cache_status, lookup_duration, lock_duration);
 }
 
-/// Writes a `<n>ms` timing header, records it on `ctx_field`, and returns the
-/// human-readable duration (only used under `tracing`).
+/// Writes a `<n>ms` timing header and records it on `ctx_field`.
 #[inline]
 pub(crate) fn process_cache_timing(
     duration_opt: Option<Duration>,
     header_name: &'static str,
     resp: &mut ResponseHeader,
     ctx_field: &mut Option<i32>,
-) -> String {
+) {
     if let Some(d) = duration_opt {
         let ms = d.as_millis() as i32;
 
@@ -128,11 +118,7 @@ pub(crate) fn process_cache_timing(
 
         let _ = resp.insert_header(header_name, value_bytes);
         *ctx_field = Some(ms);
-
-        #[cfg(feature = "tracing")]
-        return humantime::Duration::from(d).to_string();
     }
-    String::new()
 }
 
 #[cfg(test)]

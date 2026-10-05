@@ -294,7 +294,7 @@ pub(crate) fn get_restriction_category_conf(
 /// `gzip`) and treats an explicit `q=0` as "not acceptable". Shared by the
 /// `accept_encoding` and `compression` plugins so the two cannot disagree about
 /// what the client accepts.
-pub(crate) fn accepts_encoding(accept_encoding: &str, coding: &str) -> bool {
+pub fn accepts_encoding(accept_encoding: &str, coding: &str) -> bool {
     accept_encoding.split(',').any(|part| {
         let mut segments = part.split(';');
         let name = segments.next().unwrap_or_default().trim();

@@ -159,6 +159,10 @@ impl LocationHostIndex {
 pub struct ServerLocationRoute {
     pub ordered: Arc<Vec<String>>,
     pub host_index: Arc<LocationHostIndex>,
+    /// The location of each name in `ordered`, as it was when the route was
+    /// built; `None` for a name that named none. Empty for a route made
+    /// with [`ServerLocationRoute::new`].
+    locations: Arc<Vec<Option<Arc<Location>>>>,
 }
 
 impl ServerLocationRoute {
@@ -166,20 +170,45 @@ impl ServerLocationRoute {
         Self {
             ordered: Arc::new(ordered),
             host_index: Arc::new(host_index),
+            locations: Arc::new(vec![]),
         }
     }
 
     /// Build from weight-ordered names, resolving each location for host
     /// buckets. The route and its index share one copy of the names.
+    ///
+    /// The locations are kept. Matching a request used to look each
+    /// candidate up by name again - a hash of the name and a reference
+    /// count taken and given back, per candidate, on counters every worker
+    /// thread shares. The route is rebuilt whenever a location changes, so
+    /// what it holds is what the names stand for.
     pub fn build(
         ordered: Vec<String>,
-        resolve: impl FnMut(&str) -> Option<Arc<Location>>,
+        mut resolve: impl FnMut(&str) -> Option<Arc<Location>>,
     ) -> Self {
-        let host_index = LocationHostIndex::build(&ordered, resolve);
+        let locations: Vec<Option<Arc<Location>>> =
+            ordered.iter().map(|name| resolve(name)).collect();
+        let by_name: AHashMap<&str, &Arc<Location>> = ordered
+            .iter()
+            .zip(locations.iter())
+            .filter_map(|(name, location)| {
+                Some((name.as_str(), location.as_ref()?))
+            })
+            .collect();
+        let host_index = LocationHostIndex::build(&ordered, |name| {
+            by_name.get(name).cloned().cloned()
+        });
         Self {
             ordered: host_index.ordered.clone(),
             host_index: Arc::new(host_index),
+            locations: Arc::new(locations),
         }
+    }
+
+    /// The location at `index` of `ordered`, if the route holds it.
+    #[inline]
+    pub fn location(&self, index: usize) -> Option<&Arc<Location>> {
+        self.locations.get(index)?.as_ref()
     }
 }
 
@@ -207,6 +236,34 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn test_route_holds_its_locations() {
+        let api = loc("api", Some("api.example.com"), Some("/"));
+        let web = loc("web", None, Some("/"));
+        let all: HashMap<&str, Arc<Location>> =
+            HashMap::from([("api", api.clone()), ("web", web.clone())]);
+        let route = ServerLocationRoute::build(
+            vec!["api".to_string(), "gone".to_string(), "web".to_string()],
+            |name| all.get(name).cloned(),
+        );
+        // The very instances that were resolved, by the index of the name.
+        assert_eq!(true, Arc::ptr_eq(&api, route.location(0).unwrap()));
+        assert_eq!(true, route.location(1).is_none());
+        assert_eq!(true, Arc::ptr_eq(&web, route.location(2).unwrap()));
+        assert_eq!(true, route.location(3).is_none());
+        assert_eq!(
+            vec![0, 2],
+            route.host_index.candidate_indices("api.example.com")
+        );
+
+        // Made from names alone: nothing is held.
+        let route = ServerLocationRoute::new(
+            vec!["api".to_string()],
+            LocationHostIndex::default(),
+        );
+        assert_eq!(true, route.location(0).is_none());
     }
 
     #[test]

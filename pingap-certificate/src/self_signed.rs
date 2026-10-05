@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use super::{LOG_TARGET, LoadedCertificate};
-use ahash::AHashMap;
-use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use std::sync::Arc;
@@ -49,10 +48,14 @@ impl SelfSignedCertificate {
     }
 }
 
-type SelfSignedCertificateMap = AHashMap<String, Arc<SelfSignedCertificate>>;
-static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<
-    ArcSwap<SelfSignedCertificateMap>,
-> = LazyLock::new(|| ArcSwap::from_pointee(AHashMap::new()));
+/// The issued certificates by name. A concurrent map: this used to be one
+/// map replaced whole for every certificate added, so each server name seen
+/// for the first time copied all of them - their names included - on the
+/// thread doing the handshake.
+type SelfSignedCertificateMap =
+    DashMap<String, Arc<SelfSignedCertificate>, ahash::RandomState>;
+static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<SelfSignedCertificateMap> =
+    LazyLock::new(SelfSignedCertificateMap::default);
 
 /// Checks the validity of self-signed certificates and performs cleanup.
 ///
@@ -77,37 +80,31 @@ async fn do_self_signed_certificate_validity(
     if !count.is_multiple_of(VALIDITY_CHECK_INTERVAL) {
         return Ok(false);
     }
-    let mut m = AHashMap::new();
     // What expires before the check after the next is dropped now. The
     // margin used to be taken off the time instead of added to it, which
     // kept a certificate for two days after it had expired.
     let expired = (pingap_core::now_sec()
         + CERTIFICATE_EXPIRY_DAYS * SECONDS_PER_DAY) as i64;
 
-    m.extend(
-        SELF_SIGNED_CERTIFICATE_MAP
-            .load()
-            .iter()
-            .filter(|(_, v)| v.not_after >= expired)
-            .flat_map(|(k, v)| {
-                let count = v.count.load(Ordering::Relaxed);
-                let stale = v.stale.load(Ordering::Relaxed);
+    SELF_SIGNED_CERTIFICATE_MAP.retain(|_, v| {
+        if v.not_after < expired {
+            return false;
+        }
+        let count = v.count.load(Ordering::Relaxed);
+        let stale = v.stale.load(Ordering::Relaxed);
 
-                if count == 0 {
-                    // certificate is not used and stale, remove it
-                    if stale {
-                        return None;
-                    }
-                    v.stale.store(true, Ordering::Relaxed);
-                } else {
-                    v.stale.store(false, Ordering::Relaxed);
-                    v.count.store(0, Ordering::Relaxed);
-                }
-                Some((k.to_string(), v.clone()))
-            }),
-    );
-
-    SELF_SIGNED_CERTIFICATE_MAP.store(Arc::new(m));
+        if count == 0 {
+            // certificate is not used and stale, remove it
+            if stale {
+                return false;
+            }
+            v.stale.store(true, Ordering::Relaxed);
+        } else {
+            v.stale.store(false, Ordering::Relaxed);
+            v.count.store(0, Ordering::Relaxed);
+        }
+        true
+    });
     Ok(true)
 }
 
@@ -152,7 +149,7 @@ pub fn new_self_signed_certificate_validity_service() -> Box<dyn BackgroundTask>
 pub fn get_self_signed_certificate(
     name: &str,
 ) -> Option<Arc<SelfSignedCertificate>> {
-    SELF_SIGNED_CERTIFICATE_MAP.load().get(name).map(|v| {
+    SELF_SIGNED_CERTIFICATE_MAP.get(name).map(|v| {
         v.count.fetch_add(1, Ordering::Relaxed);
         v.clone()
     })
@@ -195,9 +192,10 @@ fn add_certificate_within(
     });
     // The name comes from the client's handshake, and anyone can send as
     // many different ones as they like. Without a limit each of them stayed
-    // in the map for a day or two, and every insert copies the map. Past
-    // the limit the certificate is still handed out, it is only not kept.
-    if SELF_SIGNED_CERTIFICATE_MAP.load().len() >= limit {
+    // in the map for a day or two. Past the limit the certificate is still
+    // handed out, it is only not kept. Handshakes that add at the same
+    // moment can take the count a few over the limit.
+    if SELF_SIGNED_CERTIFICATE_MAP.len() >= limit {
         static LAST_WARNING: AtomicU64 = AtomicU64::new(0);
         let now = pingap_core::now_sec();
         if now.saturating_sub(LAST_WARNING.swap(now, Ordering::Relaxed)) >= 60 {
@@ -209,14 +207,7 @@ fn add_certificate_within(
         }
         return v;
     }
-    // `rcu`, not load-modify-store: two handshakes issuing certificates at
-    // the same time both keep their entry instead of one overwriting the
-    // other's map.
-    SELF_SIGNED_CERTIFICATE_MAP.rcu(|m| {
-        let mut m = m.as_ref().clone();
-        m.insert(name.clone(), v.clone());
-        m
-    });
+    SELF_SIGNED_CERTIFICATE_MAP.insert(name, v.clone());
     v
 }
 

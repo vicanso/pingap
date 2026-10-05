@@ -21,6 +21,7 @@ use pingap_otel::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use std::time::Duration;
 
 #[inline]
 pub(crate) fn initialize_telemetry(
@@ -58,16 +59,24 @@ pub(crate) fn initialize_telemetry(
 pub(crate) fn update_otel_cache_attrs(
     ctx: &mut Ctx,
     cache_status: &str,
-    lookup_duration: String,
-    lock_duration: String,
+    lookup_duration: Option<Duration>,
+    lock_duration: Option<Duration>,
 ) {
     if let Some(tracer) =
         ctx.features.as_mut().and_then(|f| f.otel_tracer.as_mut())
     {
+        // Put into words here, for a request that is traced. It used to be
+        // done by the caller for every cached response of a `tracing`
+        // build, traced or not.
+        let text = |duration: Option<Duration>| {
+            duration
+                .map(|d| humantime::Duration::from(d).to_string())
+                .unwrap_or_default()
+        };
         let attrs = vec![
             KeyValue::new("cache.status", cache_status.to_string()),
-            KeyValue::new("cache.lookup", lookup_duration),
-            KeyValue::new("cache.lock", lock_duration),
+            KeyValue::new("cache.lookup", text(lookup_duration)),
+            KeyValue::new("cache.lock", text(lock_duration)),
         ];
         tracer.http_request_span.set_attributes(attrs);
     }

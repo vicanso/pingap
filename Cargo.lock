@@ -4047,8 +4047,8 @@ name = "pingap-certificate"
 version = "0.15.0"
 dependencies = [
  "ahash",
- "arc-swap",
  "async-trait",
+ "dashmap 6.2.1",
  "nanoid",
  "pingap-config",
  "pingap-core",
@@ -4420,7 +4420,6 @@ dependencies = [
  "criterion",
  "dashmap 6.2.1",
  "derive_more",
- "futures",
  "futures-util",
  "http",
  "pingap-config",

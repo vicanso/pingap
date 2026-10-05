@@ -801,11 +801,22 @@ impl Server {
             .candidate_indices(host)
             .into_iter()
             .find_map(|idx| {
-                let name = route.ordered.get(idx)?;
-                let location = self.location_provider.get(name)?;
+                // The route holds the location of each name, so a candidate
+                // costs no lookup and only the one that matches is cloned.
+                // A route made from names alone holds none, and those are
+                // looked up as they used to be.
+                let looked_up;
+                let location = match route.location(idx) {
+                    Some(location) => location,
+                    None => {
+                        let name = route.ordered.get(idx)?;
+                        looked_up = self.location_provider.get(name)?;
+                        &looked_up
+                    },
+                };
                 let (matched, captures) = location.match_host_path(host, path);
                 if matched && location.match_conditions(header) {
-                    Some((location, captures))
+                    Some((location.clone(), captures))
                 } else {
                     None
                 }

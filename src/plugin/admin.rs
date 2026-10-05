@@ -59,6 +59,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error};
@@ -72,7 +73,51 @@ static LOG_TARGET: &str = "main::admin";
 #[folder = "dist/"]
 struct AdminAsset;
 
-pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
+/// A file of the admin UI, how long it may be cached, and whether the
+/// client takes gzip.
+pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration, pub bool);
+
+/// The gzip form of the embedded files, by the hash of their content, each
+/// made the first time it is asked for.
+///
+/// It used to be made for every request: a few hundred kilobytes of
+/// javascript put through gzip at its highest level on a worker thread,
+/// each time a browser opened the admin.
+static GZIPPED: LazyLock<RwLock<HashMap<[u8; 32], Bytes>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// More entries than there are files means the files are changing under a
+/// debug build, which reads them from disk: start over.
+const GZIPPED_LIMIT: usize = 256;
+
+fn gzipped(file: &EmbeddedFile) -> Option<Bytes> {
+    let key = file.metadata.sha256_hash();
+    let cached = GZIPPED
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .cloned();
+    if cached.is_some() {
+        return cached;
+    }
+    let mut encoder = GzEncoder::new(vec![], Compression::best());
+    encoder.write_all(&file.data).ok()?;
+    let data = Bytes::from(encoder.finish().ok()?);
+    let mut cache = GZIPPED.write().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= GZIPPED_LIMIT {
+        cache.clear();
+    }
+    cache.insert(key, data.clone());
+    Some(data)
+}
+
+/// Text is worth compressing; an image or a font is compressed already.
+fn is_compressible(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || ["javascript", "json", "xml"]
+            .iter()
+            .any(|kind| mime_type.contains(kind))
+}
 
 impl From<EmbeddedStaticFile> for HttpResponse {
     fn from(value: EmbeddedStaticFile) -> Self {
@@ -99,21 +144,31 @@ impl From<EmbeddedStaticFile> for HttpResponse {
             headers.push((header::ETAG, value));
         }
 
+        // Compressed for a client that takes gzip - it used to be sent to
+        // one that does not as well - and only what gains from it.
         let mut gzip_body = None;
-        if file.data.len() > 1024 {
-            let mut d = GzEncoder::new(vec![], Compression::best());
-            let _ = d.write_all(&file.data);
-            if let Ok(w) = d.finish() {
-                gzip_body = Some(Bytes::copy_from_slice(w.as_ref()));
-                if let Ok(value) = HeaderValue::from_str("gzip") {
-                    headers.push((header::CONTENT_ENCODING, value));
-                }
+        if file.data.len() > 1024 && is_compressible(mime_type) {
+            headers.push((
+                header::VARY,
+                HeaderValue::from_static("Accept-Encoding"),
+            ));
+            if value.2 {
+                gzip_body = gzipped(&file);
             }
         }
-        let body = if let Some(data) = gzip_body {
-            data
-        } else {
-            Bytes::copy_from_slice(&file.data)
+        let body = match gzip_body {
+            Some(data) => {
+                headers.push((
+                    header::CONTENT_ENCODING,
+                    HeaderValue::from_static("gzip"),
+                ));
+                data
+            },
+            // A release build has the file in the binary: nothing to copy.
+            None => match file.data {
+                Cow::Borrowed(data) => Bytes::from_static(data),
+                Cow::Owned(data) => Bytes::from(data),
+            },
         };
 
         HttpResponse {
@@ -568,7 +623,7 @@ fn api_route(path: &str) -> Option<&str> {
     (route.is_empty() || route.starts_with('/')).then_some(route)
 }
 
-fn static_file(path: &str) -> HttpResponse {
+fn static_file(path: &str, gzip: bool) -> HttpResponse {
     let mut file = path.substring(1, path.len());
     if file.is_empty() {
         file = "index.html";
@@ -576,6 +631,7 @@ fn static_file(path: &str) -> HttpResponse {
     EmbeddedStaticFile(
         AdminAsset::get(file),
         Duration::from_secs(365 * 24 * 3600),
+        gzip,
     )
     .into()
 }
@@ -635,7 +691,15 @@ async fn handle_request_admin(
     // Everything outside `/api` is an embedded file of the UI: public, and
     // needed before the user can log in.
     let Some(route) = api_route(&path) else {
-        return Ok(Some(static_file(&path)));
+        let gzip = session
+            .req_header()
+            .headers
+            .get(header::ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                pingap_plugin::accepts_encoding(value, "gzip")
+            });
+        return Ok(Some(static_file(&path, gzip)));
     };
     if !plugin.auth_validate(session.req_header()) {
         plugin.ip_fail_limit.inc(ip);
@@ -929,7 +993,8 @@ mod tests {
     fn test_embedded_static_file() {
         let file = AdminAsset::get("index.html").unwrap();
         let resp: HttpResponse =
-            EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
+            EmbeddedStaticFile(Some(file), Duration::from_secs(60), false)
+                .into();
         assert_eq!(true, !resp.body.is_empty());
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(0, resp.max_age.unwrap_or_default());
@@ -939,8 +1004,55 @@ mod tests {
         );
 
         let resp: HttpResponse =
-            EmbeddedStaticFile(None, Duration::from_secs(60)).into();
+            EmbeddedStaticFile(None, Duration::from_secs(60), false).into();
         assert_eq!(404, resp.status.as_u16())
+    }
+
+    /// Regression: every request put the file through gzip again, and
+    /// answered with gzip whether the client took it or not.
+    #[test]
+    fn test_embedded_static_file_gzip() {
+        let script = AdminAsset::iter()
+            .find(|name| name.ends_with(".js"))
+            .expect("the admin ui has a script");
+        let get = |gzip: bool| -> HttpResponse {
+            EmbeddedStaticFile(
+                AdminAsset::get(&script),
+                Duration::from_secs(60),
+                gzip,
+            )
+            .into()
+        };
+        let header = |resp: &HttpResponse, name: &str| {
+            resp.headers
+                .iter()
+                .flatten()
+                .find(|(key, _)| key.as_str() == name)
+                .map(|(_, value)| value.to_str().unwrap().to_string())
+        };
+        let plain = get(false);
+        assert_eq!(None, header(&plain, "content-encoding"));
+        assert_eq!(Some("Accept-Encoding".to_string()), header(&plain, "vary"));
+
+        let first = get(true);
+        assert_eq!(
+            Some("gzip".to_string()),
+            header(&first, "content-encoding")
+        );
+        assert_eq!(true, first.body.len() < plain.body.len());
+        // The same bytes the second time, not another run of gzip.
+        let second = get(true);
+        assert_eq!(first.body.as_ptr(), second.body.as_ptr());
+
+        // An image is sent as it is, to whoever asks.
+        let image: HttpResponse = EmbeddedStaticFile(
+            AdminAsset::get("pingap.png"),
+            Duration::from_secs(60),
+            true,
+        )
+        .into();
+        assert_eq!(None, header(&image, "content-encoding"));
+        assert_eq!(None, header(&image, "vary"));
     }
 
     #[test]

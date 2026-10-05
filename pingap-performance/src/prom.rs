@@ -75,6 +75,18 @@ pub struct Prometheus {
     /// per status class, indexed by [`code_class`].
     all_codes: [IntCounter; CODE_LABELS.len()],
 
+    /// The children of each location a request was counted against, found
+    /// in the vectors once and kept. A request used to look every one of
+    /// them up again - nine lookups for its location and five for its
+    /// upstream, each a hash of the labels, a read lock on the vector and a
+    /// reference count taken and given back - on state all worker threads
+    /// share.
+    location_series: ArcSwap<HashMap<String, Arc<LocationSeries>>>,
+
+    /// The same for each upstream. An upstream that is removed is dropped
+    /// from here together with its series.
+    upstream_series: ArcSwap<HashMap<String, Arc<UpstreamSeries>>>,
+
     /// Upstream names seen by the previous metrics refresh, so the
     /// per-upstream series of an upstream that has since been removed from
     /// the configuration can be dropped rather than exported forever.
@@ -221,6 +233,61 @@ struct PrometheusVecs<'a> {
 /// indexes them.
 const CODE_LABELS: [&str; 6] = ["1xx", "2xx", "3xx", "4xx", "5xx", "unknown"];
 
+/// The series of one location. Those every request touches are found when
+/// the location is first seen; the others when they first have something
+/// to count, so a series still appears only once it has a value.
+struct LocationSeries {
+    requests_total: IntCounter,
+    requests_current: IntGauge,
+    received: Histogram,
+    received_bytes: IntCounter,
+    response_time: Histogram,
+    sent: Histogram,
+    sent_bytes: OnceLock<IntCounter>,
+    codes: [OnceLock<IntCounter>; CODE_LABELS.len()],
+}
+
+/// The series of one upstream, each found when it first has a value.
+#[derive(Default)]
+struct UpstreamSeries {
+    connections: OnceLock<IntGauge>,
+    connections_current: OnceLock<IntGauge>,
+    tcp_connect_time: OnceLock<Histogram>,
+    tls_handshake_time: OnceLock<Histogram>,
+    reuses: OnceLock<IntCounter>,
+    processing_time: OnceLock<Histogram>,
+    response_time: OnceLock<Histogram>,
+}
+
+/// Runs `f` on the entry of `name` in a map of series; the entry is made
+/// with `new` and added when there is none. Two threads that miss together
+/// both make one; one of the two is kept, and both point at the same
+/// children of the vectors.
+///
+/// The entry is used where it is, without taking a reference to it: that
+/// would be a count every worker thread writes to, per request.
+#[inline]
+fn with_series<T, R>(
+    map: &ArcSwap<HashMap<String, Arc<T>>>,
+    name: &str,
+    new: impl FnOnce() -> T,
+    f: impl FnOnce(&T) -> R,
+) -> R {
+    let current = map.load();
+    if let Some(found) = current.get(name) {
+        return f(found);
+    }
+    drop(current);
+    let created = Arc::new(new());
+    map.rcu(|current| {
+        let mut next = current.as_ref().clone();
+        next.entry(name.to_string())
+            .or_insert_with(|| created.clone());
+        next
+    });
+    f(&created)
+}
+
 /// Index of a status code in [`CODE_LABELS`].
 #[inline]
 fn code_class(code: u16) -> usize {
@@ -258,12 +325,45 @@ impl Prometheus {
         if location.is_empty() {
             return;
         }
-        self.http_requests_total
-            .with_label_values(&[location])
-            .inc();
-        self.http_requests_current
-            .with_label_values(&[location])
-            .inc();
+        self.with_location(location, |series| {
+            series.requests_total.inc();
+            series.requests_current.inc();
+        });
+    }
+
+    /// Runs `f` on the series of `location`.
+    #[inline]
+    fn with_location<R>(
+        &self,
+        location: &str,
+        f: impl FnOnce(&LocationSeries) -> R,
+    ) -> R {
+        with_series(
+            &self.location_series,
+            location,
+            || {
+                let labels = [location];
+                LocationSeries {
+                    requests_total: self
+                        .http_requests_total
+                        .with_label_values(&labels),
+                    requests_current: self
+                        .http_requests_current
+                        .with_label_values(&labels),
+                    received: self.http_received.with_label_values(&labels),
+                    received_bytes: self
+                        .http_received_bytes
+                        .with_label_values(&labels),
+                    response_time: self
+                        .http_response_time
+                        .with_label_values(&labels),
+                    sent: self.http_sent.with_label_values(&labels),
+                    sent_bytes: OnceLock::new(),
+                    codes: Default::default(),
+                }
+            },
+            f,
+        )
     }
 
     /// Records comprehensive metrics at request completion.
@@ -314,26 +414,27 @@ impl Prometheus {
         self.all_codes[class].inc();
 
         if !location.is_empty() {
-            let labels = [location];
-            self.http_requests_current.with_label_values(&labels).dec();
-            self.http_received
-                .with_label_values(&labels)
-                .observe(payload_size);
-            self.http_received_bytes
-                .with_label_values(&labels)
-                .inc_by(payload_bytes);
-            self.http_response_time
-                .with_label_values(&labels)
-                .observe(response_time);
-            self.http_sent.with_label_values(&labels).observe(sent);
-            if sent_bytes > 0 {
-                self.http_sent_bytes
-                    .with_label_values(&labels)
-                    .inc_by(sent_bytes);
-            }
-            self.http_responses_codes
-                .with_label_values(&[location, CODE_LABELS[class]])
-                .inc();
+            self.with_location(location, |series| {
+                series.requests_current.dec();
+                series.received.observe(payload_size);
+                series.received_bytes.inc_by(payload_bytes);
+                series.response_time.observe(response_time);
+                series.sent.observe(sent);
+                if sent_bytes > 0 {
+                    series
+                        .sent_bytes
+                        .get_or_init(|| {
+                            self.http_sent_bytes.with_label_values(&[location])
+                        })
+                        .inc_by(sent_bytes);
+                }
+                series.codes[class]
+                    .get_or_init(|| {
+                        self.http_responses_codes
+                            .with_label_values(&[location, CODE_LABELS[class]])
+                    })
+                    .inc();
+            });
         }
 
         // reused connection
@@ -349,48 +450,12 @@ impl Prometheus {
         // upstream
         if !upstream.is_empty() {
             let upstream_labels = &[upstream.as_ref()];
-            if let Some(count) = ctx.upstream.connected_count {
-                self.upstream_connections
-                    .with_label_values(upstream_labels)
-                    .set(count as i64);
-            }
-            if let Some(count) = ctx.upstream.processing_count {
-                self.upstream_connections_current
-                    .with_label_values(upstream_labels)
-                    .set(count as i64);
-            }
-            // upstream stats
-            if let Some(upstream_tcp_connect_time) =
-                ctx.timing.upstream_tcp_connect
-            {
-                self.upstream_tcp_connect_time
-                    .with_label_values(upstream_labels)
-                    .observe(upstream_tcp_connect_time as f64 / SECOND);
-            }
-            if let Some(upstream_tls_handshake_time) =
-                ctx.timing.upstream_tls_handshake
-            {
-                self.upstream_tls_handshake_time
-                    .with_label_values(upstream_labels)
-                    .observe(upstream_tls_handshake_time as f64 / SECOND);
-            }
-            if ctx.upstream.reused {
-                self.upstream_reuses
-                    .with_label_values(upstream_labels)
-                    .inc();
-            }
-            if let Some(upstream_processing_time) =
-                ctx.timing.upstream_processing
-            {
-                self.upstream_processing_time
-                    .with_label_values(upstream_labels)
-                    .observe(upstream_processing_time as f64 / SECOND);
-            }
-            if let Some(upstream_response_time) = ctx.timing.upstream_response {
-                self.upstream_response_time
-                    .with_label_values(upstream_labels)
-                    .observe(upstream_response_time as f64 / SECOND);
-            }
+            with_series(
+                &self.upstream_series,
+                upstream,
+                UpstreamSeries::default,
+                |series| self.count_upstream(series, upstream_labels, ctx),
+            );
         }
 
         // cache stats
@@ -416,6 +481,81 @@ impl Prometheus {
             && let Some(compression_stat) = &features.compression_stat
         {
             self.compression_ratio.observe(compression_stat.ratio());
+        }
+    }
+
+    /// Counts a finished request against the series of its upstream.
+    #[inline]
+    fn count_upstream(
+        &self,
+        series: &UpstreamSeries,
+        upstream_labels: &[&str; 1],
+        ctx: &Ctx,
+    ) {
+        if let Some(count) = ctx.upstream.connected_count {
+            series
+                .connections
+                .get_or_init(|| {
+                    self.upstream_connections.with_label_values(upstream_labels)
+                })
+                .set(count as i64);
+        }
+        if let Some(count) = ctx.upstream.processing_count {
+            series
+                .connections_current
+                .get_or_init(|| {
+                    self.upstream_connections_current
+                        .with_label_values(upstream_labels)
+                })
+                .set(count as i64);
+        }
+        // upstream stats
+        if let Some(upstream_tcp_connect_time) = ctx.timing.upstream_tcp_connect
+        {
+            series
+                .tcp_connect_time
+                .get_or_init(|| {
+                    self.upstream_tcp_connect_time
+                        .with_label_values(upstream_labels)
+                })
+                .observe(upstream_tcp_connect_time as f64 / SECOND);
+        }
+        if let Some(upstream_tls_handshake_time) =
+            ctx.timing.upstream_tls_handshake
+        {
+            series
+                .tls_handshake_time
+                .get_or_init(|| {
+                    self.upstream_tls_handshake_time
+                        .with_label_values(upstream_labels)
+                })
+                .observe(upstream_tls_handshake_time as f64 / SECOND);
+        }
+        if ctx.upstream.reused {
+            series
+                .reuses
+                .get_or_init(|| {
+                    self.upstream_reuses.with_label_values(upstream_labels)
+                })
+                .inc();
+        }
+        if let Some(upstream_processing_time) = ctx.timing.upstream_processing {
+            series
+                .processing_time
+                .get_or_init(|| {
+                    self.upstream_processing_time
+                        .with_label_values(upstream_labels)
+                })
+                .observe(upstream_processing_time as f64 / SECOND);
+        }
+        if let Some(upstream_response_time) = ctx.timing.upstream_response {
+            series
+                .response_time
+                .get_or_init(|| {
+                    self.upstream_response_time
+                        .with_label_values(upstream_labels)
+                })
+                .observe(upstream_response_time as f64 / SECOND);
         }
     }
 
@@ -505,6 +645,16 @@ impl Prometheus {
             let _ = self.upstream_reuses.remove_label_values(&labels);
             let _ = self.upstream_processing_time.remove_label_values(&labels);
             let _ = self.upstream_response_time.remove_label_values(&labels);
+            // After the series, not before: what is kept here points at
+            // them, and an upstream of this name that comes back has to
+            // find its series anew.
+            if self.upstream_series.load().contains_key(name) {
+                self.upstream_series.rcu(|current| {
+                    let mut next = current.as_ref().clone();
+                    next.remove(name);
+                    next
+                });
+            }
         }
         // Equal length plus every old name still live means the same set.
         let unchanged = previous.len() == live.len()
@@ -1120,6 +1270,8 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         r,
         all,
         all_codes,
+        location_series: ArcSwap::from_pointee(HashMap::new()),
+        upstream_series: ArcSwap::from_pointee(HashMap::new()),
         known_upstreams: ArcSwap::from_pointee(Vec::new()),
         http_requests_total,
         http_requests_current,
@@ -1387,5 +1539,87 @@ mod tests {
         let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
         assert_eq!(false, buf.contains("upstream=\"gone\""), "{buf}");
         assert_eq!(true, buf.contains("upstream=\"kept\""), "{buf}");
+    }
+
+    /// The series of a location and of an upstream are found once and kept.
+    /// What is kept for an upstream goes when the upstream does: one that
+    /// comes back under its name is counted in its new series, not in ones
+    /// that are no longer exported. And a series still only appears once
+    /// it has a value.
+    #[tokio::test]
+    async fn test_series_are_kept_and_follow_removal() {
+        let mock_io = Builder::new()
+            .read(b"GET / HTTP/1.1\r\nHost: github.com\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let p = new_prometheus("pingap").unwrap();
+        let ctx = Ctx {
+            state: RequestState {
+                status: Some(StatusCode::OK),
+                ..Default::default()
+            },
+            upstream: pingap_core::UpstreamInfo {
+                name: "up".into(),
+                location: "lo".into(),
+                reused: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let request = || {
+            p.on_request_start();
+            p.on_location_matched("lo");
+            p.after(&session, &ctx);
+        };
+        let metrics = || String::from_utf8(p.metrics().unwrap()).unwrap();
+        let reuses = |buf: &str| {
+            metric_value(buf, "pingap_upstream_reuses{", &["upstream=\"up\""])
+        };
+
+        request();
+        request();
+        let buf = metrics();
+        assert_eq!(
+            Some("2".to_string()),
+            metric_value(
+                &buf,
+                "pingap_http_requests_total{",
+                &["location=\"lo\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("2".to_string()),
+            metric_value(
+                &buf,
+                "pingap_http_responses_codes{",
+                &["location=\"lo\"", "code=\"2xx\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(Some("2".to_string()), reuses(&buf), "{buf}");
+        // Nothing was sent and nothing failed: no series for either.
+        assert_eq!(
+            None,
+            metric_value(&buf, "pingap_http_sent_bytes{", &["location=\"lo\""]),
+            "{buf}"
+        );
+        assert_eq!(false, buf.contains("code=\"5xx\",location=\"lo\""));
+        assert_eq!(
+            false,
+            buf.contains("pingap_upstream_tls_handshake_time"),
+            "{buf}"
+        );
+
+        // The upstream leaves the configuration, and comes back.
+        let live: HashMap<String, pingap_upstream::UpstreamStats> =
+            HashMap::from([("up".to_string(), Default::default())]);
+        p.forget_removed_upstreams(&live);
+        p.forget_removed_upstreams(&HashMap::new());
+        assert_eq!(None, reuses(&metrics()));
+        assert_eq!(true, p.upstream_series.load().is_empty());
+        request();
+        assert_eq!(Some("1".to_string()), reuses(&metrics()));
     }
 }

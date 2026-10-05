@@ -15,7 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 ahash = { workspace = true }
-arc-swap = { workspace = true }
+dashmap = { workspace = true }
 async-trait = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
