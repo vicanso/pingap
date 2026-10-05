@@ -34,9 +34,10 @@ pub struct PingapConfig {
 
 Every section implements `Validate`. `pingap -t` loads the configuration, runs
 all validators and exits — run it in CI and before a reload. On top of the
-validators it builds every location and every plugin the way startup does, so
-a path or host regex that does not compile, a malformed `rewrite` rule or an
-invalid plugin setting is reported there and not on the next start. It only
+validators it builds every upstream, location and plugin the way startup does,
+so an unknown `alpn`, a `ca` that does not load, a path or host regex that does
+not compile, a malformed `rewrite` rule or an invalid plugin setting is
+reported there and not on the next start. It only
 reads: the configuration is left exactly as it is on disk.
 
 ## Storage backends
@@ -73,6 +74,20 @@ on a fresh connection.
 A directory is loaded by reading every `*.toml` file in it (or, when there is
 none, every `*.hcl`, then every `*.kdl`), each checked on its own, so a syntax
 error names the file it is in rather than a line in the concatenation.
+
+A file is written by putting the new content in a temporary file beside it and
+renaming that over it, so a reader - the change check among them - finds the
+old content or the new and never half a file. The mode and the owner of the
+file are kept, and a symlink is followed to the file it points at. Where the
+name cannot be taken over (a single config file mounted into a container) or
+the owner cannot be kept, the file is written in place.
+
+Importing a configuration (`POST /api/configs/import`, `--sync`) replaces what is
+stored: an entry the imported configuration does not have is removed, in every
+layout.
+
+Sizes are written back exactly: `10MB` is saved as `10 MB`, in the largest unit
+that divides it.
 
 Query parameters for the file backend (directories only):
 
@@ -250,6 +265,8 @@ A poll fetches the raw document (`ConfigManager::load_all_raw`) and hashes it;
 parsing, validation (which resolves every static upstream address) and the diff
 only run when the document changed since the last pass, or when the last pass
 was hot-reload-only and this one may restart.
+A replacement process that cannot load its configuration, or whose plugins do
+not build, exits and leaves the running one in place, `--admin` or not.
 A change that only touches `storages` never restarts the process: an entry
 there has no effect of its own, and what another entry includes from it shows
 up as a change of that entry.

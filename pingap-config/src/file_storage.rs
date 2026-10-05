@@ -25,6 +25,7 @@ use pingap_core::now_sec;
 use pingap_util::resolve_path;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::fs;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -108,6 +109,80 @@ fn encode_for_file(file: &Path, value: &str) -> Result<String> {
         });
     }
     Ok(encoded)
+}
+
+/// Keeps the temporary files of one process apart.
+static TMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Gives `file` the owner and group that `meta` has, when they differ.
+#[cfg(unix)]
+async fn keep_owner(
+    file: &Path,
+    meta: &std::fs::Metadata,
+) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let created = fs::metadata(file).await?;
+    if created.uid() == meta.uid() && created.gid() == meta.gid() {
+        return Ok(());
+    }
+    std::os::unix::fs::chown(file, Some(meta.uid()), Some(meta.gid()))
+}
+
+#[cfg(not(unix))]
+async fn keep_owner(
+    _file: &Path,
+    _meta: &std::fs::Metadata,
+) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Writes `value` to `file` so that whoever reads it finds the old content
+/// or the new, never part of either.
+///
+/// The file used to be emptied and then filled. A config is read by the
+/// change check every few seconds, and a read in between found a config
+/// with its tail missing: if it still parsed, everything defined after the
+/// cut was taken to have been removed. A crash at that moment left the
+/// file like that for good.
+///
+/// So the content goes to a temporary file beside it, which then takes its
+/// name. The temporary name does not end in an extension the loader looks
+/// for. A link is followed, so that the file it points at is replaced and
+/// the link stays. Where the name cannot be taken over - a single file
+/// mounted into a container - the file is written in place, as before.
+async fn write_atomic(file: &Path, value: &str) -> std::io::Result<()> {
+    let target = fs::canonicalize(file)
+        .await
+        .unwrap_or_else(|_| file.to_path_buf());
+    let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
+        return fs::write(&target, value).await;
+    };
+    let tmp = dir.join(format!(
+        ".{}.{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id(),
+        TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
+    ));
+    let replaced = async {
+        fs::write(&tmp, value).await?;
+        // With the mode and the owner of the file it replaces: a config
+        // readable by its owner alone stays that way, and one that belongs
+        // to somebody else - the process runs as root, or writes through
+        // its group - stays theirs. Where the owner cannot be kept the
+        // file is written in place instead.
+        if let Ok(meta) = fs::metadata(&target).await {
+            fs::set_permissions(&tmp, meta.permissions()).await?;
+            keep_owner(&tmp, &meta).await?;
+        }
+        fs::rename(&tmp, &target).await
+    }
+    .await;
+    if replaced.is_ok() {
+        return Ok(());
+    }
+    let _ = fs::remove_file(&tmp).await;
+    fs::write(&target, value).await
 }
 
 pub struct FileStorage {
@@ -275,7 +350,7 @@ impl Storage for FileStorage {
                 file: file.to_string_lossy().to_string(),
             })?;
         }
-        fs::write(&file, value).await.map_err(|e| Error::Io {
+        write_atomic(&file, value).await.map_err(|e| Error::Io {
             source: e,
             file: file.to_string_lossy().to_string(),
         })?;
@@ -600,6 +675,63 @@ addrs = ["127.0.0.1:5000"]
             .to_string();
         assert_eq!(true, err.contains("without losing part of it"), "{err}");
         assert_eq!(before, std::fs::read_to_string(&file).unwrap());
+    }
+
+    /// A save replaces the file in one step and leaves nothing else behind.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_save_replaces_the_file_whole() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, "[basic]\nname = \"a\"\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        let inode = |path: &std::path::Path| {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(path).unwrap().ino()
+        };
+        let before = inode(&file);
+
+        let storage = FileStorage::new(&file.to_string_lossy()).unwrap();
+        storage
+            .save("pingap.toml", "[basic]\nname = \"b\"\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            "[basic]\nname = \"b\"\n",
+            std::fs::read_to_string(&file).unwrap()
+        );
+        // A new file took the name, with the mode of the old one.
+        assert_ne!(before, inode(&file));
+        assert_eq!(
+            0o600,
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777
+        );
+        // No temporary file is left, and none that the loader would read.
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into())
+            .collect();
+        assert_eq!(vec!["pingap.toml"], names);
+
+        // Through a link: the file it points at is replaced, the link stays.
+        let link = dir.path().join("link.toml");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let storage = FileStorage::new(&link.to_string_lossy()).unwrap();
+        storage
+            .save("pingap.toml", "[basic]\nname = \"c\"\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            true,
+            std::fs::symlink_metadata(&link).unwrap().is_symlink()
+        );
+        assert_eq!(
+            "[basic]\nname = \"c\"\n",
+            std::fs::read_to_string(&file).unwrap()
+        );
     }
 
     /// A caller can ask before it has anything to save.

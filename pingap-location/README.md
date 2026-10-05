@@ -56,5 +56,11 @@ This enum determines how to match the request's URL path. The matching strategy 
 
 A request is matched by its **normalized** path: percent-encoding decoded (once), `.` and `..` segments resolved, repeated slashes merged. `/%61dmin/users`, `//admin/users` and `/public/../admin/users` all match a location for `/admin`, as the upstream that receives them would read them, so the plugins of that location cannot be sidestepped by spelling the path differently. Only the matching uses this form; the request is forwarded exactly as it came, and `rewrite` works on the path as sent.
 
+Two spellings are not covered, because only some backends give them a
+meaning: a path parameter (`/public/..;/admin`, which Tomcat reads as
+`/public/../admin`) and a backslash used as a separator (IIS). In front of
+such a backend, do not rely on a path prefix alone to keep a location's
+plugins in the way.
+
 Exact and prefix paths in the configuration are kept in the same form, so `/%E6%96%87%E6%A1%A3` and `/文档` name the same location. A regex is taken as written and is applied to the normalized path: write `/a b`, not `/a%20b`, in a pattern.
 - **(Any)**: An empty path string matches any request path.

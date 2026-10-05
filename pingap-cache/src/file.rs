@@ -29,6 +29,7 @@ use prometheus::Histogram;
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
@@ -59,7 +60,12 @@ pub struct FileCache {
     /// Histogram metric for tracking cache write operation times
     write_time: Box<Histogram>,
     /// Hot layer in front of the disk, `None` unless `cache_max` is set.
-    cache: Option<MemoryCache>,
+    /// The hot layer, behind a lock so that a namespace purge can replace
+    /// it whole: its entries cannot be listed, and some of them have no
+    /// file to find them by.
+    cache: Option<RwLock<MemoryCache>>,
+    /// The weight limit the hot layer is built with.
+    cache_max: usize,
     /// Largest object (in pages) admitted to the hot layer.
     cache_file_max_weight: u16,
     /// Inactive duration when cache file will be removed regardless of their freshness.
@@ -277,8 +283,9 @@ impl FileCache {
             current_size,
             "new file cache"
         );
-        let cache = (params.cache_max > 0)
-            .then(|| MemoryCache::new(CacheMode::Normal, params.cache_max));
+        let cache = (params.cache_max > 0).then(|| {
+            RwLock::new(MemoryCache::new(CacheMode::Normal, params.cache_max))
+        });
 
         Ok(FileCache {
             directory: params.directory,
@@ -296,6 +303,7 @@ impl FileCache {
             #[cfg(feature = "tracing")]
             write_time: CACHE_WRITING_TIME.clone(),
             cache,
+            cache_max: params.cache_max,
             cache_inactive: params
                 .inactive
                 .unwrap_or(Duration::from_secs(48 * 3600)),
@@ -395,6 +403,11 @@ impl FileCache {
 
         let mut files =
             list_cache_files(PathBuf::from(&self.directory), true).await;
+        // The counter is an estimate: two writes of one key, a file removed
+        // by another process or by hand, and it is off, for good. With the
+        // whole directory listed here anyway, it is set to what is there.
+        self.current_size
+            .store(files.iter().map(|file| file.len).sum(), Ordering::Relaxed);
         files.sort_by_key(|file| file.accessed);
         let mut evicted = 0u64;
         let mut count = 0u32;
@@ -454,18 +467,40 @@ impl FileCache {
         path
     }
 
+    /// Runs `f` on the hot layer, when there is one. The lock is only ever
+    /// held for the one call, and a writer that panicked leaves the cache
+    /// as usable as before.
+    fn with_hot<T>(&self, f: impl FnOnce(&MemoryCache) -> T) -> Option<T> {
+        let cache = self.cache.as_ref()?;
+        let cache = cache.read().unwrap_or_else(|e| e.into_inner());
+        Some(f(&cache))
+    }
+
+    fn get_hot(&self, key: &str) -> Option<CacheObject> {
+        self.with_hot(|cache| cache.get(key)).flatten()
+    }
+
+    fn remove_hot(&self, key: &str) {
+        self.with_hot(|cache| cache.remove(key));
+    }
+
+    /// Empties the hot layer by putting a new one in its place.
+    fn reset_hot(&self) {
+        if let Some(cache) = &self.cache {
+            *cache.write().unwrap_or_else(|e| e.into_inner()) =
+                MemoryCache::new(CacheMode::Normal, self.cache_max);
+        }
+    }
+
     /// Puts an object read from or written to disk into the hot layer,
     /// unless it is too large for it.
     fn put_hot(&self, key: &str, obj: &CacheObject) {
-        let Some(cache) = &self.cache else {
-            return;
-        };
         let weight = obj.get_weight();
         if weight >= self.cache_file_max_weight {
             return;
         }
         debug!(target: LOG_TARGET, key, weight, "put cache to tinyufo");
-        cache.put(key, obj.clone(), weight);
+        self.with_hot(|cache| cache.put(key, obj.clone(), weight));
     }
 }
 
@@ -495,9 +530,7 @@ impl HttpCacheStorage for FileCache {
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         // Early return if found in cache
-        if let Some(cache) = &self.cache
-            && let Some(obj) = cache.get(key)
-        {
+        if let Some(obj) = self.get_hot(key) {
             debug!(
                 target: LOG_TARGET,
                 key, namespace, "get cache from tinyufo"
@@ -631,15 +664,15 @@ impl HttpCacheStorage for FileCache {
         ));
         let result = async {
             fs::write(&tmp, &buf).await?;
-            if let Err(e) = fs::rename(&tmp, &file).await {
-                // Never leave the temporary file behind: nothing else knows
-                // about it, so nothing else would ever clean it up.
-                let _ = fs::remove_file(&tmp).await;
-                return Err(e);
-            }
-            Ok(())
+            fs::rename(&tmp, &file).await
         }
         .await;
+        // Never leave the temporary file behind: nothing else knows about
+        // it, so nothing else would ever clean it up. A write that fails
+        // halfway, on a full disk, leaves one just as a failed rename does.
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp).await;
+        }
         #[cfg(feature = "tracing")]
         self.write_time.observe(elapsed_second(start));
         result.map_err(|e| Error::Io { source: e })?;
@@ -662,12 +695,12 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
-        if let Some(c) = &self.cache {
+        if self.cache.is_some() {
             debug!(
                 target: LOG_TARGET,
                 key, namespace, "remove cache from tinyufo"
             );
-            c.remove(key);
+            self.remove_hot(key);
         }
         let file = self.get_file_path(key, namespace_str(namespace));
         // Already gone (e.g. external cleanup) is the same as a cache miss
@@ -777,16 +810,6 @@ impl HttpCacheStorage for FileCache {
             match fs::remove_file(&file.path).await {
                 Ok(()) => {
                     self.track_removed(file.len);
-                    // The file name IS the combined cache key hash, which is
-                    // also the hot layer's key - so the memory copy can be
-                    // dropped too and a purged object cannot keep being
-                    // served from tinyufo.
-                    if let Some(cache) = &self.cache
-                        && let Some(name) =
-                            file.path.file_name().and_then(|name| name.to_str())
-                    {
-                        cache.remove(name);
-                    }
                     success += 1;
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
@@ -801,6 +824,14 @@ impl HttpCacheStorage for FileCache {
                 },
             }
         }
+        // The memory copies go as well, all of them. Dropping the copy of
+        // each file that was removed, as this used to, missed the objects
+        // that are in memory only - a write that was skipped over quota or
+        // for want of disk space still puts its object there - and those
+        // went on being served after the purge. The hot layer cannot be
+        // searched by namespace, so it is replaced: the other namespaces
+        // read their objects back from disk.
+        self.reset_hot();
         // Best effort: drop now-empty level directories and the namespace
         // directory itself; a concurrent write recreates what it needs.
         let _ =
@@ -908,7 +939,7 @@ mod tests {
         assert_eq!(obj, cached_obj);
 
         // Verify it exists in the TinyUfo cache.
-        assert!(cache.cache.as_ref().unwrap().get(key).is_some());
+        assert!(cache.get_hot(key).is_some());
 
         // --- Test fallback from file ---
         // Create a new cache instance to simulate a fresh start with no in-memory cache.
@@ -919,13 +950,13 @@ mod tests {
         assert_eq!(obj, file_obj);
 
         // 5. After reading from the file, it should now be populated in the new instance's in-memory cache.
-        assert!(fresh_cache.cache.as_ref().unwrap().get(key).is_some());
+        assert!(fresh_cache.get_hot(key).is_some());
 
         // 6. Test REMOVE.
         fresh_cache.remove(key, namespace).await.unwrap();
 
         // Verify it's gone from both in-memory and file caches.
-        assert!(fresh_cache.cache.as_ref().unwrap().get(key).is_none());
+        assert!(fresh_cache.get_hot(key).is_none());
         assert!(
             fresh_cache.get(key, namespace).await.unwrap().is_none(),
             "Get after remove should be a miss"
@@ -1009,7 +1040,7 @@ mod tests {
         assert_eq!(true, result.is_none());
         cache.put(key, namespace, obj.clone()).await.unwrap();
         // tinyufo cache will be exist after put
-        assert_eq!(true, cache.cache.as_ref().unwrap().get(key).is_some());
+        assert_eq!(true, cache.get_hot(key).is_some());
 
         let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
@@ -1021,11 +1052,11 @@ mod tests {
 
         // check tinyufo cache
         // it will be exist after get from file
-        assert_eq!(true, cache.cache.as_ref().unwrap().get(key).is_some());
+        assert_eq!(true, cache.get_hot(key).is_some());
 
         cache.remove(key, namespace).await.unwrap();
         // tinyufo cache will be removed after remove
-        assert_eq!(false, cache.cache.as_ref().unwrap().get(key).is_some());
+        assert_eq!(false, cache.get_hot(key).is_some());
         let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
 
@@ -1211,17 +1242,82 @@ mod tests {
             body: Bytes::from(vec![0; PAGE_SIZE * 3]),
         };
         cache.put("big", b"", big.clone()).await.unwrap();
-        let hot = cache.cache.as_ref().unwrap();
-        assert_eq!(true, hot.get("big").is_none());
+        assert_eq!(true, cache.get_hot("big").is_none());
         assert_eq!(big, cache.get("big", b"").await.unwrap().unwrap());
-        assert_eq!(true, hot.get("big").is_none());
+        assert_eq!(true, cache.get_hot("big").is_none());
 
         let small = CacheObject {
             meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
             body: Bytes::from_static(b"small"),
         };
         cache.put("small", b"", small.clone()).await.unwrap();
-        assert_eq!(true, hot.get("small").is_some());
+        assert_eq!(true, cache.get_hot("small").is_some());
+    }
+
+    /// Regression: an object that is in memory only - its disk write was
+    /// skipped - has no file for a namespace purge to find, and went on
+    /// being served after the purge.
+    #[tokio::test]
+    async fn test_purge_namespace_reaches_memory_only_objects() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=100&writing_max=1",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from_static(b"body"),
+        };
+        cache.put("on-disk", b"ns", obj.clone()).await.unwrap();
+        // Over the write quota: the object goes to memory and not to disk.
+        cache.writing.store(1, Ordering::Relaxed);
+        cache.put("memory-only", b"ns", obj.clone()).await.unwrap();
+        cache.writing.store(0, Ordering::Relaxed);
+        assert_eq!(false, cache.get_file_path("memory-only", "ns").exists());
+        assert_eq!(
+            true,
+            cache.get("memory-only", b"ns").await.unwrap().is_some()
+        );
+
+        let stats = cache.purge_namespace("ns").await.unwrap().unwrap();
+        assert_eq!(1, stats.success);
+        assert_eq!(true, cache.get("on-disk", b"ns").await.unwrap().is_none());
+        assert_eq!(
+            true,
+            cache.get("memory-only", b"ns").await.unwrap().is_none()
+        );
+        // The cache keeps working after the purge.
+        cache.put("again", b"ns", obj.clone()).await.unwrap();
+        assert_eq!(Some(obj), cache.get("again", b"ns").await.unwrap());
+    }
+
+    /// The disk usage counter is an estimate that nothing used to correct.
+    /// When a write has to make room the directory is listed anyway, and
+    /// the counter is set to what is there.
+    #[tokio::test]
+    async fn test_disk_usage_is_resynced_when_evicting() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=0&max_size=64kb",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from(vec![0; 1024]),
+        };
+        cache.put("a", b"", obj.clone()).await.unwrap();
+        let real = cache.current_size.load(Ordering::Relaxed);
+        assert_eq!(true, real > 1024);
+
+        // Drifted up to where the next write does not seem to fit, as
+        // after files were removed behind its back.
+        cache.current_size.store(63_500, Ordering::Relaxed);
+        cache.put("b", b"", obj.clone()).await.unwrap();
+        // Nothing had to be evicted, and the counter is the two files.
+        assert_eq!(true, cache.get("a", b"").await.unwrap().is_some());
+        assert_eq!(2 * real, cache.current_size.load(Ordering::Relaxed));
     }
 
     #[test]

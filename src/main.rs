@@ -562,6 +562,18 @@ fn validate_locations(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Builds each upstream the way startup does. That is where an `alpn` that
+/// is none of the known ones, a `ca` that does not load or a health check
+/// with a bad parameter is found, and nothing is connected to or started
+/// by it: checks and discovery only run from the background services.
+fn validate_upstreams(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    for (name, conf) in config.upstreams.iter() {
+        pingap_upstream::Upstream::new(name, conf, None)
+            .map_err(|e| format!("upstream \"{name}\" is invalid: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Dry-runs each configured plugin through the factory so `--test` reports bad
 /// plugin configs, which `PingapConfig::validate` cannot check (the factory
 /// lives in a higher layer). A feature-gated category that was compiled out
@@ -657,9 +669,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Starting on an empty config is indistinguishable from a healthy server
     // that simply has nothing configured, though, so the reason has to be
     // reported. This runs before the logger exists, hence stderr.
+    //
+    // Not for a process that is to replace a running one: that one is
+    // serving the config it loaded, and handing its listeners to a process
+    // with nothing configured - because the storage could not be read just
+    // now - would answer every request with a 404.
     let empty_config =
         |e: Box<dyn Error>| -> Result<PingapConfig, Box<dyn Error>> {
-            if args.admin.is_none() {
+            if args.admin.is_none() || args.upgrade {
                 return Err(e);
             }
             eprintln!(
@@ -736,6 +753,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
+        validate_upstreams(&config)?;
         validate_locations(&config)?;
         validate_plugins(&config)?;
         info!(target: LOG_TARGET, "Validate config success");

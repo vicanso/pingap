@@ -494,6 +494,10 @@ impl ConfigManager {
                 }
             },
             ConfigMode::MultiByItem => {
+                // What is stored now, to find the items the new config no
+                // longer has. A storage that does not load has nothing to
+                // compare with, and is simply written over.
+                let existing = self.load_all().await.ok();
                 let basic_config = config.get_toml(&Category::Basic, "")?;
                 self.storage
                     .save(&self.get_key(&Category::Basic, "")?, &basic_config)
@@ -515,6 +519,48 @@ impl ConfigManager {
                         self.storage
                             .save(&self.get_key(&category, name)?, &value)
                             .await?;
+                    }
+                }
+                // Each item is a file (or key) of its own, so one that the
+                // new config drops has to be removed: saving the rest left
+                // it in place, and an import brought back nothing less than
+                // what was there before. The other layouts rewrite a whole
+                // category at a time and lose it on their own.
+                if let Some(existing) = existing {
+                    for (category, old, new) in [
+                        (Category::Server, existing.servers, &config.servers),
+                        (
+                            Category::Location,
+                            existing.locations,
+                            &config.locations,
+                        ),
+                        (
+                            Category::Upstream,
+                            existing.upstreams,
+                            &config.upstreams,
+                        ),
+                        (Category::Plugin, existing.plugins, &config.plugins),
+                        (
+                            Category::Certificate,
+                            existing.certificates,
+                            &config.certificates,
+                        ),
+                        (
+                            Category::Storage,
+                            existing.storages,
+                            &config.storages,
+                        ),
+                    ] {
+                        for name in old.iter().flat_map(|old| old.keys()) {
+                            let kept = new
+                                .as_ref()
+                                .is_some_and(|new| new.contains_key(name));
+                            if !kept {
+                                self.storage
+                                    .delete(&self.get_key(&category, name)?)
+                                    .await?;
+                            }
+                        }
                     }
                 }
             },
@@ -1080,6 +1126,58 @@ value = "/storage22"
         );
         let manager = new_etcd_config_manager(&url).unwrap();
         test_config_manger(manager, ConfigMode::MultiByItem).await;
+    }
+
+    /// Regression: with one file per item, importing a config kept the
+    /// items it no longer has. An import is a replacement in every layout.
+    #[tokio::test]
+    async fn test_import_removes_dropped_items() {
+        for separation in ["?separation", ""] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let manager = new_file_config_manager(&format!(
+                "{}{separation}",
+                dir.path().to_string_lossy()
+            ))
+            .unwrap();
+            let before = PingapTomlConfig::from_toml(
+                r#"
+[upstreams.keep]
+addrs = ["127.0.0.1:7080"]
+
+[upstreams.gone]
+addrs = ["127.0.0.1:7081"]
+
+[plugins.gone]
+category = "ping"
+"#,
+            )
+            .unwrap();
+            manager.save_all(&before).await.unwrap();
+            let loaded = manager.load_all().await.unwrap();
+            assert_eq!(2, loaded.upstreams.unwrap().len(), "{separation}");
+
+            let after = PingapTomlConfig::from_toml(
+                r#"
+[upstreams.keep]
+addrs = ["127.0.0.1:7082"]
+
+[upstreams.added]
+addrs = ["127.0.0.1:7083"]
+"#,
+            )
+            .unwrap();
+            manager.save_all(&after).await.unwrap();
+            let loaded = manager.load_all().await.unwrap();
+            let mut names: Vec<String> =
+                loaded.upstreams.unwrap().keys().cloned().collect();
+            names.sort();
+            assert_eq!(vec!["added", "keep"], names, "{separation}");
+            assert_eq!(
+                true,
+                loaded.plugins.is_none_or(|plugins| plugins.is_empty()),
+                "{separation}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -53,7 +53,7 @@ ipv4_only = true
 
 | Key | Description |
 | --- | --- |
-| `dns_server` | Resolver to query. Unset uses the system resolver. |
+| `dns_server` | Resolvers to query, separated by commas: an IP address with an optional port (`10.0.0.53`, `10.0.0.53:5353`, `[fd00::53]:53`). Anything else is a configuration error. Unset uses the system resolver. |
 | `dns_domain` | Domain appended to unqualified names |
 | `dns_search` | Search list for unqualified names |
 | `ipv4_only` | Ignore AAAA records |

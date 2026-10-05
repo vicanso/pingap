@@ -27,7 +27,7 @@ appended), carrying the selected original headers plus:
 | Header | Value |
 | --- | --- |
 | `x-forwarded-method` | Original HTTP method |
-| `x-forwarded-uri` | Original path and query |
+| `x-forwarded-uri` | Original path and query, as the client sent them (not normalized) |
 | `x-forwarded-host` | Original `Host` |
 | `x-forwarded-proto` | `https` when the client connected over TLS, else `http` |
 | `x-forwarded-for` | Client IP as resolved by Pingap |

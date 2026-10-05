@@ -82,6 +82,39 @@ struct Dns {
 }
 
 /// Checks if the discovery type is DNS
+/// The name servers of a `dns_server` setting: addresses separated by
+/// commas, each with or without a port (`10.0.0.53`, `10.0.0.53:5353`,
+/// `[fd00::53]:53`).
+///
+/// Only a bare address used to be understood, and whatever was not one was
+/// dropped without a word. `10.0.0.53:53`, the form the documentation
+/// shows, left the resolver with no server at all: every lookup failed and
+/// the upstream had no backends.
+fn parse_name_servers(value: &str) -> Result<Vec<NameServerConfig>> {
+    let mut name_servers = vec![];
+    for item in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (ip, port) = if let Ok(ip) = item.parse::<IpAddr>() {
+            (ip, None)
+        } else if let Ok(addr) = item.parse::<StdSocketAddr>() {
+            (addr.ip(), Some(addr.port()))
+        } else {
+            return Err(Error::Invalid {
+                message: format!(
+                    "dns server {item} is invalid, expected an ip address with an optional port"
+                ),
+            });
+        };
+        let mut server = NameServerConfig::udp_and_tcp(ip);
+        if let Some(port) = port {
+            for connection in server.connections.iter_mut() {
+                connection.port = port;
+            }
+        }
+        name_servers.push(server);
+    }
+    Ok(name_servers)
+}
+
 pub fn is_dns_discovery(value: &str) -> bool {
     value == DNS_DISCOVERY
 }
@@ -212,16 +245,16 @@ impl Dns {
         }
 
         if let Some(name_server) = &self.name_server {
-            let name_servers = name_server
-                .split(',')
-                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
-                .map(NameServerConfig::udp_and_tcp)
-                .collect::<Vec<_>>();
-            config = ResolverConfig::from_parts(
-                config.domain().cloned(),
-                config.search().to_vec(),
-                name_servers,
-            );
+            let name_servers = parse_name_servers(name_server)?;
+            // Nothing given after all (an empty setting): the system's
+            // servers stay.
+            if !name_servers.is_empty() {
+                config = ResolverConfig::from_parts(
+                    config.domain().cloned(),
+                    config.search().to_vec(),
+                    name_servers,
+                );
+            }
         }
 
         options.ip_strategy = if self.ipv4_only {
@@ -488,6 +521,9 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
     let mut dns =
         Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
     if let Some(dns_server) = &discovery.dns_server {
+        // Checked when the upstream is built, so a setting that is no
+        // address fails the config check and not the first lookup.
+        parse_name_servers(dns_server)?;
         dns = dns.with_name_server(dns_server.clone());
     }
     if let Some(domain) = &discovery.dns_domain {
@@ -503,9 +539,46 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dns, is_dns_discovery, new_dns_discover_backends};
+    use super::{
+        Dns, is_dns_discovery, new_dns_discover_backends, parse_name_servers,
+    };
     use crate::Discovery;
     use pretty_assertions::assert_eq;
+
+    /// Regression: an address with a port was dropped, leaving no server.
+    #[test]
+    fn test_parse_name_servers() {
+        let servers = |value: &str| -> Vec<(String, Vec<u16>)> {
+            parse_name_servers(value)
+                .unwrap()
+                .iter()
+                .map(|server| {
+                    (
+                        server.ip.to_string(),
+                        server.connections.iter().map(|c| c.port).collect(),
+                    )
+                })
+                .collect()
+        };
+        let server = |ip: &str, port: u16| (ip.to_string(), vec![port, port]);
+
+        assert_eq!(vec![server("10.0.0.53", 53)], servers("10.0.0.53"));
+        assert_eq!(vec![server("10.0.0.53", 53)], servers("10.0.0.53:53"));
+        assert_eq!(vec![server("10.0.0.53", 5353)], servers("10.0.0.53:5353"));
+        assert_eq!(vec![server("fd00::53", 53)], servers("fd00::53"));
+        assert_eq!(vec![server("fd00::53", 5353)], servers("[fd00::53]:5353"));
+        assert_eq!(
+            vec![server("10.0.0.53", 53), server("10.0.0.54", 1053)],
+            servers("10.0.0.53, 10.0.0.54:1053,")
+        );
+        assert_eq!(true, servers("").is_empty());
+
+        // Not an address: said so, not skipped.
+        for value in ["dns.example.com", "10.0.0.53:port", "10.0.0.53,nope"] {
+            let err = parse_name_servers(value).unwrap_err().to_string();
+            assert_eq!(true, err.contains("is invalid"), "{value}: {err}");
+        }
+    }
 
     #[tokio::test]
     async fn test_async_dns_discover() {

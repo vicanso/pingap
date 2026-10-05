@@ -415,11 +415,13 @@ pub struct UpstreamConf {
     /// HTTP/2 flow-control window advertised per stream to this upstream
     /// (RFC 9113 §6.9.2), between 1 and 2 GiB - 1; pingora defaults to
     /// 8 MiB. Larger windows help big responses on high-latency links.
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub h2_stream_window_size: Option<ByteSize>,
 
     /// HTTP/2 connection-level flow-control window advertised to this
     /// upstream, shared by every stream on the connection, between 1 and
     /// 2 GiB - 1; pingora defaults to 8 MiB.
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub h2_connection_window_size: Option<ByteSize>,
 
     /// Timeout for establishing new connections
@@ -466,6 +468,7 @@ pub struct UpstreamConf {
     pub tcp_probe_count: Option<usize>,
 
     /// TCP receive buffer size
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub tcp_recv_buf: Option<ByteSize>,
 
     /// Enable TCP Fast Open
@@ -783,6 +786,7 @@ pub struct LocationConf {
     pub plugins: Option<Vec<String>>,
 
     /// Maximum allowed size of request body
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub client_max_body_size: Option<ByteSize>,
 
     /// Maximum number of concurrent requests being processed
@@ -963,15 +967,18 @@ pub struct ServerConf {
     /// keeps pingora's bounded default of 64 KiB. A client whose cookies or
     /// tokens exceed it is refused at the h2 layer, so raise this
     /// deliberately rather than removing the bound.
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub h2_max_header_list_size: Option<ByteSize>,
 
     /// Initial HTTP/2 flow-control window per stream (RFC 9113 §6.9.2),
     /// between 1 and 2 GiB - 1. Larger windows help big uploads on
     /// high-latency links.
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub h2_initial_window_size: Option<ByteSize>,
 
     /// Initial HTTP/2 flow-control window for the whole connection, between
     /// 1 and 2 GiB - 1.
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub h2_initial_connection_window_size: Option<ByteSize>,
 
     /// Close a downstream HTTP/2 connection that has been idle this long.
@@ -1234,6 +1241,7 @@ pub struct BasicConf {
     /// Log level (debug, info, warn, error)
     pub log_level: Option<String>,
     /// Size of log buffer before flushing
+    #[serde(default, serialize_with = "serialize_byte_size")]
     pub log_buffered_size: Option<ByteSize>,
     /// Whether to format logs as JSON
     pub log_format_json: Option<bool>,
@@ -1354,6 +1362,54 @@ fn validate_tcp_keepalive(
         });
     }
     Ok(())
+}
+
+/// A size as text that reads back to the same number of bytes.
+///
+/// The size type writes itself rounded to one decimal of the nearest binary
+/// unit, so `10MB` was saved as `9.5 MiB`, which is 38528 bytes less: a
+/// size changed the first time its entry was saved through the admin.
+///
+/// The largest unit that divides the size is used (`10 MB`, `64 KiB`), and
+/// kilobytes with up to three decimals for the sizes that have none.
+fn format_byte_size(size: ByteSize) -> String {
+    const UNITS: [(u64, &str); 6] = [
+        (1 << 30, "GiB"),
+        (1_000_000_000, "GB"),
+        (1 << 20, "MiB"),
+        (1_000_000, "MB"),
+        (1 << 10, "KiB"),
+        (1_000, "KB"),
+    ];
+    let bytes = size.as_u64();
+    if bytes == 0 {
+        return "0 KB".to_string();
+    }
+    for (unit, name) in UNITS {
+        if bytes.is_multiple_of(unit) {
+            return format!("{} {name}", bytes / unit);
+        }
+    }
+    let decimals = format!("{:03}", bytes % 1000);
+    let text =
+        format!("{}.{} KB", bytes / 1000, decimals.trim_end_matches('0'));
+    // The parser goes through a float; fall back to plain bytes should
+    // that ever land on another number.
+    if text.parse::<ByteSize>().is_ok_and(|parsed| parsed == size) {
+        text
+    } else {
+        bytes.to_string()
+    }
+}
+
+fn serialize_byte_size<S: serde::Serializer>(
+    value: &Option<ByteSize>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match value {
+        Some(size) => serializer.serialize_some(&format_byte_size(*size)),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// An offload pool is described by two numbers that only mean something
@@ -2290,7 +2346,7 @@ h2_connection_window_size = "16mib"
         assert_eq!(Some(ByteSize::mib(16)), conf.h2_connection_window_size);
         assert_eq!(true, conf.validate().is_ok());
         let toml = toml::to_string(&conf).unwrap();
-        assert_eq!(true, toml.contains("h2_stream_window_size = \"1.0 MiB\""));
+        assert_eq!(true, toml.contains("h2_stream_window_size = \"1 MiB\""));
         let restored: UpstreamConf = toml::from_str(&toml).unwrap();
         assert_eq!(conf.ca, restored.ca);
         assert_eq!(
@@ -2658,6 +2714,54 @@ restart_ready_timeout = "2m"
         assert_eq!(
             "Invalid error restart ready timeout should be at least 1s",
             result.expect_err("").to_string()
+        );
+    }
+
+    /// Regression: a size was written rounded to one decimal of a binary
+    /// unit, so the first save of an entry changed it.
+    #[test]
+    fn test_byte_size_is_saved_exactly() {
+        for (text, bytes) in [
+            ("10 MB", 10_000_000),
+            ("1 MB", 1_000_000),
+            ("100 KB", 100_000),
+            ("1 MiB", 1 << 20),
+            ("64 KiB", 64 << 10),
+            ("2 GiB", 2 << 30),
+            ("3 GB", 3_000_000_000),
+            ("1000 KiB", 1_024_000),
+            ("1.5 KB", 1_500),
+            ("1.234 KB", 1_234),
+            ("0.001 KB", 1),
+            ("12345.678 KB", 12_345_678),
+            ("0 KB", 0),
+        ] {
+            let size = ByteSize(bytes);
+            assert_eq!(text, super::format_byte_size(size), "{bytes}");
+            assert_eq!(size, text.parse::<ByteSize>().unwrap(), "{text}");
+        }
+
+        // Through a config entry and back, as the admin saves one.
+        let conf: LocationConf =
+            toml::from_str("client_max_body_size = \"10MB\"").unwrap();
+        let saved = toml::to_string(&conf).unwrap();
+        assert_eq!(
+            true,
+            saved.contains("client_max_body_size = \"10 MB\""),
+            "{saved}"
+        );
+        let restored: LocationConf = toml::from_str(&saved).unwrap();
+        assert_eq!(Some(ByteSize(10_000_000)), restored.client_max_body_size);
+        // What an earlier version wrote still loads.
+        let conf: LocationConf =
+            toml::from_str("client_max_body_size = \"9.5 MiB\"").unwrap();
+        assert_eq!(Some(ByteSize(9_961_472)), conf.client_max_body_size);
+        // Unset stays unset.
+        assert_eq!(
+            false,
+            toml::to_string(&LocationConf::default())
+                .unwrap()
+                .contains("client_max_body_size")
         );
     }
 

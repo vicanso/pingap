@@ -22,7 +22,7 @@
 | Header | Value |
 | --- | --- |
 | `x-forwarded-method` | 原始 HTTP 方法 |
-| `x-forwarded-uri` | 原始路径与查询串 |
+| `x-forwarded-uri` | 原始路径与查询串，保持客户端发送时的样子（不做规范化） |
 | `x-forwarded-host` | 原始 `Host` |
 | `x-forwarded-proto` | 客户端走 TLS 时为 `https`，否则为 `http` |
 | `x-forwarded-for` | Pingap 解析的客户端 IP |

@@ -28,7 +28,7 @@ pub struct PingapConfig {
 | `certificates` | TLS 证书，含 ACME 设置 |
 | `storages` | 可被 `includes` 引用的可复用片段；ACME 也在此保存 challenge 状态 |
 
-每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 location 和插件，所以编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置，都在这一步报告，而不是等到下次启动。它只读取配置，磁盘上的配置保持原样。
+每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置，都在这一步报告，而不是等到下次启动。它只读取配置，磁盘上的配置保持原样。
 
 ## 存储后端
 
@@ -53,6 +53,12 @@ pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`、`connect_timeout`、`user`、`password`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
 
 目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`），每个文件单独检查，因此语法错误会指出所在文件，而不是拼接后文档里的某一行。
+
+写文件时先把新内容写到旁边的临时文件，再改名覆盖，所以读取方（包括变更检查）看到的要么是旧内容、要么是新内容，不会读到半个文件。文件的权限和属主保持不变，符号链接会跟随到它指向的文件。无法改名覆盖（例如挂载进容器的单个配置文件）或无法保留属主时，退回为直接写入。
+
+导入配置（`POST /api/configs/import`、`--sync`）是整体替换：导入的配置里没有的条目会被删除，各种布局都一样。
+
+尺寸按原值写回：`10MB` 保存为 `10 MB`，使用能整除它的最大单位。
 
 文件后端（仅目录）查询参数：
 
@@ -179,7 +185,7 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 - **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。监听使用独立的连接；连接中断或被服务端结束后会重新建立，etcd 持续不可达时重试间隔从 500ms 逐步增加到一分钟，恢复后立即再比较一次配置。不论监听是否正常，存储里的配置每隔 `basic.auto_restart_check_interval` 也会重新读取一次。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
 
 ## Includes
 

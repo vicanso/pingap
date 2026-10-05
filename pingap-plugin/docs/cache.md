@@ -78,8 +78,10 @@ curl -X PURGE http://127.0.0.1:6188/*
 `PURGE /*` empties everything this plugin cached: the namespace survives as a
 directory in the file backend, so it is the one granularity beyond an exact url
 that can be purged without an index (storage file names are hashes of the full
-key — a url prefix does not map to anything on disk). The purge clears the
-in-memory hot layer along with the files, and only cleans the local instance:
+key — a url prefix does not map to anything on disk). The purge empties the
+in-memory hot layer along with the files — the whole layer, since it cannot be
+searched by namespace: objects that were in memory only are gone too, and the
+other namespaces read theirs back from disk. It only cleans the local instance:
 in a multi-instance deployment, issue the request on every node.
 
 ## Who may purge

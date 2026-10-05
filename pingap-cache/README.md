@@ -70,7 +70,9 @@ budget exceeded (on the blocking pool, so no worker thread stalls), after which
 files are deleted in access order until the new object fits. Writes that arrive
 while that eviction runs go ahead without waiting. An object larger than the
 whole budget is not written at all; evicting everything for it would only empty
-the cache.
+the cache. The usage figure is a running estimate; that walk sets it back to
+what is actually in the directory, so files removed by hand or two writes of one
+key do not leave it off for good.
 
 `new_storage_clear_service()` returns a background service that periodically
 sweeps inactive files.
@@ -80,8 +82,12 @@ sweeps inactive files.
 The `cache` plugin's `namespace` option isolates entries. With the file backend
 it becomes a subdirectory, which is what makes namespace-level purging possible:
 `HttpCacheStorage::purge_namespace` walks that directory, removes every object
-from disk and from the TinyUFO hot layer (file names are the cache key hashes,
-which are also the memory keys), and drops the emptied directories. The memory
+from disk, empties the TinyUFO hot layer, and drops the emptied directories. The
+hot layer is emptied whole: it cannot be searched by namespace, and an object
+whose disk write was skipped or failed (over `writing_max`, larger than
+`max_size`, an i/o error) is in memory only,
+with no file to find it by. Other namespaces read their objects back from disk.
+The memory
 backend cannot enumerate its entries, so its `purge_namespace` reports
 "unsupported" (`Ok(None)`) rather than silently doing nothing. The `cache`
 plugin exposes this as `PURGE /*`.
