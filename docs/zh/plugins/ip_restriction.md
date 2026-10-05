@@ -61,6 +61,8 @@ trusted_proxies = ["10.0.0.0/8"]
 
 没有配置 `trusted_proxies` 时，任何来源的 `X-Forwarded-For` 的第一个条目都会被采用，只有在客户端无法直连 pingap 时才安全。
 
+通过双栈监听（`[::]:80`）接入的 IPv4 客户端，地址是 `::ffff:1.2.3.4`。它按 `1.2.3.4` 匹配、记录和计数，`ip_list` 和 `trusted_proxies` 里的 IPv4 条目对它同样生效。
+
 ## 响应
 
 | Situation | Status | Body |

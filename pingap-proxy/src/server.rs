@@ -784,7 +784,10 @@ impl Server {
     ) -> pingora::Result<()> {
         let header = session.req_header();
         let host = pingap_core::get_host(header).unwrap_or_default();
-        let path = header.uri.path();
+        // Matched in normalized form, so an encoded or roundabout spelling
+        // of a path lands in the location of the path it stands for. The
+        // request itself is not changed.
+        let path = &pingap_core::normalize_path(header.uri.path());
 
         // locations not found
         let Some(route) = self.server_locations_provider.get(&self.name) else {
@@ -2613,6 +2616,53 @@ value = 'proxy_set_headers = ["name:value"]'
                 .contains("plugin pingap:requestId is not available"),
             "{err}"
         );
+    }
+
+    /// Regression: the location was picked by the path as sent, so an
+    /// encoded or roundabout spelling of `/admin` missed the location for
+    /// `/admin` - and its plugins - on its way to an upstream that reads it
+    /// as `/admin`.
+    #[tokio::test]
+    async fn test_location_is_matched_by_the_normalized_path() {
+        let toml = TEST_TOML.replace("path = \"/\"", "path = \"/admin\"");
+        let server = new_server_from(&toml, None);
+        let matched = async |path: &str| {
+            let mock_io = Builder::new()
+                .read(format!("GET {path} HTTP/1.1\r\n\r\n").as_bytes())
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            // The request is forwarded as it came.
+            assert_eq!(path, session.req_header().uri.path());
+            ctx.upstream.location.as_ref() == "lo"
+        };
+        for path in [
+            "/admin",
+            "/admin/users",
+            "/%61dmin/users",
+            "/%61%64%6d%69%6e",
+            "//admin/users",
+            "/./admin",
+            "/public/../admin/users",
+            "/public/%2e%2e/admin",
+            "/public/..%2fadmin",
+        ] {
+            assert_eq!(true, matched(path).await, "{path}");
+        }
+        for path in [
+            "/",
+            "/public",
+            "/public/admin",
+            "/admin/../public",
+            "/%2561dmin",
+        ] {
+            assert_eq!(false, matched(path).await, "{path}");
+        }
     }
 
     #[tokio::test]

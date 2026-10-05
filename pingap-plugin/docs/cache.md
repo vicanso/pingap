@@ -23,7 +23,7 @@ IP-restricted `PURGE` method.
 | `eviction` | bool | absent | Presence of the key enables LRU eviction. Memory backend only. |
 | `predictor` | bool | absent | Presence of the key enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
-| `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. |
+| `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. See [who may purge](#who-may-purge) for the address that is checked. |
 | `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. |
 
 ### Backend selection
@@ -82,6 +82,22 @@ key — a url prefix does not map to anything on disk). The purge clears the
 in-memory hot layer along with the files, and only cleans the local instance:
 in a multi-instance deployment, issue the request on every node.
 
+## Who may purge
+
+A `PURGE` is allowed when the address of the request is in `purge_ip_list`;
+with an empty list nobody may purge. Which address that is depends on
+`basic.trusted_proxies`:
+
+- **Set:** the client IP, resolved through the trusted proxies as described
+  under [`ip_restriction`](ip_restriction.md#client-ip-resolution).
+- **Not set:** the address of the connection itself. `X-Forwarded-For` and
+  `X-Real-IP` are not looked at, since without trusted proxies they are
+  whatever the request says: a list allowing `127.0.0.1` would let in anyone
+  who sends `X-Forwarded-For: 127.0.0.1`.
+
+So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
+`trusted_proxies`. Without it the address checked is the proxy's own.
+
 ## Behaviour
 
 - Only `GET`, `HEAD` and `PURGE` are handled; every other method skips the
@@ -138,6 +154,10 @@ in a multi-instance deployment, issue the request on every node.
 
 ## Usage notes
 
+- **`PURGE` no longer goes by `X-Forwarded-For` unless `basic.trusted_proxies`
+  is set.** Up to 0.15.0 the header was believed from anyone. A purge that
+  worked through a proxy not listed there is answered `403` after the upgrade;
+  list the proxy, see [who may purge](#who-may-purge).
 - **Upgrading from 0.15.0 or earlier empties the cache.** Up to that version
   the host was part of the key for HTTP/2 requests only; over HTTP/1.1 two
   sites behind one `cache` plugin shared their entries. Entries written by

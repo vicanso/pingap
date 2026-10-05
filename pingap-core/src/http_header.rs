@@ -23,6 +23,7 @@ use ipnet::IpNet;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
+use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -324,13 +325,18 @@ fn handle_special_headers(
 }
 
 /// Gets the remote address (IP and port) from the session.
+///
+/// An IPv4 client of a dual-stack listener (`[::]:80`) has the address
+/// `::ffff:1.2.3.4`. It is reported as `1.2.3.4`: left in the mapped form
+/// it matched no IPv4 entry of an allow or deny list, no IPv4 trusted
+/// proxy, and no country.
 pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
     session
         .client_addr()
         // Ensure the address is an IP address (v4 or v6).
         .and_then(|addr| addr.as_inet())
         // Map it to a tuple of (String, u16).
-        .map(|addr| (addr.ip().to_string(), addr.port()))
+        .map(|addr| (addr.ip().to_canonical().to_string(), addr.port()))
 }
 
 /// Parsed trusted downstream proxy addresses: individual IPs plus CIDR
@@ -350,7 +356,7 @@ impl TrustedProxies {
             if let Ok(net) = IpNet::from_str(item) {
                 nets.push(net);
             } else if let Ok(ip) = IpAddr::from_str(item) {
-                ips.insert(ip);
+                ips.insert(ip.to_canonical());
             }
         }
         Self { nets, ips }
@@ -358,6 +364,7 @@ impl TrustedProxies {
 
     /// Returns true if `peer` is one of the trusted proxies.
     fn contains(&self, peer: IpAddr) -> bool {
+        let peer = peer.to_canonical();
         self.ips.contains(&peer)
             || self.nets.iter().any(|net| net.contains(&peer))
     }
@@ -394,16 +401,18 @@ pub fn set_trusted_proxies(proxies: &Option<Vec<String>>) {
 /// An `X-Forwarded-For` entry as an address. Besides the plain form some
 /// proxies write `ip:port` or `[v6]:port`.
 fn parse_forwarded_ip(value: &str) -> Option<IpAddr> {
-    if let Ok(ip) = IpAddr::from_str(value) {
-        return Some(ip);
-    }
-    if let Ok(addr) = SocketAddr::from_str(value) {
-        return Some(addr.ip());
-    }
-    value
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .and_then(|value| IpAddr::from_str(value).ok())
+    let ip = if let Ok(ip) = IpAddr::from_str(value) {
+        ip
+    } else if let Ok(addr) = SocketAddr::from_str(value) {
+        addr.ip()
+    } else {
+        value
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .and_then(|value| IpAddr::from_str(value).ok())?
+    };
+    // `::ffff:1.2.3.4` is `1.2.3.4`, see `get_remote_addr`.
+    Some(ip.to_canonical())
 }
 
 /// The client address out of the `X-Forwarded-For` lines of a request that
@@ -447,6 +456,30 @@ fn forwarded_client_ip<'a>(
     first_proxy.map(|ip| ip.to_string())
 }
 
+/// Whether `basic.trusted_proxies` is set.
+#[inline]
+pub fn has_trusted_proxies() -> bool {
+    TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed)
+}
+
+/// The address to check a request by when the check grants something to the
+/// few, such as the allow list of the cache's `PURGE`.
+///
+/// With trusted proxies configured this is the client ip, which a client
+/// can not choose then. Without them the forwarded headers are simply what
+/// the request says, so the address is the peer's own: a list that allows
+/// `127.0.0.1` used to let in anyone who sent `X-Forwarded-For: 127.0.0.1`.
+#[inline]
+pub fn ensure_verified_client_ip<'a>(
+    session: &Session,
+    ctx: &'a mut Ctx,
+) -> &'a str {
+    if has_trusted_proxies() {
+        return ensure_client_ip(session, ctx);
+    }
+    ctx.conn.remote_addr.as_deref().unwrap_or_default()
+}
+
 /// Ensures `ctx.conn.client_ip` is populated and returns a borrowed reference.
 ///
 /// Prefer this on the request path over calling [`get_client_ip`] repeatedly —
@@ -481,7 +514,7 @@ pub fn get_client_ip(session: &Session) -> String {
         let Some(peer) = session
             .client_addr()
             .and_then(|addr| addr.as_inet())
-            .map(|addr| addr.ip())
+            .map(|addr| addr.ip().to_canonical())
         else {
             return String::new();
         };
@@ -638,6 +671,91 @@ pub fn remove_query_from_header(
     }
 
     set_path_and_query(req_header, &path_and_query)
+}
+
+/// Whether `path` has anything for `normalize_path` to do: a `%`, an empty
+/// segment (`//`), or a segment that is `.` or `..`.
+fn path_needs_normalizing(path: &[u8]) -> bool {
+    let mut after_slash = false;
+    for (index, byte) in path.iter().enumerate() {
+        match byte {
+            b'%' => return true,
+            b'/' if after_slash => return true,
+            b'.' if after_slash => {
+                let rest = &path[index + 1..];
+                let rest = rest.strip_prefix(b".").unwrap_or(rest);
+                if rest.first().is_none_or(|next| *next == b'/') {
+                    return true;
+                }
+            },
+            _ => {},
+        }
+        after_slash = *byte == b'/';
+    }
+    false
+}
+
+/// The path of a request in the form it is matched by: percent-encoding
+/// decoded, `.` and `..` segments resolved, repeated slashes merged.
+///
+/// Which location a request belongs to is decided on this form, because it
+/// is the form most upstreams go on to serve. Matching the path as it was
+/// sent let `/%61dmin`, `//admin` and `/public/../admin` slip past a
+/// location for `/admin`, and whatever plugins guard it, on their way to
+/// an upstream that reads all three as `/admin`. Only the matching uses
+/// it; the request is forwarded as it came.
+///
+/// A path with nothing to change, which is nearly every path, is returned
+/// as it is.
+pub fn normalize_path(path: &str) -> Cow<'_, str> {
+    let bytes = path.as_bytes();
+    if !path.starts_with('/') || !path_needs_normalizing(bytes) {
+        return Cow::Borrowed(path);
+    }
+    let hex = |byte: Option<&u8>| {
+        byte.and_then(|byte| (*byte as char).to_digit(16))
+            .map(|value| value as u8)
+    };
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) =
+                (hex(bytes.get(index + 1)), hex(bytes.get(index + 2)))
+        {
+            decoded.push(high << 4 | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+
+    let mut segments: Vec<&[u8]> = vec![];
+    // Whether the path ends in a directory, `/a/` as well as `/a/.`.
+    let mut trailing_slash = false;
+    for segment in decoded.split(|byte| *byte == b'/') {
+        trailing_slash = true;
+        match segment {
+            b"" | b"." => {},
+            b".." => {
+                segments.pop();
+            },
+            _ => {
+                segments.push(segment);
+                trailing_slash = false;
+            },
+        }
+    }
+    let mut normalized = Vec::with_capacity(decoded.len());
+    for segment in segments.iter() {
+        normalized.push(b'/');
+        normalized.extend_from_slice(segment);
+    }
+    if trailing_slash || normalized.is_empty() {
+        normalized.push(b'/');
+    }
+    Cow::Owned(String::from_utf8_lossy(&normalized).into_owned())
 }
 
 /// Replaces the path and query of the request, and nothing else.
@@ -1089,6 +1207,21 @@ mod tests {
         assert_eq!(None, client_ip(&[]));
         assert_eq!(None, client_ip(&[" , "]));
 
+        // Regression: the IPv4-mapped form is the IPv4 address, as a
+        // trusted proxy and as a client.
+        assert_eq!(
+            ip("9.9.9.9"),
+            client_ip(&["6.6.6.6, ::ffff:9.9.9.9, ::ffff:10.0.0.2"])
+        );
+        assert_eq!(true, trusted.contains("::ffff:10.1.2.3".parse().unwrap()));
+        assert_eq!(
+            true,
+            trusted.contains("::ffff:192.168.1.1".parse().unwrap())
+        );
+        assert_eq!(false, trusted.contains("::ffff:9.9.9.9".parse().unwrap()));
+        let mapped = TrustedProxies::parse(&["::ffff:172.16.0.1".to_string()]);
+        assert_eq!(true, mapped.contains("172.16.0.1".parse().unwrap()));
+
         // Regression: a byte that is not ASCII, written by the client at
         // the front of the line the proxy appends to. The whole line used
         // to be dropped, leaving the client's own `X-Real-IP` or the
@@ -1257,6 +1390,63 @@ mod tests {
         assert_eq!(get_cookie_value(&req, "lang"), None);
         // Test for a cookie name that is a prefix of another.
         assert_eq!(get_cookie_value(&req, "the"), None);
+    }
+
+    #[test]
+    fn test_normalize_path() {
+        // Nothing to do: the very same string comes back.
+        for path in [
+            "/",
+            "/admin",
+            "/admin/",
+            "/a/b.c/d",
+            "/.well-known/acme-challenge/token",
+            "/.env",
+            "/a/..b/c",
+            "/a/b../c",
+            "/a/...",
+            "*",
+            "",
+        ] {
+            assert_eq!(
+                true,
+                matches!(normalize_path(path), Cow::Borrowed(value) if value == path),
+                "{path}"
+            );
+        }
+        for (path, expected) in [
+            // what a location for `/admin` used to miss
+            ("/%61dmin", "/admin"),
+            ("/%61dmin/users", "/admin/users"),
+            ("//admin", "/admin"),
+            ("/./admin", "/admin"),
+            ("/public/../admin", "/admin"),
+            ("/public/%2e%2e/admin", "/admin"),
+            ("/public/%2E%2E%2Fadmin", "/admin"),
+            ("/public/..%2fadmin/x", "/admin/x"),
+            // above the root is the root
+            ("/../../admin", "/admin"),
+            ("/..", "/"),
+            ("/.", "/"),
+            ("//", "/"),
+            // the end of the path keeps its shape
+            ("/admin//", "/admin/"),
+            ("/admin/.", "/admin/"),
+            ("/admin/x/..", "/admin/"),
+            ("/admin/x/../", "/admin/"),
+            // decoded once, not until nothing is left to decode
+            ("/%2561dmin", "/%61dmin"),
+            // not an escape: left alone
+            ("/100%", "/100%"),
+            ("/a%zzb", "/a%zzb"),
+            ("/a%4", "/a%4"),
+            ("/%E6%96%87%E6%A1%A3/menu", "/文档/menu"),
+            ("/a%20b", "/a b"),
+        ] {
+            assert_eq!(expected, normalize_path(path), "{path}");
+        }
+        // Bytes that are no text still give a path to match against.
+        assert_eq!("/\u{fffd}/x", normalize_path("/%ff/x"));
     }
 
     /// Regression: an HTTP/2 request has its host in the uri. Replacing the

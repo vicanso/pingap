@@ -21,7 +21,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `eviction` | bool | 缺席 | 键存在即启用 LRU 淘汰。 |
 | `predictor` | bool | 缺席 | 键存在即启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
-| `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。 |
+| `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。校验的是哪个地址见[谁可以清理](#谁可以清理)。 |
 | `skip` | string | — | 路径+查询串的正则；匹配的请求完全绕过缓存。 |
 
 ### 后端选择
@@ -73,6 +73,15 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 `PURGE /*` 清空该插件缓存的全部内容：namespace 在文件后端以目录形式存在，是精确 URL 之外唯一无需索引即可清除的粒度（存储文件名是完整键的哈希，URL 前缀在磁盘上没有对应结构）。清除会连同内存热层一起处理，且只作用于本机——多实例部署需要对每个节点分别发起。
 
+## 谁可以清理
+
+请求的地址在 `purge_ip_list` 里时才允许 `PURGE`；列表为空时任何人都不能清理。这个地址取哪一个，取决于 `basic.trusted_proxies`：
+
+- **已配置：** 取客户端 IP，按 [`ip_restriction`](ip_restriction.md#客户端-ip-解析) 里说明的规则经可信代理解析。
+- **未配置：** 取连接本身的对端地址，不看 `X-Forwarded-For` 和 `X-Real-IP`。没有可信代理时这两个头只是请求自己的说法：允许 `127.0.0.1` 的列表，会放行任何带 `X-Forwarded-For: 127.0.0.1` 的请求。
+
+因此，经过负载均衡或 CDN 发送的 `PURGE`，需要把该代理写进 `trusted_proxies`。否则校验的是代理自己的地址。
+
 ## 行为
 
 - 仅处理 `GET`、`HEAD` 与 `PURGE`；其他方法跳过插件。
@@ -92,6 +101,7 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 ## 使用说明
 
+- **没有配置 `basic.trusted_proxies` 时，`PURGE` 不再采用 `X-Forwarded-For`。** 到 0.15.0 为止，任何来源的这个头都会被采用。经过未列入可信代理的代理发送的清理请求，升级后会返回 `403`；把该代理加入列表即可，见[谁可以清理](#谁可以清理)。
 - **从 0.15.0 及更早版本升级后缓存会清空。** 到该版本为止，只有 HTTP/2 请求的键包含域名，HTTP/1.1 下同一个 `cache` 插件后面的两个站点共用条目。这些版本写入的条目在现在的键下找不到：升级后缓存从空开始，文件缓存里的旧条目留在磁盘上，由 inactive 扫描清除。
 - **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。
 - **每个进程只有一个内存后端。** 第一个请求内存缓存的 `cache` 插件创建进程级单例；第二个声明不同 `max_size` 或 `mode` 时会静默复用第一个。用 `namespace` 分隔内容，不要再声明第二个 `directory`。

@@ -63,7 +63,7 @@ impl IpRules {
                 ip_net_list.push(value);
             // If not a network, try parsing as a single IP address.
             } else if let Ok(value) = IpAddr::from_str(item_str) {
-                ip_set.insert(value);
+                ip_set.insert(value.to_canonical());
             } else {
                 invalid.push(item_str.to_string());
             }
@@ -90,7 +90,13 @@ impl IpRules {
     ///
     /// This allows callers to avoid re-parsing the IP address if they already
     /// have it in `IpAddr` form.
+    ///
+    /// An IPv4-mapped IPv6 address (`::ffff:1.2.3.4`, what an IPv4 client
+    /// of a dual-stack listener has) is matched as the IPv4 address it
+    /// stands for. As an IPv6 address it matched none of the IPv4 entries,
+    /// so a deny list let it through and an allow list kept it out.
     pub fn is_match_addr(&self, ip_addr: &IpAddr) -> bool {
+        let ip_addr = &ip_addr.to_canonical();
         // First, perform a fast O(1) lookup in the HashSet.
         if self.ip_set.contains(ip_addr) {
             return true;
@@ -104,6 +110,24 @@ impl IpRules {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// Regression: an IPv4 client seen through a dual-stack listener.
+    #[test]
+    fn test_ipv4_mapped_addresses() {
+        let rules =
+            IpRules::new(&["192.168.1.0/24", "10.0.0.1", "::ffff:172.16.0.1"]);
+        for ip in [
+            "::ffff:192.168.1.7",
+            "::ffff:10.0.0.1",
+            "172.16.0.1",
+            "::ffff:172.16.0.1",
+        ] {
+            assert_eq!(Ok(true), rules.is_match(ip), "{ip}");
+        }
+        for ip in ["::ffff:192.168.2.7", "::ffff:10.0.0.2", "::1"] {
+            assert_eq!(Ok(false), rules.is_match(ip), "{ip}");
+        }
+    }
 
     #[test]
     fn test_ip_rules() {

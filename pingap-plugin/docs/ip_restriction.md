@@ -78,6 +78,10 @@ address.
 Without `trusted_proxies` the first `X-Forwarded-For` entry is taken from
 anyone, which is only safe when no client can reach pingap directly.
 
+An IPv4 client of a dual-stack listener (`[::]:80`) has the address
+`::ffff:1.2.3.4`. It is matched, logged and counted as `1.2.3.4`, so IPv4
+entries in `ip_list` and in `trusted_proxies` apply to it.
+
 ## Responses
 
 | Situation | Status | Body |

@@ -21,7 +21,7 @@ use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
 use pingap_core::{
-    HttpHeader, convert_headers, resolve_static_header_value,
+    HttpHeader, convert_headers, normalize_path, resolve_static_header_value,
     set_path_and_query,
 };
 use pingap_core::{
@@ -86,6 +86,11 @@ impl PathSelector {
     /// - Starting with "~": Regex pattern matching
     /// - Starting with "=": Exact path matching  
     /// - Otherwise: Prefix path matching
+    ///
+    /// A request is matched by its normalized path (see
+    /// `pingap_core::normalize_path`), so an exact or prefix path is kept in
+    /// that form too: `/%E6%96%87%E6%A1%A3` in the config and in the request are the
+    /// same path. A regex is taken as written and sees the normalized path.
     fn new(path: &str) -> Result<Self> {
         let path = path.trim();
         if path.is_empty() {
@@ -98,9 +103,11 @@ impl PathSelector {
             })?;
             Ok(PathSelector::Regex(re))
         } else if let Some(eq_path) = path.strip_prefix('=') {
-            Ok(PathSelector::Equal(eq_path.trim().to_string()))
+            Ok(PathSelector::Equal(
+                normalize_path(eq_path.trim()).into_owned(),
+            ))
         } else {
-            Ok(PathSelector::Prefix(path.to_string()))
+            Ok(PathSelector::Prefix(normalize_path(path).into_owned()))
         }
     }
     #[inline]
@@ -1104,6 +1111,45 @@ mod tests {
         assert_eq!(false, matched);
         assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
+    }
+
+    /// A request is matched by its normalized path, and the paths of the
+    /// config are kept in the same form.
+    #[test]
+    fn test_path_is_matched_in_normalized_form() {
+        let new_location = |path: &str| {
+            Location::new(
+                "lo",
+                &LocationConf {
+                    upstream: Some("up".to_string()),
+                    path: Some(path.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let matches = |lo: &Location, path: &str| {
+            lo.match_host_path("", &normalize_path(path)).0
+        };
+
+        let lo = new_location("/admin");
+        for path in ["/admin/x", "/%61dmin/x", "//admin", "/a/../admin"] {
+            assert_eq!(true, matches(&lo, path), "{path}");
+        }
+        assert_eq!(false, matches(&lo, "/public"));
+
+        // Written with an escape in the config: the same path.
+        let lo = new_location("/%E6%96%87%E6%A1%A3/");
+        assert_eq!(true, matches(&lo, "/%E6%96%87%E6%A1%A3/menu"));
+        assert_eq!(true, matches(&lo, "/文档/menu"));
+        let lo = new_location("=/a%20b");
+        assert_eq!(true, matches(&lo, "/a%20b"));
+        assert_eq!(false, matches(&lo, "/a%20b/c"));
+
+        // A regex sees the normalized path.
+        let lo = new_location("~^/admin/(?<id>\\d+)$");
+        assert_eq!(true, matches(&lo, "/%61dmin/42"));
+        assert_eq!(false, matches(&lo, "/admin/42/x"));
     }
 
     /// Regression: a rewrite replaced the whole uri with the new path. An

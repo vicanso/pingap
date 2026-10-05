@@ -26,7 +26,7 @@ use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_client_ip, get_cache_key,
+    ensure_verified_client_ip, get_cache_key,
 };
 use pingap_util::IpRules;
 use pingora::cache::CacheOptionOverrides;
@@ -446,7 +446,9 @@ impl Plugin for Cache {
 
         // Handle PURGE requests with IP-based access control
         if method == *METHOD_PURGE {
-            let ip = ensure_client_ip(session, ctx);
+            // Not the plain client ip: without trusted proxies that is
+            // whatever `X-Forwarded-For` says.
+            let ip = ensure_verified_client_ip(session, ctx);
             let found = match self.purge_ip_rules.is_match(ip) {
                 Ok(matched) => matched,
                 Err(e) => {
@@ -674,9 +676,9 @@ max_ttl = "1m"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let mut ctx = Ctx::default();
-        // The mock io has no peer address, so the ip check is satisfied
-        // explicitly instead of through `get_client_ip`.
-        ctx.conn.client_ip = Some("127.0.0.1".to_string());
+        // The mock io has no peer address; the proxy records it here when
+        // the request comes in.
+        ctx.conn.remote_addr = Some("127.0.0.1".to_string());
         let result = cache
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
@@ -764,6 +766,49 @@ purge_ip_list = ["127.0.0.1"]
         // An exact purge responds 204 whether or not the entry existed.
         let resp = purge(&cache, "/vicanso/pingap").await;
         assert_eq!(StatusCode::NO_CONTENT, resp.status);
+    }
+
+    /// Regression: without trusted proxies the address of a `PURGE` is the
+    /// peer's. It used to be the client ip, which is then the first entry
+    /// of `X-Forwarded-For`: sending the header was enough to purge.
+    #[tokio::test]
+    async fn test_purge_ignores_forged_forwarded_for() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-forged"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let status = async |remote_addr: &str, headers: &str| {
+            let input_header =
+                format!("PURGE /vicanso/pingap HTTP/1.1\r\n{headers}\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            ctx.conn.remote_addr = Some(remote_addr.to_string());
+            let result = cache
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!("purge must respond, got a pass-through");
+            };
+            resp.status
+        };
+        let forged = "X-Forwarded-For: 127.0.0.1\r\nX-Real-IP: 127.0.0.1\r\n";
+        assert_eq!(StatusCode::FORBIDDEN, status("9.9.9.9", forged).await);
+        assert_eq!(StatusCode::FORBIDDEN, status("9.9.9.9", "").await);
+        // From the allowed address, with or without the headers.
+        assert_eq!(StatusCode::NO_CONTENT, status("127.0.0.1", "").await);
+        assert_eq!(
+            StatusCode::NO_CONTENT,
+            status("127.0.0.1", "X-Forwarded-For: 9.9.9.9\r\n").await
+        );
     }
 
     #[tokio::test]

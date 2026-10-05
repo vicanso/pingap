@@ -71,7 +71,11 @@ country and always continues.
 | --- | --- | --- |
 | Country in `country_codes` | allowed | **403** |
 | Country not in the list, or unknown (`??`) | **403** | allowed |
-| Client IP not parseable | allowed (plugin continues) | allowed |
+| Client IP not parseable | **403** | allowed |
+
+A client IP that is not an address has no country and is treated like any
+address the database does not know. An IPv4 client of a dual-stack listener
+(`[::]:80`), whose address is `::ffff:1.2.3.4`, is looked up as `1.2.3.4`.
 
 ## Usage notes
 

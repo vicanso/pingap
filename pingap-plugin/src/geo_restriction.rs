@@ -152,14 +152,14 @@ impl Plugin for GeoRestriction {
 
         let ip = ensure_client_ip(session, ctx);
 
-        let ip_addr: IpAddr = match ip.parse() {
-            Ok(addr) => addr,
-            Err(_) => {
-                return Ok(RequestPluginResult::Continue);
-            },
-        };
-
-        let country_code = GEO_DB.lookup_country_code(ip_addr);
+        // `::ffff:1.2.3.4` is looked up as `1.2.3.4`: as an IPv6 address
+        // it has no country. Something that is no address has none either,
+        // and is judged like any other unknown: it used to be let through
+        // whatever the list said, an allow list included.
+        let country_code = ip
+            .parse::<IpAddr>()
+            .ok()
+            .and_then(|addr| GEO_DB.lookup_country_code(addr.to_canonical()));
         let country_code_str =
             country_code.as_ref().map(AsRef::as_ref).unwrap_or("??");
 
@@ -243,5 +243,55 @@ message = "Country not allowed"
             .await
             .unwrap();
         assert!(result == RequestPluginResult::Continue);
+    }
+
+    async fn allowed(geo: &GeoRestriction, client_ip: &str) -> bool {
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.conn.client_ip = Some(client_ip.to_string());
+        let result = geo
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        result == RequestPluginResult::Continue
+    }
+
+    fn new_geo(kind: &str) -> GeoRestriction {
+        GeoRestriction::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "type = \"{kind}\"\ncountry_codes = [\"US\"]"
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Regression: an IPv4 client of a dual-stack listener has the address
+    /// `::ffff:a.b.c.d`. Looked up as an IPv6 address it had no country,
+    /// so a deny list let it in.
+    #[tokio::test]
+    async fn test_geo_restriction_ipv4_mapped_address() {
+        let deny = new_geo("deny");
+        assert!(!allowed(&deny, "8.8.8.8").await);
+        assert!(!allowed(&deny, "::ffff:8.8.8.8").await);
+        let allow = new_geo("allow");
+        assert!(allowed(&allow, "8.8.8.8").await);
+        assert!(allowed(&allow, "::ffff:8.8.8.8").await);
+    }
+
+    /// Regression: a client ip that is no address was let through whatever
+    /// the list said. It has no country, like any address the database
+    /// does not know: outside an allow list, and not on a deny list.
+    #[tokio::test]
+    async fn test_geo_restriction_unparsable_address() {
+        let allow = new_geo("allow");
+        for client_ip in ["unknown", "", "8.8.8.8, 1.1.1.1"] {
+            assert!(!allowed(&allow, client_ip).await, "{client_ip}");
+        }
+        assert!(allowed(&new_geo("deny"), "unknown").await);
     }
 }

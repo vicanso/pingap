@@ -53,4 +53,8 @@ This enum determines how to match the request's URL path. The matching strategy 
 - **`~` (Regex Match)**: The path is matched against a regular expression. e.g., `~/api/users/(\d+)`.
   A rewrite rule runs its regex once per request: the leftmost match builds the new path and, when the pattern has named groups, those become request variables from the same match.
 - **(Prefix Match)**: If no prefix is provided, the request path must start with the given string. e.g., `/api/`.
+
+A request is matched by its **normalized** path: percent-encoding decoded (once), `.` and `..` segments resolved, repeated slashes merged. `/%61dmin/users`, `//admin/users` and `/public/../admin/users` all match a location for `/admin`, as the upstream that receives them would read them, so the plugins of that location cannot be sidestepped by spelling the path differently. Only the matching uses this form; the request is forwarded exactly as it came, and `rewrite` works on the path as sent.
+
+Exact and prefix paths in the configuration are kept in the same form, so `/%E6%96%87%E6%A1%A3` and `/文档` name the same location. A regex is taken as written and is applied to the normalized path: write `/a b`, not `/a%20b`, in a pattern.
 - **(Any)**: An empty path string matches any request path.
