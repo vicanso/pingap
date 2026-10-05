@@ -16,7 +16,7 @@
 
 -   **Flexible Consistent Hashing Keys**: When using consistent hashing, you can define the key based on various request attributes:
     -   Client IP Address
-    -   URL Path, Query, or full URL
+    -   URL Path, Query, or full URL (`hash:url` is the path and query, without scheme or host, so the same url picks the same backend over HTTP/1.1 and HTTP/2)
     -   HTTP Header value
     -   Cookie value
 

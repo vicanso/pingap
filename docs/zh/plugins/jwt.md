@@ -93,6 +93,8 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A…
 
 并设置 `content-type: application/json`，改为 chunked 传输。因此上游返回的是*声明*（`{"id":"u-1","exp":…}`），而不是令牌本身。
 
+响应体是逐字节签名的，所以发往上游的 `auth_path` 请求不带客户端的 `Accept-Encoding`，声明以未压缩的形式返回。上游仍然压缩时返回 `502`，而不是签出一个载荷是 gzip 数据的令牌。
+
 签发仅支持 HMAC——签名始终用 `secret` 以 `HS256` 或 `HS512` 计算。只有上游 `2xx` 才会签名；错误响应原样透传，避免失败登录被签成永不过期令牌。
 
 ## 响应

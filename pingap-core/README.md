@@ -9,10 +9,10 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 ## Core Features
 
 - **Request Context (`Ctx`)**: A central struct that tracks the state of each request, including timing metrics, connection details, upstream information, caching status, and custom variables. It also provides utilities for generating detailed logs and `Server-Timing` headers.
-- **Plugin System**: An extensible plugin architecture that allows developers to hook into various stages of the request/response lifecycle (`PluginStep`). This enables custom logic for authentication, rate-limiting, header modification, and more.
+- **Plugin System**: An extensible plugin architecture that allows developers to hook into various stages of the request/response lifecycle (`PluginStep`). This enables custom logic for authentication, rate-limiting, header modification, and more. A response that a plugin answers with skips the response step; a plugin that returns `true` from `handles_plugin_response()` still gets to set its headers on it.
 - **HTTP Helpers**: A rich set of utilities for working with HTTP headers and responses:
     - **Header Manipulation**: Parse, create, and modify HTTP headers, with support for dynamic value substitution (e.g., `$hostname`, `$ja4`, `$remote_addr`, `$http_user_agent`).
-    - **Response Builders**: Fluent builders (`HttpResponseBuilder`) for easily constructing complete HTTP responses, with helpers for common types like JSON, HTML, text, and redirects.
+    - **Response Builders**: Fluent builders (`HttpResponseBuilder`) for easily constructing complete HTTP responses, with helpers for common types like JSON, HTML, text, and redirects. A header given twice is the last one given, except `Set-Cookie`, `WWW-Authenticate`, `Proxy-Authenticate` and `Link`, which are sent once per value.
     - **Streaming Responses**: Support for chunked responses (`HttpChunkResponse`) to efficiently stream large bodies of data.
 - **Background Task Service**: A generic service (`BackgroundTaskService`) for running periodic tasks in the background, such as health checks, data synchronization, or cleanup routines.
 - **Rate Limiting**: An efficient, TTL-based LRU cache (`TtlLruLimit`) for implementing rate-limiting logic based on a maximum number of requests within a given time window.

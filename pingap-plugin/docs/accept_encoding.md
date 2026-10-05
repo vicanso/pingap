@@ -20,7 +20,7 @@ Two problems this solves:
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `accept_encoding`. |
-| `encodings` | string | `""` | Comma-separated list of encodings to keep, **in priority order**. |
+| `encodings` | string \| string[] | `""` | Encodings to keep, **in priority order**: a comma-separated string (`"zstd, br, gzip"`) or a list (`["zstd", "br", "gzip"]`). |
 | `only_one_encoding` | bool | `false` | Keep only the first encoding the client actually accepts. |
 
 The output header is built by walking `encodings` in order and keeping those the

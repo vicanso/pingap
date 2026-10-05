@@ -296,9 +296,7 @@ impl HttpResponse {
 
         // Add all custom headers from the `headers` field.
         if let Some(headers) = &self.headers {
-            for (name, value) in headers {
-                add_header(name, value)?;
-            }
+            put_custom_headers(&mut resp, headers)?;
         }
         Ok(resp)
     }
@@ -307,6 +305,16 @@ impl HttpResponse {
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         // First, build the response header.
         let header = self.new_response_header()?;
+        self.send_with_header(session, header).await
+    }
+
+    /// Sends the body under `header`: the one `new_response_header` builds,
+    /// with whatever the caller has added to it.
+    pub async fn send_with_header(
+        self,
+        session: &mut Session,
+        header: ResponseHeader,
+    ) -> pingora::Result<usize> {
         let size = self.body.len();
         // Write the header to the session.
         session
@@ -318,6 +326,42 @@ impl HttpResponse {
         session.finish_body().await?;
         Ok(size)
     }
+}
+
+/// The headers that are sent once per value and cannot be folded into one
+/// line: a cookie's `Expires` has a comma of its own, and a challenge is a
+/// list already.
+fn is_repeated_header(name: &HeaderName) -> bool {
+    [
+        header::SET_COOKIE,
+        header::WWW_AUTHENTICATE,
+        header::PROXY_AUTHENTICATE,
+        header::LINK,
+    ]
+    .contains(name)
+}
+
+/// Puts the custom headers of a response into `resp`.
+///
+/// A header given again replaces the earlier one, which is how a configured
+/// `Content-Type` takes the place of the detected one. Not so for the few
+/// headers that come once per value: each `Set-Cookie` used to replace the
+/// last, and of the three an auth service answered with, the client got
+/// one.
+fn put_custom_headers(
+    resp: &mut ResponseHeader,
+    headers: &[HttpHeader],
+) -> pingora::Result<()> {
+    for (index, (name, value)) in headers.iter().enumerate() {
+        if is_repeated_header(name)
+            && headers[..index].iter().any(|(earlier, _)| earlier == name)
+        {
+            resp.append_header(name, value)?;
+        } else {
+            resp.insert_header(name, value)?;
+        }
+    }
+    Ok(())
 }
 
 /// Represents a chunked HTTP response for streaming large bodies of data.
@@ -368,9 +412,7 @@ where
         let mut resp = ResponseHeader::build(self.status, Some(4))?;
         // Add any custom headers.
         if let Some(headers) = &self.headers {
-            for (name, value) in headers {
-                resp.insert_header(name.to_owned(), value)?;
-            }
+            put_custom_headers(&mut resp, headers)?;
         }
 
         if !resp.headers.contains_key(header::CONTENT_LENGTH) {
@@ -683,6 +725,50 @@ mod tests {
                 .unwrap()
                 .contains(&HTTP_HEADER_NO_STORE.clone())
         );
+    }
+
+    /// Regression: every `Set-Cookie` of a response replaced the one before
+    /// it. Any other header given twice is still the last one given.
+    #[test]
+    fn test_repeated_headers_are_kept() {
+        let cookie = |value: &'static str| {
+            (header::SET_COOKIE, HeaderValue::from_static(value))
+        };
+        let text = |value: &'static str| {
+            (header::CONTENT_TYPE, HeaderValue::from_static(value))
+        };
+        let headers = vec![
+            cookie("a=1"),
+            text("text/html"),
+            cookie("b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT"),
+            text("text/plain"),
+            cookie("c=3"),
+        ];
+        let values = |resp: &ResponseHeader, name: HeaderName| {
+            resp.headers
+                .get_all(name)
+                .iter()
+                .map(|value| value.to_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        let expect_cookies =
+            vec!["a=1", "b=2; Expires=Wed, 21 Oct 2026 07:28:00 GMT", "c=3"];
+
+        let resp = HttpResponse {
+            headers: Some(headers.clone()),
+            ..Default::default()
+        }
+        .new_response_header()
+        .unwrap();
+        assert_eq!(expect_cookies, values(&resp, header::SET_COOKIE));
+        assert_eq!(vec!["text/plain"], values(&resp, header::CONTENT_TYPE));
+
+        let mut reader = tokio_test::io::Builder::new().build();
+        let mut chunked = HttpChunkResponse::new(&mut reader);
+        chunked.headers = Some(headers);
+        let resp = chunked.get_response_header().unwrap();
+        assert_eq!(expect_cookies, values(&resp, header::SET_COOKIE));
+        assert_eq!(vec!["text/plain"], values(&resp, header::CONTENT_TYPE));
     }
 
     #[test]

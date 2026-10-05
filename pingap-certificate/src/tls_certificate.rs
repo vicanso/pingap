@@ -233,13 +233,25 @@ impl TlsCertificate {
     ) -> Result<Arc<SelfSignedCertificate>> {
         // Format the common name (converts subdomain.example.com to *.example.com)
         let cn = Self::format_common_name(server_name);
-        // Create a unique cache key using the certificate name and common name
-        let cache_key =
-            format!("{}:{cn}", self.name.as_deref().unwrap_or_default());
+        // The key has the CA's content in it, not only its name: a CA that
+        // is replaced under the same name used to go on handing out what
+        // the old one had signed, for as long as the names stayed in use.
+        let cache_key = format!(
+            "{}:{}:{cn}",
+            self.name.as_deref().unwrap_or_default(),
+            self.hash_key
+        );
 
-        // Try to get existing certificate from cache
+        // Try to get existing certificate from cache. One that has expired
+        // is issued again - unless the CA has expired as well, when a new
+        // one would be no better and would be made on every handshake.
         if let Some(cert) = get_self_signed_certificate(&cache_key) {
-            return Ok(cert);
+            let now = pingap_core::now_sec() as i64;
+            let ca_expired =
+                self.info.as_ref().is_some_and(|info| info.not_after <= now);
+            if !cert.is_expired(now) || ca_expired {
+                return Ok(cert);
+            }
         }
 
         // Generate new certificate if not found in cache
@@ -280,6 +292,7 @@ mod tests {
     use super::TlsCertificate;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
 
     #[test]
     fn test_format_common_name() {
@@ -358,15 +371,27 @@ iama6sNZgokeRWVL1QJBaC2q0312AG8xeOZ7oWqfAtfxGpjhvNpgPJfZi8NA7+WE
 kknq2XUsBMCyIW1BqgLVEyeNxg==
 -----END PRIVATE KEY-----"#;
         // spellchecker:on
-        let cert = TlsCertificate::try_from(&CertificateConf {
-            tls_cert: Some(pem.to_string()),
-            tls_key: Some(key.to_string()),
-            ..Default::default()
-        })
-        .unwrap();
+        let new_ca = || {
+            TlsCertificate::try_from(&CertificateConf {
+                tls_cert: Some(pem.to_string()),
+                tls_key: Some(key.to_string()),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let ca = new_ca();
 
         let server_name = format!("{}.test.example.com", nanoid::nanoid!(10));
-        let cert = cert.get_self_signed_certificate(&server_name).unwrap();
+        let cert = ca.get_self_signed_certificate(&server_name).unwrap();
+        // The same CA hands out what it issued before.
+        let again = ca.get_self_signed_certificate(&server_name).unwrap();
+        assert_eq!(true, Arc::ptr_eq(&cert, &again));
+        // Regression: so did a CA that replaced it under the same name.
+        let mut replaced = new_ca();
+        replaced.hash_key = format!("{}-replaced", ca.hash_key);
+        let other = replaced.get_self_signed_certificate(&server_name).unwrap();
+        assert_eq!(false, Arc::ptr_eq(&cert, &other));
+
         let der = cert.certificate.leaf_der().unwrap();
         let (_, x509) = x509_parser::parse_x509_certificate(&der).unwrap();
         assert_eq!(

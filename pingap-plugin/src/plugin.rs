@@ -62,12 +62,14 @@ impl PluginFactory {
             });
         }
 
-        self.plugins
+        let creator = self
+            .plugins
             .get(&category)
+            .map(|creator| creator.value().clone())
             .ok_or(Error::NotFound {
                 category: category.to_string(),
-            })
-            .and_then(|creator| creator(conf))
+            })?;
+        crate::build_plugin(&category, || creator(conf))
     }
 }
 

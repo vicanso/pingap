@@ -902,11 +902,17 @@ impl LocationInstance for Location {
             }
         }
 
-        // preserve query parameters, appended in place
+        // preserve query parameters, appended in place. A replacement can
+        // bring a query of its own (`/search?from=old`): the request's is
+        // then added to it with `&`. It used to get a second `?`, which
+        // made the request's first parameter part of the last value.
         if let Some(query) = header.uri.query() {
-            new_path.reserve(query.len() + 1);
-            new_path.push('?');
-            new_path.push_str(query);
+            let has_query = new_path.contains('?');
+            if !has_query || !query.is_empty() {
+                new_path.reserve(query.len() + 1);
+                new_path.push(if has_query { '&' } else { '?' });
+                new_path.push_str(query);
+            }
         }
         debug!(target: LOG_TARGET, new_path, "rewrite path");
 
@@ -1177,6 +1183,30 @@ mod tests {
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
         assert_eq!(true, lo.rewrite(&mut h1, &mut variables));
         assert_eq!("/me?abc=1", h1.uri.to_string());
+    }
+
+    /// Regression: a replacement with a query of its own got the request's
+    /// query after a second `?`.
+    #[test]
+    fn test_rewrite_to_a_path_with_query() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("up".to_string()),
+                rewrite: Some("^/old/(.*) /search?from=old&q=$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rewritten = |path: &str| {
+            let mut header =
+                RequestHeader::build("GET", path.as_bytes(), None).unwrap();
+            assert_eq!(true, lo.rewrite(&mut header, &mut None), "{path}");
+            header.uri.to_string()
+        };
+        assert_eq!("/search?from=old&q=a", rewritten("/old/a"));
+        assert_eq!("/search?from=old&q=a&page=2", rewritten("/old/a?page=2"));
+        assert_eq!("/search?from=old&q=a", rewritten("/old/a?"));
     }
 
     /// The resolved plugin list is shared until the provider reports a new

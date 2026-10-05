@@ -66,7 +66,8 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 - `If-None-Match` 命中文件 ETag 的请求回 `304 Not Modified`，无正文（弱比较，`W/` 前缀不影响，`*` 总是命中）。
 - 每个响应带 `Accept-Ranges: bytes` 与由大小和 mtime 导出的弱 ETag（`W/"<size hex>-<mtime hex>"`）。
 - `text/html` 视为不可缓存，不应用 `max_age`——SPA 壳保持新鲜，而带 hash 的资源可缓存。
-- 支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffix`；多 range 只取第一个。不可满足的 range 返回 `416`，带 `Content-Range: bytes */<size>`。
+- 支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffix`；多 range 只取第一个。suffix 比文件长时返回整个文件（`206`）。不可满足的 range 返回 `416`，带 `Content-Range: bytes */<size>`。
+- `HEAD` 请求只读文件元数据，响应头和 `Content-Length` 与 `GET` 相同，不读取文件内容。
 - 不大于 `chunk_size` 的文件读入内存一次发送；更大的流式发送。两种情况下响应都带 `Content-Length`，状态码与请求一致：range 请求不论范围大小都是 `206` 并带 `Content-Range`。
 - `autoindex` 列表按名称排序并跳过点文件；名称经 HTML 转义、链接经百分号编码，因此名为 `<script>` 或 `a b.txt` 的文件能正确列出并链接。
 

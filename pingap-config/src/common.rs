@@ -15,6 +15,7 @@
 use super::{Error, Result};
 use crate::PingapTomlConfig;
 use bytesize::ByteSize;
+use pingap_core::ACCESS_LOG_PRESETS;
 use pingap_discovery::{DNS_DISCOVERY, is_static_discovery};
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
@@ -1047,6 +1048,35 @@ pub struct ServerConf {
     pub remark: Option<String>,
 }
 
+/// Checks that an `access_log` is a format, a preset, or a file followed
+/// by one of the two - the forms `parse_access_log_directive` of
+/// `pingap-logger` reads.
+///
+/// Anything else is taken for a format as well, one with no placeholder in
+/// it: `access_log = "stdout"`, or a file path on its own, printed that
+/// very word once per request and logged nothing.
+fn validate_access_log(access_log: &str) -> Result<()> {
+    let is_preset = |value: &str| ACCESS_LOG_PRESETS.contains(&value);
+    let format = match access_log.split_once(' ') {
+        Some((_, format))
+            if !access_log.starts_with('{')
+                && (is_preset(format) || format.starts_with('{')) =>
+        {
+            format
+        },
+        _ => access_log,
+    };
+    if format.is_empty() || is_preset(format) || format.contains('{') {
+        return Ok(());
+    }
+    Err(Error::Invalid {
+        message: format!(
+            "access_log {access_log:?} logs nothing of the request: expected a format such as \"{{method}} {{uri}} {{status}}\", one of {}, or a file path followed by either",
+            ACCESS_LOG_PRESETS.join(", ")
+        ),
+    })
+}
+
 impl Validate for ServerConf {
     fn validate(&self) -> Result<()> {
         self.validate_with_locations(&[])?;
@@ -1077,16 +1107,7 @@ impl ServerConf {
                 }
             }
         }
-        let access_log = self.access_log.clone().unwrap_or_default();
-        if !access_log.is_empty() {
-            // TODO: validate access log format
-            // let logger = Parser::from(access_log.as_str());
-            // if logger.tags.is_empty() {
-            //     return Err(Error::Invalid {
-            //         message: "access log format is invalid".to_string(),
-            //     });
-            // }
-        }
+        validate_access_log(self.access_log.as_deref().unwrap_or_default())?;
 
         self.validate_h2()?;
         validate_tcp_keepalive(
@@ -1763,6 +1784,19 @@ impl PingapConfig {
         // Plugin configs are validated by the binary (`src/main.rs`) through
         // the plugin factory: that factory lives in a higher layer than this
         // crate, so it cannot be reached from here without a dependency cycle.
+        // What a plugin names of the other entries is checked here, with
+        // the other references: a `traffic_splitting` plugin sending its
+        // share of the requests to an upstream that does not exist used to
+        // pass, and those requests then failed.
+        for (name, upstream) in self.plugin_upstreams() {
+            if !upstream_names.iter().any(|item| item == upstream) {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "plugin({name}): upstream({upstream}) is not found"
+                    ),
+                });
+            }
+        }
         for certificate in self.certificates.values() {
             certificate.validate()?;
         }
@@ -1773,6 +1807,19 @@ impl PingapConfig {
             true,
         )?;
         Ok(())
+    }
+    /// The upstreams that plugins send requests to, with the name of the
+    /// plugin: the `upstream` of each `traffic_splitting` plugin.
+    fn plugin_upstreams(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.plugins.iter().filter_map(|(name, plugin)| {
+            let text =
+                |key: &str| plugin.get(key).and_then(|value| value.as_str());
+            if text("category") != Some("traffic_splitting") {
+                return None;
+            }
+            let upstream = text("upstream").filter(|item| !item.is_empty())?;
+            Some((name.as_str(), upstream))
+        })
     }
     /// Generate the content hash of config.
     pub fn hash(&self) -> Result<String> {
@@ -1799,6 +1846,12 @@ impl PingapConfig {
                     })
                 {
                     return Err(in_use("upstream", "location", location_name));
+                }
+                if let Some((plugin_name, _)) = self
+                    .plugin_upstreams()
+                    .find(|(_, upstream)| *upstream == name)
+                {
+                    return Err(in_use("upstream", "plugin", plugin_name));
                 }
             },
             CATEGORY_LOCATION => {
@@ -2600,6 +2653,89 @@ h1_upgrade = "preserve"
         conf.locations = Some(vec!["lo".to_string()]);
         let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_ok());
+    }
+
+    /// Regression: the upstream a `traffic_splitting` plugin names was not
+    /// checked, and could be removed while the plugin still used it.
+    #[test]
+    fn test_plugin_upstream_reference() {
+        let new_config = |upstream: &str| {
+            PingapConfig::new(
+                format!(
+                    r#"
+[upstreams.main]
+addrs = ["127.0.0.1:5000"]
+
+[upstreams.canary]
+addrs = ["127.0.0.1:5001"]
+
+[plugins.split]
+category = "traffic_splitting"
+upstream = "{upstream}"
+weight = 10
+
+[plugins.other]
+category = "mock"
+upstream = "not-a-reference"
+"#
+                )
+                .as_bytes(),
+                false,
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            "Invalid error plugin(split): upstream(canery) is not found",
+            new_config("canery").validate().unwrap_err().to_string()
+        );
+        let config = new_config("canary");
+        config.validate().unwrap();
+        assert_eq!(
+            "Invalid error upstream(canary) is in used by plugin(split)",
+            config
+                .check_removable(CATEGORY_UPSTREAM, "canary")
+                .unwrap_err()
+                .to_string()
+        );
+        config.check_removable(CATEGORY_UPSTREAM, "main").unwrap();
+    }
+
+    /// Regression: an `access_log` without a placeholder was taken for a
+    /// format and printed as it is, once per request.
+    #[test]
+    fn test_access_log_needs_a_placeholder() {
+        let validate = |access_log: &str| {
+            ServerConf {
+                addr: "127.0.0.1:3001".to_string(),
+                access_log: Some(access_log.to_string()),
+                ..Default::default()
+            }
+            .validate()
+        };
+        for access_log in [
+            "",
+            "combined",
+            "json",
+            "{method} {uri} {status}",
+            "/var/log/pingap/access.log combined",
+            "/var/log/pingap/access.log {method} {uri}",
+            "{\"uri\":{uri}}",
+        ] {
+            assert_eq!(true, validate(access_log).is_ok(), "{access_log}");
+        }
+        for access_log in [
+            "stdout",
+            "/var/log/pingap/access.log",
+            "combinedd",
+            "stdout combinedd",
+        ] {
+            let err = validate(access_log).unwrap_err().to_string();
+            assert_eq!(
+                true,
+                err.contains("logs nothing of the request"),
+                "{access_log}: {err}"
+            );
+        }
     }
 
     #[test]

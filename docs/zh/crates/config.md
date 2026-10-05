@@ -28,7 +28,7 @@ pub struct PingapConfig {
 | `certificates` | TLS 证书，含 ACME 设置 |
 | `storages` | 可被 `includes` 引用的可复用片段；ACME 也在此保存 challenge 状态 |
 
-每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置，都在这一步报告，而不是等到下次启动。它只读取配置，磁盘上的配置保持原样。
+每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置（包括类型写错的值），都在这一步报告，而不是等到下次启动。校验器还会检查条目之间的引用：location 的 upstream 和插件、server 的 location，以及 `traffic_splitting` 插件的 upstream。`access_log` 既不是带占位符的格式、也不是预设名、也不是文件路径后跟这两者之一时，会被拒绝。它只读取配置，磁盘上的配置保持原样。
 
 ## 存储后端
 

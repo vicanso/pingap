@@ -641,10 +641,17 @@ impl Plugin for JwtAuth {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
-        let req_header = session.req_header();
-        if req_header.uri.path() == self.auth_path {
+        if session.req_header().uri.path() == self.auth_path {
+            // The upstream's answer to this request becomes the payload of
+            // the token, byte for byte, so it is asked for without a
+            // content coding. With the client's `Accept-Encoding` passed
+            // on, an upstream that compresses had its gzip stream signed.
+            session
+                .req_header_mut()
+                .remove_header(&http::header::ACCEPT_ENCODING);
             return Ok(RequestPluginResult::Skipped);
         }
+        let req_header = session.req_header();
         let value = if let Some(key) = &self.header {
             strip_bearer(
                 pingap_core::get_req_header_value(req_header, key)
@@ -736,6 +743,21 @@ impl Plugin for JwtAuth {
         // token that never expires.
         if !upstream_response.status.is_success() {
             return Ok(ResponsePluginResult::Unchanged);
+        }
+        // Asked for without a coding, see `handle_request`. An upstream
+        // that sends one all the same has nothing here that can be signed:
+        // better no token than one whose payload is a gzip stream.
+        let coded = upstream_response
+            .headers
+            .get(http::header::CONTENT_ENCODING)
+            .is_some_and(|value| {
+                !value.as_bytes().eq_ignore_ascii_case(b"identity")
+            });
+        if coded {
+            return Err(pingap_core::new_internal_error(
+                502,
+                "jwt: the response to sign has a content encoding",
+            ));
         }
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
@@ -1555,5 +1577,56 @@ auth_path = "/login"
             b"invalid user or password".as_ref(),
             body.unwrap().as_ref()
         );
+    }
+
+    /// Regression: the response at `auth_path` is signed as it comes. With
+    /// the client's `Accept-Encoding` passed on, an upstream that compresses
+    /// had its compressed bytes signed into the token.
+    #[tokio::test]
+    async fn test_auth_path_is_requested_and_signed_uncoded() {
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+secret = "123123"
+header = "Authorization"
+auth_path = "/login"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mock_io = Builder::new()
+            .read(b"GET /login HTTP/1.1\r\nAccept-Encoding: gzip, br\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        let result = auth
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Skipped);
+        assert_eq!(
+            false,
+            session.req_header().headers.contains_key("accept-encoding")
+        );
+
+        // Coded all the same: no token is made of it.
+        let mut coded = ResponseHeader::build_no_case(200, None).unwrap();
+        coded.insert_header("Content-Encoding", "gzip").unwrap();
+        assert_eq!(
+            true,
+            auth.handle_response(&mut session, &mut ctx, &mut coded)
+                .await
+                .is_err()
+        );
+        let mut plain = ResponseHeader::build_no_case(200, None).unwrap();
+        plain.insert_header("Content-Encoding", "identity").unwrap();
+        let result = auth
+            .handle_response(&mut session, &mut ctx, &mut plain)
+            .await
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Modified, result);
     }
 }

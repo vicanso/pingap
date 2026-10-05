@@ -126,6 +126,17 @@ A placeholder is `{`, a name made of letters, digits and `_ - < > ~ : $`, and
 header or cookie, no status yet - is rendered as `-`; a context field with no
 value writes nothing. A placeholder that names no tag is dropped.
 
+In a text format a value that comes from the request or a response header is
+escaped: `"` becomes `\"`, `\` becomes `\\`, and a control character `\xXX`.
+A format usually quotes such fields (`"{referer}" "{user_agent}"`), and a
+user agent of `" 200 "-` would otherwise write fields of its own into the
+line. Everything else, non-ASCII text included, is written as it came.
+
+An `access_log` has to log something of the request: a format with at least
+one placeholder, a preset, or a file followed by either. `access_log =
+"stdout"` or a file path on its own is rejected by configuration validation -
+it used to be taken for a format and printed that word once per request.
+
 #### Context keys
 
 `{:<context_key>}` prints a value pingap recorded while serving the request.
@@ -317,6 +328,11 @@ The logger is configured via a URI-like string in the `log` field of `LoggerPara
   down does not stop pingap from starting. Connecting and writing time out
   after one second; after a failure messages are dropped for five seconds
   before the next attempt, and each failure is reported on stderr.
+
+  The local socket is connected at startup, so a path that is not there fails
+  then. When the syslog daemon is restarted the socket is connected again on
+  the next message, which is then sent; while there is no daemon, messages are
+  dropped and a reconnect is tried every five seconds.
 
 - **Standard I/O:** `stdout` or `stderr`; `""` (empty string) is stderr.
 

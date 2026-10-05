@@ -329,6 +329,14 @@ impl Plugin for Cors {
         }
         Ok(ResponsePluginResult::Modified)
     }
+
+    /// A 401 or a 429 that another plugin answers with is a response to the
+    /// same cross-origin request. Without these headers the browser keeps
+    /// it from the page, which sees a failed request and no status.
+    #[inline]
+    fn handles_plugin_response(&self) -> bool {
+        true
+    }
 }
 
 register_plugin!("cors", Cors);

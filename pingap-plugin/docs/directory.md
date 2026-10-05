@@ -73,8 +73,11 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 - `text/html` responses are treated as non-cacheable, so `max_age` is not applied
   to them — the SPA shell stays fresh while hashed assets are cached.
 - `bytes=start-end`, `bytes=start-` and `bytes=-suffix` are supported; only the
-  first range of a multi-range request is honoured. An unsatisfiable range gets
-  `416` with `Content-Range: bytes */<size>`.
+  first range of a multi-range request is honoured. A suffix longer than the
+  file is the whole file (`206`). An unsatisfiable range gets `416` with
+  `Content-Range: bytes */<size>`.
+- A `HEAD` is answered from the file's metadata, with the headers and the
+  `Content-Length` of the `GET`; the file is not read.
 - Files at or below `chunk_size` are read into memory and sent in one response;
   larger ones are streamed. Either way the response has a `Content-Length` and
   the status of the request: `206` with `Content-Range` for a range, whatever

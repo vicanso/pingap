@@ -156,6 +156,18 @@ pub trait Plugin: Sync + Send {
         Ok(ResponsePluginResult::Unchanged)
     }
 
+    /// Whether `handle_response` is also to see the response that another
+    /// plugin answered the request with.
+    ///
+    /// Such a response is sent from the request step and never reaches the
+    /// response step. Only for a plugin whose `handle_response` does
+    /// nothing but set headers: no body handler runs for that response, and
+    /// its length is fixed.
+    #[inline]
+    fn handles_plugin_response(&self) -> bool {
+        false
+    }
+
     /// Processes an HTTP response body at a specified lifecycle step.
     ///
     /// # Parameters

@@ -27,7 +27,11 @@ Levels outside their range are clamped to it (a negative level is `0`).
 | `decompression` | bool | absent | Presence of the key toggles decompression of compressed upstream responses. |
 
 Algorithm priority is fixed: **zstd > brotli > gzip**. The first enabled
-algorithm the client accepts wins.
+algorithm the client accepts wins, wherever the client lists it: a browser
+sends `gzip, deflate, br, zstd` and gets zstd when zstd is enabled. To make
+that so in `response` mode the plugin moves its choice to the front of the
+request's `Accept-Encoding` (`zstd, gzip, deflate, br`), which is also what the
+upstream receives; the set of encodings is unchanged.
 
 ## Examples
 

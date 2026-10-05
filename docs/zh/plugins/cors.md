@@ -65,6 +65,7 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 | --- | --- |
 | 匹配路径上的 `OPTIONS` | `204 No Content` 带全部 CORS 头；不调用上游 |
 | 任意方法，请求有 `Origin` | 向响应追加 CORS 头 |
+| 同一 location 的其他插件直接返回响应（`401`、`429`、重定向） | 同样追加 CORS 头 |
 | 任意方法，无 `Origin` | 响应不变 |
 | 路径不匹配 `path` | 两阶段均跳过插件 |
 
@@ -74,3 +75,4 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 - 匹配路径上的**任意** `OPTIONS` 都会被预检应答，无论是否带 `Origin` 与 `Access-Control-Request-Method`。若上游需要看到 `OPTIONS`（如 WebDAV），请收窄 `path`。
 - `allow_origin` 仅支持单个值；实现 origin 允许列表请用 `$http_origin` 加上游/边缘检查。
 - 预检完全绕过上游，成本很低。
+- 认证、限流插件直接返回的响应同样带 CORS 头，与 `cors` 在插件列表里的位置无关。没有这些头时，浏览器不会把响应交给页面，页面看到的是请求失败，而不是 `401`。Pingap 因上游故障生成的响应（`502`、`504`）不带这些头。

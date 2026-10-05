@@ -22,7 +22,7 @@
 | `min_length` | int | `0` | 仅上游模式：`Content-Length` 低于此值则跳过。 |
 | `decompression` | bool | 缺席 | 键存在则切换对压缩上游响应的解压。 |
 
-算法优先级固定：**zstd > brotli > gzip**。客户端接受的第一个已启用算法胜出。
+算法优先级固定：**zstd > brotli > gzip**。客户端接受的第一个已启用算法胜出，与客户端把它写在第几位无关：浏览器发送 `gzip, deflate, br, zstd`，启用了 zstd 就用 zstd。为此，`response` 模式下插件会把选中的算法移到请求 `Accept-Encoding` 的最前面（`zstd, gzip, deflate, br`），上游收到的也是这个顺序；编码集合不变。
 
 ## 示例
 

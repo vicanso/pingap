@@ -66,6 +66,7 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 | --- | --- |
 | `OPTIONS` on a matching path | `204 No Content` with all CORS headers; upstream is not called |
 | Any method, request has `Origin` | CORS headers appended to the response |
+| Another plugin of the location answers (a `401`, a `429`, a redirect) | CORS headers appended to that response as well |
 | Any method, no `Origin` | Response untouched |
 | Path does not match `path` | Plugin skipped in both phases |
 
@@ -80,3 +81,8 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 - `allow_origin` supports a single value only; use `$http_origin` plus an
   upstream/edge check to implement an origin allow-list.
 - The preflight response bypasses the upstream entirely, so it is cheap.
+- A response that an auth or limit plugin produces carries the CORS headers too,
+  wherever `cors` stands in the plugin list. Without them the browser withholds
+  the response from the page, which sees a failed request and not the `401`.
+  Responses Pingap generates for an upstream failure (`502`, `504`) do not get
+  them.

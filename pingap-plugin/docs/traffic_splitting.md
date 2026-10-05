@@ -12,7 +12,7 @@ tests. Routing is unchanged — only the chosen backend pool differs.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `traffic_splitting`. |
-| `upstream` | string | — | **Required.** Upstream to switch to when the request is selected. |
+| `upstream` | string | — | **Required.** Upstream to switch to when the request is selected. Must be a configured upstream: a name that is not fails configuration validation, and an upstream a plugin names cannot be removed. |
 | `weight` | int | `0` | 0–100. Percentage of traffic sent to `upstream`. |
 | `stickiness` | bool | `false` | Make the decision deterministic per client instead of random. |
 | `sticky_cookie` | string | — | Cookie whose value drives the sticky decision. |

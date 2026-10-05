@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `traffic_splitting`。 |
-| `upstream` | string | — | **必填。** 被选中时切换到的 upstream。 |
+| `upstream` | string | — | **必填。** 被选中时切换到的 upstream。必须是已配置的 upstream：名字不存在时配置校验报错，被插件引用的 upstream 不能删除。 |
 | `weight` | int | `0` | 0–100。导向 `upstream` 的流量百分比。 |
 | `stickiness` | bool | `false` | 是否按客户端做确定性决策（而非随机）。 |
 | `sticky_cookie` | string | — | 驱动粘性决策的 Cookie 名。 |

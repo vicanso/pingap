@@ -118,8 +118,11 @@ fn parse_range_header(range_header: &str, file_size: u64) -> Option<ByteRange> {
     let range_spec = range_spec.split(',').next()?.trim();
 
     if let Some(suffix_str) = range_spec.strip_prefix('-') {
-        let suffix: u64 = suffix_str.parse().ok()?;
-        if suffix == 0 || suffix > file_size {
+        // The last `suffix` bytes, or the whole file when it has fewer:
+        // RFC 9110 14.1.2. Asking for more than there is used to be a 416,
+        // which is what a player gets that probes with `bytes=-65536`.
+        let suffix = suffix_str.parse::<u64>().ok()?.min(file_size);
+        if suffix == 0 {
             return None;
         }
         Some(ByteRange {
@@ -530,6 +533,30 @@ impl Directory {
                 .await
                 .is_ok_and(|resolved| !resolved.starts_with(&self.path))
     }
+    /// The answer to a HEAD: the headers the GET would have, `length` as
+    /// the size of the body it would send, and no body. `cache` is whether
+    /// the file may be cached, or `None` for an answer the GET sends
+    /// without the plugin's cache headers.
+    fn head_response(
+        &self,
+        status: StatusCode,
+        mut headers: Vec<HttpHeader>,
+        length: usize,
+        cache: Option<bool>,
+    ) -> HttpResponse {
+        headers.push((header::CONTENT_LENGTH, HeaderValue::from(length)));
+        HttpResponse {
+            status,
+            max_age: if cache == Some(true) {
+                self.max_age
+            } else {
+                None
+            },
+            cache_private: cache.and(self.cache_private),
+            headers: Some(headers),
+            ..Default::default()
+        }
+    }
     async fn send_streaming_response(
         &self,
         session: &mut Session,
@@ -774,6 +801,10 @@ impl Plugin for Directory {
             .get(header::RANGE)
             .and_then(|v| v.to_str().ok());
         let chunk_size = self.chunk_size.unwrap_or(MIN_CHUNK_SIZE as usize);
+        // A HEAD is answered from the metadata. It used to go the way of
+        // the GET, reading the file - all of it, chunk by chunk, for a
+        // large one - for a body that is never sent.
+        let is_head = session.req_header().method == http::Method::HEAD;
 
         // handle range request
         if let Some(range_str) = range_header {
@@ -784,6 +815,19 @@ impl Plugin for Directory {
                     range.start, range.end, size
                 )) {
                     headers.push((header::CONTENT_RANGE, val));
+                }
+                if is_head {
+                    // The cache headers of the GET: only a streamed range
+                    // carries them.
+                    let streamed = range_len > chunk_size;
+                    return Ok(RequestPluginResult::Respond(
+                        self.head_response(
+                            StatusCode::PARTIAL_CONTENT,
+                            headers,
+                            range_len,
+                            streamed.then_some(cacheable),
+                        ),
+                    ));
                 }
                 if let Err(e) =
                     f.seek(std::io::SeekFrom::Start(range.start)).await
@@ -840,6 +884,15 @@ impl Plugin for Directory {
                     ..Default::default()
                 }));
             }
+        }
+
+        if is_head {
+            return Ok(RequestPluginResult::Respond(self.head_response(
+                StatusCode::OK,
+                headers,
+                size,
+                Some(cacheable),
+            )));
         }
 
         // handle normal request
@@ -1292,6 +1345,66 @@ follow_symlinks = {follow_symlinks}
         assert_eq!(403, request(&dir, "/sub").await.status.as_u16());
     }
 
+    /// Regression: a HEAD went the way of the GET and read the file, the
+    /// whole of a large one, for a body that is not sent. It is answered
+    /// from the metadata, with the length the GET would send.
+    #[tokio::test]
+    async fn test_directory_head_does_not_read_the_file() {
+        let root = tempfile::tempdir().unwrap();
+        let size = 3 * MIN_CHUNK_SIZE as usize;
+        std::fs::write(root.path().join("big.bin"), vec![b'a'; size]).unwrap();
+        std::fs::write(root.path().join("small.txt"), "hello").unwrap();
+        let dir = new_directory(root.path(), "max_age = \"1h\"");
+
+        let head = async |path: &str, headers: &str| {
+            let resp = request(
+                &dir,
+                &format!("HEAD {path} HTTP/1.1\r\n{headers}\r\n"),
+            )
+            .await;
+            assert_eq!(true, resp.body.is_empty(), "{path}");
+            let header = resp.new_response_header().unwrap();
+            let value = |name: &str| {
+                header
+                    .headers
+                    .get(name)
+                    .map(|value| value.to_str().unwrap().to_string())
+                    .unwrap_or_default()
+            };
+            (
+                resp.status.as_u16(),
+                value("content-length"),
+                value("content-range"),
+                value("cache-control"),
+            )
+        };
+
+        // A streamed response used to report the status 999 here: it had
+        // been written to the connection, chunk by chunk.
+        let (status, length, _, cache) = head("/big.bin", "").await;
+        assert_eq!(200, status);
+        assert_eq!(size.to_string(), length);
+        assert_eq!("public, max-age=3600", cache);
+
+        let (status, length, _, cache) = head("/small.txt", "").await;
+        assert_eq!(200, status);
+        assert_eq!("5", length);
+        assert_eq!("public, max-age=3600", cache);
+
+        let (status, length, range, _) =
+            head("/big.bin", "Range: bytes=0-99\r\n").await;
+        assert_eq!(206, status);
+        assert_eq!("100", length);
+        assert_eq!(format!("bytes 0-99/{size}"), range);
+
+        // The suffix is longer than the file: all of it.
+        let (status, length, range, _) =
+            head("/small.txt", "Range: bytes=-100\r\n").await;
+        assert_eq!(206, status);
+        assert_eq!("5", length);
+        assert_eq!("bytes 0-4/5", range);
+    }
+
     /// Regression: a response too large for one chunk is streamed, and the
     /// streamed header was always `200 OK` with `Transfer-Encoding: chunked`
     /// on top of the `Content-Length` - for a range too, which a client
@@ -1399,6 +1512,14 @@ follow_symlinks = {follow_symlinks}
         let range = parse_range_header("bytes=-500", 1000).unwrap();
         assert_eq!(500, range.start);
         assert_eq!(999, range.end);
+
+        // Regression: a suffix longer than the file is the whole file, not
+        // an unsatisfiable range.
+        let range = parse_range_header("bytes=-1500", 1000).unwrap();
+        assert_eq!(0, range.start);
+        assert_eq!(999, range.end);
+        assert!(parse_range_header("bytes=-0", 1000).is_none());
+        assert!(parse_range_header("bytes=-500", 0).is_none());
 
         // Test range beyond file size
         let range = parse_range_header("bytes=0-1999", 1000).unwrap();

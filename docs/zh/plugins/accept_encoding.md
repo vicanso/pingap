@@ -15,7 +15,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `accept_encoding`。 |
-| `encodings` | string | `""` | 要保留的编码，逗号分隔，**按优先级排序**。 |
+| `encodings` | string \| string[] | `""` | 要保留的编码，**按优先级排序**：逗号分隔的字符串（`"zstd, br, gzip"`）或列表（`["zstd", "br", "gzip"]`）。 |
 | `only_one_encoding` | bool | `false` | 仅保留客户端实际接受的第一个编码。 |
 
 输出头按 `encodings` 顺序遍历并保留客户端列出的项，因此结果顺序是你的，不是客户端的。匹配在逗号/`;` 词边界上进行，并尊重 `q=0`，故 `x-gzip` 不匹配 `gzip`，`gzip;q=0` 视为“不可接受”。

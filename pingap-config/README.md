@@ -36,8 +36,12 @@ Every section implements `Validate`. `pingap -t` loads the configuration, runs
 all validators and exits — run it in CI and before a reload. On top of the
 validators it builds every upstream, location and plugin the way startup does,
 so an unknown `alpn`, a `ca` that does not load, a path or host regex that does
-not compile, a malformed `rewrite` rule or an invalid plugin setting is
-reported there and not on the next start. It only
+not compile, a malformed `rewrite` rule or an invalid plugin setting - a value
+of the wrong type included - is reported there and not on the next start. The
+validators also check what entries name of each other: a location's upstream
+and plugins, a server's locations, and the upstream of a `traffic_splitting`
+plugin. An `access_log` that is neither a format with a placeholder, a preset,
+nor a file followed by one of the two is rejected. It only
 reads: the configuration is left exactly as it is on disk.
 
 ## Storage backends

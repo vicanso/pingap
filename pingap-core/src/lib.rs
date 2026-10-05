@@ -36,6 +36,12 @@ pub fn new_internal_error(
     )
 }
 
+/// The names `access_log` accepts in place of a format. Here, and not with
+/// the formats themselves in `pingap-logger`, so that the config validation
+/// knows a preset from a word that is none.
+pub const ACCESS_LOG_PRESETS: [&str; 5] =
+    ["combined", "common", "short", "tiny", "json"];
+
 mod ctx;
 mod http_header;
 mod http_response;

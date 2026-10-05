@@ -770,6 +770,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = process::RestartProcessCommand {
             exec_path,
+            // Read here, before the server daemonizes and moves to `/`.
+            current_dir: std::env::current_dir().ok(),
             ..Default::default()
         };
         if let Ok(env) = std::env::var("RUST_LOG") {
@@ -809,10 +811,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Some(threads) = args.threads {
             new_args.push(format!("--threads={threads}"));
         }
-        // `--autoreload` is deliberately not forwarded: it is implied by
-        // `--autorestart`, which the restarted process gets below.
+        // `--autorestart` implies `--autoreload`. Started with the latter
+        // alone, a process restarted from the admin used to come back with
+        // neither, and no longer followed its config.
         if args.autorestart {
             new_args.push("--autorestart".to_string());
+        } else if args.autoreload {
+            new_args.push("--autoreload".to_string());
         }
         // The readiness channel for the hand-over: a unix socket next to the
         // upgrade socket, plus the pid file both generations share so that a

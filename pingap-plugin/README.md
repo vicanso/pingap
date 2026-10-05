@@ -44,6 +44,12 @@ A location never runs without a plugin it names:
   `reload_config_fail` notification. A new plugin that fails to build has
   nothing to fall back to: its locations answer `500`.
 
+A value of the wrong type is an invalid configuration, not a default:
+`max = "100"` where an integer is expected, `hide_credentials = "true"` where a
+boolean is, a number in a list of strings, a duration that does not parse. The
+error names the key and what it takes. Up to 0.15.0 such a value was silently
+read as `0`, `false` or an empty list.
+
 A plugin whose category this build was compiled without is not an error by
 itself, so one configuration can be shared between builds; it is logged as
 unavailable. What a location that names it gets depends on the plugin:
@@ -142,12 +148,18 @@ the same factory and are configured exactly the same way.
 1. Implement `pingap_core::Plugin`. Only the hooks you need have to be
    overridden — every method has a default no-op implementation.
 2. Parse `&PluginConf` in `TryFrom`, using the `get_*_conf` helpers in
-   `src/plugin.rs`, and reject invalid combinations there so that `pingap -t`
-   catches them before the proxy starts.
+   `src/lib.rs`, and reject invalid combinations there so that `pingap -t`
+   catches them before the proxy starts. A helper that finds a value of the
+   wrong type answers the default and notes it; the factory then fails the
+   plugin with that note, so the type of each key needs no check of your own.
 3. Return `get_hash_key(conf)` from `config_key()`. Pingap uses it to detect
    whether a hot reload actually changed this plugin instance.
 4. Register the category with the `register_plugin!` macro, which expands to a
    pre-main constructor.
+5. A plugin that only sets response headers, and should set them on a response
+   another plugin answered with as well (as `cors` does for a `401`), returns
+   `true` from `handles_plugin_response()`. Its `handle_response` is then also
+   called for those responses, which never reach the response step.
 
 ```rust
 use async_trait::async_trait;

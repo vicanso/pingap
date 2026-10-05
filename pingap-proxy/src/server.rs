@@ -991,6 +991,41 @@ impl Server {
 
 const MODULE_GRPC_WEB: &str = "grpc-web";
 
+/// Sends the response that the plugin at `responder` answered a request
+/// with.
+///
+/// It goes out from the request step and never reaches the response step,
+/// so what the plugins of that step add was missing from it. For CORS that
+/// is more than a missing header: a 401 or a 429 without it is withheld
+/// from the page by the browser, which reports a failed request. The
+/// plugins that ask for it (`handles_plugin_response`) get to set their
+/// headers; the responder itself has said what it had to say.
+async fn send_plugin_response(
+    session: &mut Session,
+    ctx: &mut Ctx,
+    plugins: &[pingap_core::NamedPlugin],
+    responder: usize,
+    resp: pingap_core::HttpResponse,
+) -> pingora::Result<()> {
+    // Built only when a plugin wants it: most responses go out as they are.
+    let mut header = None;
+    for (index, (_, plugin)) in plugins.iter().enumerate() {
+        if index == responder || !plugin.handles_plugin_response() {
+            continue;
+        }
+        let header = match &mut header {
+            Some(header) => header,
+            None => header.insert(resp.new_response_header()?),
+        };
+        plugin.handle_response(session, ctx, header).await?;
+    }
+    match header {
+        Some(header) => resp.send_with_header(session, header).await?,
+        None => resp.send(session).await?,
+    };
+    Ok(())
+}
+
 impl Server {
     /// Executes request plugins in the configured chain
     /// Returns true if a plugin handled the request completely
@@ -1011,7 +1046,7 @@ impl Server {
 
         let result = async {
             let mut request_done = false;
-            for (name, plugin) in plugins.iter() {
+            for (index, (name, plugin)) in plugins.iter().enumerate() {
                 let now = Instant::now();
                 let result = plugin.handle_request(step, session, ctx).await?;
                 let elapsed = now.elapsed().as_millis() as u32;
@@ -1037,7 +1072,10 @@ impl Server {
                         // ignore status >= 900
                         if resp.status.as_u16() < 900 {
                             ctx.state.status = Some(resp.status);
-                            resp.send(session).await?;
+                            send_plugin_response(
+                                session, ctx, &plugins, index, resp,
+                            )
+                            .await?;
                         }
                         request_done = true;
                         break;
@@ -3445,6 +3483,74 @@ value = 'proxy_set_headers = ["name:value"]'
             "{response}"
         );
         assert_eq!(true, response.ends_with("early"), "{response}");
+    }
+
+    /// Regression: a response that a plugin answers with goes out from the
+    /// request step, and had none of the headers the response step adds: a
+    /// cross-origin 401 without the CORS headers never reaches the page.
+    /// The plugins that ask for it set their headers on it, the one that
+    /// answered and the ones that did not ask do not.
+    #[tokio::test]
+    async fn test_plugin_response_gets_the_headers_asked_for() {
+        struct Adder {
+            header: &'static str,
+            asks: bool,
+        }
+        #[async_trait::async_trait]
+        impl Plugin for Adder {
+            async fn handle_response(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                resp: &mut ResponseHeader,
+            ) -> pingora::Result<ResponsePluginResult> {
+                resp.insert_header(self.header, "1")?;
+                Ok(ResponsePluginResult::Modified)
+            }
+            fn handles_plugin_response(&self) -> bool {
+                self.asks
+            }
+        }
+        let adder = |header, asks| -> Arc<dyn Plugin> {
+            Arc::new(Adder { header, asks })
+        };
+        let plugins: Vec<pingap_core::NamedPlugin> = vec![
+            ("cors".into(), adder("X-Cors", true)),
+            ("auth".into(), adder("X-Auth", true)),
+            ("other".into(), adder("X-Other", false)),
+        ];
+        let send = async |plugins: &[pingap_core::NamedPlugin],
+                          responder: usize| {
+            let (mut session, client) =
+                new_duplex_session("GET / HTTP/1.1\r\n\r\n").await;
+            let mut resp = pingap_core::HttpResponse::text("denied");
+            resp.status = StatusCode::UNAUTHORIZED;
+            send_plugin_response(
+                &mut session,
+                &mut Ctx::default(),
+                plugins,
+                responder,
+                resp,
+            )
+            .await
+            .unwrap();
+            drop(session);
+            read_response(client).await.to_lowercase()
+        };
+
+        // `auth`, the second plugin, is the one that answers.
+        let response = send(&plugins, 1).await;
+        assert_eq!(true, response.starts_with("http/1.1 401 "), "{response}");
+        assert_eq!(true, response.contains("x-cors: 1"), "{response}");
+        assert_eq!(false, response.contains("x-auth"), "{response}");
+        assert_eq!(false, response.contains("x-other"), "{response}");
+        assert_eq!(true, response.contains("content-length: 6"), "{response}");
+        assert_eq!(true, response.ends_with("denied"), "{response}");
+
+        // Nobody asks: sent as it is.
+        let response = send(&plugins[1..], 0).await;
+        assert_eq!(true, response.starts_with("http/1.1 401 "), "{response}");
+        assert_eq!(false, response.contains("x-"), "{response}");
     }
 
     /// A backend that takes the connection and then fails the request is

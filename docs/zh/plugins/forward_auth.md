@@ -70,7 +70,7 @@ x-forwarded-for: 1.2.3.4
 | 其他状态 | 该状态码、头与正文原样回传 |
 | 不可达 / 超时 | `502 Bad Gateway`，正文 `Forward auth request failed` |
 
-回传响应会剥离 `content-length`、`transfer-encoding`、`connection` 及其他逐跳头，因为 Pingap 会重新组帧。非法 HTTP 状态码降级为 `403`。
+回传响应会剥离 `content-length`、`transfer-encoding`、`connection` 及其他逐跳头，因为 Pingap 会重新组帧。非法 HTTP 状态码降级为 `403`。认证服务重复发送的头会原数转给客户端：登录跳转里的每个 `Set-Cookie`、每个 `WWW-Authenticate` 质询。
 
 `add_headers` 里列出的头代表认证服务对上游说的话，也只代表它：每个头先从请求中移除，认证响应里有才重新设置。客户端自己发送 `X-User-Id: admin` 时，不论认证服务是否返回这个头，这个值都到不了上游。
 

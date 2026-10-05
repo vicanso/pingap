@@ -42,6 +42,13 @@ pub struct SelfSignedCertificate {
     not_after: i64,
 }
 
+impl SelfSignedCertificate {
+    /// Whether the certificate is past its validity at `now` (unix seconds).
+    pub fn is_expired(&self, now: i64) -> bool {
+        self.not_after <= now
+    }
+}
+
 type SelfSignedCertificateMap = AHashMap<String, Arc<SelfSignedCertificate>>;
 static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<
     ArcSwap<SelfSignedCertificateMap>,
@@ -71,8 +78,11 @@ async fn do_self_signed_certificate_validity(
         return Ok(false);
     }
     let mut m = AHashMap::new();
+    // What expires before the check after the next is dropped now. The
+    // margin used to be taken off the time instead of added to it, which
+    // kept a certificate for two days after it had expired.
     let expired = (pingap_core::now_sec()
-        - CERTIFICATE_EXPIRY_DAYS * SECONDS_PER_DAY) as i64;
+        + CERTIFICATE_EXPIRY_DAYS * SECONDS_PER_DAY) as i64;
 
     m.extend(
         SELF_SIGNED_CERTIFICATE_MAP
@@ -312,6 +322,36 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
             "O=mkcert development certificate, OU=tree@TreeXies-MacBook-Pro.local (TreeXie)",
             subject(&cert)
         );
+
+        // Regression: the margin of the check was applied the wrong way
+        // round, and a certificate stayed for two days after it expired.
+        // One that expires before the next check is dropped now.
+        let new_certificate = || {
+            LoadedCertificate::from_pem(
+                &[pem.as_bytes().to_vec()],
+                key.as_bytes(),
+            )
+            .unwrap()
+        };
+        let now = pingap_core::now_sec() as i64;
+        let expired = nanoid::nanoid!(10);
+        let cert = add_self_signed_certificate(
+            expired.clone(),
+            new_certificate(),
+            now - 60,
+        );
+        assert_eq!(true, cert.is_expired(now));
+        let soon = nanoid::nanoid!(10);
+        let cert = add_self_signed_certificate(
+            soon.clone(),
+            new_certificate(),
+            now + 3600,
+        );
+        assert_eq!(false, cert.is_expired(now));
+        do_self_signed_certificate_validity(0).await.unwrap();
+        assert_eq!(true, get_self_signed_certificate(&expired).is_none());
+        assert_eq!(true, get_self_signed_certificate(&soon).is_none());
+        assert_eq!(true, get_self_signed_certificate(&name).is_some());
 
         // Regression: nothing limited how many were kept, and the name is
         // whatever a client puts in its handshake. At the limit the

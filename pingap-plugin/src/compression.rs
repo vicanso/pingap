@@ -251,6 +251,34 @@ impl Compression {
     }
 }
 
+/// `accept_encoding` with `coding` moved to the front, or `None` when it
+/// is there already. The entry keeps its parameters, the others their
+/// order.
+fn prefer_encoding(accept_encoding: &str, coding: &str) -> Option<String> {
+    let is_coding = |item: &&str| {
+        item.split(';')
+            .next()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case(coding))
+    };
+    let items = || {
+        accept_encoding
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+    };
+    let position = items().position(|item| is_coding(&item))?;
+    if position == 0 {
+        return None;
+    }
+    let mut value = String::with_capacity(accept_encoding.len() + 2);
+    value.push_str(items().nth(position)?);
+    for item in items().filter(|item| !is_coding(item)) {
+        value.push_str(", ");
+        value.push_str(item);
+    }
+    Some(value)
+}
+
 #[async_trait]
 impl Plugin for Compression {
     /// Returns the unique hash key for this plugin instance
@@ -335,15 +363,30 @@ impl Plugin for Compression {
             return Ok(RequestPluginResult::Skipped);
         };
 
-        // Configure compression levels for each supported algorithm
-        if zstd_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Zstd, zstd_level);
-        }
-        if br_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Brotli, br_level);
-        }
-        if gzip_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Gzip, gzip_level);
+        // One algorithm, by the fixed priority, and it is put first in
+        // `Accept-Encoding`: pingora compresses with the first coding of
+        // that header it knows and looks no further. A browser lists gzip
+        // first, so with all three enabled it got gzip, and with only
+        // zstd or brotli enabled it got nothing. Order has no meaning in
+        // the header, so the upstream is told the same as before.
+        let (coding, algorithm, level) = if zstd_level > 0 {
+            (ZSTD, Algorithm::Zstd, zstd_level)
+        } else if br_level > 0 {
+            (BR, Algorithm::Brotli, br_level)
+        } else {
+            (GZIP, Algorithm::Gzip, gzip_level)
+        };
+        c.adjust_algorithm_level(algorithm, level);
+        let preferred = session
+            .req_header()
+            .headers
+            .get(ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| prefer_encoding(value, coding));
+        if let Some(value) = preferred {
+            let _ = session
+                .req_header_mut()
+                .insert_header(ACCEPT_ENCODING, value);
         }
 
         Ok(RequestPluginResult::Continue)
@@ -740,6 +783,82 @@ zstd_level = 7
                 .get::<ResponseCompression>()
                 .unwrap()
                 .is_enabled()
+        );
+    }
+
+    #[test]
+    fn test_prefer_encoding() {
+        let prefer = |value: &str, coding: &str| {
+            prefer_encoding(value, coding).unwrap_or_else(|| value.to_string())
+        };
+        assert_eq!(
+            "zstd, gzip, deflate, br",
+            prefer("gzip, deflate, br, zstd", "zstd")
+        );
+        // Already first: left as it is.
+        assert_eq!(None, prefer_encoding("zstd, gzip", "zstd"));
+        assert_eq!(None, prefer_encoding("gzip", "gzip"));
+        // The entry keeps its weight, and its spelling.
+        assert_eq!("br;q=0.9, gzip;q=0", prefer("gzip;q=0, br;q=0.9", "br"));
+        assert_eq!("ZSTD, gzip", prefer("gzip,ZSTD", "zstd"));
+        // Not listed: nothing to move.
+        assert_eq!(None, prefer_encoding("gzip, x-br", "br"));
+    }
+
+    /// Regression: pingora compresses with the first coding the client
+    /// lists. A browser lists gzip first, so the priority of the plugin
+    /// did not hold, and with gzip disabled nothing was compressed.
+    #[tokio::test]
+    async fn test_compression_puts_its_choice_first() {
+        let accept_encoding_after = async |conf: &str, accept: &str| {
+            let compression = Compression::try_from(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+            )
+            .unwrap();
+            let input_header =
+                format!("GET / HTTP/1.1\r\nAccept-Encoding: {accept}\r\n\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut modules = HttpModules::new();
+            modules.add_module(ResponseCompressionBuilder::enable(0));
+            let mut session =
+                Session::new_h1_with_modules(Box::new(mock_io), &modules);
+            session.read_request().await.unwrap();
+            compression
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            session
+                .req_header()
+                .headers
+                .get("Accept-Encoding")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        };
+        let browser = "gzip, deflate, br, zstd";
+        let all = "gzip_level = 6\nbr_level = 6\nzstd_level = 3";
+        assert_eq!(
+            "zstd, gzip, deflate, br",
+            accept_encoding_after(all, browser).await
+        );
+        assert_eq!(
+            "br, gzip, deflate, zstd",
+            accept_encoding_after("br_level = 6", browser).await
+        );
+        // A coding the client refuses is not chosen.
+        assert_eq!(
+            "br, gzip, zstd;q=0",
+            accept_encoding_after(all, "gzip, br, zstd;q=0").await
+        );
+        // Nothing enabled that the client takes: untouched.
+        assert_eq!(
+            "gzip",
+            accept_encoding_after("zstd_level = 3", "gzip").await
         );
     }
 

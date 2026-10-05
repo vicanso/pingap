@@ -27,6 +27,8 @@ location 不会在缺少它所列插件的情况下提供服务：
 - 插件配置无效（包括 `category` 写错）时进程启动失败。带 `--admin` 时，全新启动的进程保持运行，以便通过 admin 修复配置；修复之前，引用该插件的 location 返回 `500`。用来接替正在运行的进程的新进程（`--upgrade`、`--autorestart` 的重启）则一律退出，原进程继续服务。
 - 热更新时，新配置无效的插件继续使用原来的配置运行，错误会写入日志并以 `reload_config_fail` 通知发出。新增的插件创建失败时没有旧实例可用，引用它的 location 返回 `500`。
 
+值的类型写错属于配置无效，不会再按默认值处理：该写整数的地方写了 `max = "100"`，该写布尔值的地方写了 `hide_credentials = "true"`，字符串列表里混了数字，时长解析不了。报错会指出是哪个键、应该是什么类型。到 0.15.0 为止，这类值会被悄悄当成 `0`、`false` 或空列表。
+
 当前构建没有编译进来的插件类别，只是定义它并不算错误，日志里会提示不可用，这样同一份配置可以用于不同的构建。引用它的 location 会怎样，取决于是哪个插件：
 
 - `image_optim`（`imageoptim` / `full` 构建）缺失时不做任何事：图片原样返回。
@@ -112,9 +114,10 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 ## 编写插件
 
 1. 实现 `pingap_core::Plugin`。只需覆盖需要的钩子——其余方法默认空操作。
-2. 在 `TryFrom` 中解析 `&PluginConf`，使用 `src/plugin.rs` 中的 `get_*_conf` 辅助函数，在此拒绝非法组合，以便 `pingap -t` 在代理启动前发现错误。
+2. 在 `TryFrom` 中解析 `&PluginConf`，使用 `src/lib.rs` 中的 `get_*_conf` 辅助函数，在此拒绝非法组合，以便 `pingap -t` 在代理启动前发现错误。辅助函数遇到类型不对的值时返回默认值并记下来，工厂随后据此让插件创建失败，所以各个键的类型不需要自己再检查。
 3. 从 `config_key()` 返回 `get_hash_key(conf)`。Pingap 用它判断热更新是否真正改变了该插件实例。
 4. 用 `register_plugin!` 宏注册 category，该宏展开为 pre-main 构造。
+5. 只设置响应头、并且希望其他插件直接返回的响应也带上这些头的插件（例如 `cors` 之于 `401`），让 `handles_plugin_response()` 返回 `true`。这类响应不经过响应阶段，此时它的 `handle_response` 也会被调用。
 
 ```rust
 use async_trait::async_trait;

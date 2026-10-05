@@ -66,6 +66,11 @@ pub struct RestartProcessCommand {
     pub exec_path: PathBuf,
     pub log_level: String,
     pub args: Vec<String>,
+    /// The directory this process was started in, which the replacement is
+    /// started in as well. A daemon runs in `/`, and a replacement started
+    /// from there resolved every relative path of the command line and the
+    /// config - `--log=logs/pingap.log` for one - against `/`.
+    pub current_dir: Option<PathBuf>,
     /// Unix socket the replacement connects to once it is ready for the
     /// listening sockets; lives next to the upgrade socket.
     pub ready_sock: PathBuf,
@@ -94,14 +99,24 @@ impl RestartProcessCommand {
     /// before its own logger was up - which is exactly the window where a
     /// failed hot upgrade dies.
     fn exec(&self) -> io::Result<process::Child> {
-        Command::new(&self.exec_path)
+        self.command().spawn()
+    }
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.exec_path);
+        command
             .env("RUST_LOG", &self.log_level)
             .env(READY_SOCK_ENV, &self.ready_sock)
             .args(&self.args)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
+            .stderr(Stdio::inherit());
+        // A directory that is gone by now cannot be started in; the
+        // replacement then starts where this process is, as before.
+        if let Some(dir) = self.current_dir.as_ref().filter(|dir| dir.is_dir())
+        {
+            command.current_dir(dir);
+        }
+        command
     }
 }
 
@@ -523,6 +538,36 @@ mod tests {
         waited.expect("the report must end the wait");
         // The socket file does not outlive the wait.
         assert_eq!(false, path.exists());
+    }
+
+    /// Regression: the replacement was started wherever the old process
+    /// happened to be - `/` for a daemon - and resolved its relative paths
+    /// from there.
+    #[test]
+    fn test_replacement_starts_in_the_original_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let started_in = |current_dir: Option<PathBuf>| {
+            let output = RestartProcessCommand {
+                exec_path: PathBuf::from("pwd"),
+                current_dir,
+                ..Default::default()
+            }
+            .command()
+            .stdout(Stdio::piped())
+            .output()
+            .unwrap();
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+                .canonicalize()
+                .unwrap()
+        };
+        assert_eq!(
+            dir.path().canonicalize().unwrap(),
+            started_in(Some(dir.path().to_path_buf()))
+        );
+        // A directory that no longer exists does not fail the restart.
+        let here = std::env::current_dir().unwrap().canonicalize().unwrap();
+        assert_eq!(here, started_in(Some(dir.path().join("gone"))));
+        assert_eq!(here, started_in(None));
     }
 
     #[tokio::test]

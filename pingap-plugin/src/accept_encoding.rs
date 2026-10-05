@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, accepts_encoding, get_bool_conf, get_hash_key, get_str_conf,
+    Error, accepts_encoding, get_bool_conf, get_hash_key, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use pingap_config::PluginConf;
@@ -51,13 +51,17 @@ impl TryFrom<&PluginConf> for AcceptEncoding {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let only_one_encoding = get_bool_conf(value, "only_one_encoding");
-        let mut encodings = vec![];
-        for encoding in get_str_conf(value, "encodings").split(",") {
-            let v = encoding.trim();
-            if !v.is_empty() {
-                encodings.push(v.to_string());
-            }
-        }
+        // `"zstd, br, gzip"` or `["zstd", "br", "gzip"]`. Only the first
+        // was read, and the list - the form the sample configuration shows
+        // - counted as no encoding at all: `Accept-Encoding` was removed
+        // from every request.
+        let encodings: Vec<String> = get_str_slice_conf(value, "encodings")
+            .iter()
+            .flat_map(|item| item.split(','))
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(String::from)
+            .collect();
 
         Ok(Self {
             encodings,
@@ -163,6 +167,23 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_accept_encoding_takes_a_list() {
+        // Regression: the list, as the sample configuration has it, was
+        // read as no encoding at all.
+        for conf in [
+            "encodings = [\"zstd\", \"br\", \"gzip\"]",
+            "encodings = \"zstd, br, gzip\"",
+            "encodings = [\"zstd, br\", \"gzip\"]",
+        ] {
+            let params = AcceptEncoding::try_from(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(vec!["zstd", "br", "gzip"], params.encodings, "{conf}");
+        }
+    }
 
     #[test]
     fn test_accept_encoding_params() {

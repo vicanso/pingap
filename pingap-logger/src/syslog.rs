@@ -32,9 +32,9 @@ const DEFAULT_PORT: u16 = 514;
 /// Connect and write timeout for a TCP syslog server: a stalled server must
 /// not hold up the threads that log for long.
 const TCP_TIMEOUT: Duration = Duration::from_secs(1);
-/// How long messages are dropped after a TCP syslog server could not be
-/// reached, before the next connection attempt.
-const TCP_RETRY: Duration = Duration::from_secs(5);
+/// How long messages are dropped after a syslog server or socket could not
+/// be reached, before the next connection attempt.
+const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 enum Formatter {
     Rfc3164(Formatter3164),
@@ -78,7 +78,7 @@ fn connect_tcp(server: &str) -> io::Result<TcpStream> {
 
 impl TcpTransport {
     /// Sends one framed message. While the server is unreachable messages
-    /// are dropped and a reconnect is tried every `TCP_RETRY`. Failures go
+    /// are dropped and a reconnect is tried every `RETRY_INTERVAL`. Failures go
     /// to stderr: this is a log writer, it has no log to report them to.
     fn send(&mut self, message: &[u8]) {
         if self.stream.is_none() {
@@ -91,11 +91,11 @@ impl TcpTransport {
                     self.retry_at = None;
                 },
                 Err(e) => {
-                    self.retry_at = Some(Instant::now() + TCP_RETRY);
+                    self.retry_at = Some(Instant::now() + RETRY_INTERVAL);
                     eprintln!(
                         "syslog server {} is unreachable, dropping messages for {}s: {e}",
                         self.server,
-                        TCP_RETRY.as_secs()
+                        RETRY_INTERVAL.as_secs()
                     );
                     return;
                 },
@@ -113,9 +113,76 @@ impl TcpTransport {
     }
 }
 
+/// The socket at `path`, or the local daemon's usual one when there is no
+/// path.
+fn connect_unix(path: &str) -> syslog::Result<LoggerBackend> {
+    // The formatter is only needed to build the logger; messages are
+    // formatted by `SyslogSender`.
+    let formatter = Formatter3164::default();
+    let logger = if path.len() <= 1 {
+        syslog::unix(formatter)
+    } else {
+        syslog::unix_custom(formatter, path)
+    }?;
+    Ok(logger.backend)
+}
+
+/// A unix socket of the local syslog daemon, connected again after a
+/// failure.
+struct UnixTransport {
+    path: String,
+    backend: Option<LoggerBackend>,
+    retry_at: Option<Instant>,
+}
+
+impl UnixTransport {
+    /// Sends one message. A syslog daemon that is restarted leaves this end
+    /// of the socket connected to nothing: every write failed from then on,
+    /// and the log was gone until pingap itself was restarted. So a write
+    /// that fails connects again and sends the message once more. While
+    /// there is no daemon messages are dropped and a reconnect is tried
+    /// every `RETRY_INTERVAL`. Failures go to stderr, as for TCP.
+    fn send(&mut self, message: &[u8]) {
+        if let Some(backend) = &mut self.backend {
+            // One `write` per message: on a stream socket it also appends
+            // the NUL that ends the message.
+            if backend.write(message).is_ok() {
+                return;
+            }
+            self.backend = None;
+        } else if self.retry_at.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        match connect_unix(&self.path) {
+            Ok(mut backend) => {
+                // The message that found the socket dead is sent again. If
+                // it fails on the new one as well it is the message - too
+                // long for a datagram - and not the socket, which is kept.
+                if let Err(e) = backend.write(message) {
+                    eprintln!("syslog message dropped: {e}");
+                }
+                self.backend = Some(backend);
+                self.retry_at = None;
+            },
+            Err(e) => {
+                self.retry_at = Some(Instant::now() + RETRY_INTERVAL);
+                eprintln!(
+                    "syslog socket {} is unreachable, dropping messages for {}s: {e}",
+                    if self.path.is_empty() {
+                        "of the local daemon"
+                    } else {
+                        &self.path
+                    },
+                    RETRY_INTERVAL.as_secs()
+                );
+            },
+        }
+    }
+}
+
 enum Transport {
     /// A unix socket of the local syslog daemon.
-    Unix(LoggerBackend),
+    Unix(UnixTransport),
     Udp {
         socket: UdpSocket,
         server: SocketAddr,
@@ -142,9 +209,10 @@ impl SyslogSender {
             .format(&mut self.buf, &String::from_utf8_lossy(line))
             .map_err(io::Error::other)?;
         match &mut self.transport {
-            // One `write` per message: on a stream socket it also appends
-            // the NUL that ends the message.
-            Transport::Unix(backend) => backend.write(&self.buf).map(|_| ()),
+            Transport::Unix(unix) => {
+                unix.send(&self.buf);
+                Ok(())
+            },
             Transport::Udp { socket, server } => {
                 socket.send_to(&self.buf, *server).map(|_| ())
             },
@@ -193,16 +261,14 @@ fn new_transport(location: &str, protocol: Option<&str>) -> Result<Transport> {
                 "syslog protocol only applies to a remote server".to_string(),
             ));
         }
-        // The formatter is only needed to build the logger; messages are
-        // formatted by `SyslogSender`.
-        let formatter = Formatter3164::default();
-        let logger = if location.len() <= 1 {
-            syslog::unix(formatter)
-        } else {
-            syslog::unix_custom(formatter, location)
-        }
-        .map_err(|e| invalid(e.to_string()))?;
-        return Ok(Transport::Unix(logger.backend));
+        // Connected now, so a socket that is not there fails at startup.
+        let path = if location.len() <= 1 { "" } else { location };
+        let backend = connect_unix(path).map_err(|e| invalid(e.to_string()))?;
+        return Ok(Transport::Unix(UnixTransport {
+            path: path.to_string(),
+            backend: Some(backend),
+            retry_at: None,
+        }));
     }
     let server = with_default_port(location.trim_end_matches('/'));
     let resolve = || {
@@ -415,6 +481,55 @@ mod tests {
         assert_eq!(true, first.ends_with("]: first line"), "{first}");
         let second = lines.next().unwrap().unwrap();
         assert_eq!(true, second.ends_with("]: second"), "{second}");
+    }
+
+    /// Regression: after the syslog daemon was restarted the socket was
+    /// connected to nothing, every write failed, and nothing connected
+    /// again.
+    #[cfg(unix)]
+    #[test]
+    fn test_unix_socket_is_connected_again() {
+        use std::os::unix::net::UnixDatagram;
+
+        // Short on purpose: a socket path is capped at about 100 bytes.
+        let path = format!("/tmp/pingap-syslog-{}.sock", std::process::id());
+        let _ = std::fs::remove_file(&path);
+        let receive = |server: &UnixDatagram| {
+            server
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut buf = [0u8; 512];
+            let size = server.recv(&mut buf).unwrap();
+            String::from_utf8_lossy(&buf[..size]).into_owned()
+        };
+
+        let server = UnixDatagram::bind(&path).unwrap();
+        let mut sender =
+            new_syslog_sender(&format!("syslog://{path}")).unwrap();
+        sender.send(b"first").unwrap();
+        assert_eq!(true, receive(&server).ends_with("first"));
+
+        // The daemon goes away and comes back at the same path.
+        drop(server);
+        std::fs::remove_file(&path).unwrap();
+        // Nobody there: the message is dropped, the send does not fail.
+        sender.send(b"lost").unwrap();
+        let server = UnixDatagram::bind(&path).unwrap();
+        // Inside the retry interval nothing is tried.
+        sender.send(b"dropped").unwrap();
+        let super::Transport::Unix(unix) = &mut sender.transport else {
+            panic!("not a unix transport");
+        };
+        assert_eq!(true, unix.backend.is_none());
+        unix.retry_at = None;
+        sender.send(b"second").unwrap();
+        assert_eq!(true, receive(&server).ends_with("second"));
+        // And the connection is kept for what follows.
+        sender.send(b"third").unwrap();
+        assert_eq!(true, receive(&server).ends_with("third"));
+
+        drop(server);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A TCP server that is down does not fail startup or a send; messages

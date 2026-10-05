@@ -42,13 +42,15 @@ impl HashStrategy {
     ) -> Cow<'a, str> {
         match self {
             HashStrategy::Url => {
+                // The path and query, whatever form the request line has.
+                // An HTTP/2 request carries its scheme and host in the uri,
+                // and with those hashed in, the same url went to another
+                // backend than it did over HTTP/1.1.
                 let uri = &session.req_header().uri;
-                // Origin-form (`/path?query`), what a proxy normally gets,
-                // prints as its path-and-query, so it needs no allocation.
-                match (uri.scheme(), uri.authority(), uri.path_and_query()) {
-                    (None, None, Some(value)) => Cow::Borrowed(value.as_str()),
-                    _ => Cow::Owned(uri.to_string()),
-                }
+                Cow::Borrowed(
+                    uri.path_and_query()
+                        .map_or(uri.path(), |value| value.as_str()),
+                )
             },
             HashStrategy::Ip => {
                 if client_ip.is_none() {
@@ -151,6 +153,19 @@ mod tests {
         assert_eq!(
             "/vicanso/pingap?id=1234",
             HashStrategy::Url.get_value(&session, &mut none)
+        );
+
+        // Regression: an HTTP/2 request has its scheme and host in the uri,
+        // and they were hashed too.
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut h2 = Session::new_h1(Box::new(mock_io));
+        h2.read_request().await.unwrap();
+        h2.req_header_mut().set_uri(http::Uri::from_static(
+            "https://github.com/vicanso/pingap?id=1234",
+        ));
+        assert_eq!(
+            "/vicanso/pingap?id=1234",
+            HashStrategy::Url.get_value(&h2, &mut None)
         );
 
         let mut none = None;

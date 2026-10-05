@@ -163,7 +163,7 @@ Hot Reload (--autoreload): For most changes—like updating upstreams, locations
 
 Graceful Restart (-a or --autorestart): For fundamental changes (like modifying server listen ports), this mode performs a full, zero-downtime restart, ensuring no requests are dropped.
 
-The hand-over is readiness-driven rather than timed: the replacement is started with `-d -u`, reports back over a unix socket next to the upgrade socket the moment it is ready to take over the listeners, and only then does the running process send itself SIGQUIT. If the replacement exits, its daemon dies, or `basic.restart_ready_timeout` (default 1m) passes first, the restart is abandoned and the running process keeps serving.
+The hand-over is readiness-driven rather than timed: the replacement is started with `-d -u`, reports back over a unix socket next to the upgrade socket the moment it is ready to take over the listeners, and only then does the running process send itself SIGQUIT. If the replacement exits, its daemon dies, or `basic.restart_ready_timeout` (default 1m) passes first, the restart is abandoned and the running process keeps serving. The replacement is started in the directory the first process was started in, with the same `--autoreload` / `--autorestart`, so relative paths (`--log=logs/pingap.log`, paths in the config) keep meaning what they did.
 
 
 ## 🔧 Development

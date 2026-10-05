@@ -535,6 +535,26 @@ impl AdminServe {
     }
 }
 
+/// The answer to a config request that failed: the status the error was
+/// made with, and its message.
+///
+/// Every failure used to be a 500 - a body that is not JSON, a config that
+/// does not validate - and the message was the error as pingora prints it,
+/// `HTTPStatus context: ... cause:  InternalError`.
+fn config_error_response(err: &pingora::Error) -> HttpResponse {
+    let status = match err.etype() {
+        pingora::ErrorType::HTTPStatus(code) => StatusCode::from_u16(*code)
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let message = match &err.context {
+        Some(context) => context.as_str().to_string(),
+        None => err.to_string(),
+    };
+    HttpResponse::try_from_json_status(&ErrorResponse { message }, status)
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+}
+
 /// The API route of an admin path (prefix already removed): `/api/basic`
 /// gives `/basic`. `None` for everything else, which is a static file.
 ///
@@ -639,29 +659,27 @@ async fn handle_request_admin(
                 if category == "import" {
                     plugin.import_config(session).await
                 } else if params.len() < 4 {
-                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                    Err(pingap_core::new_internal_error(
+                        400,
+                        "Url is invalid(no name)",
+                    ))
                 } else {
                     plugin.update_config(session, category, &params[3]).await
                 }
             },
             Method::DELETE => {
                 if params.len() < 4 {
-                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                    Err(pingap_core::new_internal_error(
+                        400,
+                        "Url is invalid(no name)",
+                    ))
                 } else {
                     plugin.remove_config(category, &params[3]).await
                 }
             },
             _ => plugin.get_config(category).await,
         }
-        .unwrap_or_else(|err| {
-            HttpResponse::try_from_json_status(
-                &ErrorResponse {
-                    message: err.to_string(),
-                },
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
-        })
+        .unwrap_or_else(|err| config_error_response(&err))
     } else if path.starts_with("/config-history") {
         let category = Category::from_str(category).map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
@@ -923,6 +941,34 @@ mod tests {
         let resp: HttpResponse =
             EmbeddedStaticFile(None, Duration::from_secs(60)).into();
         assert_eq!(404, resp.status.as_u16())
+    }
+
+    #[test]
+    fn test_config_error_response() {
+        let message = |resp: &pingap_core::HttpResponse| {
+            serde_json::from_slice::<serde_json::Value>(&resp.body).unwrap()
+                ["message"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        // Regression: a bad request was answered 500, with the error as
+        // pingora prints it for a message.
+        let bad_json =
+            serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        let expected = bad_json.to_string();
+        let resp = super::config_error_response(
+            &pingap_core::new_internal_error(400, bad_json),
+        );
+        assert_eq!(400, resp.status.as_u16());
+        assert_eq!(expected, message(&resp));
+
+        // Not one of ours: a 500, and whatever it says.
+        let resp = super::config_error_response(&pingora::Error::new_str(
+            "disk on fire",
+        ));
+        assert_eq!(500, resp.status.as_u16());
+        assert_eq!(true, message(&resp).contains("disk on fire"));
     }
 
     #[test]

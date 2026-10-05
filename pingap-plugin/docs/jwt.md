@@ -110,6 +110,11 @@ replaces the upstream response body with
 sets `content-type: application/json` and switches to chunked encoding. The
 upstream therefore returns the *claims* (`{"id":"u-1","exp":…}`), not a token.
 
+The body is signed byte for byte, so the request to `auth_path` goes to the
+upstream without the client's `Accept-Encoding`: the claims come back
+uncompressed. An upstream that compresses them anyway is answered with a `502`
+rather than a token whose payload is a gzip stream.
+
 Minting only works with HMAC — the signature is always computed from `secret`
 using `HS256` or `HS512`. Only a `2xx` upstream response is signed; an error
 body is passed through untouched, so a failed login cannot be turned into a

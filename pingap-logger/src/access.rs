@@ -262,9 +262,9 @@ static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size_human} 
 static TINY: &str = r###"{method} {uri} {status} {size_human} - {latency}ms"###;
 static JSON: &str = r###"{"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host},"method":{method},"uri":{uri},"proto":{proto},"status":{status},"size":{size},"latency":{latency},"referer":{referer},"user_agent":{user_agent},"request_id":{request_id}}"###;
 
-/// The names `access_log` accepts in place of a format.
-pub const ACCESS_LOG_PRESETS: [&str; 5] =
-    ["combined", "common", "short", "tiny", "json"];
+/// The names `access_log` accepts in place of a format. Kept in
+/// `pingap-core`, where the config validation can reach them as well.
+pub use pingap_core::ACCESS_LOG_PRESETS;
 
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
@@ -517,6 +517,68 @@ fn escape_json(buf: &mut BytesMut, start: usize) {
     }
 }
 
+/// Whether a tag's value is text from outside: the request line, a header
+/// of either side, the client address a header can give. The rest is
+/// numbers, times and names from the configuration.
+const fn is_outside_text(category: &TagCategory) -> bool {
+    matches!(
+        category,
+        TagCategory::Host
+            | TagCategory::Path
+            | TagCategory::Query
+            | TagCategory::Uri
+            | TagCategory::ClientIp
+            | TagCategory::Referrer
+            | TagCategory::UserAgent
+            | TagCategory::Cookie
+            | TagCategory::RequestHeader
+            | TagCategory::ResponseHeader
+            | TagCategory::RequestId
+    )
+}
+
+/// The bytes a line of text cannot carry as they are. Without a branch, so
+/// that the scan over a value can be done several bytes at a time.
+const fn needs_text_escape(b: u8) -> bool {
+    (b < 0x20) | (b == b'"') | (b == b'\\') | (b == 0x7f)
+}
+
+/// Escapes `buf[start..]` for a text format: `\"`, `\\`, and `\xXX` for a
+/// control character.
+///
+/// A header value can hold a quote, and a format quotes its fields
+/// (`"{referer}" "{user_agent}"`): a user agent of `" 200 "-` wrote fields
+/// of its own choosing into its line. Nearly every value has nothing to
+/// escape and costs the one scan.
+#[inline(always)]
+fn escape_text(buf: &mut BytesMut, start: usize) {
+    // Every byte is looked at, with no early exit: there is nearly never
+    // anything to find, and the loop without one is the faster.
+    let found = buf[start..]
+        .iter()
+        .fold(false, |found, b| found | needs_text_escape(*b));
+    if found {
+        escape_text_bytes(buf, start);
+    }
+}
+
+#[cold]
+fn escape_text_bytes(buf: &mut BytesMut, start: usize) {
+    let raw = buf.split_off(start);
+    for b in raw.iter().copied() {
+        match b {
+            b'"' => buf.put_slice(b"\\\""),
+            b'\\' => buf.put_slice(b"\\\\"),
+            b if needs_text_escape(b) => {
+                buf.put_slice(b"\\x");
+                buf.put_u8(HEX_DIGITS[(b >> 4) as usize]);
+                buf.put_u8(HEX_DIGITS[(b & 0x0f) as usize]);
+            },
+            b => buf.put_u8(b),
+        }
+    }
+}
+
 /// Appends `text` for its place in a JSON format: escaped inside a string,
 /// a quoted string (or `null` when empty) as a value of its own.
 fn put_json_text(buf: &mut BytesMut, slot: JsonSlot, text: &[u8]) {
@@ -763,8 +825,9 @@ impl Parser {
         size
     }
     /// Formats one access log line. In a text format a missing value is
-    /// `-` (a context field writes nothing); in a JSON format values are
-    /// escaped and a missing one is empty or `null`.
+    /// `-` (a context field writes nothing), and a quote, a backslash or a
+    /// control character in a value from the request is escaped; in a JSON
+    /// format values are escaped and a missing one is empty or `null`.
     pub fn format(&self, session: &Session, ctx: &Ctx) -> BytesMut {
         let mut buf = BytesMut::with_capacity(self.capacity);
         // Only read the clocks when a tag needs them.
@@ -793,10 +856,15 @@ impl Parser {
                 }
             } else if self.json {
                 source.put_json(&mut buf, tag);
-            } else if !source.put(&mut buf, tag)
-                && !matches!(tag.category, TagCategory::Context(_))
-            {
-                buf.put_slice(EMPTY_FIELD);
+            } else {
+                let start = buf.len();
+                if source.put(&mut buf, tag) {
+                    if is_outside_text(&tag.category) {
+                        escape_text(&mut buf, start);
+                    }
+                } else if !matches!(tag.category, TagCategory::Context(_)) {
+                    buf.put_slice(EMPTY_FIELD);
+                }
             }
         }
         buf
@@ -939,6 +1007,39 @@ mod tests {
             let p = Parser::from(value);
             assert_eq!(category, p.tags[0].category);
         }
+    }
+
+    /// Regression: a text format wrote a value from the request as it
+    /// came. A quote in it ended the field the format had quoted, and the
+    /// rest of the value read as fields of the line.
+    #[tokio::test]
+    async fn test_text_format_escapes_request_values() {
+        let p: Parser =
+            r#"{method} "{uri}" {status} "{referer}" "{user_agent}" "{>x-tab}" {~id}"#
+                .into();
+        let headers = [
+            r#"User-Agent: evil" 200 "-" "curl"#,
+            r"Referer: https://a.test/back\slash",
+            "X-Tab: a\tb",
+            "Cookie: id=plain",
+        ]
+        .join("\r\n");
+        let input_header = format!("GET /a?b=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let ctx = Ctx {
+            state: RequestState {
+                status: Some(http::StatusCode::NOT_FOUND),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let log = p.format(&session, &ctx);
+        assert_eq!(
+            r#"GET "/a?b=1" 404 "https://a.test/back\\slash" "evil\" 200 \"-\" \"curl" "a\x09b" plain"#,
+            std::string::String::from_utf8_lossy(&log)
+        );
     }
 
     #[tokio::test]

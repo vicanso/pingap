@@ -88,7 +88,9 @@ If the service answers `200` with `X-User-Id: 42`, the upstream sees
 
 `content-length`, `transfer-encoding`, `connection` and the other hop-by-hop
 headers are stripped from the relayed response because Pingap re-frames it. A
-status outside the valid HTTP range degrades to `403`.
+status outside the valid HTTP range degrades to `403`. Headers the auth service
+sends more than once reach the client as often: every `Set-Cookie` of a login
+redirect, every `WWW-Authenticate` challenge.
 
 The headers named in `add_headers` carry the auth service's word to the
 upstream, and nothing else does: each of them is removed from the request

@@ -16,6 +16,7 @@ use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::PluginStep;
 use snafu::Snafu;
+use std::cell::RefCell;
 use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -50,21 +51,82 @@ pub enum Error {
     },
 }
 
+thread_local! {
+    /// The config values of the plugin being built that were not of the
+    /// type their key takes. `None` when no plugin is being built.
+    static WRONG_TYPES: RefCell<Option<Vec<String>>> =
+        const { RefCell::new(None) };
+}
+
+/// Notes that the value of `key` is not `expected`.
+///
+/// The getters below answer a value of the wrong type with the default:
+/// `max = "100"` was a limit of 0, `encodings = ["gzip"]` no encoding at
+/// all, a number in a list of keys a key that is not there. Nothing said
+/// so. They still answer the default, and [`build_plugin`] turns the note
+/// into the error of the plugin that is being built.
+fn note_wrong_type(key: &str, expected: &str, value: &toml::Value) {
+    WRONG_TYPES.with_borrow_mut(|notes| {
+        if let Some(notes) = notes {
+            notes.push(format!(
+                "{key} must be {expected}, got {} {value}",
+                value.type_str()
+            ));
+        }
+    });
+}
+
+/// Builds one plugin with `build`, and fails when a config value it read
+/// was not of the type its key takes.
+///
+/// Building a plugin is one synchronous call, which is what lets the notes
+/// be kept per thread instead of being handed through every getter.
+pub(crate) fn build_plugin<T>(
+    category: &str,
+    build: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    /// Puts back what was there, on a panic too.
+    struct Restore(Option<Vec<String>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WRONG_TYPES.set(self.0.take());
+        }
+    }
+    let restore = Restore(WRONG_TYPES.replace(Some(vec![])));
+    let result = build();
+    let notes = WRONG_TYPES.take().unwrap_or_default();
+    drop(restore);
+    // The plugin's own complaint comes first: it is the more specific.
+    let plugin = result?;
+    if notes.is_empty() {
+        return Ok(plugin);
+    }
+    Err(Error::Invalid {
+        category: category.to_string(),
+        message: notes.join(", "),
+    })
+}
+
 /// Helper functions for accessing plugin configuration values
 pub fn get_str_conf(value: &PluginConf, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+    match value.get(key) {
+        Some(toml::Value::String(item)) => item.clone(),
+        Some(other) => {
+            note_wrong_type(key, "a string", other);
+            String::new()
+        },
+        None => String::new(),
+    }
 }
 
 /// Helper functions for accessing plugin configuration values
 pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
-    value
-        .get(key)
-        .and_then(|v| v.as_str())
-        .and_then(|s| parse_duration(s).ok())
+    let item = value.get(key)?;
+    let duration = item.as_str().and_then(|s| parse_duration(s).ok());
+    if duration.is_none() {
+        note_wrong_type(key, "a duration such as \"10s\"", item);
+    }
+    duration
 }
 
 /// The name one plugin instance keeps its response body handler under.
@@ -87,19 +149,40 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
     match value.get(key) {
         Some(toml::Value::Array(arr)) => arr
             .iter()
-            .filter_map(|item| item.as_str())
+            .filter_map(|item| {
+                let text = item.as_str();
+                if text.is_none() {
+                    note_wrong_type(key, "a list of strings", item);
+                }
+                text
+            })
             .map(String::from) // same as .map(|s| s.to_string())
             .collect(),
         // An empty string is an empty list, not a list of one empty item.
-        Some(toml::Value::String(item)) if !item.is_empty() => {
-            vec![item.clone()]
+        Some(toml::Value::String(item)) => {
+            if item.is_empty() {
+                vec![]
+            } else {
+                vec![item.clone()]
+            }
         },
-        _ => vec![],
+        Some(other) => {
+            note_wrong_type(key, "a list of strings", other);
+            vec![]
+        },
+        None => vec![],
     }
 }
 
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
-    value.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+    match value.get(key) {
+        Some(toml::Value::Boolean(item)) => *item,
+        Some(other) => {
+            note_wrong_type(key, "true or false", other);
+            false
+        },
+        None => false,
+    }
 }
 
 pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
@@ -111,10 +194,14 @@ pub fn get_int_conf_or_default(
     key: &str,
     default_value: i64,
 ) -> i64 {
-    value
-        .get(key)
-        .and_then(|v| v.as_integer()) // assume PluginConf value can be converted to i64
-        .unwrap_or(default_value)
+    match value.get(key) {
+        Some(toml::Value::Integer(item)) => *item,
+        Some(other) => {
+            note_wrong_type(key, "an integer", other);
+            default_value
+        },
+        None => default_value,
+    }
 }
 
 pub fn get_step_conf(
@@ -295,9 +382,69 @@ pub use plugin::get_plugin_factory;
 
 #[cfg(test)]
 mod tests {
-    use super::{accepts_encoding, get_str_slice_conf};
+    use super::{accepts_encoding, get_plugin_factory, get_str_slice_conf};
     use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
+
+    /// Regression: a value of the wrong type was read as the default, and
+    /// the plugin ran with a limit of 0, an empty list or a flag left off.
+    #[test]
+    fn test_wrong_typed_values_are_rejected() {
+        let create = |conf: &str| {
+            get_plugin_factory()
+                .create(&toml::from_str::<PluginConf>(conf).unwrap())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+        let limit = "category = \"limit\"\ntag = \"ip\"\n";
+        let key_auth = "category = \"key_auth\"\nheader = \"X-Key\"\n";
+        for (conf, expected) in [
+            (
+                format!("{limit}max = \"100\""),
+                "Plugin limit invalid, message: max must be an integer, got string \"100\"",
+            ),
+            (
+                format!("{limit}max = 10\ninterval = 10"),
+                "interval must be a string, got integer 10",
+            ),
+            (
+                format!("{key_auth}keys = [\"a\", 123]"),
+                "keys must be a list of strings, got integer 123",
+            ),
+            (
+                format!("{key_auth}keys = [\"a\"]\nhide_credentials = \"true\""),
+                "hide_credentials must be true or false, got string \"true\"",
+            ),
+            (
+                "category = \"forward_auth\"\nauth_url = \"http://127.0.0.1/\"\ntimeout = \"10\"".to_string(),
+                "timeout must be a duration such as \"10s\", got string \"10\"",
+            ),
+        ] {
+            let err = create(&conf).unwrap_err();
+            assert_eq!(true, err.contains(expected), "{conf}: {err}");
+        }
+        // The plugin's own error is the one reported when it has one.
+        let err =
+            create(&format!("{limit}max = -1\ninterval = 10")).unwrap_err();
+        assert_eq!(true, err.contains("max must not be negative"), "{err}");
+
+        assert_eq!(Ok(()), create(&format!("{limit}max = 100")));
+        assert_eq!(Ok(()), create(&format!("{key_auth}keys = \"a\"")));
+        // Nothing is left over for the plugin built next on this thread.
+        assert_eq!(Ok(()), create(&format!("{limit}max = 100")));
+    }
+
+    /// Outside the factory the getters answer the default, as they did.
+    #[test]
+    fn test_getters_default_outside_the_factory() {
+        let conf: PluginConf =
+            toml::from_str("max = \"100\"\nkeys = 1\nflag = \"true\"").unwrap();
+        assert_eq!(0, super::get_int_conf(&conf, "max"));
+        assert_eq!(true, get_str_slice_conf(&conf, "keys").is_empty());
+        assert_eq!(false, super::get_bool_conf(&conf, "flag"));
+        assert_eq!("", super::get_str_conf(&conf, "keys"));
+        assert_eq!(None, super::get_duration_conf(&conf, "max"));
+    }
 
     #[test]
     fn test_get_str_slice_conf() {
