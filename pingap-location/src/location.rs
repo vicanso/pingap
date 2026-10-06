@@ -1156,6 +1156,24 @@ mod tests {
         let lo = new_location("~^/admin/(?<id>\\d+)$");
         assert_eq!(true, matches(&lo, "/%61dmin/42"));
         assert_eq!(false, matches(&lo, "/admin/42/x"));
+        assert_eq!(true, matches(&lo, "/admin;v=1/42;x"));
+
+        // Regression: a path parameter or a backslash took a request past
+        // the location of the path that a servlet container, or IIS, goes
+        // on to serve.
+        let lo = new_location("/api/admin");
+        for path in [
+            "/api;v=1/admin/users",
+            "/public/..;/api/admin",
+            "/api\\admin\\users",
+            "/public/..%5capi/admin",
+        ] {
+            assert_eq!(true, matches(&lo, path), "{path}");
+        }
+        assert_eq!(false, matches(&lo, "/api;admin"));
+        let lo = new_location("=/login");
+        assert_eq!(true, matches(&lo, "/login;jsessionid=A1"));
+        assert_eq!(false, matches(&lo, "/login;x/more"));
     }
 
     /// Regression: a rewrite replaced the whole uri with the new path. An

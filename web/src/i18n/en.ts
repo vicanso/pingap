@@ -750,7 +750,7 @@ export default {
     basicAuthIpFailLimitPlaceholder:
       "Wrong passwords per client IP before it is blocked, 0 to disable",
     basicAuthIpFailLimitTips:
-      "Counts wrong credentials per client IP; at the limit the IP gets 403 until the window ends. Behind a proxy or CDN, set trusted proxies in Basic, or the client IP can be spoofed with X-Forwarded-For.",
+      "Counts wrong credentials per client IP; at the limit the IP gets 403 until the window ends. Behind a proxy or CDN, set trusted proxies in Basic: without them the address counted is the proxy's, shared by every client behind it.",
     basicAuthIpFailWindow: "IP Fail Window",
     basicAuthIpFailWindowPlaceholder:
       "How long failures are counted and an IP stays blocked, e.g. 10m (default 5m)",

@@ -685,7 +685,7 @@ export default {
     basicAuthIpFailLimitPlaceholder:
       "同一客户端IP密码错误多少次后拦截，0为关闭",
     basicAuthIpFailLimitTips:
-      "按客户端IP统计密码错误次数，达到上限后该IP在窗口结束前都返回403。位于代理或CDN之后时，请在基础配置中设置可信代理，否则客户端IP可以通过X-Forwarded-For伪造。",
+      "按客户端IP统计密码错误次数，达到上限后该IP在窗口结束前都返回403。位于代理或CDN之后时，请在基础配置中设置可信代理，否则统计用的是代理的地址，代理后面的所有客户端共用一个计数。",
     basicAuthIpFailWindow: "IP失败统计窗口",
     basicAuthIpFailWindowPlaceholder:
       "失败次数的统计时长，也是最长拦截时长，如10m（默认5m）",

@@ -54,13 +54,21 @@ This enum determines how to match the request's URL path. The matching strategy 
   A rewrite rule runs its regex once per request: the leftmost match builds the new path and, when the pattern has named groups, those become request variables from the same match.
 - **(Prefix Match)**: If no prefix is provided, the request path must start with the given string. e.g., `/api/`.
 
-A request is matched by its **normalized** path: percent-encoding decoded (once), `.` and `..` segments resolved, repeated slashes merged. `/%61dmin/users`, `//admin/users` and `/public/../admin/users` all match a location for `/admin`, as the upstream that receives them would read them, so the plugins of that location cannot be sidestepped by spelling the path differently. Only the matching uses this form; the request is forwarded exactly as it came, and `rewrite` works on the path as sent.
+A request is matched by its **normalized** path: percent-encoding decoded (once), path parameters left out, a backslash taken for a slash, `.` and `..` segments resolved, repeated slashes merged. `/%61dmin/users`, `//admin/users` and `/public/../admin/users` all match a location for `/admin`, as the upstream that receives them would read them, so the plugins of that location cannot be sidestepped by spelling the path differently. Only the matching uses this form; the request is forwarded exactly as it came, and `rewrite` works on the path as sent.
 
-Two spellings are not covered, because only some backends give them a
-meaning: a path parameter (`/public/..;/admin`, which Tomcat reads as
-`/public/../admin`) and a backslash used as a separator (IIS). In front of
-such a backend, do not rely on a path prefix alone to keep a location's
-plugins in the way.
+Two of these are what only some backends read, and the request is matched
+the way they read it:
 
-Exact and prefix paths in the configuration are kept in the same form, so `/%E6%96%87%E6%A1%A3` and `/文档` name the same location. A regex is taken as written and is applied to the normalized path: write `/a b`, not `/a%20b`, in a pattern.
+- **Path parameters.** A servlet container (Tomcat, Jetty) drops the
+  `;name=value` of a segment before it looks at the path, so
+  `/public/..;/admin` is `/admin` to it, `/api;v=1/admin` is `/api/admin`, and
+  `/login;jsessionid=A1` is `/login`. Everything from a `;` to the end of its
+  segment is left out of the match.
+- **Backslashes.** IIS takes `\` for `/`, so `/public\..\admin` is `/admin`.
+
+A backend that does neither has nothing at such a path, so nothing is lost by
+it. Up to 0.15.0 neither was covered, and in front of such a backend these
+spellings reached a path past the location meant to guard it.
+
+Exact and prefix paths in the configuration are kept in the same form, so `/%E6%96%87%E6%A1%A3` and `/文档` name the same location. A regex is taken as written and is applied to the normalized path: write `/a b`, not `/a%20b`, in a pattern, and a pattern cannot match a path parameter or a backslash, which are gone by then. A `;` in an exact or prefix path of the configuration cuts it there, like in a request.
 - **(Any)**: An empty path string matches any request path.

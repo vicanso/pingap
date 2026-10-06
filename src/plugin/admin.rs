@@ -648,7 +648,12 @@ async fn handle_request_admin(
     session: &mut Session,
     ctx: &mut Ctx,
 ) -> pingora::Result<Option<HttpResponse>> {
-    let ip = pingap_core::ensure_client_ip(session, ctx);
+    // Failed logins are counted by an address the client cannot choose:
+    // the client ip behind trusted proxies, the peer's own without them.
+    // The client ip alone is, without trusted proxies, whatever
+    // `X-Forwarded-For` says, and a new address with every guess was never
+    // locked out.
+    let ip = pingap_core::ensure_verified_client_ip(session, ctx);
     if !plugin.ip_fail_limit.validate(ip) {
         return Ok(Some(HttpResponse {
             status: StatusCode::FORBIDDEN,

@@ -97,9 +97,18 @@ failures`, even for correct credentials, until its window ends:
   forgotten, which can only let an IP off early.
 - The count is per process, like the `limit` plugin's.
 
-The client IP is pingap's usual client IP. Without `basic.trusted_proxies` it is
-taken from `X-Forwarded-For` first, which any client can set: an attacker can
-send a fresh address with every guess and never be blocked, or put someone
-else's address in the header to get them blocked. Behind a proxy or CDN, list
-it in `trusted_proxies`; when clients connect directly, set `trusted_proxies`
-anyway (to any address that is not a client) so the header is ignored.
+Failures are counted by an address the client cannot choose:
+
+| `basic.trusted_proxies` | The address counted |
+| --- | --- |
+| set | The client IP: through a listed proxy the right-most `X-Forwarded-For` entry that is not a listed proxy, otherwise the peer |
+| not set | The address of the connection itself; `X-Forwarded-For` and `X-Real-IP` are not looked at |
+
+So behind a proxy or CDN that is not listed in `trusted_proxies`, every client
+shares the proxy's address and one count: a few wrong passwords from anyone
+block them all until the window ends. List the proxy.
+
+Up to 0.15.0 the count went by `X-Forwarded-For` whenever no trusted proxies
+were set, which any client can write: a new address with every guess was never
+blocked, and someone else's address got them blocked. The admin's own lockout
+of failed logins is counted the same way.

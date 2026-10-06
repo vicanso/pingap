@@ -23,7 +23,7 @@ use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
-    RequestPluginResult, TtlLruLimit, ensure_client_ip,
+    RequestPluginResult, TtlLruLimit, ensure_verified_client_ip,
 };
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
@@ -252,8 +252,14 @@ impl Plugin for BasicAuth {
 
         // A blocked IP is refused before its credentials are looked at, so
         // guessing stops paying off even when a guess would be right.
+        //
+        // Counted by an address the client cannot choose: the client ip
+        // behind trusted proxies, the peer's own without them. It used to
+        // be the client ip either way, which without trusted proxies is
+        // whatever `X-Forwarded-For` says - a new address with every guess
+        // was never blocked, and someone else's address got them blocked.
         if let Some(limit) = &self.ip_fail_limit
-            && !limit.validate(ensure_client_ip(session, ctx))
+            && !limit.validate(ensure_verified_client_ip(session, ctx))
         {
             return Ok(RequestPluginResult::Respond(
                 self.too_many_failures_resp.clone(),
@@ -280,7 +286,7 @@ impl Plugin for BasicAuth {
             // Only wrong credentials count. A missing header does not: it is
             // how every browser starts, before the login prompt.
             if let Some(limit) = &self.ip_fail_limit {
-                limit.inc(ensure_client_ip(session, ctx));
+                limit.inc(ensure_verified_client_ip(session, ctx));
             }
             // If configured, apply rate limiting delay
             // This helps prevent automated brute force attempts
@@ -471,12 +477,27 @@ hide_credentials = true
         }
     }
 
+    /// A request from the peer `client_ip`, which is what the failures are
+    /// counted by when no trusted proxies are configured.
     async fn request(
         auth: &BasicAuth,
         client_ip: &str,
         authorization: Option<&str>,
     ) -> RequestPluginResult {
-        let mut headers = vec![format!("X-Forwarded-For: {client_ip}")];
+        request_with(auth, client_ip, "", authorization).await
+    }
+
+    /// The same, with an `X-Forwarded-For` of the client's choosing.
+    async fn request_with(
+        auth: &BasicAuth,
+        peer: &str,
+        forwarded_for: &str,
+        authorization: Option<&str>,
+    ) -> RequestPluginResult {
+        let mut headers = vec!["Host: example.com".to_string()];
+        if !forwarded_for.is_empty() {
+            headers.push(format!("X-Forwarded-For: {forwarded_for}"));
+        }
         if let Some(value) = authorization {
             headers.push(format!("Authorization: {value}"));
         }
@@ -485,13 +506,11 @@ hide_credentials = true
         let mock_io = Builder::new().read(input.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        auth.handle_request(
-            PluginStep::Request,
-            &mut session,
-            &mut Ctx::default(),
-        )
-        .await
-        .unwrap()
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some(peer.to_string());
+        auth.handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap()
     }
 
     fn status(result: &RequestPluginResult) -> u16 {
@@ -548,6 +567,48 @@ hide_credentials = true
         assert_eq!(
             true,
             request(&auth, "3.3.3.3", Some(good)).await
+                == RequestPluginResult::Continue
+        );
+    }
+
+    /// Regression: the failures were counted by the client ip, which
+    /// without trusted proxies is what `X-Forwarded-For` says. A new
+    /// address with every guess was never blocked, and naming somebody
+    /// else's address got that address blocked.
+    #[tokio::test]
+    async fn test_ip_fail_limit_ignores_a_forged_address() {
+        // spellchecker:off
+        let good = "Basic YWRtaW46MTIzMTIz";
+        let bad = "Basic YWRtaW46MTIzMTIa";
+        // spellchecker:on
+        let auth = BasicAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "authorizations = [\"{}\"]\nip_fail_limit = 2\nip_fail_window = \"1m\"",
+                &good["Basic ".len()..]
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // One peer guessing, under a different address each time.
+        for forged in ["7.7.7.1", "7.7.7.2"] {
+            assert_eq!(
+                401,
+                status(
+                    &request_with(&auth, "1.1.1.1", forged, Some(bad)).await
+                )
+            );
+        }
+        assert_eq!(
+            403,
+            status(
+                &request_with(&auth, "1.1.1.1", "7.7.7.3", Some(good)).await
+            )
+        );
+        // The addresses it named are not the ones that are blocked.
+        assert_eq!(
+            true,
+            request(&auth, "7.7.7.1", Some(good)).await
                 == RequestPluginResult::Continue
         );
     }

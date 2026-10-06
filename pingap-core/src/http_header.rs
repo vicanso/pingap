@@ -673,13 +673,14 @@ pub fn remove_query_from_header(
     set_path_and_query(req_header, &path_and_query)
 }
 
-/// Whether `path` has anything for `normalize_path` to do: a `%`, an empty
-/// segment (`//`), or a segment that is `.` or `..`.
+/// Whether `path` has anything for `normalize_path` to do: a `%`, a path
+/// parameter (`;`), a backslash, an empty segment (`//`), or a segment that
+/// is `.` or `..`.
 fn path_needs_normalizing(path: &[u8]) -> bool {
     let mut after_slash = false;
     for (index, byte) in path.iter().enumerate() {
         match byte {
-            b'%' => return true,
+            b'%' | b';' | b'\\' => return true,
             b'/' if after_slash => return true,
             b'.' if after_slash => {
                 let rest = &path[index + 1..];
@@ -696,7 +697,8 @@ fn path_needs_normalizing(path: &[u8]) -> bool {
 }
 
 /// The path of a request in the form it is matched by: percent-encoding
-/// decoded, `.` and `..` segments resolved, repeated slashes merged.
+/// decoded, path parameters left out, a backslash taken for a slash, `.`
+/// and `..` segments resolved, repeated slashes merged.
 ///
 /// Which location a request belongs to is decided on this form, because it
 /// is the form most upstreams go on to serve. Matching the path as it was
@@ -704,6 +706,14 @@ fn path_needs_normalizing(path: &[u8]) -> bool {
 /// location for `/admin`, and whatever plugins guard it, on their way to
 /// an upstream that reads all three as `/admin`. Only the matching uses
 /// it; the request is forwarded as it came.
+///
+/// Two of these are what some upstreams read and others do not. A servlet
+/// container drops the `;name=value` of a segment before it looks at the
+/// path, so to Tomcat `/public/..;/admin` and `/api;v=1/admin` are
+/// `/admin` and `/api/admin`; IIS takes `\` for `/`. An upstream that does
+/// neither has nothing at such a path, so reading it the way the others do
+/// costs it nothing, and the ones that do are no longer reached past the
+/// location that was meant to stand in front of them.
 ///
 /// A path with nothing to change, which is nearly every path, is returned
 /// as it is.
@@ -734,15 +744,20 @@ pub fn normalize_path(path: &str) -> Cow<'_, str> {
     let mut segments: Vec<&[u8]> = vec![];
     // Whether the path ends in a directory, `/a/` as well as `/a/.`.
     let mut trailing_slash = false;
-    for segment in decoded.split(|byte| *byte == b'/') {
+    for segment in decoded.split(|byte| matches!(byte, b'/' | b'\\')) {
         trailing_slash = true;
-        match segment {
+        // The name of the segment, without its parameters.
+        let name = segment
+            .split(|byte| *byte == b';')
+            .next()
+            .unwrap_or(segment);
+        match name {
             b"" | b"." => {},
             b".." => {
                 segments.pop();
             },
             _ => {
-                segments.push(segment);
+                segments.push(name);
                 trailing_slash = false;
             },
         }
@@ -1442,6 +1457,24 @@ mod tests {
             ("/a%4", "/a%4"),
             ("/%E6%96%87%E6%A1%A3/menu", "/文档/menu"),
             ("/a%20b", "/a b"),
+            // Regression: a path parameter is no part of the name of its
+            // segment. A servlet container reads these as the path on the
+            // right, and a location for it was walked past.
+            ("/public/..;/admin", "/admin"),
+            ("/public/..;x=1/admin", "/admin"),
+            ("/public/.;/admin", "/public/admin"),
+            ("/public/%2e%2e%3b/admin", "/admin"),
+            ("/api;v=1/admin", "/api/admin"),
+            ("/admin;jsessionid=A1/users", "/admin/users"),
+            ("/login;jsessionid=A1", "/login"),
+            ("/a/;x/b", "/a/b"),
+            ("/a/b;x/", "/a/b/"),
+            ("/a/;x", "/a/"),
+            // Regression: so is a backslash a separator to some.
+            ("/public\\..\\admin", "/admin"),
+            ("/public/..%5cadmin", "/admin"),
+            ("/a\\b", "/a/b"),
+            ("/a\\\\b\\", "/a/b/"),
         ] {
             assert_eq!(expected, normalize_path(path), "{path}");
         }
