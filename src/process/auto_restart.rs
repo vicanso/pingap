@@ -14,7 +14,7 @@
 
 use super::restart;
 use crate::certificates::{
-    try_reload_certificate_files, try_update_certificates,
+    try_reload_certificate_files, try_update_certificates_except,
 };
 use crate::locations::try_init_locations;
 use crate::plugin;
@@ -27,8 +27,8 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
-    CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-    CATEGORY_UPSTREAM, ConfigManager, Observer, PingapConfig, PingapTomlConfig,
+    CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM, CertificateConf,
+    ConfigManager, Observer, PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -38,12 +38,13 @@ use pingap_logger::LoggerReloadHandle;
 use pingap_logger::new_env_filter;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 static LOG_TARGET: &str = "main::auto_restart";
 
@@ -156,6 +157,70 @@ async fn diff_and_update_config(
     Ok(Some(new_config))
 }
 
+/// What a hot reload does with a change of the certificates.
+struct CertificateChanges {
+    /// The certificates once the reload is done.
+    merged: HashMap<String, CertificateConf>,
+    /// Whether any entry that is reloaded here changed.
+    changed: bool,
+    /// The entries the new configuration gives to ACME: not reloaded here.
+    of_acme: HashSet<String>,
+    /// Those of them whose settings changed, which only a restart applies.
+    left: Vec<String>,
+}
+
+/// Splits a change of the certificates into the entries a hot reload takes
+/// and the ones it leaves.
+///
+/// An entry the new configuration gives to ACME stays as it is, a new one
+/// stays out: the ACME service reads its settings from the running
+/// configuration and stores the certificate it orders into the same entry,
+/// and what a server needs to answer its challenge is set up at start.
+/// That write alone - `tls_cert` and `tls_key` of an entry that is
+/// otherwise the same - is the service's own doing and nothing to report.
+///
+/// An entry that is no longer one of ACME, or no longer there, is reloaded
+/// like any other. Left in the running configuration, the service went on
+/// renewing it: over the certificate that was put in its place, or for an
+/// entry that is not stored any more.
+fn merge_certificates(
+    current: &HashMap<String, CertificateConf>,
+    new: &HashMap<String, CertificateConf>,
+) -> CertificateChanges {
+    let settings = |conf: Option<&CertificateConf>| {
+        conf.map(|conf| CertificateConf {
+            tls_cert: None,
+            tls_key: None,
+            ..conf.clone()
+        })
+    };
+    let mut changes = CertificateChanges {
+        merged: HashMap::with_capacity(new.len()),
+        changed: false,
+        of_acme: HashSet::new(),
+        left: vec![],
+    };
+    let names: BTreeSet<&String> = current.keys().chain(new.keys()).collect();
+    for name in names {
+        let (before, after) = (current.get(name), new.get(name));
+        if after.is_some_and(|conf| conf.is_acme()) {
+            changes.of_acme.insert(name.clone());
+            if settings(before) != settings(after) {
+                changes.left.push(name.clone());
+            }
+            if let Some(conf) = before {
+                changes.merged.insert(name.clone(), conf.clone());
+            }
+            continue;
+        }
+        changes.changed |= before != after;
+        if let Some(conf) = after {
+            changes.merged.insert(name.clone(), conf.clone());
+        }
+    }
+    changes
+}
+
 /// Compares configurations and handles updates through hot reload or full restart
 ///
 /// This function:
@@ -166,7 +231,7 @@ async fn diff_and_update_config(
 ///    - Upstream configurations
 ///    - Location definitions
 ///    - Plugin configurations
-///    - Certificates (except ACME/Let's Encrypt)
+///    - Certificates, entry by entry: all but the ones of ACME
 ///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`,
 ///      `webhook_batch_window`, `webhook_batch_max_events`)
 /// 4. Sends notifications for successful updates
@@ -207,7 +272,6 @@ async fn apply_config(
         let mut should_reload_upstream = false;
         let mut should_reload_location = false;
         let mut should_reload_plugin = false;
-        let mut should_reload_certificate = false;
 
         // The webhook goes first, so the notifications for everything else
         // this change reloads already go out with the new settings.
@@ -250,29 +314,31 @@ async fn apply_config(
         // so again on each attempt, ten minutes apart.
         hot_reload_config.storages = new_config.storages.clone();
 
-        // acme will create a let's encrypt service
-        // so it can't be reloaded.
-        let mut exists_acme = false;
-        for cert in new_config.certificates.values() {
-            if cert.acme.is_some() {
-                exists_acme = true;
-            }
+        // Certificates are taken entry by entry. One of ACME is left as
+        // it is: its certificate is its service's to order and to store.
+        // With a single such entry no certificate at all used to be
+        // reloaded, the ones given in the configuration included, and
+        // nothing said so.
+        let certificates = merge_certificates(
+            &current_config.certificates,
+            &new_config.certificates,
+        );
+        hot_reload_config.certificates = certificates.merged;
+        let certificates_of_acme = certificates.of_acme;
+        let should_reload_certificate = certificates.changed;
+        if !certificates.left.is_empty() {
+            warn!(
+                target: LOG_TARGET,
+                certificates = certificates.left.join(","),
+                "the change to a certificate of acme takes a restart to apply"
+            );
         }
-        if !exists_acme {
-            hot_reload_config.certificates = new_config.certificates.clone();
-        }
-
-        // new_config.certificates
 
         for category in updated_category_list {
             match category.as_str() {
                 CATEGORY_LOCATION => should_reload_location = true,
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
                 CATEGORY_PLUGIN => should_reload_plugin = true,
-                // acme should be reload by let's encrypt service
-                CATEGORY_CERTIFICATE if !exists_acme => {
-                    should_reload_certificate = true;
-                },
                 _ => {},
             };
         }
@@ -373,8 +439,10 @@ async fn apply_config(
             plugin::remove_unconfigured_plugins(&new_config.plugins);
         }
         if should_reload_certificate {
-            let (updated_certificates, errors) =
-                try_update_certificates(&new_config.certificates);
+            let (updated_certificates, errors) = try_update_certificates_except(
+                &hot_reload_config.certificates,
+                |name| certificates_of_acme.contains(name),
+            );
             info!(target: LOG_TARGET, "reload certificate success");
             send_notification(NotificationData {
                 category: "reload_config".to_string(),
@@ -843,8 +911,92 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{LastSeen, should_skip};
+    use super::{LastSeen, merge_certificates, should_skip};
+    use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+
+    /// Regression: one certificate of ACME in the configuration and no
+    /// certificate was hot reloaded, the ones given as PEM included.
+    #[test]
+    fn test_merge_certificates_goes_entry_by_entry() {
+        let conf = |cert: &str, acme: bool| CertificateConf {
+            domains: Some("example.com".to_string()),
+            tls_cert: Some(cert.to_string()),
+            tls_key: Some(cert.to_string()),
+            acme: acme.then(|| "lets_encrypt".to_string()),
+            ..Default::default()
+        };
+        let configs = |items: &[(&str, CertificateConf)]| {
+            items
+                .iter()
+                .map(|(name, conf)| (name.to_string(), conf.clone()))
+                .collect::<HashMap<_, _>>()
+        };
+        let current = configs(&[
+            ("acme", conf("a1", true)),
+            ("static", conf("s1", false)),
+            ("gone", conf("g1", false)),
+            ("was-acme", conf("w1", true)),
+        ]);
+
+        // Nothing changed.
+        let changes = merge_certificates(&current, &current);
+        assert_eq!(current, changes.merged);
+        assert_eq!(false, changes.changed);
+        assert_eq!(true, changes.left.is_empty());
+        assert_eq!(2, changes.of_acme.len());
+
+        let new = configs(&[
+            // Renewed: what the ACME service itself stores.
+            ("acme", conf("a2", true)),
+            ("static", conf("s2", false)),
+            ("added", conf("n1", false)),
+            // No longer of ACME: reloaded, so that its service lets go.
+            ("was-acme", conf("w2", false)),
+            // Given to ACME, and a new one of ACME: both wait.
+            ("gone", conf("g1", true)),
+            ("new-acme", conf("", true)),
+        ]);
+        let changes = merge_certificates(&current, &new);
+        assert_eq!(true, changes.changed);
+        assert_eq!(
+            configs(&[
+                ("acme", conf("a1", true)),
+                ("static", conf("s2", false)),
+                ("added", conf("n1", false)),
+                ("was-acme", conf("w2", false)),
+                ("gone", conf("g1", false)),
+            ]),
+            changes.merged
+        );
+        assert_eq!(
+            vec!["gone".to_string(), "new-acme".to_string()],
+            changes.left
+        );
+        let mut of_acme: Vec<_> = changes.of_acme.into_iter().collect();
+        of_acme.sort();
+        assert_eq!(vec!["acme", "gone", "new-acme"], of_acme);
+
+        // The last entry of ACME is taken out: reloaded like any other.
+        // Left in the running configuration, its service went on renewing
+        // a certificate that is not stored any more.
+        let new = configs(&[("static", conf("s1", false))]);
+        let changes = merge_certificates(&current, &new);
+        assert_eq!(true, changes.changed);
+        assert_eq!(new, changes.merged);
+        assert_eq!(true, changes.left.is_empty());
+        assert_eq!(true, changes.of_acme.is_empty());
+
+        // The settings of an entry of ACME changed: said, and left.
+        let mut new = current.clone();
+        new.get_mut("acme").unwrap().domains =
+            Some("example.com,www.example.com".to_string());
+        let changes = merge_certificates(&current, &new);
+        assert_eq!(false, changes.changed);
+        assert_eq!(current, changes.merged);
+        assert_eq!(vec!["acme".to_string()], changes.left);
+    }
 
     #[test]
     fn test_should_skip() {

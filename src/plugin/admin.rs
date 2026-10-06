@@ -63,7 +63,7 @@ use std::sync::Arc;
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 use substring::Substring;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -322,12 +322,143 @@ struct AesResp {
     value: String,
 }
 
+/// The largest request body the API reads. A whole configuration with its
+/// certificates and keys inline is far below it; without a limit a request
+/// was read into memory for as long as it kept coming.
+const MAX_BODY_SIZE: usize = 8 * 1024 * 1024;
+
 async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
+    let too_large = || {
+        pingap_core::new_internal_error(
+            413,
+            format!("the request body is larger than {MAX_BODY_SIZE} bytes"),
+        )
+    };
+    // What says so itself is turned away before any of it is read.
+    let declared = session
+        .req_header()
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    if declared.is_some_and(|len| len > MAX_BODY_SIZE) {
+        return Err(too_large());
+    }
     let mut buf = BytesMut::with_capacity(4096);
     while let Some(value) = session.read_request_body().await? {
+        if buf.len() + value.len() > MAX_BODY_SIZE {
+            return Err(too_large());
+        }
         buf.put(value.as_ref());
     }
     Ok(buf)
+}
+
+/// The authority a request names: the one of its target (HTTP/2, or an
+/// absolute form), or else its `Host`.
+fn request_authority(header: &RequestHeader) -> String {
+    header
+        .uri
+        .authority()
+        .map(|authority| authority.as_str())
+        .or_else(|| {
+            header
+                .headers
+                .get(header::HOST)
+                .and_then(|value| value.to_str().ok())
+        })
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The host of an authority, without the port and the brackets of an ipv6
+/// address.
+fn authority_host(authority: &str) -> &str {
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split_once(']').map_or(rest, |(host, _)| host);
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => host,
+        _ => authority,
+    }
+}
+
+/// Whether a browser sent this request from a page of another origin.
+///
+/// Browsers say so themselves in `Sec-Fetch-Site`; where they do not (it is
+/// only sent to https and to localhost) the `Origin` they add to a request
+/// that changes something has to be the host the request is for. A client
+/// that sends neither is not a browser, and nobody's page.
+fn is_cross_site(header: &RequestHeader, authority: &str) -> bool {
+    if let Some(site) = header.headers.get("sec-fetch-site") {
+        return !matches!(site.as_bytes(), b"same-origin" | b"none");
+    }
+    let Some(origin) = header.headers.get(header::ORIGIN) else {
+        return false;
+    };
+    // `null`, or anything else that names no host, is nobody's origin.
+    origin
+        .to_str()
+        .ok()
+        .and_then(|origin| origin.split_once("://"))
+        .is_none_or(|(_, origin)| !origin.eq_ignore_ascii_case(authority))
+}
+
+/// Whether `host` is a name that only ever means this machine or the
+/// address that was dialled: an ip address, `localhost`, or a name under
+/// `.localhost`. No DNS answer can make any other name's page a page of
+/// these.
+fn is_literal_host(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_ok()
+        || host.eq_ignore_ascii_case("localhost")
+        || host
+            .len()
+            .checked_sub(".localhost".len())
+            .and_then(|at| host.get(at..))
+            .is_some_and(|tail| tail.eq_ignore_ascii_case(".localhost"))
+}
+
+/// Why an API request to an admin without credentials is refused, if it
+/// is. Such an admin takes whatever reaches it, and a browser on the same
+/// machine reaches it for any page the user has open:
+///
+/// - a page of another site can send a request that changes something
+///   (a form, or a `fetch` in `no-cors` mode) without being able to read
+///   the answer, which is all a new config or a restart needs;
+/// - a page under a name its owner then points at 127.0.0.1 (DNS
+///   rebinding) is, to the browser, the admin's own page, and reads the
+///   configuration with its keys as well.
+///
+/// With credentials neither gets anywhere: the token every request needs
+/// is a header the first cannot add and a secret the second does not have.
+fn refuse_without_credentials(
+    header: &RequestHeader,
+    authority: &str,
+    server_addr: Option<&str>,
+) -> Option<&'static str> {
+    let reads = matches!(header.method, Method::GET | Method::HEAD);
+    if !reads && is_cross_site(header, authority) {
+        return Some(
+            "Forbidden, a request from another site to an admin without credentials",
+        );
+    }
+    // Only where the connection came to a loopback address, which is where
+    // the name is `localhost` or the address for everyone but a rebound
+    // page. An admin on another address is reached by whatever name its
+    // network gives it.
+    //
+    // A listener on `[::]` takes ipv4 connections as well, and names their
+    // addresses `::ffff:127.0.0.1`, which is not what `::1` is.
+    let loopback = server_addr
+        .and_then(|addr| addr.parse::<std::net::IpAddr>().ok())
+        .is_some_and(|addr| addr.to_canonical().is_loopback());
+    let host = authority_host(authority);
+    if loopback && !host.is_empty() && !is_literal_host(host) {
+        return Some(
+            "Forbidden, an admin without credentials is reached on this machine by localhost or its address only",
+        );
+    }
+    None
 }
 
 impl AdminServe {
@@ -712,6 +843,8 @@ async fn handle_request_admin(
     ctx: &mut Ctx,
 ) -> pingora::Result<Option<HttpResponse>> {
     let header = session.req_header_mut();
+    // Before the target is rewritten below, which leaves only the path.
+    let authority = request_authority(header);
     let path = header.uri.path();
     // What is left always starts with `/`. Cutting `plugin.path` by length
     // took the leading `/` along when the admin is mounted at `/`, and let
@@ -755,6 +888,29 @@ async fn handle_request_admin(
             });
         return Ok(Some(static_file(&path, gzip)));
     };
+    if plugin.authorizations.is_empty()
+        && let Some(reason) = refuse_without_credentials(
+            session.req_header(),
+            &authority,
+            ctx.conn.server_addr.as_deref(),
+        )
+    {
+        warn!(
+            target: LOG_TARGET,
+            path,
+            host = authority,
+            origin = pingap_core::get_req_header_value(
+                session.req_header(),
+                "origin"
+            ),
+            "{reason}"
+        );
+        return Ok(Some(HttpResponse {
+            status: StatusCode::FORBIDDEN,
+            body: Bytes::from_static(reason.as_bytes()),
+            ..Default::default()
+        }));
+    }
     // Failed logins are counted by an address the client cannot choose:
     // the client ip behind trusted proxies, the peer's own without them.
     // The client ip alone is, without trusted proxies, whatever
@@ -1360,6 +1516,222 @@ mod tests {
             })
             .unwrap_or(body);
         (resp.status.as_u16(), message)
+    }
+
+    /// The answer of `admin` to `request`, which came in on `server_addr`.
+    async fn answer(
+        admin: &AdminServe,
+        server_addr: &str,
+        request: &str,
+    ) -> (u16, String) {
+        let mut session = new_admin_session(request).await;
+        let mut ctx = Ctx::default();
+        ctx.conn.server_addr = Some(server_addr.to_string());
+        let resp = handle_request_admin(admin, &mut session, &mut ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            resp.status.as_u16(),
+            String::from_utf8_lossy(&resp.body).into_owned(),
+        )
+    }
+
+    /// Regression: an admin without credentials took a write from any page
+    /// the user had open - `fetch(url, {method: "POST", mode: "no-cors"})`
+    /// stored a config - and answered a page whose name had been pointed at
+    /// 127.0.0.1 as if it were its own.
+    #[tokio::test]
+    async fn test_admin_without_credentials_refuses_other_sites() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), STORED).unwrap();
+        let (admin, manager) = new_admin_on(file.path(), "");
+        let upstream = r#"{"addrs":["127.0.0.1:5001"]}"#;
+        let write = |headers: &str| {
+            format!(
+                "POST /api/configs/upstream/x HTTP/1.1\r\nHost: 127.0.0.1:3018\r\n{headers}Content-Length: {}\r\n\r\n{upstream}",
+                upstream.len()
+            )
+        };
+        let stored = async || {
+            let config = manager.load_all().await.unwrap();
+            config
+                .to_pingap_config(false)
+                .unwrap()
+                .upstreams
+                .contains_key("x")
+        };
+
+        // What a page of another site can send without a preflight.
+        for headers in [
+            "Origin: https://evil.test\r\nContent-Type: text/plain\r\n",
+            "Origin: null\r\n",
+            // Another port of the same host is another origin.
+            "Origin: http://127.0.0.1:8080\r\n",
+            "Sec-Fetch-Site: cross-site\r\nOrigin: https://evil.test\r\n",
+            "Sec-Fetch-Site: same-site\r\nOrigin: http://127.0.0.1:8080\r\n",
+            // The browser's word counts where it gives it, not the origin.
+            "Sec-Fetch-Site: cross-site\r\nOrigin: http://127.0.0.1:3018\r\n",
+        ] {
+            let (status, body) =
+                answer(&admin, "127.0.0.1", &write(headers)).await;
+            assert_eq!(403, status, "{headers}: {body}");
+            assert_eq!(true, body.contains("another site"), "{body}");
+            assert_eq!(false, stored().await, "{headers}");
+        }
+        let (status, _) = answer(
+            &admin,
+            "127.0.0.1",
+            "POST /api/restart HTTP/1.1\r\nHost: 127.0.0.1:3018\r\nOrigin: https://evil.test\r\n\r\n",
+        )
+        .await;
+        assert_eq!(403, status);
+        let (status, _) = answer(
+            &admin,
+            "127.0.0.1",
+            "DELETE /api/configs/upstream/u1 HTTP/1.1\r\nHost: 127.0.0.1:3018\r\nOrigin: https://evil.test\r\n\r\n",
+        )
+        .await;
+        assert_eq!(403, status);
+
+        // A read from another site has nothing to show for it: the browser
+        // keeps the answer from the page.
+        let (status, _) = answer(
+            &admin,
+            "127.0.0.1",
+            "GET /api/configs/toml HTTP/1.1\r\nHost: 127.0.0.1:3018\r\nSec-Fetch-Site: cross-site\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, status);
+
+        // The admin's own page, and a client that is not a browser.
+        for headers in [
+            "Origin: http://127.0.0.1:3018\r\n",
+            "Sec-Fetch-Site: same-origin\r\nOrigin: http://127.0.0.1:3018\r\n",
+            "",
+        ] {
+            let (status, body) =
+                answer(&admin, "127.0.0.1", &write(headers)).await;
+            assert_eq!(204, status, "{headers}: {body}");
+        }
+        assert_eq!(true, stored().await);
+
+        // DNS rebinding: to the browser the page and the admin are one
+        // origin, and what gives it away is the name.
+        let read = |host: &str| {
+            format!("GET /api/configs/toml HTTP/1.1\r\nHost: {host}\r\n\r\n")
+        };
+        for host in ["evil.test:3018", "evil.test", "localhost.evil.test"] {
+            let (status, body) = answer(&admin, "127.0.0.1", &read(host)).await;
+            assert_eq!(403, status, "{host}");
+            assert_eq!(true, body.contains("localhost"), "{body}");
+            for server_addr in ["::1", "::ffff:127.0.0.1"] {
+                let (status, _) =
+                    answer(&admin, server_addr, &read(host)).await;
+                assert_eq!(403, status, "{host} on {server_addr}");
+            }
+        }
+        for host in [
+            "127.0.0.1:3018",
+            "localhost:3018",
+            "LOCALHOST",
+            "admin.localhost:3018",
+            "[::1]:3018",
+            "192.168.1.5:3018",
+        ] {
+            let (status, _) = answer(&admin, "127.0.0.1", &read(host)).await;
+            assert_eq!(200, status, "{host}");
+        }
+        // The pages themselves are public, under any name.
+        let (status, _) = answer(
+            &admin,
+            "127.0.0.1",
+            "GET / HTTP/1.1\r\nHost: evil.test\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, status);
+        // On an address of the network the admin is reached by the names
+        // that network has for it.
+        let (status, _) =
+            answer(&admin, "192.168.1.5", &read("pingap.internal:3018")).await;
+        assert_eq!(200, status);
+    }
+
+    /// With credentials the token is what keeps another site out, and a
+    /// request that has it is not asked where it comes from.
+    #[tokio::test]
+    async fn test_admin_with_credentials_goes_by_the_token() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), STORED).unwrap();
+        // spellchecker:off
+        let (admin, _) = new_admin_on(
+            file.path(),
+            r#"authorizations = ["YWRtaW46MTIzMTIz"]"#,
+        );
+        // spellchecker:on
+        let ts = pingap_core::now_sec();
+        let mut hasher = Sha256::new();
+        hasher.update(format!("admin:123123:{ts}").as_bytes());
+        let token = hasher.finalize().encode_hex::<String>();
+        let request = |authorization: &str| {
+            format!(
+                "GET /api/configs/toml HTTP/1.1\r\nHost: admin.example.com\r\nOrigin: https://other.example.com\r\n{authorization}\r\n"
+            )
+        };
+        let (status, _) = answer(&admin, "127.0.0.1", &request("")).await;
+        assert_eq!(401, status);
+        let (status, _) = answer(
+            &admin,
+            "127.0.0.1",
+            &request(&format!("Authorization: {token}:{ts}\r\n")),
+        )
+        .await;
+        assert_eq!(200, status);
+    }
+
+    /// Regression: the body of a request was read into memory however
+    /// large it was.
+    #[tokio::test]
+    async fn test_request_body_has_a_limit() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), STORED).unwrap();
+        let (admin, _) = new_admin_on(file.path(), "");
+
+        // Says so itself: refused before any of it is read.
+        let (status, body) = answer(
+            &admin,
+            "192.168.1.5",
+            &format!(
+                "POST /api/configs/import HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+                super::MAX_BODY_SIZE + 1
+            ),
+        )
+        .await;
+        assert_eq!(413, status, "{body}");
+
+        // Does not say: refused once it has grown past the limit, with
+        // the rest of it still on its way.
+        let chunk = "a".repeat(64 * 1024);
+        let mut request = String::from(
+            "POST /api/configs/import HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
+        );
+        for _ in 0..=super::MAX_BODY_SIZE / chunk.len() {
+            request.push_str(&format!("{:x}\r\n{chunk}\r\n", chunk.len()));
+        }
+        request.push_str("0\r\n\r\n");
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = client.write_all(request.as_bytes()).await;
+        });
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+        let resp =
+            handle_request_admin(&admin, &mut session, &mut Ctx::default())
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(413, resp.status.as_u16());
     }
 
     const STORED: &str = r#"[basic]

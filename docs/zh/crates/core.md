@@ -25,7 +25,7 @@ Pingap Core 是 Pingap 项目的基础库，提供一组核心组件与工具，
 - `http_header`：HTTP 请求头解析与操作辅助。 `resolve_static_header_value` 在加载配置时就把 `$hostname`、`$ENV_VAR` 折算成固定值；`$http_user_agent` 读取的是 `User-Agent`（下划线代表横线）；`get_host` 会完整保留 IPv6 字面量。
 - `http_response`：创建 HTTP 响应的构建器与结构体。
 - `plugin`：定义 `Plugin` trait 与 `PluginStep` 枚举。
-- `service`：运行后台任务的 `BackgroundTaskService`。 常规周期只记 debug 日志；一个周期超过间隔仍未结束时，会带着未完成任务的名字打 warn。
+- `service`：运行后台任务的 `BackgroundTaskService`。同一个服务里的任务各自计时：每一轮只启动空闲的任务，上一轮还没结束的任务本轮跳过（并带着它已运行的时长打 warn），不会拖住其他任务。传给任务的 `count` 是它自己的运行次数，所以按“每 n 次执行一回”调度的任务不会因为跳过某一轮而错过该它执行的那一次。常规周期只记 debug 日志。
 - `ttl_lru_limit`：基于 TTL 的 LRU 限流器。 计数器是原子的，同一键的并发递增不会丢失。
 - `notification`：发送通知的 trait。
 - `util`：杂项工具，含时间缓存与主机名获取。

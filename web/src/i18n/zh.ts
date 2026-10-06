@@ -716,6 +716,9 @@ export default {
       "从该地址获取密钥，并按令牌的 kid 选择。优先于公钥和密钥。",
     jwtJwksTtl: "JWKS 有效期",
     jwtJwksTtlPlaceholder: "获取到的密钥的有效时长，默认: 1h",
+    jwtRequireExp: "要求过期时间",
+    jwtRequireExpTips:
+      "不设置时为开启：拒绝没有 exp 的令牌，签发路径的响应里没有 exp 时也不签发。只有确实需要永不过期的令牌时才关闭。",
     forwardAuthUrl: "认证地址",
     forwardAuthUrlPlaceholder: "输入认证服务的地址",
     forwardAuthTimeout: "超时",

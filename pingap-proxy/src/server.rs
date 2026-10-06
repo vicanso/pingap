@@ -320,7 +320,7 @@ fn cache_variance(
 /// once; any other status is generated on demand the way pingora does it.
 static ERROR_RESPONSES: LazyLock<AHashMap<u16, ResponseHeader>> =
     LazyLock::new(|| {
-        [400, 404, 408, 413, 429, 500, 502, 503]
+        [400, 404, 408, 413, 429, 500, 502, 503, 504]
             .into_iter()
             .map(|code| (code, error_resp::gen_error_response(code)))
             .collect()
@@ -353,7 +353,14 @@ fn classify_proxy_error(e: &pingora::Error) -> (u16, bool) {
         // spellchecker:off
         _ => {
             match e.esource() {
-                pingora::ErrorSource::Upstream => (502, false),
+                // An upstream that did not answer in time is a 504, one
+                // that failed any other way a 502: they are different
+                // things to be woken up for, and used to be one status.
+                pingora::ErrorSource::Upstream => match e.etype() {
+                    ConnectTimedout | ReadTimedout | WriteTimedout
+                    | TLSHandshakeTimedout => (504, false),
+                    _ => (502, false),
+                },
                 pingora::ErrorSource::Downstream => match e.etype() {
                     ConnectionClosed | ReadError | WriteError
                     | WriteTimedout => (499, true),
@@ -932,7 +939,7 @@ impl Server {
     async fn handle_metrics_request(
         &self,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> Option<pingora::Result<bool>> {
         let header = session.req_header();
         let should_handle = !self.prometheus_push_mode
@@ -942,6 +949,23 @@ impl Server {
         if should_handle {
             let prom = self.prometheus.as_ref()?;
             let result = async {
+                // The path belongs to a location like any other, and what
+                // guards that location guards the metrics: its request
+                // plugins run first, and one that answers - a 401, a 403 -
+                // has answered. The endpoint used to be served ahead of
+                // them, to anyone who could reach the port, next to a
+                // location that asked everyone else for a password.
+                if ctx.upstream.location_instance.is_some()
+                    && self
+                        .handle_request_plugin(
+                            PluginStep::Request,
+                            session,
+                            ctx,
+                        )
+                        .await?
+                {
+                    return Ok(true);
+                }
                 let body =
                     prom.metrics().map_err(|e| new_internal_error(500, e))?;
                 HttpResponse::text(body).send(session).await?;
@@ -992,6 +1016,7 @@ impl Server {
         if let Some(variables) = variables {
             ctx.extend_variables(variables);
         }
+        let rewritten = rewritten?;
         if rewritten {
             ctx.features.get_or_insert_default().original_uri = original_uri;
         }
@@ -2882,6 +2907,69 @@ value = 'proxy_set_headers = ["name:value"]'
         );
     }
 
+    /// Regression: the metrics endpoint was answered ahead of the plugins,
+    /// so a location that asks for a password stood next to metrics that
+    /// anyone could read. The request plugins of the location its path
+    /// belongs to run first, and one that answers has answered.
+    #[cfg(feature = "tracing")]
+    #[tokio::test]
+    async fn test_metrics_endpoint_is_behind_the_location_plugins() {
+        struct Guard(bool);
+        #[async_trait::async_trait]
+        impl Plugin for Guard {
+            async fn handle_request(
+                &self,
+                step: PluginStep,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+            ) -> pingora::Result<RequestPluginResult> {
+                if step == PluginStep::Request && self.0 {
+                    return Ok(RequestPluginResult::Respond(
+                        pingap_core::HttpResponse {
+                            status: StatusCode::UNAUTHORIZED,
+                            ..Default::default()
+                        },
+                    ));
+                }
+                Ok(RequestPluginResult::Skipped)
+            }
+        }
+        struct Provider(bool);
+        impl PluginProvider for Provider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                Some(Arc::new(Guard(self.0)))
+            }
+        }
+        let toml = TEST_TOML.replace(
+            "threads = 1",
+            "threads = 1\nprometheus_metrics = \"/metrics\"",
+        );
+        let get = async |refuses: bool| {
+            let server =
+                new_server_from(&toml, Some(Arc::new(Provider(refuses))));
+            let (mut session, client) =
+                new_duplex_session("GET /metrics HTTP/1.1\r\n\r\n").await;
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            let done =
+                server.request_filter(&mut session, &mut ctx).await.unwrap();
+            assert_eq!(true, done);
+            drop(session);
+            read_response(client).await
+        };
+
+        let response = get(true).await;
+        assert_eq!(true, response.starts_with("HTTP/1.1 401 "), "{response}");
+        assert_eq!(false, response.contains("pingap_"), "{response}");
+
+        let response = get(false).await;
+        assert_eq!(true, response.starts_with("HTTP/1.1 200 "), "{response}");
+        assert_eq!(true, response.contains("pingap_"), "{response}");
+    }
+
     #[tokio::test]
     async fn test_cache_key_callback() {
         let server = new_server();
@@ -3943,6 +4031,16 @@ value = 'proxy_set_headers = ["name:value"]'
         assert_eq!((502, false), classify_proxy_error(&up(ConnectRefused)));
         // An upstream that went away mid-transfer is still ours to report.
         assert_eq!((502, false), classify_proxy_error(&up(ReadError)));
+        // Regression: one that did not answer in time was a 502 as well,
+        // the same as one that is down.
+        for timeout in [
+            ConnectTimedout,
+            ReadTimedout,
+            WriteTimedout,
+            TLSHandshakeTimedout,
+        ] {
+            assert_eq!((504, false), classify_proxy_error(&up(timeout)));
+        }
         assert_eq!((499, true), classify_proxy_error(&down(ConnectionClosed)));
         assert_eq!((499, true), classify_proxy_error(&down(ReadError)));
         assert_eq!((499, true), classify_proxy_error(&down(WriteError)));
@@ -4081,7 +4179,7 @@ value = 'proxy_set_headers = ["name:value"]'
         .await;
         assert_eq!(
             true,
-            response.starts_with("HTTP/1.1 502 Bad Gateway\r\n"),
+            response.starts_with("HTTP/1.1 504 Gateway Timeout\r\n"),
             "{response}"
         );
         assert_eq!(
@@ -4089,7 +4187,7 @@ value = 'proxy_set_headers = ["name:value"]'
             response.contains("X-Pingap-EType: ConnectTimedout\r\n"),
             "{response}"
         );
-        assert_eq!(true, response.contains(">Bad Gateway<"), "{response}");
+        assert_eq!(true, response.contains(">Gateway Timeout<"), "{response}");
         assert_eq!(false, response.contains("10.9.8.7"), "{response}");
     }
 

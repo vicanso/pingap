@@ -25,7 +25,7 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 - `http_header`: Contains helpers for parsing and manipulating HTTP request headers. `resolve_static_header_value` folds `$hostname` and `$ENV_VAR` into plain values when the configuration is loaded; `$http_user_agent` reads `User-Agent` (underscores stand for dashes); `get_host` keeps an IPv6 literal whole.
 - `http_response`: Provides builders and structs for creating HTTP responses.
 - `plugin`: Defines the `Plugin` trait and `PluginStep` enum for building custom plugins.
-- `service`: Includes the `BackgroundTaskService` for running background tasks. Routine cycles log at debug level; a cycle still running past its interval is warned about with the names of the tasks involved.
+- `service`: Includes the `BackgroundTaskService` for running background tasks. Every task of a service keeps its own time: a round starts the tasks that are free, and one that is still running from an earlier round is left out of it (and warned about, with how long it has been running) instead of holding the others up. The `count` a task is given is the number of its own runs, so a task that acts on every nth run does not miss its turn in a round it sat out. Routine rounds log at debug level.
 - `ttl_lru_limit`: Implements a TTL-based LRU rate limiter. Counters are atomic, so concurrent increments on one key are all counted.
 - `notification`: Defines the trait for sending notifications.
 - `util`: Contains miscellaneous utilities, including time caching and hostname retrieval.

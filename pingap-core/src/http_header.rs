@@ -693,7 +693,7 @@ pub fn get_query_value<'a>(
 pub fn remove_query_from_header(
     req_header: &mut RequestHeader,
     name: &str,
-) -> Result<(), http::uri::InvalidUri> {
+) -> Result<(), http::Error> {
     // If there is no query string, there is nothing to do.
     let Some(query_str) = req_header.uri.query() else {
         return Ok(());
@@ -777,9 +777,95 @@ fn path_needs_normalizing(path: &[u8]) -> bool {
 /// A path with nothing to change, which is nearly every path, is returned
 /// as it is.
 pub fn normalize_path(path: &str) -> Cow<'_, str> {
+    match normalized_path_bytes(path) {
+        None => Cow::Borrowed(path),
+        Some(normalized) => {
+            Cow::Owned(String::from_utf8_lossy(&normalized).into_owned())
+        },
+    }
+}
+
+/// [`normalize_path`] in a form that can be sent on: the same path, with
+/// what a uri cannot carry as it is - a space, a `?` that was `%3F`, a
+/// byte that is not ASCII - percent-encoded again.
+///
+/// This is the path a location's `rewrite` falls back on. The rule used
+/// to be matched against the path as it was sent and nothing else, while
+/// the location had been chosen by the normalized one: `/%75sers/x`
+/// reached the location for `/users` and then slipped past its
+/// `^/users/(.*)$ /acme/$1`, to arrive at the upstream as `/users/x`
+/// without the prefix; `/users/../other` took the prefix and left it again
+/// one segment later.
+///
+/// It is not the path to rewrite every request by: it says less than the
+/// path that was sent. `%2F` has become a separator, `;jsessionid=...` is
+/// gone, `//` is one slash. See `Location::rewrite` for when it is used.
+///
+/// A path with nothing to change is returned as it is, like there.
+pub fn canonical_path(path: &str) -> Cow<'_, str> {
+    let Some(normalized) = normalized_path_bytes(path) else {
+        return Cow::Borrowed(path);
+    };
+    let mut encoded = String::with_capacity(normalized.len() + 8);
+    for byte in normalized {
+        // What a path may hold unencoded (RFC 3986 `pchar`, and the `/`
+        // between segments).
+        let plain = byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'/' | b'-'
+                    | b'.'
+                    | b'_'
+                    | b'~'
+                    | b'!'
+                    | b'$'
+                    | b'&'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'*'
+                    | b'+'
+                    | b','
+                    | b';'
+                    | b'='
+                    | b':'
+                    | b'@'
+            );
+        if plain {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte >> 4) as usize]));
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte & 15) as usize]));
+        }
+    }
+    Cow::Owned(encoded)
+}
+
+/// Whether `path` has a `.` or `..` segment, read the way
+/// [`normalize_path`] reads it: `%2e%2e`, `..;x`, and the ones that only
+/// show once `%2F` or `\` is taken for a separator (`a%2F..%2Fb`).
+///
+/// A path without one cannot leave the directory it names under any of
+/// those readings, since each of them finds its segments among the ones
+/// found here. That is what makes such a path safe to rewrite as it was
+/// sent.
+pub fn has_dot_segments(path: &str) -> bool {
+    normalized_path(path).is_some_and(|(_, dot_segments)| dot_segments)
+}
+
+/// The bytes of the normalized path, `None` when the path is in that form
+/// already - which is nearly every path.
+fn normalized_path_bytes(path: &str) -> Option<Vec<u8>> {
+    normalized_path(path).map(|(bytes, _)| bytes)
+}
+
+/// [`normalized_path_bytes`], and whether a `.` or `..` segment was
+/// resolved on the way.
+fn normalized_path(path: &str) -> Option<(Vec<u8>, bool)> {
     let bytes = path.as_bytes();
     if !path.starts_with('/') || !path_needs_normalizing(bytes) {
-        return Cow::Borrowed(path);
+        return None;
     }
     let hex = |byte: Option<&u8>| {
         byte.and_then(|byte| (*byte as char).to_digit(16))
@@ -801,6 +887,7 @@ pub fn normalize_path(path: &str) -> Cow<'_, str> {
     }
 
     let mut segments: Vec<&[u8]> = vec![];
+    let mut dot_segments = false;
     // Whether the path ends in a directory, `/a/` as well as `/a/.`.
     let mut trailing_slash = false;
     for segment in decoded.split(|byte| matches!(byte, b'/' | b'\\')) {
@@ -811,8 +898,10 @@ pub fn normalize_path(path: &str) -> Cow<'_, str> {
             .next()
             .unwrap_or(segment);
         match name {
-            b"" | b"." => {},
+            b"" => {},
+            b"." => dot_segments = true,
             b".." => {
+                dot_segments = true;
                 segments.pop();
             },
             _ => {
@@ -829,7 +918,7 @@ pub fn normalize_path(path: &str) -> Cow<'_, str> {
     if trailing_slash || normalized.is_empty() {
         normalized.push(b'/');
     }
-    Cow::Owned(String::from_utf8_lossy(&normalized).into_owned())
+    Some((normalized, dot_segments))
 }
 
 /// Replaces the path and query of the request, and nothing else.
@@ -842,7 +931,7 @@ pub fn normalize_path(path: &str) -> Cow<'_, str> {
 pub fn set_path_and_query(
     req_header: &mut RequestHeader,
     path_and_query: &str,
-) -> Result<(), http::uri::InvalidUri> {
+) -> Result<(), http::Error> {
     if req_header.uri.authority().is_none() {
         req_header.set_uri(http::Uri::from_str(path_and_query)?);
         return Ok(());
@@ -850,10 +939,10 @@ pub fn set_path_and_query(
     let path_and_query = http::uri::PathAndQuery::from_str(path_and_query)?;
     let mut parts = req_header.uri.clone().into_parts();
     parts.path_and_query = Some(path_and_query);
-    // Scheme and authority are those of a uri that was valid already.
-    if let Ok(uri) = http::Uri::from_parts(parts) {
-        req_header.set_uri(uri);
-    }
+    // Scheme and authority are those of a uri that was valid already. One
+    // that has an authority and no scheme takes no path at all: that is an
+    // error like any other, not a path that was set.
+    req_header.set_uri(http::Uri::from_parts(parts)?);
 
     Ok(())
 }
@@ -1571,6 +1660,70 @@ mod tests {
         assert_eq!(get_cookie_value(&req, "lang"), None);
         // Test for a cookie name that is a prefix of another.
         assert_eq!(get_cookie_value(&req, "the"), None);
+    }
+
+    /// The normalized path as it can be sent on: what `normalize_path`
+    /// gives, with whatever a uri cannot carry encoded again.
+    #[test]
+    fn test_canonical_path() {
+        // Nothing to change: the very same string.
+        for path in ["/", "/users/x", "/a/b.c/d", "relative"] {
+            assert_eq!(
+                true,
+                matches!(canonical_path(path), Cow::Borrowed(_)),
+                "{path}"
+            );
+        }
+        for (path, expected) in [
+            ("/%75sers/x", "/users/x"),
+            ("/users/../other", "/other"),
+            ("//users/./x/", "/users/x/"),
+            ("/users;v=1/x", "/users/x"),
+            ("/a%20b", "/a%20b"),
+            ("/a%3fb", "/a%3Fb"),
+            ("/a%23b", "/a%23b"),
+            ("/a%2fb", "/a/b"),
+            ("/100%25", "/100%25"),
+            // decoded once, not twice
+            ("/%2561", "/%2561"),
+            ("/caf%c3%a9", "/caf%C3%A9"), // spellchecker:disable-line
+            // not text, and still the same bytes
+            ("/%ff%00", "/%FF%00"),
+        ] {
+            assert_eq!(expected, canonical_path(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn test_has_dot_segments() {
+        for path in [
+            "/a/../b",
+            "/a/./b",
+            "/a/..",
+            "/a/%2e%2e/b",
+            "/a/%2E./b",
+            "/a/..;x=1/b",
+            "/a%2F..%2Fb",
+            "/a%5c..%5cb",
+            "/a\\..\\b",
+            "/a/.;/b",
+        ] {
+            assert_eq!(true, has_dot_segments(path), "{path}");
+        }
+        for path in [
+            "/",
+            "/a/b",
+            "/a..b/c",
+            "/a/..b/c..",
+            "/a/.../b",
+            "/a%2Fb",
+            "/a;x=../b",
+            "/a/b;jsessionid=1",
+            "//a//b",
+            "/%2e%2ea/b",
+        ] {
+            assert_eq!(false, has_dot_segments(path), "{path}");
+        }
     }
 
     #[test]

@@ -83,7 +83,8 @@
 | 失败 | 状态码 | 是否写页面 |
 | --- | --- | --- |
 | location 或插件以某状态码拒绝请求 | 该状态码 | 是 |
-| 上游连接、读或写失败 | 502 | 是 |
+| 上游超时：连接、TLS 握手、读或写 | 504 | 是 |
+| 上游的其他失败：连接被拒绝或重置、响应无法解析 | 502 | 是 |
 | 下游读超时（`downstream_read_timeout`） | 408 | 是 |
 | 请求头格式错误 | 400 | 是 |
 | 客户端关闭连接、socket 读写失败或写超时 | 499 | 否 |
@@ -131,7 +132,7 @@ modules = ["grpc-web"]
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。版本名接受 `tlsv1.1` / `tlsv1.2` / `tlsv1.3`（大小写不敏感，`TLSv1.2` 亦可）。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
 - `ja4 = true` 为每个客户端计算 JA4 TLS 指纹，见 [JA4 指纹](#ja4-指纹)。需要 `global_certificates = true`，配置校验会检查。
-- `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。
+- `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。pull 端点和 server 上的其他路径一样：先执行（按 host 和 path）匹配到的 location 的请求阶段插件，所以挂了 `basic_auth` 或 `ip_restriction` 的 location 下的 `/metrics` 受它们保护，该 location 上自己应答请求的插件（`directory`、`mock`、`redirect`）也会应答这个路径。端点本身没有认证：匹配不到任何 location 的请求会直接拿到指标。如果 server 上的 location 都限定了 `host`，换一个 `Host` 的请求就匹配不到它们，所以要让端点对所有请求都受保护，需要给这个路径配一个不限定 host 的 location。
 - `enable_server_timing` 添加由请求时序分解构建的 `Server-Timing` 响应头——便于诊断延迟来源。
 - `error_template`（在 `[basic]` 下）替换内置 `error.html`。模板在 server 启动时解析一次，每次出错填入三个占位符：
 

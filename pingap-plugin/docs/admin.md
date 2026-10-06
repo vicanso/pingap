@@ -89,9 +89,47 @@ lock its user out. The lock stands in front of the API only: the files of the
 UI still load, and on a server shared with an application the paths outside
 the admin prefix are not affected.
 
+## Without credentials
+
+`--admin=127.0.0.1:3018`, with no user and password, is a common way to run the
+admin on a machine of one's own. The API then answers whatever reaches it, and
+a browser on that machine reaches it for every page its user has open. Two
+kinds of request are refused with `403`, and a warning at startup says that the
+admin has no credentials:
+
+- **A write from another site.** A page elsewhere can send a `POST` it is not
+  allowed to read the answer of (a form, or `fetch` in `no-cors` mode), which
+  is all that storing a configuration or asking for a restart takes. A request
+  other than `GET`/`HEAD` is refused when the browser marks it as coming from
+  another origin: `Sec-Fetch-Site` is anything but `same-origin` or `none`, or,
+  where the browser does not send that header (plain http to anything but
+  localhost), its `Origin` is not the `Host` the request was sent to. A client
+  that sends neither header, such as `curl`, is not a browser and is served.
+- **A name that is not this machine's.** A page under a name that its owner
+  then points at `127.0.0.1` (DNS rebinding) is, to the browser, the admin's
+  own page, and could read the configuration with its private keys. On a
+  connection that came in on a loopback address the `Host` has to be an IP
+  address, `localhost`, or a name under `.localhost`; any other name is
+  refused for the whole API. The files of the UI are still served.
+
+Neither applies once credentials are set: the token every request needs is a
+header a page of another site cannot add, and a secret a rebound page does not
+have. That is also the way out when a credential-less admin on loopback really
+is reached under a name (a reverse proxy on the same machine that passes the
+`Host` on, an entry in `/etc/hosts`): set a user and a password.
+
+What this does not cover is an admin without credentials on an address of the
+network. It is reached by whatever name that network gives it, so the name
+cannot be checked, and anyone who can connect can use it. That includes an
+admin in a container whose port is published on the host's `127.0.0.1`: inside
+the container the connection arrives on the container's own address, not on
+loopback, so the name check does not apply there. Set credentials.
+
 ## API
 
 All routes are relative to `<path>/api`.
+
+A request body is read up to 8 MiB; a larger one is answered `413`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -168,7 +206,8 @@ there as a whole, and writes are then only checked entry by entry.
 ## Usage notes
 
 - **An empty `authorizations` disables authentication.** Never expose such an
-  instance beyond localhost.
+  instance beyond localhost; see [Without credentials](#without-credentials)
+  for what is and is not refused there.
 - The API can change certificates, upstreams and servers and can restart the
   process. Bind it to a private interface, or put
   [`ip_restriction`](ip_restriction.md) in front of the admin location.

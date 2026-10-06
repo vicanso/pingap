@@ -72,9 +72,9 @@ error from `new_cache_backend`, not silently the default.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `inactive` | none | Remove files untouched for this long, regardless of freshness |
+| `inactive` | `48h` | Remove files untouched for this long, regardless of freshness |
 | `reading_max` | `10000` | Maximum concurrent reads; over quota is a **miss** (origin fetch), not 5xx |
-| `writing_max` | — | Maximum concurrent writes; over quota **skips** the disk write |
+| `writing_max` | `1000` | Maximum concurrent writes; over quota **skips** the disk write |
 | `cache_max` | `0` | Size, in 4 KB pages, of an in-front TinyUFO layer for hot entries |
 | `cache_file_max_weight` | 256 pages (1 MB) | Largest entry admitted to that layer, whether it arrives by a write or by a read from disk |
 | `levels` | — | Directory nesting, up to two levels of 1 to 3 key characters each, e.g. `levels=1:2`, to avoid huge flat directories; anything else is rejected |
@@ -91,6 +91,14 @@ key do not leave it off for good.
 
 `new_storage_clear_service()` returns a background service that periodically
 sweeps inactive files.
+
+The directory can hold other data. The cache counts, evicts, sweeps and purges
+only the files it wrote: the objects, whose names are their keys (32
+hexadecimal digits in lower case), and the temporary file of a write
+(`<key>.<pid>.<seq>.tmp`). Any other file is left where it is and does not
+count towards `max_size`. A file of something else that happens to be named
+like a key, by an MD5 for example, cannot be told apart and is treated as a
+cached object, so a directory of such files is not one to share.
 
 ## Namespaces
 

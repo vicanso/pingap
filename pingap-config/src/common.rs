@@ -146,7 +146,9 @@ pub fn normalize_dns_provider(value: &str) -> Option<&'static str> {
 }
 
 /// Configuration struct for TLS/SSL certificates
-#[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
+#[derive(
+    Debug, Default, Deserialize, Clone, Serialize, Hash, PartialEq, Eq,
+)]
 pub struct CertificateConf {
     /// Domain names this certificate is valid for (comma separated)
     pub domains: Option<String>,
@@ -215,6 +217,13 @@ impl CertificateConf {
     /// the document for changes has to look at these separately.
     pub fn reads_files(&self) -> bool {
         self.files().next().is_some()
+    }
+
+    /// Whether the certificate of this entry is ordered and renewed
+    /// through ACME. What is stored for it is then written by that
+    /// service, not only by whoever edits the configuration.
+    pub fn is_acme(&self) -> bool {
+        self.acme.as_deref().is_some_and(|acme| !acme.is_empty())
     }
 }
 
@@ -549,6 +558,8 @@ impl Validate for UpstreamConf {
         self.validate_ca()?;
         self.validate_h2_window()?;
 
+        self.validate_backend_stats_interval()?;
+
         Ok(())
     }
 }
@@ -752,6 +763,21 @@ impl UpstreamConf {
             self.tcp_interval,
             self.tcp_probe_count,
         )
+    }
+
+    /// The window is counted in milliseconds: one of none has no length to
+    /// take a share of.
+    fn validate_backend_stats_interval(&self) -> Result<()> {
+        if self
+            .backend_stats_interval
+            .is_some_and(|interval| interval < Duration::from_millis(1))
+        {
+            return Err(Error::Invalid {
+                message: "backend stats interval should be at least 1ms"
+                    .to_string(),
+            });
+        }
+        Ok(())
     }
 
     fn validate_max_h2_streams(&self) -> Result<()> {
@@ -2634,6 +2660,29 @@ value = ''
             true,
             config.check_removable(CATEGORY_STORAGE, "unused").is_ok()
         );
+    }
+
+    /// Regression: a stats window of less than a millisecond was taken,
+    /// and the estimate that divides by it took the process down.
+    #[test]
+    fn test_upstream_backend_stats_interval() {
+        let conf = |interval: &str| {
+            toml::from_str::<UpstreamConf>(&format!(
+                "addrs = [\"127.0.0.1:8080\"]\nenable_backend_stats = true\nbackend_stats_interval = \"{interval}\"\n"
+            ))
+            .unwrap()
+        };
+        for interval in ["0s", "500us"] {
+            let err = conf(interval).validate().expect_err(interval);
+            assert_eq!(
+                true,
+                err.to_string().contains("backend stats interval"),
+                "{err}"
+            );
+        }
+        for interval in ["1ms", "10s"] {
+            assert_eq!(true, conf(interval).validate().is_ok(), "{interval}");
+        }
     }
 
     #[test]

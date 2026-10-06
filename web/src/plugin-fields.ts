@@ -630,6 +630,16 @@ export const PLUGIN_FIELDS: Partial<
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
+    {
+      name: "require_exp",
+      label: t("jwtRequireExp"),
+      placeholder: "",
+      tips: t("jwtRequireExpTips"),
+      defaultValue: conf.require_exp as boolean,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
   ],
   [PluginCategory.FORWARD_AUTH]: (conf, t) => [
     {

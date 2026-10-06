@@ -115,7 +115,8 @@ someone to send it to, a page rendered from the error template:
 | Failure | Status | Page written |
 | --- | --- | --- |
 | A location or plugin rejected the request with a status | that status | yes |
-| Upstream connect, read or write failure | 502 | yes |
+| Upstream timeout: connecting, the TLS handshake, a read or a write | 504 | yes |
+| Any other upstream failure: refused or reset connection, a response that cannot be parsed | 502 | yes |
 | Downstream read timeout (`downstream_read_timeout`) | 408 | yes |
 | Malformed request header | 400 | yes |
 | Client closed the connection, the socket failed on a read or write, or a write timed out | 499 | no |
@@ -197,7 +198,15 @@ Notes on a few of these:
   [JA4 fingerprint](#ja4-fingerprint). It needs `global_certificates = true`,
   which config validation checks.
 - `prometheus_metrics` exposes the pull endpoint on this server; a URL value
-  instead configures push mode.
+  instead configures push mode. The pull endpoint is a path of the server like
+  any other: the request plugins of the location that matches it (by host and
+  path) run first, so `/metrics` under a location with `basic_auth` or
+  `ip_restriction` is behind them, and a plugin there that answers requests
+  itself (`directory`, `mock`, `redirect`) answers this path too. It has no
+  authentication of its own: a request that matches no location of the server
+  gets the metrics unguarded. When every location names a `host`, that is any
+  request with another `Host`, so give the path a location without a host if
+  the endpoint is to be guarded for all of them.
 - `enable_server_timing` adds a `Server-Timing` response header built from the
   request's timing breakdown — useful when diagnosing where latency comes from.
 - `error_template` (under `[basic]`) replaces the built-in `error.html`. The

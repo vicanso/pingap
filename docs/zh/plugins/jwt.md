@@ -27,6 +27,7 @@ JWT 认证，支持三种校验模式，并可选用一个端点把上游响应�
 | `jwks_url` | string | — | JWKS 端点 URL。 |
 | `jwks_ttl` | duration | `1h` | 拉取的 JWKS 密钥新鲜度。 |
 | `auth_path` | string | — | 签发令牌（而非消费）的路径。 |
+| `require_exp` | bool | `true` | 令牌是否必须带 `exp`（三种校验模式都适用），以及 `auth_path` 的响应是否必须带 `exp` 才签发。见[过期时间](#过期时间)。 |
 | `delay` | duration | 无 | 无效令牌应答前休眠。 |
 
 `header` / `cookie` / `query` 按该顺序只使用第一个有值的；至少设置其一。
@@ -95,7 +96,16 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A…
 
 响应体是逐字节签名的，所以发往上游的 `auth_path` 请求不带客户端的 `Accept-Encoding`，声明以未压缩的形式返回。上游仍然压缩时返回 `502`，而不是签出一个载荷是 gzip 数据的令牌。
 
-签发仅支持 HMAC——签名始终用 `secret` 以 `HS256` 或 `HS512` 计算。只有上游 `2xx` 才会签名；错误响应原样透传，避免失败登录被签成永不过期令牌。
+签发仅支持 HMAC——签名始终用 `secret` 以 `HS256` 或 `HS512` 计算。只有上游 `2xx` 才会签名；错误响应原样透传，避免失败登录被签成令牌。
+
+## 过期时间
+
+没有 `exp` 的令牌只要密钥不换就一直有效，所以默认处处要求 `exp`：
+
+- **校验**——三种模式下，载荷里没有 `exp`（或为 `null`）的令牌都返回 `401`。HMAC 模式以前会接受这样的令牌，两种公钥模式一直不接受。
+- **签发**——上游返回的声明原样签名，不会补任何字段。声明不是带数值 `exp` 的 JSON 对象时不签发令牌，对 `auth_path` 的请求失败：返回 `502`；如果上游的响应头在响应体到达之前已经转发给客户端，则在响应中途关闭连接。
+
+`require_exp = false` 恢复以前的行为，供确实需要永不过期令牌的部署使用：所有模式都接受没有 `exp` 的令牌，`auth_path` 对 `2xx` 响应不论内容一律签名。带了 `exp` 的令牌过期后仍然会被拒绝。
 
 ## 响应
 
@@ -105,11 +115,13 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A…
 | 不是三段点分结构，或载荷不是 JSON 对象（HMAC 模式） | 401 | `Jwt authorization format is invalid` |
 | 签名错误或不支持的 `alg` | 401（在 `delay` 之后） | `Jwt authorization is invalid` |
 | `exp` 已过期（HMAC 模式） | 401 | `Jwt authorization is expired` |
+| 没有 `exp` 且 `require_exp` 开启（HMAC 模式） | 401 | `Jwt authorization has no exp` |
 | `nbf` 尚未到达（HMAC 模式） | 401 | `Jwt authorization is not yet valid` |
+| `auth_path` 的声明没有 `exp` 且 `require_exp` 开启 | 502，或关闭连接 | 错误页 |
 
 ## 使用说明
 
 - 非对称与 JWKS 路径通过 `jsonwebtoken` 一并校验签名、`exp` 与 `nbf`；不校验 `aud`。HMAC 路径校验同样两个声明，整数或浮点数都接受，且不要求头部带 `typ`。`delay` 只作用于签名错误，那是唯一能靠猜测得到的结果。
-- HMAC 模式下算法取自令牌头，同时接受 `HS256` 与 `HS512`，因此仅设置 `algorithm = "HS512"` 并不会拒绝 `HS256` 令牌。`none` 及其他值会被拒绝。
+- HMAC 模式下显式配置的 `algorithm` 会被强制执行：配置 `HS512` 时拒绝 `HS256` 令牌，反之亦然。不设置 `algorithm` 时两者都接受。`none` 及其他值一律拒绝；密钥路径无法校验的 `algorithm`（`HS384`，或没有 `public_key` / `jwks_url` 的非对称算法）在启动时就会报错。
 - `auth_path` 与请求路径做精确相等比较。
 - `auth_path` 下路径设计上就是未认证的——若外围 location 另有保护，请把签发路径单独拆到自己的 location。

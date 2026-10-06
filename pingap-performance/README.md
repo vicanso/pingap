@@ -29,6 +29,17 @@ prometheus_metrics = "/metrics"
 curl http://127.0.0.1:6188/metrics
 ```
 
+The endpoint has no authentication of its own. It is a path of the server like
+any other, so the request plugins of the location that matches it run first:
+with a catch-all location that has `basic_auth` or `ip_restriction`, `/metrics`
+is behind them too (it used to be served ahead of every plugin). A plugin of
+that location that answers requests itself (`directory`, `mock`, `redirect`)
+answers this path as well, in place of the metrics. To expose the endpoint
+differently from the application, give the path a location of its own on that
+server, with the plugins it should have. A request that matches no location at
+all (another `Host`, when every location names one) gets the metrics without
+any plugin, so that location should not be bound to a host.
+
 ### Push mode
 
 Give a URL instead of a path and Pingap pushes to a Pushgateway:

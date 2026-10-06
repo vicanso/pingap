@@ -191,17 +191,49 @@ struct CacheFile {
     accessed: SystemTime,
 }
 
-/// Lists the files under `dir`. `skip_tmp` leaves in-flight temporaries to
-/// the `put` that owns them; the inactive sweep keeps them, since one older
-/// than the inactive window was abandoned by a writer that died.
+/// The length of a cache key: the hex form of a 128 bit hash.
+const CACHE_KEY_LEN: usize = 32;
+
+/// Whether `name` is the name of a cached object, which is its key as
+/// pingora writes it: 32 hex digits in lower case. Nothing looser, so that
+/// as little as possible of what else may be in the directory looks like
+/// one; `test_cache_file_names` holds this against the keys pingora gives.
+fn is_cache_key(name: &str) -> bool {
+    name.len() == CACHE_KEY_LEN
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Whether `name` is the temporary file of a write, `<key>.<pid>.<seq>.tmp`.
+fn is_cache_tmp_file(name: &str) -> bool {
+    let is_number =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    name.strip_suffix(".tmp")
+        .and_then(|rest| rest.rsplit_once('.'))
+        .and_then(|(rest, seq)| Some((rest.rsplit_once('.')?, seq)))
+        .is_some_and(|((key, pid), seq)| {
+            is_cache_key(key) && is_number(pid) && is_number(seq)
+        })
+}
+
+/// Lists the files under `dir` that the cache wrote: the objects, and their
+/// temporaries unless `skip_tmp`. The directory is the operator's, and
+/// anything else in it is not the cache's to count, evict or sweep - a
+/// directory shared with other data used to lose every file that had not
+/// been read for `inactive`.
+///
+/// `skip_tmp` leaves in-flight temporaries to the `put` that owns them; the
+/// inactive sweep keeps them, since one older than the inactive window was
+/// abandoned by a writer that died.
 fn walk_cache_files(dir: &Path, skip_tmp: bool) -> Vec<CacheFile> {
     WalkDir::new(dir)
         .into_iter()
         .filter_map(|item| item.ok())
         .filter(|item| item.file_type().is_file())
         .filter(|item| {
-            !skip_tmp
-                || !item.path().extension().is_some_and(|ext| ext == "tmp")
+            let name = item.file_name().to_string_lossy();
+            is_cache_key(&name) || (!skip_tmp && is_cache_tmp_file(&name))
         })
         .filter_map(|item| {
             let metadata = item.metadata().ok()?;
@@ -867,6 +899,13 @@ mod tests {
     use std::time::{Duration, SystemTime};
     use tempfile::{TempDir, tempdir};
 
+    /// A key of the shape `CacheKey::combined` gives, which is the only
+    /// kind of file the directory walks take for the cache's own.
+    fn key(label: &str) -> String {
+        let hex: String = label.bytes().map(|b| format!("{b:02x}")).collect();
+        format!("{hex:0<32}")
+    }
+
     /// Tests the `parse_params` function with various query string configurations.
     #[test]
     fn test_parse_params() {
@@ -980,7 +1019,7 @@ mod tests {
         let cache = FileCache::new(dir.path().to_str().unwrap()).unwrap();
 
         // Create a file and set its access time to be in the past.
-        let old_file_path = cache.get_file_path("old_key", "ns");
+        let old_file_path = cache.get_file_path(&key("old"), "ns");
         fs::create_dir_all(old_file_path.parent().unwrap())
             .await
             .unwrap();
@@ -993,7 +1032,7 @@ mod tests {
         .unwrap();
 
         // Create a new file with a recent access time.
-        let new_file_path = cache.get_file_path("new_key", "ns");
+        let new_file_path = cache.get_file_path(&key("new"), "ns");
         File::create(&new_file_path).unwrap();
 
         // Clear files accessed more than 10 minutes ago.
@@ -1095,19 +1134,37 @@ mod tests {
             meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: Bytes::from_static(b"Hello World!"),
         };
-        cache.put("key-a1", b"ns-a", obj.clone()).await.unwrap();
-        cache.put("key-a2", b"ns-a", obj.clone()).await.unwrap();
-        cache.put("key-b", b"ns-b", obj.clone()).await.unwrap();
+        cache
+            .put(&key("key-a1"), b"ns-a", obj.clone())
+            .await
+            .unwrap();
+        cache
+            .put(&key("key-a2"), b"ns-a", obj.clone())
+            .await
+            .unwrap();
+        cache
+            .put(&key("key-b"), b"ns-b", obj.clone())
+            .await
+            .unwrap();
 
         let stats = cache.purge_namespace("ns-a").await.unwrap().unwrap();
         assert_eq!(2, stats.success);
         assert_eq!(0, stats.fail);
 
         // Gone from disk AND memory (a get would prefer tinyufo).
-        assert_eq!(true, cache.get("key-a1", b"ns-a").await.unwrap().is_none());
-        assert_eq!(true, cache.get("key-a2", b"ns-a").await.unwrap().is_none());
+        assert_eq!(
+            true,
+            cache.get(&key("key-a1"), b"ns-a").await.unwrap().is_none()
+        );
+        assert_eq!(
+            true,
+            cache.get(&key("key-a2"), b"ns-a").await.unwrap().is_none()
+        );
         // The other namespace is untouched.
-        assert_eq!(obj, cache.get("key-b", b"ns-b").await.unwrap().unwrap());
+        assert_eq!(
+            obj,
+            cache.get(&key("key-b"), b"ns-b").await.unwrap().unwrap()
+        );
         // The namespace directory itself is removed.
         assert_eq!(false, dir.path().join("ns-a").exists());
 
@@ -1207,22 +1264,22 @@ mod tests {
             meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
             body: Bytes::from(vec![fill; 1024]),
         };
-        cache.put("a", b"", obj(1)).await.unwrap();
-        cache.put("b", b"", obj(2)).await.unwrap();
+        cache.put(&key("a"), b"", obj(1)).await.unwrap();
+        cache.put(&key("b"), b"", obj(2)).await.unwrap();
         assert_eq!(2068, cache.current_size.load(Ordering::Relaxed));
         // `a` is the one nobody touched for an hour.
         filetime::set_file_atime(
-            cache.get_file_path("a", ""),
+            cache.get_file_path(&key("a"), ""),
             filetime::FileTime::from_system_time(
                 SystemTime::now() - Duration::from_secs(3600),
             ),
         )
         .unwrap();
 
-        cache.put("c", b"", obj(3)).await.unwrap();
-        assert_eq!(true, cache.get("a", b"").await.unwrap().is_none());
-        assert_eq!(obj(2), cache.get("b", b"").await.unwrap().unwrap());
-        assert_eq!(obj(3), cache.get("c", b"").await.unwrap().unwrap());
+        cache.put(&key("c"), b"", obj(3)).await.unwrap();
+        assert_eq!(true, cache.get(&key("a"), b"").await.unwrap().is_none());
+        assert_eq!(obj(2), cache.get(&key("b"), b"").await.unwrap().unwrap());
+        assert_eq!(obj(3), cache.get(&key("c"), b"").await.unwrap().unwrap());
         assert_eq!(2068, cache.current_size.load(Ordering::Relaxed));
 
         // Larger than the budget: not written, nothing evicted for it.
@@ -1230,10 +1287,10 @@ mod tests {
             meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
             body: Bytes::from(vec![0; 4096]),
         };
-        cache.put("d", b"", big).await.unwrap();
-        assert_eq!(true, cache.get("d", b"").await.unwrap().is_none());
-        assert_eq!(true, cache.get("b", b"").await.unwrap().is_some());
-        assert_eq!(true, cache.get("c", b"").await.unwrap().is_some());
+        cache.put(&key("d"), b"", big).await.unwrap();
+        assert_eq!(true, cache.get(&key("d"), b"").await.unwrap().is_none());
+        assert_eq!(true, cache.get(&key("b"), b"").await.unwrap().is_some());
+        assert_eq!(true, cache.get(&key("c"), b"").await.unwrap().is_some());
         assert_eq!(2068, cache.current_size.load(Ordering::Relaxed));
     }
 
@@ -1279,27 +1336,47 @@ mod tests {
             meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
             body: Bytes::from_static(b"body"),
         };
-        cache.put("on-disk", b"ns", obj.clone()).await.unwrap();
+        cache
+            .put(&key("on-disk"), b"ns", obj.clone())
+            .await
+            .unwrap();
         // Over the write quota: the object goes to memory and not to disk.
         cache.writing.store(1, Ordering::Relaxed);
-        cache.put("memory-only", b"ns", obj.clone()).await.unwrap();
+        cache
+            .put(&key("memory-only"), b"ns", obj.clone())
+            .await
+            .unwrap();
         cache.writing.store(0, Ordering::Relaxed);
-        assert_eq!(false, cache.get_file_path("memory-only", "ns").exists());
+        assert_eq!(
+            false,
+            cache.get_file_path(&key("memory-only"), "ns").exists()
+        );
         assert_eq!(
             true,
-            cache.get("memory-only", b"ns").await.unwrap().is_some()
+            cache
+                .get(&key("memory-only"), b"ns")
+                .await
+                .unwrap()
+                .is_some()
         );
 
         let stats = cache.purge_namespace("ns").await.unwrap().unwrap();
         assert_eq!(1, stats.success);
-        assert_eq!(true, cache.get("on-disk", b"ns").await.unwrap().is_none());
         assert_eq!(
             true,
-            cache.get("memory-only", b"ns").await.unwrap().is_none()
+            cache.get(&key("on-disk"), b"ns").await.unwrap().is_none()
+        );
+        assert_eq!(
+            true,
+            cache
+                .get(&key("memory-only"), b"ns")
+                .await
+                .unwrap()
+                .is_none()
         );
         // The cache keeps working after the purge.
-        cache.put("again", b"ns", obj.clone()).await.unwrap();
-        assert_eq!(Some(obj), cache.get("again", b"ns").await.unwrap());
+        cache.put(&key("again"), b"ns", obj.clone()).await.unwrap();
+        assert_eq!(Some(obj), cache.get(&key("again"), b"ns").await.unwrap());
     }
 
     /// The disk usage counter is an estimate that nothing used to correct.
@@ -1317,17 +1394,115 @@ mod tests {
             meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
             body: Bytes::from(vec![0; 1024]),
         };
-        cache.put("a", b"", obj.clone()).await.unwrap();
+        cache.put(&key("a"), b"", obj.clone()).await.unwrap();
         let real = cache.current_size.load(Ordering::Relaxed);
         assert_eq!(true, real > 1024);
 
         // Drifted up to where the next write does not seem to fit, as
         // after files were removed behind its back.
         cache.current_size.store(63_500, Ordering::Relaxed);
-        cache.put("b", b"", obj.clone()).await.unwrap();
+        cache.put(&key("b"), b"", obj.clone()).await.unwrap();
         // Nothing had to be evicted, and the counter is the two files.
-        assert_eq!(true, cache.get("a", b"").await.unwrap().is_some());
+        assert_eq!(true, cache.get(&key("a"), b"").await.unwrap().is_some());
         assert_eq!(2 * real, cache.current_size.load(Ordering::Relaxed));
+    }
+
+    /// Regression: the sweeps took every regular file under the directory
+    /// for a cached object, so a directory shared with other data lost
+    /// whatever had not been read for `inactive`, and with `max_size` the
+    /// least recently read file whatever its name.
+    #[tokio::test]
+    async fn test_sweeps_leave_foreign_files_alone() {
+        let dir = tempdir().unwrap();
+        let three_days_ago = filetime::FileTime::from_system_time(
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600),
+        );
+        let age = |path: &Path| {
+            filetime::set_file_atime(path, three_days_ago).unwrap();
+        };
+        let notes = dir.path().join("notes.txt");
+        std::fs::write(&notes, vec![0; 4096]).unwrap();
+        age(&notes);
+        // Not a key either: too short, and not the temporary of a key.
+        let short = dir.path().join("abcdef");
+        std::fs::write(&short, b"x").unwrap();
+        age(&short);
+        let other_tmp = dir.path().join("upload.tmp");
+        std::fs::write(&other_tmp, b"x").unwrap();
+        age(&other_tmp);
+        std::fs::create_dir(dir.path().join("ns")).unwrap();
+        let nested = dir.path().join("ns").join("data.db");
+        std::fs::write(&nested, b"x").unwrap();
+        age(&nested);
+
+        // The budget starts from the cache's own files, which is none.
+        let cache = FileCache::new(&format!(
+            "{}?max_size=2200",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        assert_eq!(0, cache.current_size.load(Ordering::Relaxed));
+
+        let obj = |fill: u8| CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from(vec![fill; 1024]),
+        };
+        cache.put(&key("a"), b"", obj(1)).await.unwrap();
+        cache.put(&key("b"), b"ns", obj(2)).await.unwrap();
+        // A third object needs room: the oldest of the cache's files goes,
+        // not the older file that is not the cache's.
+        cache.put(&key("c"), b"", obj(3)).await.unwrap();
+        assert_eq!(2068, cache.current_size.load(Ordering::Relaxed));
+
+        // An abandoned temporary of the cache is the sweep's to remove.
+        let abandoned = dir.path().join(format!("{}.4242.7.tmp", key("gone")));
+        std::fs::write(&abandoned, b"half").unwrap();
+        age(&abandoned);
+        age(&cache.get_file_path(&key("c"), ""));
+
+        let stats = cache
+            .clear(SystemTime::now() - Duration::from_secs(48 * 3600))
+            .await
+            .unwrap();
+        assert_eq!(2, stats.success);
+        assert_eq!(0, stats.fail);
+        assert_eq!(false, abandoned.exists());
+        assert_eq!(false, cache.get_file_path(&key("c"), "").exists());
+
+        cache.purge_namespace("ns").await.unwrap();
+
+        for file in [&notes, &short, &other_tmp, &nested] {
+            assert_eq!(true, file.exists(), "{} is gone", file.display());
+        }
+    }
+
+    #[test]
+    fn test_cache_file_names() {
+        // What pingora gives as the key of an object.
+        use pingora::cache::key::CacheHashKey;
+        let combined = pingora::cache::CacheKey::new("ns", "/path").combined();
+        assert_eq!(true, is_cache_key(&combined), "{combined}");
+        assert_eq!(true, is_cache_key(&key("a")));
+        for name in ["", "notes.txt", "abcdef", &format!("{}.bak", key("a"))] {
+            assert_eq!(false, is_cache_key(name), "{name}");
+        }
+        // 32 characters, but not hex; hex, but not the way it is written
+        // or as long as a key is.
+        assert_eq!(false, is_cache_key("0123456789abcdef0123456789abcdeg"));
+        assert_eq!(false, is_cache_key("0123456789ABCDEF0123456789ABCDEF"));
+        assert_eq!(false, is_cache_key(&"0123456789abcdef".repeat(4)));
+
+        assert_eq!(true, is_cache_tmp_file(&format!("{combined}.812.3.tmp")));
+        for name in [
+            "upload.tmp".to_string(),
+            format!("{combined}.tmp"),
+            format!("{combined}.812.tmp"),
+            format!("{combined}.a.3.tmp"),
+            format!("{combined}.812.3.tmp.bak"),
+            "abcdef.812.3.tmp".to_string(),
+        ] {
+            assert_eq!(false, is_cache_tmp_file(&name), "{name}");
+        }
     }
 
     #[test]

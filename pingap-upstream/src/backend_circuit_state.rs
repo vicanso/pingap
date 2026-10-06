@@ -463,14 +463,12 @@ mod tests {
     #[test]
     fn test_failure_percent_zero_is_disabled() {
         let addr = "127.0.0.1:8080";
-        // 9 successes and 1 failure in the stats window; the window
-        // reports the previous interval, so wait one out.
-        let stats = BackendStats::new(Duration::from_secs(1), vec![]);
+        // 9 successes and 1 failure in the stats window.
+        let stats = BackendStats::new(Duration::from_secs(60), vec![]);
         for _ in 0..9 {
             stats.on_response(addr, StatusCode::OK);
         }
         stats.on_response(addr, StatusCode::BAD_GATEWAY);
-        std::thread::sleep(Duration::from_millis(1100));
         assert_eq!(10, stats.get_window_stats(addr).total_requests);
 
         let states = BackendCircuitStates::new(CircuitBreakerConfig {

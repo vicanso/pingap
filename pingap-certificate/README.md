@@ -56,6 +56,18 @@ within a few seconds. Like every reload this needs the process to run with
 `--autoreload` or `--autorestart`. Certificates managed by ACME in the same
 configuration are left to their own service and are not affected.
 
+A change to the configuration is hot reloaded entry by entry. An entry that is
+not one of ACME is added, replaced or removed in place, also when other entries
+are; with a single `acme` entry in the configuration no certificate at all used
+to be reloaded until a restart. An entry that has `acme` set in the new
+configuration stays as it is, and a new one stays out: the ACME service orders
+and stores its certificate, and a change to its settings (`domains`, the
+challenge) takes a restart, which `--autorestart` performs and `--autoreload`
+only logs a warning about. An entry that no longer has `acme`, or is removed,
+is reloaded like any other, and the ACME service stops renewing it. When two
+entries name the same domain and the one serving it is removed, the domain goes
+to the other.
+
 Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
 `tls_max_version` that OpenSSL rejects (or a version name other than
 `tlsv1.1`/`tlsv1.2`/`tlsv1.3`, case-insensitive) is an error when the listener

@@ -14,10 +14,10 @@
 
 use super::{Error, LOG_TARGET};
 use async_trait::async_trait;
-use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
@@ -119,13 +119,32 @@ impl BackgroundService for BackgroundTaskService {
             tokio::time::sleep(initial_delay).await;
         }
         let mut period = interval(self.interval);
-        // A cycle that overruns must not be followed by a burst of catch-up
-        // ticks; the next one is due one interval after it finished.
+        // A tick that comes late must not be followed by a burst of
+        // catch-up ticks; the next one is due one interval after it.
         period.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The first tick fires immediately, which is often not desired. We skip it.
         if !self.immediately {
             period.tick().await;
         }
+
+        // The tasks that are running, and since when each of them is.
+        //
+        // A round used to wait for every task before the next round could
+        // start. One slow task - an ACME order, the hourly sweep of a
+        // cache directory, a push to a gateway that does not answer - held
+        // all the others up for as long as it took: the log was not
+        // flushed, metrics were not pushed, and a task that acts on every
+        // sixtieth round drifted off its hour. Each task now keeps its own
+        // time: a round starts the ones that are free and leaves out the
+        // one that is still at it.
+        //
+        // And its own count, of the times it ran. A task that acts on
+        // every nth run still sees every number: left out of a round, it
+        // is given that round's turn the next time, where one count for
+        // all would have had it miss the number it was waiting for.
+        let mut running = FuturesUnordered::new();
+        let mut started: Vec<Option<Instant>> = vec![None; self.tasks.len()];
+        let mut runs: Vec<u32> = vec![0; self.tasks.len()];
 
         loop {
             tokio::select! {
@@ -138,95 +157,71 @@ impl BackgroundService for BackgroundTaskService {
                     break;
                 }
                 _ = period.tick() => {
-                    let cycle_start = Instant::now();
-                    let count = self.count.fetch_add(1, Ordering::Relaxed);
-
-                    // Every task flags itself done, so a cycle that overruns
-                    // can name the ones still going.
-                    let done: Vec<AtomicBool> =
-                        self.tasks.iter().map(|_| AtomicBool::new(false)).collect();
-                    // Create a collection of futures to run all tasks concurrently.
-                    let futures = self.tasks.iter().zip(done.iter()).map(|((task_name, task), flag)| async move {
-                        let task_start = Instant::now();
-                        let result = task.execute(count).await;
-                        flag.store(true, Ordering::Relaxed);
-                        (task_name, result, task_start.elapsed())
-                    });
-
-                    // Await all tasks to complete in parallel. Nothing is
-                    // cancelled: a task is not stopped halfway through its
-                    // work, it is only reported.
-                    let mut all = std::pin::pin!(join_all(futures));
-                    let results = loop {
-                        tokio::select! {
-                            results = &mut all => break results,
-                            _ = tokio::time::sleep(self.interval) => {
-                                let running: Vec<&str> = self
-                                    .tasks
-                                    .iter()
-                                    .zip(done.iter())
-                                    .filter(|(_, flag)| !flag.load(Ordering::Relaxed))
-                                    .map(|((task_name, _), _)| task_name.as_str())
-                                    .collect();
-                                warn!(
-                                    target: LOG_TARGET,
-                                    name = self.name,
-                                    tasks = running.join(", "),
-                                    elapsed = duration_to_string(cycle_start.elapsed()),
-                                    "background tasks still running past the interval"
-                                );
-                            }
+                    let cycle = self.count.fetch_add(1, Ordering::Relaxed);
+                    let mut skipped = vec![];
+                    for (index, (task_name, task)) in
+                        self.tasks.iter().enumerate()
+                    {
+                        if let Some(since) = started[index] {
+                            skipped.push(format!(
+                                "{task_name}({})",
+                                duration_to_string(since.elapsed())
+                            ));
+                            continue;
                         }
-                    };
-
-                    let mut success_tasks = Vec::new();
-                    let mut failed_tasks = Vec::new();
-
-                    // Process results for logging.
-                    for (task_name, result, elapsed) in results {
-                        match result {
-                            Ok(true) => {
-                                success_tasks.push(task_name.as_str());
-                                debug!(
-                                    target: LOG_TARGET,
-                                    name = self.name,
-                                    task = task_name,
-                                    elapsed = duration_to_string(elapsed),
-                                    "background task executed successfully"
-                                );
-                            }
-                            Ok(false) => {
-                                // Task was skipped, do nothing.
-                            }
-                            Err(e) => {
-                                failed_tasks.push(task_name.as_str());
-                                error!(
-                                    target: LOG_TARGET,
-                                    name = self.name,
-                                    task = task_name,
-                                    error = %e,
-                                    "background task failed"
-                                );
-                            }
-                        }
+                        started[index] = Some(Instant::now());
+                        let count = runs[index];
+                        runs[index] = count.wrapping_add(1);
+                        running.push(async move {
+                            let task_start = Instant::now();
+                            let result = task.execute(count).await;
+                            (index, result, task_start.elapsed())
+                        });
                     }
-
-                    // A routine cycle is debug noise; failures were logged
-                    // above at error level.
-                    if !success_tasks.is_empty() || !failed_tasks.is_empty() {
-                         debug!(
+                    if !skipped.is_empty() {
+                        warn!(
                             target: LOG_TARGET,
                             name = self.name,
-                            cycle = count,
-                            success_count = success_tasks.len(),
-                            failed_count = failed_tasks.len(),
-                            total_elapsed = duration_to_string(cycle_start.elapsed()),
-                            "background service cycle completed",
+                            tasks = skipped.join(", "),
+                            cycle,
+                            "background tasks still running, left out of this round"
                         );
+                    }
+                }
+                Some((index, result, elapsed)) = running.next(),
+                    if !running.is_empty() =>
+                {
+                    started[index] = None;
+                    let task_name = self.tasks[index].0.as_str();
+                    match result {
+                        Ok(true) => {
+                            debug!(
+                                target: LOG_TARGET,
+                                name = self.name,
+                                task = task_name,
+                                elapsed = duration_to_string(elapsed),
+                                "background task executed successfully"
+                            );
+                        }
+                        Ok(false) => {
+                            // Task was skipped, do nothing.
+                        }
+                        Err(e) => {
+                            error!(
+                                target: LOG_TARGET,
+                                name = self.name,
+                                task = task_name,
+                                error = %e,
+                                "background task failed"
+                            );
+                        }
                     }
                 }
             }
         }
+        // Nothing is cancelled: a task is not stopped halfway through its
+        // work, as it was not when a round was waited for.
+        while running.next().await.is_some() {}
     }
 }
 
@@ -242,6 +237,78 @@ mod tests {
         assert_eq!(duration_to_string(Duration::from_secs(60)), "1.0m");
         assert_eq!(duration_to_string(Duration::from_secs(3600)), "1.0h");
         assert_eq!(duration_to_string(Duration::from_secs(86400)), "1.0d");
+    }
+
+    /// Regression: a round waited for every task, so one slow task held
+    /// up all the others for as long as it took.
+    #[tokio::test]
+    async fn test_slow_task_does_not_hold_up_the_others() {
+        use std::sync::Arc;
+
+        use std::sync::Mutex;
+
+        struct Counting {
+            runs: Arc<AtomicU32>,
+            counts: Arc<Mutex<Vec<u32>>>,
+            takes: Duration,
+        }
+        #[async_trait]
+        impl BackgroundTask for Counting {
+            async fn execute(&self, count: u32) -> Result<bool, Error> {
+                self.runs.fetch_add(1, Ordering::Relaxed);
+                self.counts.lock().unwrap().push(count);
+                tokio::time::sleep(self.takes).await;
+                Ok(true)
+            }
+        }
+        let quick = Arc::new(AtomicU32::new(0));
+        let slow = Arc::new(AtomicU32::new(0));
+        let quick_counts = Arc::new(Mutex::new(vec![]));
+        let slow_counts = Arc::new(Mutex::new(vec![]));
+        let service = BackgroundTaskService::new(
+            "test",
+            Duration::from_millis(50),
+            vec![
+                (
+                    "quick".to_string(),
+                    Box::new(Counting {
+                        runs: quick.clone(),
+                        counts: quick_counts.clone(),
+                        takes: Duration::ZERO,
+                    }),
+                ),
+                (
+                    "slow".to_string(),
+                    Box::new(Counting {
+                        runs: slow.clone(),
+                        counts: slow_counts.clone(),
+                        takes: Duration::from_millis(400),
+                    }),
+                ),
+            ],
+        );
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        let stopper = async {
+            tokio::time::sleep(Duration::from_millis(620)).await;
+            stop.send(true).unwrap();
+        };
+        tokio::join!(service.start(shutdown), stopper);
+
+        // About twelve rounds went by. The slow task was started when it
+        // was free, twice; the quick one in every round, where it used to
+        // get the two that the slow one let through.
+        let quick = quick.load(Ordering::Relaxed);
+        let slow = slow.load(Ordering::Relaxed);
+        assert_eq!(true, quick >= 8, "quick ran {quick} times");
+        assert_eq!(true, (1..=3).contains(&slow), "slow ran {slow} times");
+
+        // Each task is given the number of its own run, so one that acts
+        // on every nth does not miss its number in a round it sat out.
+        assert_eq!((0..slow).collect::<Vec<_>>(), *slow_counts.lock().unwrap());
+        assert_eq!(
+            (0..quick).collect::<Vec<_>>(),
+            *quick_counts.lock().unwrap()
+        );
     }
 
     #[test]

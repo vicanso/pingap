@@ -26,6 +26,8 @@ prometheus_metrics = "/metrics"
 curl http://127.0.0.1:6188/metrics
 ```
 
+端点本身没有认证。它和 server 上的其他路径一样，先执行匹配到的 location 的请求阶段插件：兜底的 location 挂了 `basic_auth` 或 `ip_restriction` 时，`/metrics` 同样受它们保护（以前它在所有插件之前就被处理了）。该 location 上自己应答请求的插件（`directory`、`mock`、`redirect`）也会应答这个路径，指标就不再返回。想让端点和业务使用不同的规则，就在这个 server 上给该路径单独配一个 location，挂上它需要的插件。匹配不到任何 location 的请求（location 都限定了 host 时，换一个 `Host` 即可）不经过任何插件就能拿到指标，所以这个 location 不要限定 host。
+
 ### Push 模式
 
 给 URL 而非路径，Pingap 推送到 Pushgateway：

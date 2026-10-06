@@ -782,6 +782,9 @@ export default {
       "The keys are fetched from this url and picked by the kid of the token. Takes precedence over the public key and the secret.",
     jwtJwksTtl: "JWKS TTL",
     jwtJwksTtlPlaceholder: "How long fetched keys stay fresh, default: 1h",
+    jwtRequireExp: "Require Expiry",
+    jwtRequireExpTips:
+      "On unless set to No: a token without exp is rejected, and the response at the sign path is only signed when it carries exp. Turn it off only for tokens that are meant to never expire.",
     forwardAuthUrl: "Auth Url",
     forwardAuthUrlPlaceholder: "Input the url of the auth service",
     forwardAuthTimeout: "Timeout",

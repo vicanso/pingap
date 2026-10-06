@@ -839,6 +839,10 @@ purge_ip_list = ["127.0.0.1"]
 
     #[tokio::test]
     async fn test_purge_namespace_file_backend() {
+        // Keys of the shape pingora gives: a namespace purge only takes
+        // files named like them for the cache's own.
+        const PURGE_KEY: &str = "00000000000000000000000000000001";
+        const OTHER_KEY: &str = "00000000000000000000000000000002";
         let dir = tempfile::TempDir::new().unwrap();
         let cache = Cache::try_from(
             &toml::from_str::<PluginConf>(&format!(
@@ -861,13 +865,13 @@ purge_ip_list = ["127.0.0.1"]
         cache
             .http_cache
             .cache
-            .put("purge-key", b"purge-ns", obj.clone())
+            .put(PURGE_KEY, b"purge-ns", obj.clone())
             .await
             .unwrap();
         cache
             .http_cache
             .cache
-            .put("other-key", b"other-ns", obj)
+            .put(OTHER_KEY, b"other-ns", obj)
             .await
             .unwrap();
 
@@ -882,14 +886,14 @@ purge_ip_list = ["127.0.0.1"]
         let purged = cache
             .http_cache
             .cache
-            .get("purge-key", b"purge-ns")
+            .get(PURGE_KEY, b"purge-ns")
             .await
             .unwrap();
         assert_eq!(true, purged.is_none());
         let kept = cache
             .http_cache
             .cache
-            .get("other-key", b"other-ns")
+            .get(OTHER_KEY, b"other-ns")
             .await
             .unwrap();
         assert_eq!(true, kept.is_some());

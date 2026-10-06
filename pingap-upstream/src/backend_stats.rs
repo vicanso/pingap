@@ -64,6 +64,10 @@ impl BackendStats {
             .iter()
             .flat_map(|code| StatusCode::from_u16(*code).ok())
             .collect::<HashSet<StatusCode>>();
+        // The estimators count their window in milliseconds and divide by
+        // it. The config validation refuses a shorter one; this is for
+        // whoever builds the stats without it.
+        let interval = interval.max(Duration::from_millis(1));
         Self {
             interval,
             total: Rate::new(interval),
@@ -78,10 +82,12 @@ impl BackendStats {
     }
 
     fn record(&self, address: &str, failure: bool) {
+        // Both are observed every time, a success as no failure: an
+        // estimator starts its next window when it is next looked at, and
+        // one that only heard of failures kept the last window's failures
+        // at full weight against requests that had long started to fade.
         self.total.observe(&address, 1);
-        if failure {
-            self.failure.observe(&address, 1);
-        }
+        self.failure.observe(&address, isize::from(failure));
         // The counters exist after a backend's first request; look them up
         // by `&str` and only allocate the key for a new backend.
         if let Some(counters) = self.consecutive_counters.get(address) {
@@ -114,12 +120,29 @@ impl BackendStats {
         failure
     }
 
+    /// The requests and failures of the last `interval`.
+    ///
+    /// All of the window that is being counted, and of the one before it
+    /// the share that still lies within an interval from now. It used to
+    /// be the previous window alone, a window that is over: a backend that
+    /// started failing was not seen to for up to a whole interval (a
+    /// minute by default), not at all in its first, and one that had
+    /// recovered was still judged by the bad window behind it.
     #[inline]
     pub(crate) fn get_window_stats(&self, address: &str) -> WindowStats {
         let interval = self.interval.as_secs_f64();
-        let rps = self.total.rate(&address);
-        let total = rps * interval;
-        let failure = self.failure.rate(&address) * interval;
+        let recent = |rate: &Rate| {
+            rate.rate_with(&address, |info| {
+                info.prev_samples.max(0) as f64
+                    * (1.0 - info.current_interval_fraction)
+                    + info.curr_samples.max(0) as f64
+            })
+        };
+        let total = recent(&self.total);
+        // Two estimates, each rounded to its own clock tick: the failures
+        // are among the requests whatever the arithmetic says.
+        let failure = recent(&self.failure).min(total);
+        let rps = total / interval;
         let failure_rate_percent = if total > 0.0 {
             (failure / total) * 100.0
         } else {
@@ -195,20 +218,87 @@ mod tests {
     }
 
     /// Transport failures count in the total, so the failure rate is a
-    /// share of the requests actually made. The window reports the
-    /// previous interval, so the test waits one out.
+    /// share of the requests actually made.
     #[test]
     fn test_window_stats_counts_transport_failures() {
-        let stats = BackendStats::new(Duration::from_secs(1), vec![]);
+        let stats = BackendStats::new(Duration::from_secs(60), vec![]);
         let addr = "127.0.0.1:8080";
         for _ in 0..3 {
             stats.on_response(addr, StatusCode::OK);
         }
         stats.on_transport_failure(addr);
-        std::thread::sleep(Duration::from_millis(1100));
         let window = stats.get_window_stats(addr);
         assert_eq!(4, window.total_requests);
         assert_eq!(25.0, window.failure_rate_percent);
         assert_eq!(WindowStats::default(), stats.get_window_stats("unknown"));
+    }
+
+    /// Regression: the window was the one before the current one, a window
+    /// that is over. Twenty failures in a row were nothing until the
+    /// interval had passed - a minute by default - and a breaker that goes
+    /// by the failure rate stayed closed that long.
+    #[test]
+    fn test_window_stats_see_the_current_window() {
+        let stats = BackendStats::new(Duration::from_secs(60), vec![]);
+        let addr = "127.0.0.1:8080";
+        for _ in 0..20 {
+            stats.on_transport_failure(addr);
+        }
+        let window = stats.get_window_stats(addr);
+        assert_eq!(20, window.total_requests);
+        assert_eq!(100.0, window.failure_rate_percent);
+
+        // What is behind fades out as the next window goes by, it does
+        // not stay whole until that one is over.
+        let stats = BackendStats::new(Duration::from_millis(400), vec![]);
+        for _ in 0..20 {
+            stats.on_transport_failure(addr);
+        }
+        std::thread::sleep(Duration::from_millis(600));
+        let faded = stats.get_window_stats(addr).total_requests;
+        assert_eq!(true, (1..20).contains(&faded), "{faded}");
+        std::thread::sleep(Duration::from_millis(900));
+        assert_eq!(0, stats.get_window_stats(addr).total_requests);
+    }
+
+    /// Regression: the failures were counted by an estimator that only
+    /// heard of failures, and it moved on to its next window when the next
+    /// failure came, not when the requests' estimator did. Until then the
+    /// failures of the window behind stood at full weight against requests
+    /// that had half faded: four failures in ten, long over, and one new
+    /// failure made a rate of 71%.
+    #[test]
+    fn test_window_stats_fade_failures_with_the_requests() {
+        let stats = BackendStats::new(Duration::from_secs(1), vec![]);
+        let addr = "127.0.0.1:8080";
+        for index in 0..10 {
+            let status = if index < 4 { 500 } else { 200 };
+            stats.on_response(addr, StatusCode::from_u16(status).unwrap());
+        }
+        // Into the next window, where a request is what turns the page.
+        std::thread::sleep(Duration::from_millis(1500));
+        stats.on_response(addr, StatusCode::OK);
+        std::thread::sleep(Duration::from_millis(300));
+        stats.on_transport_failure(addr);
+
+        let window = stats.get_window_stats(addr);
+        assert_eq!(
+            true,
+            window.failure_rate_percent < 50.0,
+            "{}",
+            window.failure_rate_percent
+        );
+    }
+
+    /// Regression: the estimate divides by the window in milliseconds, and
+    /// a window of none took the process down with it.
+    #[test]
+    fn test_window_stats_with_no_interval() {
+        for interval in [Duration::ZERO, Duration::from_micros(500)] {
+            let stats = BackendStats::new(interval, vec![]);
+            stats.on_transport_failure("127.0.0.1:8080");
+            let window = stats.get_window_stats("127.0.0.1:8080");
+            assert_eq!(true, window.failure_rate_percent <= 100.0);
+        }
     }
 }

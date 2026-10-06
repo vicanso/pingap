@@ -517,6 +517,10 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     })?;
     let (server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
+    plugin::warn_if_admin_has_no_credentials(
+        &proxy_plugin_info,
+        &server_conf.addr,
+    );
     // What this node stores is run elsewhere.
     validate::set_control_panel();
 
@@ -975,6 +979,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             target: LOG_TARGET,
             admin_addr = server_conf.addr,
             path, "admin plugin is created"
+        );
+        plugin::warn_if_admin_has_no_credentials(
+            &plugin_conf,
+            &server_conf.addr,
         );
         if let Some(server) = server_conf_list
             .iter_mut()

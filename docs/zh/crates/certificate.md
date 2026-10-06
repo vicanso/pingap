@@ -35,6 +35,8 @@ crate 核心是 `GlobalCertificate`：SNI 选择逻辑（精确 → 通配 → �
 
 `tls_cert` / `tls_key` 以文件路径给出的证书，在文件内容变化时会重新加载，不需要改配置：重载服务每一轮都会对这些文件计算 hash（`CertificateConf::reads_files`、`hash_key`）。原地替换 `fullchain.pem` 和 `privkey.pem` 的续期，几秒之内生效。和其他重载一样，需要进程带 `--autoreload` 或 `--autorestart` 运行。同一份配置里由 ACME 管理的证书仍由 ACME 服务负责，不受影响。
 
+配置变更时证书按条目逐个热更新。不是 ACME 的条目原地新增、替换或删除，配置里同时有 ACME 条目时也一样；以前只要配置里有一个 `acme` 条目，所有证书都要等到重启才更新。新配置里设置了 `acme` 的条目保持原样，新增的这类条目也不会加入：它的证书由 ACME 服务申请和保存，对其设置（`domains`、验证方式）的修改需要重启才生效——`--autorestart` 会执行重启，`--autoreload` 只打一条警告日志。去掉了 `acme` 的条目或被删除的条目和其他条目一样热更新，ACME 服务不再为它续期。两个条目写了同一个域名时，正在为该域名提供服务的那个被删除后，域名交给另一个。
+
 OpenSSL 后端下，被 OpenSSL 拒绝的 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（或 `tlsv1.1`/`tlsv1.2`/`tlsv1.3` 以外的版本名；大小写不敏感）在构建监听器时报错，服务器不会带着与配置不同的设置启动。
 
 ## 模块

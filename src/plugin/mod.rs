@@ -126,6 +126,28 @@ pub fn parse_admin_plugin(
     ))
 }
 
+/// Says so, once at startup, when the admin of `--admin` has no
+/// credentials. It is a common way to run it on a machine of one's own,
+/// and it is as open as it sounds: nothing but the address stands between
+/// a request and the configuration, private keys included.
+pub fn warn_if_admin_has_no_credentials(conf: &PluginConf, addr: &str) {
+    let has_credentials = conf
+        .get("authorizations")
+        .and_then(|value| value.as_array())
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.as_str().is_some_and(|item| !item.is_empty()))
+        });
+    if !has_credentials {
+        warn!(
+            target: LOG_TARGET,
+            addr,
+            "the admin has no credentials: whoever reaches this address can read and replace the configuration, private keys included. Set them with --admin=user:password@addr"
+        );
+    }
+}
+
 fn is_base64_credential(value: &str) -> bool {
     let Ok(data) = pingap_util::base64_decode(value) else {
         return false;

@@ -217,12 +217,14 @@ pub trait LocationInstance: Send + Sync {
         false
     }
     /// Rewrites the request url. Returns whether the path changed; named
-    /// captures of the rewrite pattern are added to `variables`.
+    /// captures of the rewrite pattern are added to `variables`. An error
+    /// when the rule gives something that is no path: the request is then
+    /// refused and not sent on with the path it came with.
     fn rewrite(
         &self,
         header: &mut RequestHeader,
         variables: &mut Option<AHashMap<String, String>>,
-    ) -> bool;
+    ) -> pingora::Result<bool>;
     /// Returns the proxy header to upstream
     fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>>;
     /// Returns the client body size limit

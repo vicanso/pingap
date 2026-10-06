@@ -41,6 +41,7 @@ order:
 | `jwks_url` | string | — | JWKS endpoint URL. |
 | `jwks_ttl` | duration | `1h` | How long fetched JWKS keys stay fresh. |
 | `auth_path` | string | — | Path that mints tokens instead of consuming them. |
+| `require_exp` | bool | `true` | Whether a token has to carry `exp`, in every verification mode, and whether the response at `auth_path` has to before it is signed. See [Expiry](#expiry). |
 | `delay` | duration | none | Sleep before answering an invalid token. |
 
 Exactly one of `header` / `cookie` / `query` is used, checked in that order; at
@@ -118,7 +119,26 @@ rather than a token whose payload is a gzip stream.
 Minting only works with HMAC — the signature is always computed from `secret`
 using `HS256` or `HS512`. Only a `2xx` upstream response is signed; an error
 body is passed through untouched, so a failed login cannot be turned into a
-token that never expires.
+token.
+
+## Expiry
+
+A token without `exp` is valid for as long as the key is, so by default one is
+required everywhere:
+
+- **Verification** — in all three modes a token whose payload has no `exp` (or
+  a `null` one) is answered with `401`. The HMAC mode used to accept such a
+  token; the two public key modes never did.
+- **Minting** — the upstream's claims are signed as they are, nothing is added
+  to them. If they are not a JSON object with a numeric `exp`, no token is
+  issued and the request to `auth_path` fails: with a `502`, or, when the
+  upstream's header had already been passed on before its body arrived, by
+  closing the connection in the middle of the response.
+
+`require_exp = false` restores the earlier behaviour for deployments that issue
+tokens meant to never expire: a missing `exp` is accepted in every mode, and
+`auth_path` signs whatever a `2xx` response holds. A token that does carry
+`exp` is still rejected once it has passed.
 
 ## Responses
 
@@ -128,7 +148,9 @@ token that never expires.
 | Not three dot-separated parts, or the payload is not a JSON object (HMAC mode) | 401 | `Jwt authorization format is invalid` |
 | Bad signature, or unsupported `alg` | 401 (after `delay`) | `Jwt authorization is invalid` |
 | `exp` in the past (HMAC mode) | 401 | `Jwt authorization is expired` |
+| No `exp` and `require_exp` is on (HMAC mode) | 401 | `Jwt authorization has no exp` |
 | `nbf` in the future (HMAC mode) | 401 | `Jwt authorization is not yet valid` |
+| Claims at `auth_path` without `exp` and `require_exp` is on | 502, or the connection is closed | error page |
 
 ## Usage notes
 

@@ -21,8 +21,9 @@ use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
 use pingap_core::{
-    HttpHeader, convert_headers, normalize_path, resolve_static_header_value,
-    set_path_and_query, strip_root_label,
+    HttpHeader, canonical_path, convert_headers, has_dot_segments,
+    normalize_path, resolve_static_header_value, set_path_and_query,
+    strip_root_label,
 };
 use pingap_core::{
     LocationInstance, MissingPlugin, NamedPlugin, PluginProvider,
@@ -254,7 +255,42 @@ struct RegexRewrite {
     has_variables: bool,
 }
 
+/// Whether two rewritten targets, `path` or `path?query`, are the same
+/// path to an upstream however it reads one, with the same query.
+fn same_path(a: &str, b: &str) -> bool {
+    let split = |target| match str::split_once(target, '?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (target, None),
+    };
+    let ((path_a, query_a), (path_b, query_b)) = (split(a), split(b));
+    query_a == query_b && canonical_path(path_a) == canonical_path(path_b)
+}
+
 impl RegexRewrite {
+    /// Applies the rule to `path`: the new path, and the groups of the
+    /// match it was made from. `None` when the rule does not match.
+    ///
+    /// One pass over the path: the leftmost match both builds the new path
+    /// (what `Regex::replace` does) and keeps its groups, so the named
+    /// captures cost no second run of the regex.
+    fn apply<'h>(
+        &self,
+        replacement: &str,
+        path: &'h str,
+    ) -> Option<(String, Option<regex::Captures<'h>>)> {
+        if self.match_all {
+            return Some((replacement.to_string(), None));
+        }
+        let found = self.re.captures(path)?;
+        let whole = found.get(0)?;
+        let mut new_path =
+            String::with_capacity(path.len() + replacement.len());
+        new_path.push_str(&path[..whole.start()]);
+        found.expand(replacement, &mut new_path);
+        new_path.push_str(&path[whole.end()..]);
+        Some((new_path, Some(found)))
+    }
+
     /// Parses `"<regex> <replacement>"`. A lone replacement holding `$`
     /// (`"/$1"`) rewrites the whole path; a lone pattern rewrites its
     /// match to nothing. The pattern must compile: a rewrite that did not
@@ -854,13 +890,10 @@ impl LocationInstance for Location {
         &self,
         header: &mut RequestHeader,
         variables: &mut Option<AHashMap<String, String>>,
-    ) -> bool {
+    ) -> pingora::Result<bool> {
         let Some(rewrite) = &self.reg_rewrite else {
-            return false;
+            return Ok(false);
         };
-        let re = &rewrite.re;
-        let path = header.uri.path();
-
         // `$name` in the replacement is a request variable (a host capture,
         // a plugin's) before it is a regex group: those are filled in first,
         // and only when the replacement can hold one at all.
@@ -870,37 +903,60 @@ impl LocationInstance for Location {
             },
             _ => Cow::Borrowed(rewrite.value.as_str()),
         };
+        let apply = |path| rewrite.apply(replacement.as_ref(), path);
 
-        // One pass over the path: the leftmost match both builds the new
-        // path (what `Regex::replace` does) and keeps its groups, so the
-        // named captures below cost no second run of the regex.
-        let mut captures = None;
-        let mut new_path = if rewrite.match_all {
-            replacement.into_owned()
-        } else {
-            let Some(found) = re.captures(path) else {
+        // The location was chosen by the path as an upstream may read it
+        // (`normalize_path`), and the rule has to hold for that reading
+        // too: matched against the path as it was sent and nothing else,
+        // `/%75sers/x` slipped past `^/users/(.*)$ /acme/$1` to arrive as
+        // `/users/x`, and `/users/../other` took the prefix only to leave
+        // it one segment later.
+        //
+        // For nearly every request the two are the same path. Where they
+        // are not, the path as sent is still the one to rewrite when it can
+        // be: the other reading has lost what it took for syntax, the
+        // `%2F` in `group%2Fproject`, `;jsessionid=...`, a second slash.
+        // It can be when it has no `.` or `..` segment under any reading,
+        // so that it stays below whatever the rule puts in front of it,
+        // and when both readings of the result name the same path.
+        let sent = header.uri.path();
+        let read = canonical_path(sent);
+        let (mut new_path, captures) = match &read {
+            Cow::Borrowed(_) => match apply(sent) {
+                Some(result) => result,
                 // no match: nothing to rewrite, and nothing was allocated
-                return false;
-            };
-            let Some(whole) = found.get(0) else {
-                return false;
-            };
-            let mut new_path =
-                String::with_capacity(path.len() + replacement.len());
-            new_path.push_str(&path[..whole.start()]);
-            found.expand(replacement.as_ref(), &mut new_path);
-            new_path.push_str(&path[whole.end()..]);
-            captures = Some(found);
-            new_path
+                None => return Ok(false),
+            },
+            Cow::Owned(read) => {
+                let as_sent = if has_dot_segments(sent) {
+                    None
+                } else {
+                    apply(sent)
+                };
+                match (as_sent, apply(read)) {
+                    (Some(as_sent), Some(as_read)) => {
+                        if same_path(&as_sent.0, &as_read.0) {
+                            as_sent
+                        } else {
+                            as_read
+                        }
+                    },
+                    // A rule written for the spelling itself, `%2F` or a
+                    // path parameter.
+                    (Some(as_sent), None) => as_sent,
+                    (None, Some(as_read)) => as_read,
+                    (None, None) => return Ok(false),
+                }
+            },
         };
-        if new_path == path {
-            return false;
+        if new_path == sent {
+            return Ok(false);
         }
 
         if rewrite.has_named_captures
             && let Some(captures) = &captures
         {
-            for name in re.capture_names().flatten() {
+            for name in rewrite.re.capture_names().flatten() {
                 if let Some(match_value) = captures.name(name) {
                     let values = variables.get_or_insert_with(AHashMap::new);
                     values.insert(
@@ -925,12 +981,16 @@ impl LocationInstance for Location {
         }
         debug!(target: LOG_TARGET, new_path, "rewrite path");
 
-        // set new uri, the host of an HTTP/2 request stays in it
-        if let Err(e) = set_path_and_query(header, &new_path) {
+        // set new uri, the host of an HTTP/2 request stays in it. A rule
+        // that gives something that is no path fails the request: it used
+        // to be logged and the request sent on with the path it came with,
+        // past the rewrite that was to put it where it belongs.
+        set_path_and_query(header, &new_path).map_err(|e| {
             error!(target: LOG_TARGET, error = %e, location = self.name.as_ref(), "new path parse fail");
-        }
+            new_internal_error(500, "rewrite gives an invalid path")
+        })?;
 
-        true
+        Ok(true)
     }
 }
 
@@ -1149,7 +1209,7 @@ mod tests {
         let mut req_header =
             RequestHeader::build("GET", b"/users/rest/me?abc=1", None).unwrap();
         let mut variables = None;
-        let matched = lo.rewrite(&mut req_header, &mut variables);
+        let matched = lo.rewrite(&mut req_header, &mut variables).unwrap();
         assert_eq!(true, matched);
         assert_eq!(r#"Some({"upstream": "rest"})"#, format!("{:?}", variables));
         assert_eq!("/me?abc=1", req_header.uri.to_string());
@@ -1157,7 +1217,7 @@ mod tests {
         let mut req_header =
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
         let mut variables = None;
-        let matched = lo.rewrite(&mut req_header, &mut variables);
+        let matched = lo.rewrite(&mut req_header, &mut variables).unwrap();
         assert_eq!(false, matched);
         assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
@@ -1223,6 +1283,151 @@ mod tests {
     /// Regression: a rewrite replaced the whole uri with the new path. An
     /// HTTP/2 request has its host there, so the host was gone afterwards:
     /// for the upstream, and for the cache key.
+    /// Regression: the rule was matched against the path as it was sent,
+    /// while the location had been chosen by the normalized one. An
+    /// encoded or roundabout spelling reached the location and went past
+    /// its rewrite: with a rule that puts a prefix in front, the upstream
+    /// got the path without the prefix, or with a `..` that left it again.
+    #[test]
+    fn test_rewrite_works_on_the_path_the_location_matched() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                path: Some("/users".to_string()),
+                rewrite: Some("^/users/(.*)$ /acme/$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let rewritten = |path: &str| {
+            let mut header =
+                RequestHeader::build("GET", path.as_bytes(), None).unwrap();
+            // only what the location matches gets here
+            assert_eq!(
+                true,
+                lo.match_host_path("", &normalize_path(header.uri.path())).0,
+                "{path}"
+            );
+            lo.rewrite(&mut header, &mut None).unwrap();
+            header.uri.to_string()
+        };
+        assert_eq!("/acme/x?a=1", rewritten("/users/x?a=1"));
+        // Spelled another way, it is still under the prefix.
+        assert_eq!("/acme/x", rewritten("/%75sers/x"));
+        assert_eq!("/acme/x", rewritten("//users/./x"));
+        assert_eq!("/acme/y", rewritten("/users/../users/y"));
+        assert_eq!("/acme/y", rewritten("/users/a/%2e%2e/y"));
+        assert_eq!("/acme/y", rewritten("/users;v=1/y"));
+        assert_eq!("/acme/x", rewritten("/users%2Fx"));
+        assert_eq!("/acme/x", rewritten("/\\users\\x"));
+        // A `..` that only shows once `%2F` or `%5C` is read as a
+        // separator, or once the parameters of a segment are dropped.
+        assert_eq!("/acme/y", rewritten("/users/x%2F..%2Fy"));
+        assert_eq!("/acme/y", rewritten("/users/x%5c..%5cy"));
+        assert_eq!("/acme/y", rewritten("/users/x/..;a=1/y"));
+        assert_eq!("/acme/secret", rewritten("/users/a%2Fb/../../secret"));
+        // What has to stay encoded is encoded in what is sent on, and a
+        // `?` that was part of the path is not the start of a query.
+        assert_eq!("/acme/a%20b", rewritten("/users/a%20b"));
+        assert_eq!("/acme/a%3fb?q=1", rewritten("/users/a%3fb?q=1"));
+        assert_eq!("/acme/100%25", rewritten("/users/100%25"));
+        assert_eq!("/acme/a%20b", rewritten("/%75sers/a%20b"));
+        assert_eq!("/acme/a%3Fb?q=1", rewritten("/%75sers/a%3fb?q=1"));
+    }
+
+    /// Regression of the fix above: every request the rule matched was
+    /// rewritten from the normalized path, which is the path with less in
+    /// it. `group%2Fproject` reached the upstream as two segments, a
+    /// `;jsessionid` was gone, `https://` in a path had one slash.
+    /// A path that hides no `..` is rewritten as it was sent.
+    #[test]
+    fn test_rewrite_keeps_the_path_as_sent() {
+        let location = |rewrite: &str| {
+            Location::new(
+                "lo",
+                &LocationConf {
+                    upstream: Some("charts".to_string()),
+                    rewrite: Some(rewrite.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let rewritten = |lo: &Location, path: &str| {
+            let mut header =
+                RequestHeader::build("GET", path.as_bytes(), None).unwrap();
+            lo.rewrite(&mut header, &mut None).unwrap();
+            header.uri.to_string()
+        };
+
+        let strip = location("^/gitlab/(.*)$ /$1");
+        for (path, expected) in [
+            (
+                "/gitlab/api/v4/projects/group%2Fproject",
+                "/api/v4/projects/group%2Fproject",
+            ),
+            ("/gitlab/@scope%2fname", "/@scope%2fname"),
+            (
+                "/gitlab/login;jsessionid=ABC?next=1",
+                "/login;jsessionid=ABC?next=1",
+            ),
+            ("/gitlab/report%3Bfinal.pdf", "/report%3Bfinal.pdf"),
+            (
+                "/gitlab/img/https://cdn.example/a.png",
+                "/img/https://cdn.example/a.png",
+            ),
+            ("/gitlab/caf%c3%a9", "/caf%c3%a9"), // spellchecker:disable-line
+            // Not when the prefix is spelled so that only the other
+            // reading finds it, or when a `..` is in it.
+            ("/%67itlab/group%2Fproject", "/group/project"),
+            ("/gitlab/a/../group%2Fproject", "/group/project"),
+        ] {
+            assert_eq!(expected, rewritten(&strip, path), "{path}");
+        }
+
+        // A rule written for the spelling itself still finds it.
+        let slashes = location("^/files/(.*)%2F(.*)$ /files/$1/$2");
+        assert_eq!("/files/a/b", rewritten(&slashes, "/files/a%2Fb"));
+        let session = location(";jsessionid=[^/?]*");
+        assert_eq!(
+            "/app/login?next=1",
+            rewritten(&session, "/app/login;jsessionid=ABC?next=1")
+        );
+
+        // The two readings of the path give two results: the one of the
+        // reading the location was chosen by is sent.
+        let split = location("^/users/([^/]+)/(.*)$ /acme/$2?u=$1");
+        assert_eq!("/acme/c?u=a", rewritten(&split, "/users/a/c"));
+        assert_eq!("/acme/b/c?u=a", rewritten(&split, "/users/a%2Fb/c"));
+    }
+
+    /// Regression: a rule whose result is no path was logged, and the
+    /// request sent on with the path it came with - past the rewrite.
+    #[test]
+    fn test_rewrite_that_gives_no_path_fails_the_request() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                rewrite: Some("^/bad/(.*)$ /a\u{7f}b/$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut header = RequestHeader::build("GET", b"/bad/x", None).unwrap();
+        let err = lo.rewrite(&mut header, &mut None).unwrap_err();
+        assert_eq!(
+            true,
+            matches!(err.etype(), pingora::ErrorType::HTTPStatus(500)),
+            "{err}"
+        );
+        assert_eq!("/bad/x", header.uri.path());
+        // The rule does not apply: nothing happens.
+        let mut header = RequestHeader::build("GET", b"/good/x", None).unwrap();
+        assert_eq!(false, lo.rewrite(&mut header, &mut None).unwrap());
+    }
+
     #[test]
     fn test_rewrite_keeps_the_authority() {
         let lo = Location::new(
@@ -1238,12 +1443,12 @@ mod tests {
 
         let mut h2 = RequestHeader::build("GET", b"/", None).unwrap();
         h2.set_uri(http::Uri::from_static("https://a.test/api/me?abc=1"));
-        assert_eq!(true, lo.rewrite(&mut h2, &mut variables));
+        assert_eq!(true, lo.rewrite(&mut h2, &mut variables).unwrap());
         assert_eq!("https://a.test/me?abc=1", h2.uri.to_string());
 
         let mut h1 =
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut h1, &mut variables));
+        assert_eq!(true, lo.rewrite(&mut h1, &mut variables).unwrap());
         assert_eq!("/me?abc=1", h1.uri.to_string());
     }
 
@@ -1263,7 +1468,11 @@ mod tests {
         let rewritten = |path: &str| {
             let mut header =
                 RequestHeader::build("GET", path.as_bytes(), None).unwrap();
-            assert_eq!(true, lo.rewrite(&mut header, &mut None), "{path}");
+            assert_eq!(
+                true,
+                lo.rewrite(&mut header, &mut None).unwrap(),
+                "{path}"
+            );
             header.uri.to_string()
         };
         assert_eq!("/search?from=old&q=a", rewritten("/old/a"));
@@ -1361,14 +1570,14 @@ mod tests {
         assert_eq!(true, matched);
         let mut req_header =
             RequestHeader::build("GET", b"/users/me?x=1", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut variables).unwrap());
         assert_eq!("/acme/me?x=1", req_header.uri.to_string());
 
         // Without variables the `$tenant` is left to the regex, which knows
         // no such group and expands it to nothing.
         let mut req_header =
             RequestHeader::build("GET", b"/users/me", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut req_header, &mut None));
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut None).unwrap());
         assert_eq!("//me", req_header.uri.to_string());
 
         // A request that does not match the pattern is left alone.
@@ -1376,7 +1585,7 @@ mod tests {
             RequestHeader::build("GET", b"/other?x=1", None).unwrap();
         let mut variables =
             Some(AHashMap::from([("tenant".to_string(), "acme".to_string())]));
-        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables).unwrap());
         assert_eq!("/other?x=1", req_header.uri.to_string());
     }
 
@@ -1449,7 +1658,7 @@ mod tests {
         let mut req_header =
             RequestHeader::build("GET", b"/users/me?x=1", None).unwrap();
         let mut variables = None;
-        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables));
+        assert_eq!(false, lo.rewrite(&mut req_header, &mut variables).unwrap());
         assert_eq!(None, variables);
         assert_eq!("/users/me?x=1", req_header.uri.to_string());
 
@@ -1465,7 +1674,7 @@ mod tests {
         .unwrap();
         let mut req_header =
             RequestHeader::build("GET", b"/old/a", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut req_header, &mut None));
+        assert_eq!(true, lo.rewrite(&mut req_header, &mut None).unwrap());
         assert_eq!("/new$/a", req_header.uri.to_string());
     }
 
@@ -1483,7 +1692,7 @@ mod tests {
         let mut req_header =
             RequestHeader::build("GET", b"/old/thing?x=1", None).unwrap();
         let mut variables = None;
-        let matched = lo.rewrite(&mut req_header, &mut variables);
+        let matched = lo.rewrite(&mut req_header, &mut variables).unwrap();
         assert_eq!(true, matched);
         // No named groups -> the second regex pass is skipped, no variables.
         assert_eq!(None, variables);
