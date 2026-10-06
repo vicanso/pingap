@@ -40,6 +40,14 @@ every certificate whose configuration (and, for file paths, file content) is
 unchanged, so a reload parses and loads only what changed and reports exactly
 those names; `parse_certificates` is the same with nothing to reuse.
 
+A certificate is loaded together with its private key, and a key that is not
+the certificate's is an error under both backends — reported by `pingap -t`
+and by the admin when it is saved. (OpenSSL on its own only objects when the
+pair is put on a handshake, which used to mean every handshake of the affected
+domains failed at runtime.) An entry that fails to build on a reload is
+reported and the certificate it was to replace goes on serving the domains it
+had; the `domains` and `is_default` of the entry that failed are not applied.
+
 Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
 `tls_max_version` that OpenSSL rejects (or a version name other than
 `tlsv1.1`/`tlsv1.2`/`tlsv1.3`, case-insensitive) is an error when the listener

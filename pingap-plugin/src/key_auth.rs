@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
+    Error, decode_query_value, get_bool_conf, get_hash_key, get_step_conf_in,
+    get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -239,10 +239,20 @@ impl Plugin for KeyAuth {
         // 1. If query parameter is configured, look for the key there
         // 2. Otherwise, look for the key in headers
         // 3. Default to empty bytes if not found
+        let mut decoded = None;
         let value = if let Some(key) = &self.query {
-            get_query_value(session.req_header(), key)
-                .unwrap_or_default()
-                .as_bytes()
+            let raw =
+                get_query_value(session.req_header(), key).unwrap_or_default();
+            // A key holding a character that has to be percent-encoded in
+            // a query (`+`, `/`, `=`) arrives encoded and, compared as it
+            // was sent, matched nothing. The decoded form is accepted next
+            // to the one sent, which is what a configuration written
+            // around this - the key listed in its encoded form - goes on
+            // matching by.
+            if let Cow::Owned(value) = decode_query_value(raw) {
+                decoded = Some(value);
+            }
+            raw.as_bytes()
         } else {
             self.header
                 .as_ref()
@@ -262,10 +272,13 @@ impl Plugin for KeyAuth {
         // 1. Check if provided key exists in the configured valid keys
         // 2. If invalid and delay is configured, wait before responding
         //    This helps prevent timing attacks and brute force attempts
-        if !self
-            .keys
-            .iter()
-            .any(|key| pingap_core::constant_time_eq(key, value))
+        let is_known = |value: &[u8]| {
+            self.keys
+                .iter()
+                .any(|key| pingap_core::constant_time_eq(key, value))
+        };
+        if !is_known(value)
+            && !decoded.as_deref().is_some_and(|v| is_known(v.as_bytes()))
         {
             if let Some(d) = self.delay {
                 sleep(d).await;
@@ -383,6 +396,60 @@ step = "proxy_upstream"
     /// * Failed authentication with invalid key
     /// * Missing credential handling
     /// * Query parameter authentication
+    /// Regression: the key of the query was compared as it was sent. One
+    /// with a character that has to be percent-encoded in a query arrived
+    /// encoded from a client that follows the rules, and matched nothing.
+    #[tokio::test]
+    async fn test_key_auth_decodes_the_query_value() {
+        let auth = KeyAuth::new(
+            &toml::from_str::<PluginConf>("query = \"k\"\nkeys = [\"a+b/c=\"]")
+                .unwrap(),
+        )
+        .unwrap();
+        let allowed = async |query: &str| {
+            let input = format!("GET /?{query} HTTP/1.1\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = auth
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            result == RequestPluginResult::Continue
+        };
+        assert_eq!(true, allowed("k=a%2Bb%2Fc%3D").await);
+        assert_eq!(true, allowed("k=a%2bb%2fc%3d").await);
+        // A key listed in its encoded form, to get around the comparison
+        // as it used to be, still matches what is sent for it.
+        let encoded = KeyAuth::new(
+            &toml::from_str::<PluginConf>("query = \"k\"\nkeys = [\"a%2Bb\"]")
+                .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new()
+            .read(b"GET /?k=a%2Bb HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = encoded
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
+        // As it is, which is what worked before. A plus stays a plus.
+        assert_eq!(true, allowed("k=a+b/c=").await);
+        assert_eq!(false, allowed("k=a%20b/c=").await);
+        assert_eq!(false, allowed("k=other").await);
+    }
+
     #[tokio::test]
     async fn test_key_auth() {
         let auth = KeyAuth::new(

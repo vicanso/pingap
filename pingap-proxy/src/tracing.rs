@@ -109,21 +109,22 @@ pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
     if let Some(mut span) =
         ctx.features.as_mut().and_then(|f| f.upstream_span.take())
     {
-        let timing = &ctx.timing;
+        // Through the getters: a phase that never finished still holds
+        // its start marker, a negative number.
         span.set_attributes([
             KeyValue::new("upstream.addr", ctx.upstream.address.clone()),
             KeyValue::new("upstream.reused", ctx.upstream.reused),
             KeyValue::new(
                 "upstream.connect_time",
-                timing.upstream_connect.unwrap_or_default() as i64,
+                ctx.get_upstream_connect_time().unwrap_or_default() as i64,
             ),
             KeyValue::new(
                 "upstream.processing_time",
-                timing.upstream_processing.unwrap_or_default() as i64,
+                ctx.get_upstream_processing_time().unwrap_or_default() as i64,
             ),
             KeyValue::new(
                 "upstream.response_time",
-                timing.upstream_response.unwrap_or_default() as i64,
+                ctx.get_upstream_response_time().unwrap_or_default() as i64,
             ),
         ]);
         span.end();

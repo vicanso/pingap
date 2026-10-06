@@ -76,6 +76,12 @@ interval actually used, so `?interval=15s` does not silently become a minute.
 | `pingap_fd_count` | gauge | — | Open file descriptors |
 | `pingap_tcp_count` / `pingap_tcp6_count` | gauge | — | IPv4 / IPv6 TCP sockets in the process's **network namespace**, not only Pingap's own: the source is `/proc/<pid>/net/tcp`, so on a host without a separate namespace it counts every process's sockets (Linux only) |
 
+`pingap_upstream_processing_time` and `pingap_upstream_response_time` only
+count the phases that finished. A response without a body (a `HEAD`, a `204`,
+a `304`) has no response phase to time, and an upstream that never answers no
+processing time, so such requests add nothing to these two histograms; their
+count can be lower than the request count of the upstream.
+
 Because most latency metrics are labelled per location or per upstream, a
 dashboard can attribute a regression to a specific route or backend without
 extra instrumentation.

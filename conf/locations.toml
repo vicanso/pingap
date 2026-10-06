@@ -53,6 +53,8 @@ upstream = "charts"
 # Maximum allowed size of the client request body.
 # Requests exceeding this limit will receive a 413 (Request Entity Too Large) error.
 # Supports units: kb, mb, gb. Example: "10mb"
+# What a client sends after an upgrade (a websocket) is not a request body
+# and is not held to this limit.
 # Default `none`
 # client_max_body_size = "1mb"
 

@@ -277,11 +277,16 @@ impl HttpResponse {
                 Ok(())
             };
 
-        // Add the Content-Length header based on the body size.
-        add_header(
-            &header::CONTENT_LENGTH,
-            &HeaderValue::from(self.body.len()),
-        )?;
+        // Add the Content-Length header based on the body size. Not on a
+        // response that has no body by definition: a 204 must not carry
+        // one (RFC 9110 8.6), and on a 304 a zero would be the length of
+        // the representation, which it is not.
+        if !has_no_body(self.status) {
+            add_header(
+                &header::CONTENT_LENGTH,
+                &HeaderValue::from(self.body.len()),
+            )?;
+        }
 
         // Generate and add the Cache-Control header.
         let (name, value) =
@@ -315,6 +320,18 @@ impl HttpResponse {
         session: &mut Session,
         header: ResponseHeader,
     ) -> pingora::Result<usize> {
+        // A HEAD, a 204 or a 304 ends with its header. HTTP/1.1 drops a
+        // body written after it, HTTP/2 does not: the DATA frame went out
+        // and the client reset the stream with a protocol error.
+        if session.req_header().method == http::Method::HEAD
+            || has_no_body(self.status)
+        {
+            session
+                .write_response_header(Box::new(header), true)
+                .await?;
+            session.finish_body().await?;
+            return Ok(0);
+        }
         let size = self.body.len();
         // Write the header to the session.
         session
@@ -326,6 +343,14 @@ impl HttpResponse {
         session.finish_body().await?;
         Ok(size)
     }
+}
+
+/// The statuses whose response has no body, whatever the request.
+#[inline]
+fn has_no_body(status: StatusCode) -> bool {
+    status.is_informational()
+        || status == StatusCode::NO_CONTENT
+        || status == StatusCode::NOT_MODIFIED
 }
 
 /// The headers that are sent once per value and cannot be folded into one
@@ -454,12 +479,19 @@ where
     ///
     /// Reads data from the `reader` in chunks and sends each chunk to the client until
     /// the reader is exhausted.
-    pub async fn send(
+    pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
+        let header = self.get_response_header()?;
+        self.send_with_header(session, header).await
+    }
+
+    /// Sends the body under `header`: the one `get_response_header` builds,
+    /// with whatever the caller has added to it.
+    pub async fn send_with_header(
         mut self,
         session: &mut Session,
+        header: ResponseHeader,
     ) -> pingora::Result<usize> {
-        // First, build and send the response headers. `end_stream` is false because a body will follow.
-        let header = self.get_response_header()?;
+        // `end_stream` is false because a body will follow.
         session
             .write_response_header(Box::new(header), false)
             .await?;
@@ -659,6 +691,103 @@ mod tests {
             resp.next_chunk(&mut buffer).await.unwrap()
         );
         assert_eq!(None, resp.next_chunk(&mut buffer).await.unwrap());
+    }
+
+    /// Regression: a 204 and a 304 carried `Content-Length: 0`. A 204 must
+    /// not have the header at all, and on a 304 it would be the length of
+    /// the representation, which is not zero.
+    #[test]
+    fn test_no_content_length_without_a_body() {
+        for (status, expected) in [
+            (StatusCode::NO_CONTENT, None),
+            (StatusCode::NOT_MODIFIED, None),
+            (StatusCode::SWITCHING_PROTOCOLS, None),
+            (StatusCode::OK, Some("0")),
+            (StatusCode::NOT_FOUND, Some("0")),
+        ] {
+            let header = HttpResponse {
+                status,
+                ..Default::default()
+            }
+            .new_response_header()
+            .unwrap();
+            assert_eq!(
+                expected,
+                header
+                    .headers
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok()),
+                "{status}"
+            );
+        }
+        // The length a HEAD is answered with is the caller's, and stays.
+        let header = HttpResponse {
+            status: StatusCode::NOT_MODIFIED,
+            headers: Some(vec![(
+                header::CONTENT_LENGTH,
+                HeaderValue::from_static("12"),
+            )]),
+            ..Default::default()
+        }
+        .new_response_header()
+        .unwrap();
+        assert_eq!("12", header.headers.get(header::CONTENT_LENGTH).unwrap());
+    }
+
+    /// Regression: the body of an answer to a HEAD, or of a 204 or a 304,
+    /// was written after the header. HTTP/1.1 drops it; over HTTP/2 the
+    /// DATA frame went out and the client reset the stream with a protocol
+    /// error. Such a response now ends with its header.
+    ///
+    /// Over HTTP/1.1, which is what this runs on, the wire looks the same
+    /// before and after; what tells them apart here is the number of body
+    /// bytes `send` reports as written. The HTTP/2 case is only checked
+    /// end to end (`curl --http2-prior-knowledge -I`).
+    #[tokio::test]
+    async fn test_send_writes_no_body_where_there_is_none() {
+        let send = async |request: &str, status: StatusCode| {
+            let (mut client, server) = tokio::io::duplex(64 * 1024);
+            tokio::io::AsyncWriteExt::write_all(
+                &mut client,
+                request.as_bytes(),
+            )
+            .await
+            .unwrap();
+            let mut session = Session::new_h1(Box::new(server));
+            session.read_request().await.unwrap();
+            let sent = HttpResponse {
+                status,
+                body: Bytes::from_static(b"Hello world!"),
+                ..Default::default()
+            }
+            .send(&mut session)
+            .await
+            .unwrap();
+            drop(session);
+            let mut buf = vec![];
+            tokio::io::AsyncReadExt::read_to_end(&mut client, &mut buf)
+                .await
+                .unwrap();
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            let (_, body) = text.split_once("\r\n\r\n").unwrap();
+            (sent, body.to_string())
+        };
+        assert_eq!(
+            (12, "Hello world!".to_string()),
+            send("GET / HTTP/1.1\r\n\r\n", StatusCode::OK).await
+        );
+        assert_eq!(
+            (0, String::new()),
+            send("HEAD / HTTP/1.1\r\n\r\n", StatusCode::OK).await
+        );
+        assert_eq!(
+            (0, String::new()),
+            send("GET / HTTP/1.1\r\n\r\n", StatusCode::NO_CONTENT).await
+        );
+        assert_eq!(
+            (0, String::new()),
+            send("GET / HTTP/1.1\r\n\r\n", StatusCode::NOT_MODIFIED).await
+        );
     }
 
     #[test]

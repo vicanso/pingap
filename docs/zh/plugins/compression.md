@@ -47,12 +47,19 @@ br_level = 6
 min_length = 1024
 ```
 
+## 不会被压缩的响应
+
+两种模式下，以下两类响应都按上游发来的样子原样转发：
+
+- `Content-Type: text/event-stream`。压缩器只在缓冲区写满或响应体结束时才输出，事件流里的事件每条只有几个字节、随产生随发送，压缩后会在流关闭时一起到达客户端。
+- 带 `Cache-Control: no-transform` 的响应，它禁止改变内容编码（RFC 9111 5.2.2.6）。在下游模式下这也包括 `decompression`：上游已压缩的响应原样转发，不解压。上游用其他格式做流式输出（按行分隔的 JSON、分块的 AI 补全）时，可以加上这个头，让分块在开启了压缩的 location 上照常流出。
+
 ## 上游模式细节
 
 仅当**全部**满足时压缩：
 
 1. 有响应体：HEAD 应答、`1xx`、`204` 与 `304` 不处理，否则即便什么都不编码也会输出格式的头尾。
-2. 尚无 `Content-Encoding`。
+2. 尚无 `Content-Encoding`，且不属于上面两类响应。
 3. `Content-Type` 可压缩：`application/json`、`application/xml`、`text/html`，或任意 `text/*`。
 4. 客户端接受已启用算法之一。
 5. `min_length` 为 `0`，或存在 `Content-Length` 且至少为 `min_length`。无 `Content-Length` 的响应总会被压缩。

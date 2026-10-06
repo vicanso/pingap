@@ -56,13 +56,27 @@ br_level = 6
 min_length = 1024
 ```
 
+## Responses that are never compressed
+
+In both modes two kinds of response are passed on as the upstream sent them:
+
+- `Content-Type: text/event-stream`. A compressor hands its output over when
+  its buffer is full or the body ends, so the events of a stream — a few bytes
+  each, sent as they happen — would all reach the client together when the
+  stream closes.
+- A response with `Cache-Control: no-transform`, which forbids changing the
+  content coding (RFC 9111 5.2.2.6). In downstream mode that includes
+  `decompression`: a response that arrives compressed is passed on compressed. An upstream that streams in another
+  format (newline-delimited JSON, a chunked AI completion) can set it to keep
+  its chunks flowing through a location that has compression on.
+
 ## Upstream mode details
 
 The response is compressed only when **all** of these hold:
 
 1. It has a body: HEAD answers, `1xx`, `204` and `304` are left alone, since
    encoding nothing would still emit the format's header and footer.
-2. It has no `Content-Encoding` yet.
+2. It has no `Content-Encoding` yet, and is not one of the responses above.
 3. It has a `Content-Type` that is compressible: `application/json`,
    `application/xml`, `text/html`, or any `text/*`.
 4. The client accepts one of the enabled algorithms.

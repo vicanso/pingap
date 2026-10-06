@@ -20,7 +20,7 @@ JWT 认证，支持三种校验模式，并可选用一个端点把上游响应�
 | `category` | string | — | 必须为 `jwt`。 |
 | `header` | string | — | 持有令牌的头；会剥离 `Bearer` scheme（不区分大小写）。 |
 | `cookie` | string | — | 持有令牌的 Cookie。 |
-| `query` | string | — | 持有令牌的查询参数。 |
+| `query` | string | — | 持有令牌的查询参数。校验前会对取到的值做百分号解码。 |
 | `secret` | string | — | HMAC 共享密钥。未设置 `public_key` 或 `jwks_url` 时必填。 |
 | `algorithm` | string | `HS256` | 签名算法；签发时也使用该算法。 |
 | `public_key` | string | — | PEM 公钥，非对称 `algorithm` 时必填。 |

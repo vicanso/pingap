@@ -22,7 +22,7 @@ use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
 use pingap_core::{
     HttpHeader, convert_headers, normalize_path, resolve_static_header_value,
-    set_path_and_query,
+    set_path_and_query, strip_root_label,
 };
 use pingap_core::{
     LocationInstance, MissingPlugin, NamedPlugin, PluginProvider,
@@ -166,9 +166,15 @@ impl HostSelector {
                     message: format!("invalid host wildcard pattern: {host}"),
                 });
             }
-            Ok(HostSelector::Suffix(domain.to_ascii_lowercase()))
+            // The request host is compared without its root label (see
+            // `strip_root_label`), so one written here must go as well.
+            Ok(HostSelector::Suffix(
+                strip_root_label(domain).to_ascii_lowercase(),
+            ))
         } else {
-            Ok(HostSelector::Equal(host.to_ascii_lowercase()))
+            Ok(HostSelector::Equal(
+                strip_root_label(host).to_ascii_lowercase(),
+            ))
         }
     }
     /// Host matching is case-insensitive (the Host header may vary in
@@ -778,6 +784,9 @@ impl LocationInstance for Location {
     fn name(&self) -> &str {
         self.name.as_ref()
     }
+    fn has_rewrite(&self) -> bool {
+        self.reg_rewrite.is_some()
+    }
     fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>> {
         self.headers.as_ref()
     }
@@ -960,6 +969,41 @@ mod tests {
         let selector = PathSelector::new("/api").unwrap();
         assert_eq!(true, matches!(selector, PathSelector::Prefix(_)));
     }
+    /// Regression: a host is the same host with its root label written
+    /// out. The request side drops it (`get_host`); one written in the
+    /// configuration is dropped as well, or it would never match.
+    #[test]
+    fn test_host_is_matched_without_its_root_label() {
+        let location = |host: &str| {
+            Location::new(
+                "lo",
+                &LocationConf {
+                    upstream: Some("charts".to_string()),
+                    host: Some(host.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        // What `get_host` gives for `Host: admin.example.com.`
+        let request_host = pingap_core::strip_root_label("admin.example.com.");
+        for host in
+            ["admin.example.com", "admin.example.com.", "*.example.com."]
+        {
+            assert_eq!(
+                true,
+                location(host).match_host_path(request_host, "/").0,
+                "{host}"
+            );
+        }
+        assert_eq!(
+            false,
+            location("other.example.com.")
+                .match_host_path(request_host, "/")
+                .0
+        );
+    }
+
     #[test]
     fn test_path_host_select_location() {
         let upstream_name = "charts";

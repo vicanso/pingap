@@ -66,7 +66,11 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 - `If-None-Match` 命中文件 ETag 的请求回 `304 Not Modified`，无正文（弱比较，`W/` 前缀不影响，`*` 总是命中）。
 - 每个响应带 `Accept-Ranges: bytes` 与由大小和 mtime 导出的弱 ETag（`W/"<size hex>-<mtime hex>"`）。
 - `text/html` 视为不可缓存，不应用 `max_age`——SPA 壳保持新鲜，而带 hash 的资源可缓存。
-- 支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffix`；多 range 只取第一个。suffix 比文件长时返回整个文件（`206`）。不可满足的 range 返回 `416`，带 `Content-Range: bytes */<size>`。
+- 只处理 `GET` 和 `HEAD`。`OPTIONS` 返回 `204`，带 `Allow: GET, HEAD, OPTIONS`（这样排在本插件之后的 [`cors`](cors.md) 插件仍能完成预检）；其他方法返回 `405 Method Not Allowed`，带同样的 `Allow`。
+- 目录不带结尾斜杠（`/docs`）时重定向到带斜杠的地址（`301`，`Location: ./docs/`，查询串保留），这样索引页或目录列表里的相对链接才会解析到目录内。重定向按客户端发来的路径和查询串计算，而不是 location 的 `rewrite` 改写之后的；目标是相对地址，前面有去掉前缀的代理时同样正确。
+- 支持 `bytes=start-end`、`bytes=start-` 与 `bytes=-suffix`；多 range 只取第一个。suffix 比文件长时返回整个文件（`206`）。格式正确但超出文件范围的 range 返回 `416`，带 `Content-Range: bytes */<size>`。不是字节范围的 `Range`（`bytes=5-2`、其他单位）按 RFC 9110 忽略，以 `200` 返回整个文件。
+- 支持 `If-Range`：只有它的值等于文件当前的 ETag 时 range 才生效，否则返回整个文件。日期形式永远不匹配，因为响应不带 `Last-Modified`。
+- `206` 响应带的缓存头（`max_age`、`private`）与完整文件相同，与范围大小无关。
 - `HEAD` 请求只读文件元数据，响应头和 `Content-Length` 与 `GET` 相同，不读取文件内容。
 - 不大于 `chunk_size` 的文件读入内存一次发送；更大的流式发送。两种情况下响应都带 `Content-Length`，状态码与请求一致：range 请求不论范围大小都是 `206` 并带 `Content-Range`。
 - `autoindex` 列表按名称排序并跳过点文件；名称经 HTML 转义、链接经百分号编码，因此名为 `<script>` 或 `a b.txt` 的文件能正确列出并链接。
@@ -79,7 +83,10 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 | 规范化后路径逃出 `path` | `403` |
 | 文件缺失 | `404 Not Found` |
 | 其他 IO 错误 | `500 File access error` |
-| 非法 range | `416 Range Not Satisfiable` |
+| range 超出文件范围 | `416 Range Not Satisfiable` |
+| `OPTIONS` | `204 No Content`，带 `Allow` |
+| `GET`/`HEAD`/`OPTIONS` 之外的方法 | `405 Method Not Allowed` |
+| 目录缺少结尾斜杠 | `301` 到带斜杠的同一路径 |
 
 ## 使用说明
 

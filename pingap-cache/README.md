@@ -22,9 +22,24 @@ let memory = new_cache_backend("memory://pingap?max_size=100mb&mode=default")?;
 let file   = new_cache_backend("/opt/pingap/cache?inactive=1h&reading_max=1000")?;
 ```
 
-Backends are process-wide singletons: file backends are memoised per directory
-string, and there is exactly **one** memory backend, created by whoever asks
-first.
+Backends are process-wide singletons: there is one file backend per directory,
+and exactly **one** memory backend, created by whoever asks first.
+
+A file backend belongs to its directory. The same directory with the same
+parameters is the same backend, however the path is spelled (`d`, `./d`) and
+in whatever order the parameters come. Asking for the directory with other
+parameters — `inactive=1h` changed to `7d` on a reload — builds a new backend
+that takes the directory over: the hourly sweep goes by the new `inactive`, and the
+replaced backend, still valid for requests that are using it, gives up its
+in-memory layer. Two `cache` plugins that name one directory should therefore
+use the same parameters; with different ones the plugin built last decides how
+the directory is swept, and the other one runs without its in-memory layer.
+
+`dry_run(|| ...)` runs a closure with the backends left as they are: inside
+it `new_cache_backend` checks the setting it is given and returns the backend
+that is there (or a stand-in) without creating a directory, replacing a
+backend or sizing the memory cache. The admin uses it to validate a `cache`
+plugin before storing it, in a process that is serving.
 
 ### Memory backend
 

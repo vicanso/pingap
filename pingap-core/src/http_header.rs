@@ -77,18 +77,68 @@ pub type HttpHeader = (HeaderName, HeaderValue);
 /// This function follows the common practice of prioritizing the host from the absolute URI
 /// (e.g., in `GET http://example.com/path HTTP/1.1`) over the `Host` header field.
 pub fn get_host(header: &RequestHeader) -> Option<&str> {
+    get_request_host(header).map(strip_root_label)
+}
+
+/// The host of the request as it was sent, less its port: what
+/// [`get_host`] gives before it drops the root label.
+///
+/// The cache key is made of this one. The request goes to the upstream
+/// with the `Host` it came with, and an upstream that answers
+/// `example.com.` differently from `example.com` - it does not know the
+/// name, or writes it into a redirect - must not have that answer stored
+/// as the answer for the other.
+pub fn get_request_host(header: &RequestHeader) -> Option<&str> {
     // First, try to get the host directly from the parsed URI.
     // http2 will always have a host in the uri
-    if let Some(host) = header.uri.host() {
-        return Some(host);
+    match header.uri.host() {
+        Some(host) => Some(host),
+        // If not in the URI, fall back to the "Host" header.
+        None => header
+            .headers
+            .get(http::header::HOST)
+            // Convert the header value to a string slice.
+            .and_then(|value| value.to_str().ok())
+            .map(strip_port),
     }
-    // If not in the URI, fall back to the "Host" header.
-    header
-        .headers
-        .get(http::header::HOST)
-        // Convert the header value to a string slice.
-        .and_then(|value| value.to_str().ok())
-        .map(strip_port)
+}
+
+/// `example.com.` is `example.com` with the root label written out, and
+/// names the same host. Matched as it came, it missed every location
+/// configured for the host and fell through to the catch-all, past the
+/// plugins that guard the host, while the upstream served it as that host.
+#[inline]
+pub fn strip_root_label(host: &str) -> &str {
+    match host.strip_suffix('.') {
+        Some(name) if !name.is_empty() => name,
+        _ => host,
+    }
+}
+
+/// Puts the cookies of a request into one `Cookie` field.
+///
+/// HTTP/2 lets a client send them as several fields (RFC 9113 8.2.3), and
+/// everything that reads a cookie reads the first field: a token in the
+/// second was not found by `jwt`, a sticky cookie not by the traffic
+/// split, a `{~name}` not by the access log. An HTTP/1.1 upstream is owed
+/// the single field anyway. A request with one field, or none, is left as
+/// it is.
+pub fn merge_cookie_headers(header: &mut RequestHeader) {
+    let mut values = header.headers.get_all(http::header::COOKIE).iter();
+    let (Some(first), Some(second)) = (values.next(), values.next()) else {
+        return;
+    };
+    let mut merged = Vec::with_capacity(
+        first.len() + second.len() + 2 + values.size_hint().0 * 16,
+    );
+    merged.extend_from_slice(first.as_bytes());
+    for value in std::iter::once(second).chain(values) {
+        merged.extend_from_slice(b"; ");
+        merged.extend_from_slice(value.as_bytes());
+    }
+    if let Ok(value) = HeaderValue::from_bytes(&merged) {
+        let _ = header.insert_header(http::header::COOKIE, value);
+    }
 }
 
 /// Drops the `:port` suffix of a `Host` value. An IPv6 literal keeps its
@@ -265,13 +315,22 @@ pub fn convert_header_value(
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
-                let existing = session.get_header(HTTP_HEADER_X_FORWARDED_FOR);
-                let capacity =
-                    existing.map(|v| v.as_bytes().len() + 2).unwrap_or(0)
-                        + remote_addr.len();
+                // Every line of the request goes in, in order: a proxy in
+                // front may add its entry as a line of its own, and with
+                // only the first line kept that entry - the client's real
+                // address - was lost, leaving what the client wrote.
+                let existing = session
+                    .req_header()
+                    .headers
+                    .get_all(HTTP_HEADER_X_FORWARDED_FOR);
+                let capacity = existing
+                    .iter()
+                    .map(|v| v.as_bytes().len() + 2)
+                    .sum::<usize>()
+                    + remote_addr.len();
                 let mut value_buf = BytesMut::with_capacity(capacity);
-                if let Some(existing) = existing {
-                    value_buf.extend_from_slice(existing.as_bytes());
+                for value in existing.iter() {
+                    value_buf.extend_from_slice(value.as_bytes());
                     value_buf.extend_from_slice(b", ");
                 }
                 value_buf.extend_from_slice(remote_addr.as_bytes());
@@ -1339,6 +1398,113 @@ mod tests {
             req.insert_header("Host", host).unwrap();
             assert_eq!(get_host(&req), Some(expected), "{host}");
         }
+    }
+
+    /// Regression: `example.com.` is `example.com` with the root label
+    /// written out. Matched as it came it missed the locations of the host
+    /// and went to the catch-all, past the plugins guarding the host.
+    #[test]
+    fn test_get_host_drops_the_root_label() {
+        for (host, expected) in [
+            ("admin.example.com.", "admin.example.com"),
+            ("admin.example.com.:8443", "admin.example.com"),
+            ("Admin.Example.com.", "Admin.Example.com"),
+            ("admin.example.com", "admin.example.com"),
+            // Only the one label: this is another, odd, name.
+            ("admin.example.com..", "admin.example.com."),
+            (".", "."),
+        ] {
+            let mut req = RequestHeader::build("GET", b"/path", None).unwrap();
+            req.insert_header("Host", host).unwrap();
+            assert_eq!(get_host(&req), Some(expected), "{host}");
+        }
+        // The `:authority` of HTTP/2 as well.
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.set_uri(http::Uri::from_static("https://admin.example.com./a"));
+        assert_eq!(get_host(&req), Some("admin.example.com"));
+        // As it was sent, which is what the cache key is made of.
+        assert_eq!(get_request_host(&req), Some("admin.example.com."));
+    }
+
+    /// The request is routed as `example.com` and goes to the upstream as
+    /// `example.com.`. What the upstream answers to that name is not
+    /// stored as the answer for the other.
+    #[test]
+    fn test_cache_key_keeps_the_host_as_sent() {
+        let key = |host: &str| {
+            let mut req = RequestHeader::build("GET", b"/a", None).unwrap();
+            req.insert_header("Host", host).unwrap();
+            let ctx = Ctx {
+                cache: Some(Default::default()),
+                ..Default::default()
+            };
+            format!("{:?}", crate::get_cache_key(&ctx, "GET", &req))
+        };
+        assert_ne!(key("example.com"), key("example.com."));
+        assert_eq!(key("example.com"), key("EXAMPLE.com:8080"));
+    }
+
+    /// Regression: HTTP/2 lets a client send its cookies as several
+    /// fields, and every reader of a cookie looked at the first.
+    #[test]
+    fn test_merge_cookie_headers() {
+        let cookies = |values: &[&str]| {
+            let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+            for value in values {
+                req.append_header("cookie", *value).unwrap();
+            }
+            merge_cookie_headers(&mut req);
+            let merged: Vec<String> = req
+                .headers
+                .get_all(http::header::COOKIE)
+                .iter()
+                .map(|value| value.to_str().unwrap().to_string())
+                .collect();
+            let c = get_cookie_value(&req, "c").map(|v| v.to_string());
+            (merged, c)
+        };
+        assert_eq!(
+            (vec!["a=1; b=2; c=3".to_string()], Some("3".to_string())),
+            cookies(&["a=1", "b=2", "c=3"])
+        );
+        assert_eq!(
+            (vec!["a=1; b=2; c=3".to_string()], Some("3".to_string())),
+            cookies(&["a=1; b=2", "c=3"])
+        );
+        // One field, or none, is left as it is.
+        assert_eq!(
+            (vec!["a=1; c=3".to_string()], Some("3".to_string())),
+            cookies(&["a=1; c=3"])
+        );
+        assert_eq!((vec![], None), cookies(&[]));
+    }
+
+    /// Regression: only the first `X-Forwarded-For` line was carried over.
+    /// A proxy in front that adds its entry as a line of its own - the
+    /// address it saw the client at - lost that entry, and what was left
+    /// was the line the client had written itself.
+    #[tokio::test]
+    async fn test_proxy_add_x_forwarded_for_keeps_every_line() {
+        let session = new_test_session(
+            &["X-Forwarded-For: 6.6.6.6", "X-Forwarded-For: 10.0.0.9"],
+            "/",
+        )
+        .await;
+        let value = convert_header_value(
+            &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
+            &session,
+            &Ctx {
+                conn: ConnectionInfo {
+                    remote_addr: Some("10.0.0.1".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            "6.6.6.6, 10.0.0.9, 10.0.0.1",
+            value.unwrap().to_str().unwrap()
+        );
     }
 
     #[test]

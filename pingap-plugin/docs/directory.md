@@ -72,10 +72,27 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
   and mtime (`W/"<size hex>-<mtime hex>"`).
 - `text/html` responses are treated as non-cacheable, so `max_age` is not applied
   to them — the SPA shell stays fresh while hashed assets are cached.
+- Only `GET` and `HEAD` are served. An `OPTIONS` is answered `204` with
+  `Allow: GET, HEAD, OPTIONS` (so a [`cors`](cors.md) plugin listed after this
+  one can still complete a preflight); any other method gets `405 Method Not
+  Allowed` with the same `Allow`.
+- A directory asked for without its closing slash (`/docs`) is redirected to
+  the address with it (`301`, `Location: ./docs/`, query kept), so the relative
+  links of its index page or listing resolve inside the directory. The redirect
+  goes by the path and query the client sent, not by what the location's
+  `rewrite` made of them, and its target is relative, so it is also right
+  behind a proxy that strips a prefix.
 - `bytes=start-end`, `bytes=start-` and `bytes=-suffix` are supported; only the
   first range of a multi-range request is honoured. A suffix longer than the
-  file is the whole file (`206`). An unsatisfiable range gets `416` with
-  `Content-Range: bytes */<size>`.
+  file is the whole file (`206`). A well formed range that lies outside the
+  file gets `416` with `Content-Range: bytes */<size>`. A `Range` that is not a
+  byte range (`bytes=5-2`, another unit) is ignored and the whole file is sent
+  with `200`, as RFC 9110 asks.
+- `If-Range` is honoured: the range applies only when its value is the ETag the
+  file currently has, otherwise the whole file is sent. A date never matches,
+  since no `Last-Modified` is sent.
+- A `206` carries the same cache headers (`max_age`, `private`) as the whole
+  file, whatever the size of the range.
 - A `HEAD` is answered from the file's metadata, with the headers and the
   `Content-Length` of the `GET`; the file is not read.
 - Files at or below `chunk_size` are read into memory and sent in one response;
@@ -94,7 +111,10 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 | Path escapes `path` after normalisation | `403` |
 | File missing | `404 Not Found` |
 | Other IO error | `500 File access error` |
-| Bad range | `416 Range Not Satisfiable` |
+| Range outside the file | `416 Range Not Satisfiable` |
+| `OPTIONS` | `204 No Content` with `Allow` |
+| Any other method than `GET`/`HEAD` | `405 Method Not Allowed` |
+| Directory without the closing slash | `301` to the same path with it |
 
 ## Usage notes
 

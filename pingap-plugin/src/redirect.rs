@@ -151,10 +151,13 @@ impl Plugin for Redirect {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        // Check current request state:
-        // - ctx.tls_version.is_some() indicates HTTPS
-        // - Compare against desired http_to_https setting
-        let schema_match = ctx.conn.tls_version.is_some() == self.http_to_https;
+        // Only `http_to_https` changes the scheme, and only one way: a
+        // request that came over TLS is where it should be. Without the
+        // option the scheme is left alone. It used to count as "plain http
+        // wanted", so a plugin set up for the prefix alone sent every
+        // https request to `http://`, the ones with the prefix included.
+        let is_tls = ctx.conn.tls_version.is_some();
+        let schema_match = is_tls || !self.http_to_https;
 
         // Skip redirect if:
         // 1. Schema already matches desired state (HTTP/HTTPS)
@@ -177,8 +180,12 @@ impl Plugin for Redirect {
             get_host(req_header).unwrap_or_default()
         };
 
-        // Determine target schema based on configuration
-        let schema = if self.http_to_https { "https" } else { "http" };
+        // The scheme of the request, or https when it is being changed.
+        let schema = if is_tls || self.http_to_https {
+            "https"
+        } else {
+            "http"
+        };
 
         // Only a url that is missing the prefix gets it prepended. Getting here
         // with the prefix already in place means the schema is what triggered
@@ -438,6 +445,50 @@ status = {status_conf}
             };
             assert_eq!(expected_status, resp.status);
         }
+    }
+
+    /// Regression: without `http_to_https` the plugin took plain http for
+    /// the scheme it was to enforce. Set up for the prefix alone on an
+    /// https server, it redirected every request to `http://`, the ones
+    /// that had the prefix already included.
+    #[tokio::test]
+    async fn test_redirect_prefix_only_keeps_https() {
+        let prefix_only = Redirect::new(
+            &toml::from_str::<PluginConf>("prefix = \"/api\"").unwrap(),
+        )
+        .unwrap();
+        let over_tls = || {
+            let mut ctx = Ctx::default();
+            ctx.conn.tls_version = Some("TLSv1.3".into());
+            ctx
+        };
+        let target = async |path: &str, ctx: &mut Ctx| {
+            let mut session = h1_session("a.test", path).await;
+            let result = prefix_only
+                .handle_request(PluginStep::Request, &mut session, ctx)
+                .await
+                .unwrap();
+            match result {
+                RequestPluginResult::Respond(resp) => Some(
+                    resp.headers.unwrap()[0].1.to_str().unwrap().to_string(),
+                ),
+                _ => None,
+            }
+        };
+
+        // Over TLS: the prefix is added, the scheme stays.
+        assert_eq!(
+            Some("https://a.test/api/users".to_string()),
+            target("/users", &mut over_tls()).await
+        );
+        // With the prefix in place there is nothing to do.
+        assert_eq!(None, target("/api/users", &mut over_tls()).await);
+        // Plain http, as before.
+        assert_eq!(
+            Some("http://a.test/api/users".to_string()),
+            target("/users", &mut Ctx::default()).await
+        );
+        assert_eq!(None, target("/api/users", &mut Ctx::default()).await);
     }
 
     /// Regression: a plain-http request whose path already carries the prefix

@@ -704,18 +704,34 @@ pub fn convert_toml_to_hcl(input: &str) -> Result<String> {
                 })
                 .unwrap_or_default();
 
+            // A location is written once, inside the first server that
+            // lists it. Every server used to get a copy of its own, and a
+            // location shared by two servers - the same routes on 80 and
+            // 443 - came out as two blocks of one name, which does not
+            // read back (`duplicate "name" in locations`).
+            let to_embed: Vec<&String> = location_names
+                .iter()
+                .filter(|name| {
+                    locations_map.get(*name).is_some_and(|v| v.is_table())
+                        && embedded_locations.insert((*name).clone())
+                })
+                .collect();
+            // The server then names the ones written elsewhere. It names
+            // all of them, in their order: read back, the list comes
+            // first and the blocks add only what it lacks.
+            let lists_locations = to_embed.len() != location_names.len();
+
             for (key, value) in server_table {
-                if key == "locations" {
+                if key == "locations" && !lists_locations {
                     continue;
                 }
                 write_hcl_attr(&mut output, key, value, 1);
             }
 
-            for loc_name in &location_names {
+            for loc_name in to_embed {
                 if let Some(loc_table) =
                     locations_map.get(loc_name).and_then(|v| v.as_table())
                 {
-                    embedded_locations.insert(loc_name.clone());
                     output.push('\n');
                     write_location_hcl(
                         &mut output,
@@ -1307,6 +1323,61 @@ value = "test_data"
 
         let storage = config.storages.get("shared").unwrap();
         assert_eq!("kv", storage.category);
+    }
+
+    /// Regression: a location listed by two servers - the same routes on
+    /// 80 and on 443 - was written inside each of them, two blocks of one
+    /// name, and the output did not read back.
+    #[test]
+    fn test_toml_to_hcl_shared_location() {
+        let toml_input = r#"
+[servers.http]
+addr = "0.0.0.0:80"
+locations = ["site", "api"]
+
+[servers.https]
+addr = "0.0.0.0:443"
+locations = ["api", "site", "secure"]
+
+[locations.api]
+path = "/api"
+upstream = "backend"
+
+[locations.site]
+upstream = "backend"
+
+[locations.secure]
+path = "/secure"
+upstream = "backend"
+
+[upstreams.backend]
+addrs = ["127.0.0.1:8080"]
+"#;
+        let hcl_output = convert_toml_to_hcl(toml_input).unwrap();
+        for name in ["api", "site", "secure"] {
+            assert_eq!(
+                1,
+                hcl_output
+                    .matches(&format!("location \"{name}\" {{"))
+                    .count(),
+                "{name}: {hcl_output}"
+            );
+        }
+        let toml_roundtrip = convert_hcl_to_toml(&hcl_output).unwrap();
+        let config =
+            convert_pingap_config(toml_roundtrip.as_bytes(), false).unwrap();
+        let original =
+            convert_pingap_config(toml_input.as_bytes(), false).unwrap();
+        assert_eq!(3, config.locations.len());
+        // Each server lists what it listed, in the order it had.
+        for name in ["http", "https"] {
+            assert_eq!(
+                original.servers[name].locations,
+                config.servers[name].locations,
+                "{name}: {hcl_output}"
+            );
+        }
+        assert_eq!(original.hash().unwrap(), config.hash().unwrap());
     }
 
     #[test]

@@ -333,6 +333,13 @@ impl Plugin for UnavailablePlugin {
 /// A misspelled name used to pass `--test` and load, and the location then
 /// served without that plugin.
 pub fn validate_plugin_references(config: &PingapConfig) -> Result<()> {
+    validate_plugin_names(config)?;
+    validate_plugin_features(config)
+}
+
+/// The part of [`validate_plugin_references`] that holds for any build:
+/// every plugin a location names is defined, or built in.
+pub fn validate_plugin_names(config: &PingapConfig) -> Result<()> {
     let builtin: Vec<String> = get_builtin_proxy_plugins()
         .into_iter()
         .map(|(name, _)| name)
@@ -355,6 +362,11 @@ pub fn validate_plugin_references(config: &PingapConfig) -> Result<()> {
             });
         }
     }
+    Ok(())
+}
+
+/// The part of [`validate_plugin_references`] that depends on this build.
+fn validate_plugin_features(config: &PingapConfig) -> Result<()> {
     // A plugin this build can not provide and a location can not go
     // without. Defining one is harmless, the config may be meant for
     // another build as well; naming it in a location is not.

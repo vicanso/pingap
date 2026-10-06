@@ -69,8 +69,53 @@ fn new_file_cache(dir: &str) -> Result<HttpCache> {
     })
 }
 
-/// File backends by directory string; each is leaked once and shared.
-static BACKENDS: LazyLock<Mutex<HashMap<String, &'static HttpCache>>> =
+thread_local! {
+    static DRY_RUN: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// What [`new_cache_backend`] gives out in a dry run when there is no
+/// backend to give: a memory cache of one page, never used.
+static DRY_RUN_BACKEND: LazyLock<HttpCache> =
+    LazyLock::new(|| new_tiny_ufo_cache(CacheMode::default(), PAGE_SIZE));
+
+/// Runs `f`, on this thread, with the cache backends left as they are:
+/// [`new_cache_backend`] checks the setting it is given and returns the
+/// backend that is there, or a stand-in, without creating, replacing or
+/// sizing anything.
+///
+/// For building a `cache` plugin only to see whether its configuration is
+/// valid, inside a process that is serving. Built for real, a setting that
+/// is then refused had already made its directory, taken the place of the
+/// backend the running plugin uses, or fixed the size of the one memory
+/// cache for the life of the process.
+pub fn dry_run<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DRY_RUN.set(self.0);
+        }
+    }
+    let _restore = Restore(DRY_RUN.replace(true));
+    f()
+}
+
+/// Whether this thread is inside [`dry_run`].
+pub fn is_dry_run() -> bool {
+    DRY_RUN.get()
+}
+
+/// File backends by the directory they store in, each with the
+/// parameters it was built from; each is leaked once and shared.
+///
+/// One per directory, not one per setting. The whole setting used to be
+/// the key, parameters included, so `inactive=1h` changed to `7d` on a
+/// reload made a second cache of the same directory and left the first
+/// in the list: its hourly sweep went on deleting what had not been read
+/// for an hour.
+type FileBackends =
+    HashMap<String, (file::FileCacheParams, &'static HttpCache)>;
+static BACKENDS: LazyLock<Mutex<FileBackends>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static MEMORY_BACKEND: OnceLock<HttpCache> = OnceLock::new();
@@ -80,7 +125,7 @@ const MAX_MEMORY_SIZE: usize = 1024 * 1024 * 1024;
 pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
     BACKENDS
         .lock()
-        .map(|backends| backends.values().copied().collect())
+        .map(|backends| backends.values().map(|(_, cache)| *cache).collect())
         .unwrap_or_default()
 }
 
@@ -202,12 +247,23 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     if directory.is_empty() || directory.starts_with("memory://") {
         let params = MemoryCacheParams::try_from(directory)?;
         let cache_mode = params.cache_mode()?;
+        if is_dry_run() {
+            return Ok(MEMORY_BACKEND.get().unwrap_or(&DRY_RUN_BACKEND));
+        }
         return Ok(try_init_memory_backend(params, cache_mode));
     }
     let mut cache_backends = BACKENDS.lock().map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
-    if let Some(backend) = cache_backends.get(directory) {
+    // What a setting says, not how it is written: the same directory with
+    // the same parameters is the same cache, whatever the spelling of the
+    // path or the order of the parameters.
+    let params = file::FileCacheParams::try_from(directory)?;
+    let existing = cache_backends.get(&params.directory);
+    if is_dry_run() {
+        return Ok(existing.map_or(&*DRY_RUN_BACKEND, |(_, backend)| *backend));
+    }
+    if let Some((_, backend)) = existing.filter(|(used, _)| *used == params) {
         return Ok(backend);
     }
 
@@ -222,7 +278,20 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     );
 
     let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
-    cache_backends.insert(directory.to_string(), cache_ref);
+    // Other parameters take the directory over. The cache they replace
+    // stays valid for the requests still using it, but is swept no more
+    // and gives up its hot layer.
+    if let Some((previous, replaced)) =
+        cache_backends.insert(params.directory.clone(), (params, cache_ref))
+    {
+        info!(
+            target: LOG_TARGET,
+            previous = ?previous,
+            current = directory,
+            "file cache backend replaced"
+        );
+        replaced.cache.retire();
+    }
 
     Ok(cache_ref)
 }
@@ -241,6 +310,7 @@ use crate::tiny::CacheMode;
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     #[test]
@@ -264,6 +334,88 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let result = new_file_cache(&dir.keep().to_string_lossy());
         assert_eq!(true, result.is_ok());
+    }
+
+    /// Regression: the backends were kept by the whole setting, so the
+    /// same directory with another `inactive` was a second cache. The
+    /// first stayed in the list, and its sweep went on deleting by the
+    /// value that had been replaced.
+    #[test]
+    fn test_file_backend_is_one_per_directory() {
+        let dir = TempDir::new().unwrap().keep();
+        let dir = dir.to_string_lossy();
+        let swept_by = || {
+            get_file_backends()
+                .into_iter()
+                .filter(|backend| backend.directory.as_deref() == Some(&*dir))
+                .map(|backend| backend.cache.inactive())
+                .collect::<Vec<_>>()
+        };
+
+        let first = new_cache_backend(&format!("{dir}?inactive=1h")).unwrap();
+        // The same setting is the same backend.
+        let again = new_cache_backend(&format!("{dir}?inactive=1h")).unwrap();
+        assert_eq!(true, std::ptr::eq(first, again));
+        assert_eq!(vec![Some(Duration::from_secs(3600))], swept_by());
+
+        // Another setting takes the directory over.
+        let second = new_cache_backend(&format!("{dir}?inactive=7d")).unwrap();
+        assert_eq!(false, std::ptr::eq(first, second));
+        assert_eq!(vec![Some(Duration::from_secs(7 * 24 * 3600))], swept_by());
+
+        // The same setting written another way - the path, the order of
+        // the parameters - is the same backend, not a third one that
+        // takes the directory from the second.
+        let other =
+            new_cache_backend(&format!("{dir}?inactive=7d&reading_max=5"))
+                .unwrap();
+        for setting in [
+            format!("{dir}/./?inactive=7d&reading_max=5"),
+            format!("{dir}?reading_max=5&inactive=7d"),
+        ] {
+            let again = new_cache_backend(&setting).unwrap();
+            assert_eq!(true, std::ptr::eq(other, again), "{setting}");
+        }
+        assert_eq!(1, swept_by().len());
+    }
+
+    /// A dry run checks the setting and leaves the backends alone: no
+    /// directory made, nothing registered, the backend of a directory not
+    /// replaced by the setting that is only being tried.
+    #[test]
+    fn test_dry_run_leaves_the_backends_alone() {
+        let root = TempDir::new().unwrap().keep();
+        let fresh = root.join("fresh");
+        let fresh = fresh.to_string_lossy();
+        let registered = |dir: &str| {
+            get_file_backends()
+                .into_iter()
+                .filter(|backend| backend.directory.as_deref() == Some(dir))
+                .map(|backend| backend.cache.inactive())
+                .collect::<Vec<_>>()
+        };
+
+        let backend = dry_run(|| {
+            assert_eq!(true, is_dry_run());
+            new_cache_backend(&format!("{fresh}?inactive=1m")).unwrap()
+        });
+        assert_eq!(false, is_dry_run());
+        assert_eq!(None, backend.directory);
+        assert_eq!(false, std::path::Path::new(&*fresh).exists());
+        assert_eq!(true, registered(&fresh).is_empty());
+        // The setting is still checked.
+        let err = dry_run(|| new_cache_backend(&format!("{fresh}?levels=9")));
+        assert_eq!(true, err.is_err());
+        let err = dry_run(|| new_cache_backend("memory://?mode=nope"));
+        assert_eq!(true, err.is_err());
+
+        // A directory in use keeps the backend it has.
+        let live = new_cache_backend(&format!("{fresh}?inactive=1h")).unwrap();
+        let tried =
+            dry_run(|| new_cache_backend(&format!("{fresh}?inactive=1m")))
+                .unwrap();
+        assert_eq!(true, std::ptr::eq(live, tried));
+        assert_eq!(vec![Some(Duration::from_secs(3600))], registered(&fresh));
     }
 
     #[test]

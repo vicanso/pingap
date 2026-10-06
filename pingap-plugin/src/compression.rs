@@ -18,8 +18,8 @@ use super::{
 };
 use async_trait::async_trait;
 use http::header::{
-    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
-    TRANSFER_ENCODING, VARY,
+    ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
+    CONTENT_TYPE, TRANSFER_ENCODING, VARY,
 };
 use http::{HeaderValue, Method, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
@@ -205,6 +205,35 @@ fn has_no_body(session: &Session, status: StatusCode) -> bool {
         || status.is_informational()
         || status == StatusCode::NO_CONTENT
         || status == StatusCode::NOT_MODIFIED
+}
+
+/// Responses that are passed on as they are: an event stream, and
+/// whatever the upstream marks `Cache-Control: no-transform`.
+///
+/// A compressor hands out its output when its buffer is full or the body
+/// ends, so the events of a `text/event-stream` - a few bytes each, sent
+/// as they happen - all reached the client together when the stream
+/// closed. `no-transform` forbids changing the content coding outright
+/// (RFC 9111 5.2.2.6).
+fn must_not_transform(headers: &http::HeaderMap) -> bool {
+    let is_event_stream = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|mime| {
+            mime.trim().eq_ignore_ascii_case("text/event-stream")
+        });
+    is_event_stream || has_no_transform(headers)
+}
+
+/// Whether the response says `Cache-Control: no-transform`.
+fn has_no_transform(headers: &http::HeaderMap) -> bool {
+    headers
+        .get_all(CACHE_CONTROL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|directive| directive.trim().eq_ignore_ascii_case("no-transform"))
 }
 
 impl Compression {
@@ -405,7 +434,9 @@ impl Plugin for Compression {
         if has_no_body(session, upstream_response.status) {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if upstream_response.headers.contains_key(CONTENT_ENCODING) {
+        if upstream_response.headers.contains_key(CONTENT_ENCODING)
+            || must_not_transform(&upstream_response.headers)
+        {
             return Ok(ResponsePluginResult::Unchanged);
         }
         let Some(content_type) = upstream_response.headers.get(CONTENT_TYPE)
@@ -470,14 +501,37 @@ impl Plugin for Compression {
     /// which already keys on the chosen encoding, is not split further by
     /// every spelling of the request header; a cached compressed entry
     /// gets it on every hit the same way.
+    ///
+    /// In the default mode the compression is pingora's, which decides by
+    /// the response header right after this hook: a response that is not
+    /// to be transformed has it switched off here.
     async fn handle_response(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if !self.upstream_mode
-            || !upstream_response.headers.contains_key(CONTENT_ENCODING)
+        if !self.upstream_mode {
+            // `adjust_level` panics once the module has gone on to the
+            // body, so it is only called while it is still at the header.
+            if self.support_compression
+                && must_not_transform(&upstream_response.headers)
+                && let Some(c) = session
+                    .downstream_modules_ctx
+                    .get_mut::<ResponseCompression>()
+                && c.is_header_phase()
+            {
+                c.adjust_level(0);
+                // `no-transform` covers the other direction as well: a
+                // response that comes compressed is passed on compressed,
+                // also with `decompression` on.
+                if has_no_transform(&upstream_response.headers) {
+                    c.adjust_decompression(false);
+                }
+            }
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        if !upstream_response.headers.contains_key(CONTENT_ENCODING)
             || varies_by_accept_encoding(&upstream_response.headers)
         {
             return Ok(ResponsePluginResult::Unchanged);
@@ -656,6 +710,95 @@ zstd_level = 6
             )
             .unwrap();
         assert_eq!(ResponsePluginResult::Unchanged, result);
+    }
+
+    /// Regression: an event stream was compressed like any other text,
+    /// and a compressor hands its output over when its buffer is full or
+    /// the body ends: the events arrived together, at the end. Neither it
+    /// nor a response marked `no-transform` is touched now, in either mode.
+    #[tokio::test]
+    async fn test_compression_leaves_streams_and_no_transform() {
+        let response = |content_type: &str, cache_control: &str| {
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            resp.append_header("Content-Type", content_type).unwrap();
+            if !cache_control.is_empty() {
+                resp.append_header("Cache-Control", cache_control).unwrap();
+            }
+            resp
+        };
+        let cases = [
+            ("text/event-stream", "", false),
+            ("Text/Event-Stream; charset=utf-8", "", false),
+            ("text/html", "public, No-Transform", false),
+            ("text/html", "no-cache", true),
+            ("text/html", "", true),
+        ];
+
+        // The upstream mode compresses by itself.
+        let upstream = Compression::new(
+            &toml::from_str::<PluginConf>(
+                "mode = \"upstream\"\ngzip_level = 6",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        for (content_type, cache_control, compressed) in cases {
+            let mut session =
+                new_session("GET / HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+                    .await;
+            let mut resp = response(content_type, cache_control);
+            upstream
+                .handle_upstream_response(
+                    &mut session,
+                    &mut Ctx::default(),
+                    &mut resp,
+                )
+                .unwrap();
+            assert_eq!(
+                compressed,
+                resp.headers.contains_key(CONTENT_ENCODING),
+                "{content_type} {cache_control}"
+            );
+        }
+
+        // The default mode leaves it to pingora, which is told not to.
+        let downstream = Compression::new(
+            &toml::from_str::<PluginConf>("gzip_level = 6").unwrap(),
+        )
+        .unwrap();
+        for (content_type, cache_control, compressed) in cases {
+            let mock_io = Builder::new()
+                .read(b"GET / HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+                .build();
+            let mut modules = HttpModules::new();
+            modules.add_module(ResponseCompressionBuilder::enable(0));
+            let mut session =
+                Session::new_h1_with_modules(Box::new(mock_io), &modules);
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            downstream
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            let mut resp = response(content_type, cache_control);
+            downstream
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap();
+            assert_eq!(
+                compressed,
+                session
+                    .downstream_modules_ctx
+                    .get::<ResponseCompression>()
+                    .unwrap()
+                    .is_enabled(),
+                "{content_type} {cache_control}"
+            );
+        }
     }
 
     #[tokio::test]

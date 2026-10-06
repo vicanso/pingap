@@ -45,7 +45,8 @@ pub static DEFAULT_SERVER_NAME: &str = "*";
 /// did not change: its PEM, key and chain are not parsed and loaded again.
 ///
 /// Returns the store, `(name, error)` for the entries that failed, and the
-/// names that were built anew.
+/// names that were built anew. An entry that failed keeps the certificate
+/// `previous` has under its name, when there is one.
 pub fn update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
     previous: &DynamicCertificates,
@@ -80,8 +81,20 @@ pub fn update_certificates(
                     updated.push(name.clone());
                     Arc::new(cert)
                 },
+                // A certificate that cannot be built is reported, and the
+                // one it was to replace goes on serving: dropping the entry
+                // took its domains off the air over a bad upload. It
+                // serves what it served, not what the entry that failed
+                // says: the new `domains` and `is_default` belong to a
+                // certificate that is not there.
                 Err(e) => {
                     errors.push((name.clone(), e.to_string()));
+                    for (domain, cert) in previous.iter() {
+                        if cert.name.as_deref() == Some(name.as_str()) {
+                            dynamic_certs
+                                .insert(domain.clone(), Arc::clone(cert));
+                        }
+                    }
                     continue;
                 },
             },
@@ -477,6 +490,62 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             Arc::ptr_eq(&again["a.example.com"], &next["a.example.com"])
         );
         assert_eq!(true, next.contains_key(DEFAULT_SERVER_NAME));
+    }
+
+    /// Regression: a certificate with the key of another one loaded and
+    /// validated under OpenSSL, which only objects when the pair is put on
+    /// a handshake - every handshake of its domains, then.
+    #[test]
+    fn test_key_has_to_be_the_one_of_the_certificate() {
+        let (tls_cert, tls_key) = get_tls_pem();
+        let other_key = rcgen::KeyPair::generate().unwrap().serialize_pem();
+        let conf = |key: &str| CertificateConf {
+            tls_cert: Some(tls_cert.clone()),
+            tls_key: Some(key.to_string()),
+            ..Default::default()
+        };
+        assert_eq!(true, TlsCertificate::try_from(&conf(&tls_key)).is_ok());
+        let err = TlsCertificate::try_from(&conf(&other_key))
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert_eq!(false, err.is_empty(), "a mismatched key was accepted");
+    }
+
+    /// Regression: an entry that failed to build was dropped from the
+    /// store, so a bad upload took the domains of a working certificate
+    /// off the air. The one that was serving stays.
+    #[test]
+    fn test_update_certificates_keeps_the_previous_one_on_failure() {
+        let (tls_cert, tls_key) = get_tls_pem();
+        let conf = CertificateConf {
+            tls_cert: Some(tls_cert.clone()),
+            tls_key: Some(tls_key),
+            domains: Some("a.example.com".to_string()),
+            ..Default::default()
+        };
+        let configs = HashMap::from([("site".to_string(), conf.clone())]);
+        let (certs, errors, _) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty());
+
+        let mut broken = conf;
+        broken.tls_key =
+            Some(rcgen::KeyPair::generate().unwrap().serialize_pem());
+        // Changed along with the key; it is the old certificate that
+        // stays, for the domains it had.
+        broken.domains = Some("b.example.com".to_string());
+        broken.is_default = Some(true);
+        let configs = HashMap::from([("site".to_string(), broken)]);
+        let (next, errors, updated) = update_certificates(&configs, &certs);
+        assert_eq!(1, errors.len());
+        assert_eq!("site", errors[0].0);
+        assert_eq!(true, updated.is_empty());
+        assert_eq!(
+            true,
+            Arc::ptr_eq(&certs["a.example.com"], &next["a.example.com"])
+        );
+        assert_eq!(1, next.len());
     }
 
     #[test]

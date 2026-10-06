@@ -58,7 +58,7 @@ where
     to_string_pretty(&BTreeMap::from([(key, value)]))
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Serialize, Clone, Default)]
 pub struct PingapTomlConfig {
     pub basic: Option<Value>,
     pub servers: Option<Map<String, Value>>,
@@ -158,6 +158,27 @@ impl PingapTomlConfig {
                 self.storages.get_or_insert_default().insert(name, value);
             },
         };
+    }
+    /// The entry that names the storage `name` in its `includes`, as its
+    /// kind and its own name.
+    fn including(&self, name: &str) -> Option<(&'static str, &str)> {
+        [
+            ("upstream", &self.upstreams),
+            ("location", &self.locations),
+            ("server", &self.servers),
+        ]
+        .into_iter()
+        .find_map(|(kind, section)| {
+            let (by, _) = section.iter().flatten().find(|(_, entry)| {
+                entry
+                    .get("includes")
+                    .and_then(|list| list.as_array())
+                    .is_some_and(|list| {
+                        list.iter().any(|item| item.as_str() == Some(name))
+                    })
+            })?;
+            Some((kind, by.as_str()))
+        })
     }
     fn get(&self, category: &Category, name: &str) -> Option<&Value> {
         let section = match category {
@@ -275,6 +296,32 @@ pub fn new_etcd_config_manager(path: &str) -> Result<ConfigManager> {
         Arc::new(storage),
         ConfigMode::MultiByItem,
     ))
+}
+
+/// A look at a change before it is stored: the configuration the storage
+/// holds, and the one it would hold with the change. An error refuses the
+/// change, and is what the caller of [`ConfigManager::update_checked`]
+/// gets.
+///
+/// A plain function, so that it can be handed to the blocking pool: a
+/// check that builds what the configuration describes resolves names and
+/// reads files, which is not work for the thread that serves requests.
+pub type ChangeCheck = fn(&PingapTomlConfig, &PingapTomlConfig) -> Result<()>;
+
+/// Runs `check` on the blocking pool and gives `candidate` back with its
+/// answer. A check that panics refuses the change.
+async fn run_check(
+    check: ChangeCheck,
+    stored: PingapTomlConfig,
+    candidate: PingapTomlConfig,
+) -> Result<PingapTomlConfig> {
+    tokio::task::spawn_blocking(move || {
+        check(&stored, &candidate).map(|_| candidate)
+    })
+    .await
+    .map_err(|e| Error::Invalid {
+        message: format!("check of the config change failed: {e}"),
+    })?
 }
 
 pub struct ConfigManager {
@@ -574,18 +621,48 @@ impl ConfigManager {
         name: &str,
         value: &T,
     ) -> Result<()> {
+        self.update_checked(category, name, value, None).await
+    }
+    /// [`ConfigManager::update`], with `check` asked about the change
+    /// first. It sees the stored configuration and the one the change
+    /// leads to, both read under the write lock, so what it approves is
+    /// what gets written.
+    pub async fn update_checked<T: Serialize + Send + Sync>(
+        &self,
+        category: Category,
+        name: &str,
+        value: &T,
+        check: Option<ChangeCheck>,
+    ) -> Result<()> {
         let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
         let value =
             Value::try_from(value).map_err(|e| Error::Ser { source: e })?;
         // update by item
         if self.mode == ConfigMode::MultiByItem {
+            // An item is a file of its own and is written without reading
+            // the others. A check needs them; when they do not load there
+            // is nothing to compare with, and the item is written as
+            // before - it may be the very one that repairs the storage.
+            if let Some(check) = check
+                && let Ok(stored) = self.load_all().await
+            {
+                let mut candidate = stored.clone();
+                candidate.update(&category, name, value.clone());
+                run_check(check, stored, candidate).await?;
+            }
             let value = format_item_toml_config(&value, &category, name)?;
             return self.storage.save(&key, &value).await;
         }
         // load all config
         let mut config = self.load_all().await?;
-        config.update(&category, name, value);
+        if let Some(check) = check {
+            let stored = config.clone();
+            config.update(&category, name, value);
+            config = run_check(check, stored, config).await?;
+        } else {
+            config.update(&category, name, value);
+        }
         // update by type
         let value = if self.mode == ConfigMode::MultiByType {
             config.get_category_toml(&category)?
@@ -618,10 +695,38 @@ impl ConfigManager {
         let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
 
-        // Refuse to remove something still referenced, without cloning the
-        // whole running config to find out.
-        self.get_current_config()
-            .check_removable(category.to_string().as_str(), name)?;
+        // Refuse to remove something still referenced - in the storage,
+        // read here under the write lock. The config this process runs
+        // is another matter: a node without auto reload still runs the one
+        // it started with, and a control panel node (`--cp`) none at all,
+        // so there an upstream could be deleted from under its location
+        // and the stored config no longer loaded anywhere.
+        //
+        // With the includes replaced, for what an entry takes from a
+        // fragment (its `upstream`, its `plugins`), and as written, for
+        // the `includes` themselves. A storage that does not load cannot
+        // be asked, and removing an entry may be what repairs it.
+        if let Ok(stored) = self.load_all().await {
+            // The includes are also looked for in the document itself: an
+            // entry that takes a required field from its fragment does not
+            // read as an entry until the fragment is put in, and then the
+            // `includes` are gone.
+            if category == Category::Storage
+                && let Some((kind, by)) = stored.including(name)
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "storage({name}) is in used by {kind}({by})"
+                    ),
+                });
+            }
+            let category = category.to_string();
+            for replace_include in [true, false] {
+                if let Ok(config) = stored.to_pingap_config(replace_include) {
+                    config.check_removable(&category, name)?;
+                }
+            }
+        }
 
         if self.mode == ConfigMode::MultiByItem {
             return self.storage.delete(&key).await;
@@ -1016,7 +1121,37 @@ value = "/storage22"
             manager.get(Category::Server, "server1").await.unwrap();
         assert_eq!(None, server_config);
 
-        // delete location config
+        // delete location config: refused while a server in the storage
+        // lists it, whatever config this process is running (none, here)
+        let err = manager
+            .delete(Category::Location, "location1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            "Invalid error location(location1) is in used by server(server2)",
+            err
+        );
+        let err = manager
+            .delete(Category::Upstream, "upstream1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            "Invalid error upstream(upstream1) is in used by location(location1)",
+            err
+        );
+        let server_config: Value = toml::from_str(
+            r#"addr = "192.186.1.1:8080"
+locations = ["location2"]
+threads = 1
+"#,
+        )
+        .unwrap();
+        manager
+            .update(Category::Server, "server2", &server_config)
+            .await
+            .unwrap();
         manager
             .delete(Category::Location, "location1")
             .await
@@ -1061,7 +1196,7 @@ value = "/storage22"
         assert_eq!(
             r#"[servers.server2]
 addr = "192.186.1.1:8080"
-locations = ["location1"]
+locations = ["location2"]
 threads = 1
 
 [upstreams.upstream2]
@@ -1086,6 +1221,204 @@ value = "/storage22"
         );
 
         // ----- delete config test end ----- //
+    }
+
+    /// Regression: whether an entry may be deleted was decided by the
+    /// config this process runs. A control panel node runs none and let a
+    /// referenced upstream go, after which the stored config loaded
+    /// nowhere; a storage named by an `includes` was not looked at at all.
+    #[tokio::test]
+    async fn test_delete_goes_by_the_stored_references() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for path in [
+            dir.path().join("pingap.toml").to_string_lossy().to_string(),
+            dir.path().to_string_lossy().to_string(),
+            format!("{}?separation=true", dir.path().join("items").display()),
+        ] {
+            if path.contains("items") {
+                std::fs::create_dir_all(dir.path().join("items")).unwrap();
+            }
+            // Never told what config is running: nothing calls
+            // `set_current_config` on a control panel node.
+            let manager = new_file_config_manager(&path).unwrap();
+            let entry = |data: &str| toml::from_str::<Value>(data).unwrap();
+            manager
+                .update(
+                    Category::Storage,
+                    "shared",
+                    &entry(
+                        "category = \"config\"\nvalue = 'upstream = \"u2\"'",
+                    ),
+                )
+                .await
+                .unwrap();
+            for name in ["u1", "u2"] {
+                manager
+                    .update(
+                        Category::Upstream,
+                        name,
+                        &entry("addrs = [\"127.0.0.1:9001\"]"),
+                    )
+                    .await
+                    .unwrap();
+            }
+            manager
+                .update(Category::Location, "l1", &entry("upstream = \"u1\""))
+                .await
+                .unwrap();
+            // Its upstream comes out of the fragment.
+            manager
+                .update(
+                    Category::Location,
+                    "l2",
+                    &entry("includes = [\"shared\"]"),
+                )
+                .await
+                .unwrap();
+            // Its addresses do too, and without them it does not read as
+            // an upstream: the fragment is still found to be in use.
+            manager
+                .update(
+                    Category::Storage,
+                    "pool",
+                    &entry("category = \"config\"\nvalue = 'addrs = [\"127.0.0.1:9003\"]'"),
+                )
+                .await
+                .unwrap();
+            manager
+                .update(
+                    Category::Upstream,
+                    "u3",
+                    &entry("includes = [\"pool\"]"),
+                )
+                .await
+                .unwrap();
+
+            let refused = async |category: Category, name: &str| {
+                manager
+                    .delete(category, name)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+            };
+            assert_eq!(
+                "Invalid error upstream(u1) is in used by location(l1)",
+                refused(Category::Upstream, "u1").await,
+                "{path}"
+            );
+            assert_eq!(
+                "Invalid error upstream(u2) is in used by location(l2)",
+                refused(Category::Upstream, "u2").await
+            );
+            assert_eq!(
+                "Invalid error storage(shared) is in used by location(l2)",
+                refused(Category::Storage, "shared").await
+            );
+
+            assert_eq!(
+                "Invalid error storage(pool) is in used by upstream(u3)",
+                refused(Category::Storage, "pool").await
+            );
+            manager.delete(Category::Upstream, "u3").await.unwrap();
+            manager.delete(Category::Storage, "pool").await.unwrap();
+
+            // Once nothing refers to them they go.
+            manager.delete(Category::Location, "l2").await.unwrap();
+            manager.delete(Category::Storage, "shared").await.unwrap();
+            manager.delete(Category::Upstream, "u2").await.unwrap();
+            manager.delete(Category::Location, "l1").await.unwrap();
+            manager.delete(Category::Upstream, "u1").await.unwrap();
+            let stored = manager.load_all().await.unwrap();
+            assert_eq!(
+                true,
+                stored.upstreams.unwrap_or_default().is_empty(),
+                "{path}"
+            );
+        }
+    }
+
+    /// `update_checked` shows its check the stored config and the one the
+    /// change leads to, and writes nothing the check refuses.
+    #[tokio::test]
+    async fn test_update_checked() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("items")).unwrap();
+        for path in [
+            dir.path().join("pingap.toml").to_string_lossy().to_string(),
+            format!("{}?separation=true", dir.path().join("items").display()),
+        ] {
+            let manager = new_file_config_manager(&path).unwrap();
+            let entry = |data: &str| toml::from_str::<Value>(data).unwrap();
+            manager
+                .update(
+                    Category::Upstream,
+                    "u1",
+                    &entry("addrs = [\"127.0.0.1:9001\"]"),
+                )
+                .await
+                .unwrap();
+
+            fn addrs(config: &PingapTomlConfig) -> Option<String> {
+                config
+                    .get(&Category::Upstream, "u1")
+                    .and_then(|value| value.get("addrs"))
+                    .map(|value| value.to_string())
+            }
+            fn refuse(
+                stored: &PingapTomlConfig,
+                candidate: &PingapTomlConfig,
+            ) -> Result<()> {
+                Err(Error::Invalid {
+                    message: format!(
+                        "{:?} -> {:?}",
+                        addrs(stored),
+                        addrs(candidate)
+                    ),
+                })
+            }
+            let changed = entry("addrs = [\"127.0.0.1:9002\"]");
+            let message = manager
+                .update_checked(
+                    Category::Upstream,
+                    "u1",
+                    &changed,
+                    Some(refuse),
+                )
+                .await
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                r#"Invalid error Some("[\"127.0.0.1:9001\"]") -> Some("[\"127.0.0.1:9002\"]")"#,
+                message,
+                "{path}"
+            );
+            let stored = manager.load_all().await.unwrap();
+            assert_eq!(
+                Some(r#"["127.0.0.1:9001"]"#.to_string()),
+                addrs(&stored)
+            );
+
+            fn accept(
+                _: &PingapTomlConfig,
+                _: &PingapTomlConfig,
+            ) -> Result<()> {
+                Ok(())
+            }
+            manager
+                .update_checked(
+                    Category::Upstream,
+                    "u1",
+                    &changed,
+                    Some(accept),
+                )
+                .await
+                .unwrap();
+            let stored = manager.load_all().await.unwrap();
+            assert_eq!(
+                Some(r#"["127.0.0.1:9002"]"#.to_string()),
+                addrs(&stored)
+            );
+        }
     }
 
     #[tokio::test]
@@ -1549,6 +1882,42 @@ addrs = ["127.0.0.1:7080"]
         assert_eq!(1, retired.len(), "{retired:?}");
         assert_eq!(false, dir.path().join("sites/demo.toml").exists());
         assert_eq!(true, dir.path().join("upstreams/demo.toml").exists());
+    }
+
+    /// The layout check reads the directory the way the loader does. Shown
+    /// the copies under `..data` of a mounted ConfigMap, it took every
+    /// start for a layout to migrate, and on a writable copy of such a
+    /// directory the migration renamed files through one of their paths
+    /// and left the others dangling.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_migrate_on_a_config_map_layout() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let version = dir.path().join("..2026_10_06_08_00_00.123456789");
+        std::fs::create_dir(&version).unwrap();
+        // The layout this manager writes itself: nothing to migrate.
+        for (name, data) in [
+            ("basic.toml", "[basic]\nname = \"pingap\"\n"),
+            (
+                "upstreams.toml",
+                "[upstreams.main]\naddrs = [\"127.0.0.1:9001\"]\n",
+            ),
+        ] {
+            std::fs::write(version.join(name), data).unwrap();
+            symlink(format!("..data/{name}"), dir.path().join(name)).unwrap();
+        }
+        symlink(&version, dir.path().join("..data")).unwrap();
+
+        let manager =
+            new_file_config_manager(&dir.path().to_string_lossy()).unwrap();
+        assert_eq!(true, manager.migrate_layout().await.unwrap().is_empty());
+        let config = manager.load_all().await.unwrap();
+        assert_eq!(1, config.upstreams.unwrap_or_default().len());
+        // Nothing renamed, nothing left dangling.
+        assert_eq!(true, version.join("upstreams.toml").exists());
+        assert_eq!(true, dir.path().join("upstreams.toml").exists());
     }
 
     #[tokio::test]

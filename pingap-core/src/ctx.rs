@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Ja4Fingerprint, Plugin, get_host, now_ms};
+use crate::{Ja4Fingerprint, Plugin, get_request_host, now_ms};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -210,6 +210,12 @@ pub trait LocationInstance: Send + Sync {
     fn name(&self) -> &str;
     /// Get the upstream of location
     fn upstream(&self) -> &str;
+    /// Whether the location has a rewrite rule at all, so that the uri of
+    /// a request is only kept (`Features::original_uri`) where it may be
+    /// replaced.
+    fn has_rewrite(&self) -> bool {
+        false
+    }
     /// Rewrites the request url. Returns whether the path changed; named
     /// captures of the rewrite pattern are added to `variables`.
     fn rewrite(
@@ -314,6 +320,11 @@ pub struct CacheInfo {
 pub struct Features {
     /// A map of custom variables for request processing.
     pub variables: Option<AHashMap<String, String>>,
+    /// The uri the client asked for, when the location has rewritten it.
+    /// A plugin that sends the client somewhere relative to where it is
+    /// (the `directory` plugin, adding the closing slash) goes by this:
+    /// the rewritten path is the upstream's, not the browser's.
+    pub original_uri: Option<http::Uri>,
     /// A list of plugin names and their processing times in milliseconds.
     pub plugin_processing_times: Option<Vec<(Arc<str>, u32)>>,
     /// Statistics about response compression.
@@ -456,6 +467,11 @@ pub struct Ctx {
     /// Plugins for the current location, shared with the location's cache
     /// of resolved plugins so a request only bumps a reference count.
     pub plugins: Option<Arc<[NamedPlugin]>>,
+    /// The same list, left here while the request plugins run when one of
+    /// them asks to see the responses of the others
+    /// (`handles_plugin_response`), for a plugin that writes its response
+    /// itself: see [`crate::decorate_plugin_response`].
+    pub response_plugins: Option<Arc<[NamedPlugin]>>,
 }
 
 /// Helper struct to store connection timing and TLS details
@@ -1128,7 +1144,8 @@ pub fn get_cache_key(
         return CacheKey::new("", "");
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
-    let host = get_host(header).unwrap_or_default();
+    // As it was sent, see `get_request_host`.
+    let host = get_request_host(header).unwrap_or_default();
     let path = header.uri.path();
     let query = header.uri.query();
     // pingora's CacheKey used to take the namespace as its own argument and

@@ -211,25 +211,121 @@ fn permission_error_message(
     }
 }
 
-/// Every `*.<ext>` file under `dir`, recursively, in glob order.
+/// Whether `file` lies in a directory, below `root`, whose name starts
+/// with `..`: the `..data` and `..<timestamp>` of a mounted ConfigMap.
+/// Only directories count - a file may be called `..x.toml` - and only
+/// those below `root`, however `root` itself is reached.
+pub(crate) fn is_under_hidden_dir(
+    root: &std::path::Path,
+    file: &std::path::Path,
+) -> bool {
+    file.strip_prefix(root)
+        .ok()
+        .and_then(|below| below.parent())
+        .is_some_and(|dirs| {
+            dirs.components().any(|part| {
+                part.as_os_str().to_string_lossy().starts_with("..")
+            })
+        })
+}
+
+/// Every `*.<ext>` file under `dir`, recursively, in glob order, each
+/// file once.
+///
+/// A directory that Kubernetes mounts from a ConfigMap or a Secret holds
+/// every file three times over: `a.toml` is a link to `..data/a.toml`,
+/// and `..data` a link to a `..<timestamp>` directory with the file in
+/// it. Read as three files, the config was three copies of itself and
+/// did not load (`duplicate key`). Whatever lies under a name starting
+/// with `..` is left out, and two paths to one file count once.
 pub(crate) fn list_config_files(
     dir: &str,
     ext: &str,
 ) -> Result<Vec<std::path::PathBuf>> {
     let pattern = format!("{dir}/**/*.{ext}");
-    glob(&pattern)
+    let files = glob(&pattern)
         .map_err(|e| Error::Pattern {
             source: e,
             path: dir.to_string(),
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| Error::Glob { source: e })
+        .map_err(|e| Error::Glob { source: e })?;
+    let root = std::path::Path::new(dir);
+    let mut seen = std::collections::HashSet::new();
+    Ok(files
+        .into_iter()
+        .filter(|file| {
+            // A file that does not resolve is kept, for the read to report.
+            !is_under_hidden_dir(root, file)
+                && seen.insert(
+                    std::fs::canonicalize(file)
+                        .unwrap_or_else(|_| file.clone()),
+                )
+        })
+        .collect())
+}
+
+/// Adds the tables of one file to the document the directory makes up.
+///
+/// A category may be spread over files - `[upstreams.a]` here,
+/// `[upstreams.b]` there - but an entry is defined in one place: the same
+/// name in two files is an error that names both. `sources` remembers
+/// which file each entry came from.
+fn merge_config_file(
+    merged: &mut toml::Table,
+    sources: &mut std::collections::HashMap<String, std::path::PathBuf>,
+    table: toml::Table,
+    file: &std::path::Path,
+) -> Result<()> {
+    let duplicate =
+        |key: &str, first: Option<&std::path::PathBuf>| Error::Invalid {
+            message: format!(
+                "duplicate {key}: defined in {} and in {}",
+                first.map_or_else(String::new, |f| f.display().to_string()),
+                file.display()
+            ),
+        };
+    for (category, value) in table {
+        let Some(existing) = merged.get_mut(&category) else {
+            for name in value.as_table().iter().flat_map(|t| t.keys()) {
+                sources
+                    .insert(format!("{category}.{name}"), file.to_path_buf());
+            }
+            sources.insert(category.clone(), file.to_path_buf());
+            merged.insert(category, value);
+            continue;
+        };
+        // `basic` is one entry, not a table of them, and like any entry
+        // it is defined in one file.
+        if category == CATEGORY_BASIC {
+            return Err(duplicate(&category, sources.get(&category)));
+        }
+        let (Some(existing), toml::Value::Table(entries)) =
+            (existing.as_table_mut(), value)
+        else {
+            return Err(duplicate(&category, sources.get(&category)));
+        };
+        for (name, entry) in entries {
+            let key = format!("{category}.{name}");
+            if existing.contains_key(&name) {
+                return Err(duplicate(&key, sources.get(&key)));
+            }
+            sources.insert(key, file.to_path_buf());
+            existing.insert(name, entry);
+        }
+    }
+    Ok(())
 }
 
 /// Reads a config directory into one TOML document. The first format that
 /// has any file wins - `toml`, then `hcl`, then `kdl` - and every file is
-/// checked (or converted) on its own, so a syntax error names the file it
-/// is in rather than a line in the concatenation.
+/// parsed (or converted) on its own and its tables merged into the
+/// document, so a syntax error names the file it is in.
+///
+/// The files used to be joined as text and parsed as one. A file then
+/// continued the last table of the one before it: top level keys written
+/// with dots (`upstreams.extra.addrs = [..]`) ended up as unknown keys of
+/// that table and were dropped without a word.
 pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     type Convert = fn(&str) -> Result<String>;
     let formats: [(&str, Option<Convert>); 3] = [
@@ -242,7 +338,8 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
         if files.is_empty() {
             continue;
         }
-        let mut data = vec![];
+        let mut merged = toml::Table::new();
+        let mut sources = std::collections::HashMap::new();
         for f in files {
             let buf = fs::read(&f)
                 .await
@@ -252,31 +349,33 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
             let in_file = |e: String| Error::Invalid {
                 message: format!("{}: {e}", f.display()),
             };
-            match convert {
-                None => {
-                    toml::from_str::<toml::Value>(&text)
-                        .map_err(|e| in_file(e.to_string()))?;
-                    data.extend_from_slice(&buf);
-                },
-                Some(convert) => {
-                    let toml_str =
-                        convert(&text).map_err(|e| in_file(e.to_string()))?;
-                    data.extend_from_slice(toml_str.as_bytes());
-                },
-            }
-            data.push(b'\n');
+            let toml_str = match convert {
+                None => text,
+                Some(convert) => std::borrow::Cow::Owned(
+                    convert(&text).map_err(|e| in_file(e.to_string()))?,
+                ),
+            };
+            let table = toml::from_str::<toml::Table>(&toml_str)
+                .map_err(|e| in_file(e.to_string()))?;
+            merge_config_file(&mut merged, &mut sources, table, &f)?;
         }
-        return Ok(data);
+        return toml::to_string(&merged)
+            .map(String::into_bytes)
+            .map_err(|e| Error::Ser { source: e });
     }
     Ok(vec![])
 }
 
+/// Copies the configuration to another storage as it is stored, with the
+/// `includes` of its entries left as they are. It used to copy the config
+/// this process had loaded, in which every include is already replaced by
+/// what it names: the copy kept the shared fragments but no entry referred
+/// to them any more, so changing one changed nothing.
 pub async fn sync_to_path(
     config_manager: Arc<ConfigManager>,
     path: &str,
 ) -> Result<()> {
-    let config = config_manager.get_current_config();
-    let config = PingapTomlConfig::from_pingap_config(&config)?;
+    let config = config_manager.load_all().await?;
     let new_config_manager = new_config_manager(path)?;
     new_config_manager.save_all(&config).await?;
     Ok(())
@@ -287,3 +386,177 @@ pub use etcd_storage::ETCD_PROTOCOL;
 pub use manager::*;
 pub use memory_storage::MemoryStorage;
 pub use storage::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    async fn load(dir: &std::path::Path) -> Result<PingapConfig> {
+        let data = read_all_config_files(&dir.to_string_lossy()).await?;
+        PingapConfig::new(&data, false)
+    }
+
+    /// Regression: the files of a directory were joined as text. Top level
+    /// keys written with dots in the second file continued the last table
+    /// of the first, where they were unknown keys and dropped: the
+    /// upstream they defined was not there, and nothing said so.
+    #[tokio::test]
+    async fn test_config_files_are_merged_not_joined() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.toml"),
+            "[basic]\nname = \"pingap\"\n\n[upstreams.main]\naddrs = [\"127.0.0.1:9001\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.toml"),
+            "upstreams.extra.addrs = [\"127.0.0.1:9002\"]\n",
+        )
+        .unwrap();
+        let config = load(dir.path()).await.unwrap();
+        assert_eq!(Some("pingap".to_string()), config.basic.name);
+        assert_eq!(
+            vec!["127.0.0.1:9001".to_string()],
+            config.upstreams["main"].addrs
+        );
+        assert_eq!(
+            vec!["127.0.0.1:9002".to_string()],
+            config.upstreams["extra"].addrs
+        );
+
+        // An entry is defined in one file; the error names both.
+        std::fs::write(
+            dir.path().join("c.toml"),
+            "[upstreams.main]\naddrs = [\"127.0.0.1:9003\"]\n",
+        )
+        .unwrap();
+        let message = load(dir.path()).await.unwrap_err().to_string();
+        assert_eq!(
+            true,
+            message.contains("duplicate upstreams.main"),
+            "{message}"
+        );
+        assert_eq!(true, message.contains("a.toml"), "{message}");
+        assert_eq!(true, message.contains("c.toml"), "{message}");
+
+        // So is `basic`.
+        std::fs::write(dir.path().join("c.toml"), "[basic]\nthreads = 2\n")
+            .unwrap();
+        let message = load(dir.path()).await.unwrap_err().to_string();
+        assert_eq!(true, message.contains("duplicate basic"), "{message}");
+
+        // A file that does not parse is named.
+        std::fs::write(dir.path().join("c.toml"), "[basic\n").unwrap();
+        let message = load(dir.path()).await.unwrap_err().to_string();
+        assert_eq!(true, message.contains("c.toml"), "{message}");
+    }
+
+    /// Regression: the layout Kubernetes mounts a ConfigMap in. Each file
+    /// is reachable three ways - the link at the top, `..data`, and the
+    /// timestamped directory behind that - and was read three times.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_config_files_of_a_mounted_config_map() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let version = dir.path().join("..2026_10_06_08_00_00.123456789");
+        std::fs::create_dir(&version).unwrap();
+        std::fs::write(
+            version.join("pingap.toml"),
+            "[upstreams.main]\naddrs = [\"127.0.0.1:9001\"]\n",
+        )
+        .unwrap();
+        symlink(&version, dir.path().join("..data")).unwrap();
+        symlink("..data/pingap.toml", dir.path().join("pingap.toml")).unwrap();
+
+        let files =
+            list_config_files(&dir.path().to_string_lossy(), "toml").unwrap();
+        assert_eq!(vec![dir.path().join("pingap.toml")], files);
+        let config = load(dir.path()).await.unwrap();
+        assert_eq!(1, config.upstreams.len());
+
+        // Two names for one file count once as well.
+        symlink("pingap.toml", dir.path().join("again.toml")).unwrap();
+        let config = load(dir.path()).await.unwrap();
+        assert_eq!(1, config.upstreams.len());
+    }
+
+    /// What is left out is what lies in a directory named `..something`
+    /// below the config directory. A file of such a name is read, and so
+    /// is everything when the config directory is itself reached through
+    /// `..`.
+    #[test]
+    fn test_only_hidden_directories_are_left_out() {
+        let root = std::path::Path::new("/etc/pingap");
+        let hidden =
+            |file: &str| is_under_hidden_dir(root, std::path::Path::new(file));
+        assert_eq!(true, hidden("/etc/pingap/..data/pingap.toml"));
+        assert_eq!(true, hidden("/etc/pingap/a/..2026_10_06/pingap.toml"));
+        assert_eq!(false, hidden("/etc/pingap/pingap.toml"));
+        assert_eq!(false, hidden("/etc/pingap/upstreams/..x.toml"));
+        assert_eq!(false, hidden("/etc/pingap/.git/x.toml"));
+        // Not below the root at all: nothing to say about it.
+        assert_eq!(false, hidden("/srv/..data/pingap.toml"));
+        let odd_root = std::path::Path::new("../conf");
+        assert_eq!(
+            false,
+            is_under_hidden_dir(
+                odd_root,
+                std::path::Path::new("../conf/pingap.toml")
+            )
+        );
+    }
+
+    /// Regression: `--sync` wrote the config this process had loaded, in
+    /// which every include is already replaced by what it names. The copy
+    /// had the shared fragment and no entry that still referred to it.
+    #[tokio::test]
+    async fn test_sync_keeps_the_includes() {
+        let source = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(
+            source.path(),
+            r#"
+[upstreams.main]
+addrs = ["127.0.0.1:9001"]
+includes = ["common"]
+
+[storages.common]
+category = "config"
+value = 'read_timeout = "7s"'
+"#,
+        )
+        .unwrap();
+        let manager = Arc::new(
+            new_config_manager(&source.path().to_string_lossy()).unwrap(),
+        );
+        // What a running process holds.
+        manager.set_current_config(
+            manager
+                .load_all()
+                .await
+                .unwrap()
+                .to_pingap_config(true)
+                .unwrap(),
+        );
+
+        let target = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        sync_to_path(manager, &target.path().to_string_lossy())
+            .await
+            .unwrap();
+        let data = std::fs::read(target.path()).unwrap();
+        let synced = PingapConfig::new(&data, false).unwrap();
+        assert_eq!(
+            Some(vec!["common".to_string()]),
+            synced.upstreams["main"].includes
+        );
+        assert_eq!(None, synced.upstreams["main"].read_timeout);
+        // And it still resolves to the same thing.
+        let resolved = PingapConfig::new(&data, true).unwrap();
+        assert_eq!(
+            Some(std::time::Duration::from_secs(7)),
+            resolved.upstreams["main"].read_timeout
+        );
+    }
+}

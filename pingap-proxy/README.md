@@ -47,7 +47,7 @@ Additional hooks that are not plugin steps but matter operationally:
 | --- | --- |
 | `upstream_peer` | Chooses the backend and applies the location's retry budget (`max_retries`, `max_retry_window`) |
 | `connected_to_upstream` | Records reuse, TCP connect and TLS handshake timings |
-| `request_body_filter` | Enforces the location's `client_max_body_size` |
+| `request_body_filter` | Enforces the location's `client_max_body_size`. After a `101` the client's half of the tunnel is not a request body and is not held to the limit: a websocket can send any amount |
 | `fail_to_proxy` | Classifies the failure and renders the error page from the configured template (see [Error responses](#error-responses)) |
 
 A plugin runs at **exactly one** request step. Configuring a step a plugin does
@@ -57,6 +57,25 @@ not implement is a silent no-op — see
 A plugin that answers at `EarlyRequest` ends the request there. pingora only
 lets a request stop at `request_filter`, so that step recognises the response
 already sent and nothing later runs on top of it.
+
+Before anything reads the request, `early_request_filter` joins the cookies of
+a request into one `Cookie` field. HTTP/2 lets a client send them as several
+fields (RFC 9113 8.2.3), and a reader that looks at the first field alone —
+`jwt` with `cookie`, `csrf`, a sticky cookie, `match_cookies`, the `{~name}` of
+the access log — would miss the rest. The upstream gets the single field too.
+
+`X-Request-Id` (and the `X-Trace-Id` / `X-Span-Id` of the tracing feature) is
+set in `response_filter`, on what goes to the client. It is not part of what
+the cache stores, so a cache hit carries the ids of the request it answers.
+
+A response a plugin answers with ends with its header when it has no body by
+definition: a `HEAD`, a `204`, a `304`. Those two statuses carry no generated
+`Content-Length` either.
+
+`$proxy_add_x_forwarded_for` (also what `enable_reverse_proxy_headers` sets)
+is every `X-Forwarded-For` line of the request, in order, followed by the
+address of the peer. A proxy in front that adds its entry as a line of its own
+is carried over like one that appends to the existing line.
 
 An interim response from the upstream, such as `103 Early Hints`, is passed on
 to the client as it is. The response plugins, the status in the access log and
@@ -109,6 +128,9 @@ is nothing to fix on this side. Once a final response header has gone out, a
 later failure (an upstream dropping mid-body, say) keeps the status the client
 saw and appends nothing to the body, the same rule pingora's own error response
 follows.
+
+A `HEAD` gets the header of the page, its `Content-Length` included, and no
+body.
 
 Each failure is logged once, by pingap, with the client address, method, host
 and path, the pingora error type and the status; pingora's own line for the

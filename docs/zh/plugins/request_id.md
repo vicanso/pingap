@@ -55,6 +55,8 @@ set_headers = ["X-Request-Id: $http_x_request_id"]
 
 ID 在访问日志中为 `{request_id}`，对其他插件为 `ctx.state.request_id`。
 
+响应通过 `X-Request-Id` 带回这个 ID。它在发给客户端之前、缓存之后才写入：命中缓存的响应带的是当前请求的 ID，也就是该请求访问日志里的那个，而不是写入缓存的那次请求的 ID。OpenTelemetry 集成的 `X-Trace-Id`、`X-Span-Id` 同理。
+
 ## 使用说明
 
 - 已有头会原样信任，客户端可自选请求 ID——包括与他人冲突的值。若 ID 必须可信，请在边缘剥离该头（`response_headers` 的 `mode = "upstream"` 帮不上忙；在入站侧删除或先在受信任代理终止）。

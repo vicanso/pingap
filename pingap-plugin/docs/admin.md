@@ -77,8 +77,13 @@ of the embedded UI, served without authentication so the login screen can
 load, and answered `404` when there is no such file. An API route is only
 reachable under `/api`: `/configs/...` without the prefix is not routed to it.
 
-After `ip_fail_limit` failures an IP is refused with `403 Forbidden, too many
-failures` for 5 minutes.
+After `ip_fail_limit` failed logins an IP is refused with `403 Forbidden, too
+many failures` for 5 minutes. A failed login is a request to the API whose
+`Authorization` does not check out; a request without one is answered `401`
+and not counted, so a page that keeps polling after its token ran out does not
+lock its user out. The lock stands in front of the API only: the files of the
+UI still load, and on a server shared with an application the paths outside
+the admin prefix are not affected.
 
 ## API
 
@@ -97,7 +102,44 @@ All routes are relative to `<path>/api`.
 | `POST` | `/restart` | Trigger a graceful restart |
 
 `{category}` is one of `basic`, `server`, `location`, `upstream`, `plugin`,
-`certificate`, `storage`.
+`certificate`, `storage`. A `POST` to any other category is answered `400`
+(`pingap`, the name the UI posts the basic config under, is accepted as
+`basic`).
+
+### What a write is checked against
+
+A `POST` is refused with `400` when the configuration it would leave in the
+storage is one that `pingap -t` rejects. That is more than the entry on its
+own: the references between entries (a location's upstream and plugins, a
+server's locations), and whatever only building an entry finds — a path or
+host regex that does not compile, a plugin option of the wrong type, a private
+key that is not the certificate's. `POST /configs/import` is checked the same
+way and has to be a valid configuration as a whole; an import that is empty, or
+has a top level section pingap does not know (`[upstream.x]` for
+`[upstreams.x]`), is refused, since it would replace what is stored with
+nothing.
+
+The check builds upstreams, locations, plugins and certificates the way a
+start does, but nothing of it reaches the running proxy: in particular a
+`cache` plugin is checked without creating its directory or touching the cache
+backends in use. It runs off the worker threads, since it may resolve host
+names and read files.
+
+Two things follow from "the configuration it would leave":
+
+- An entry has to exist before another one refers to it: create the upstream,
+  then the location that names it.
+- When the stored configuration is already invalid (edited by hand, or written
+  by an older version), changes are accepted as long as the entry itself
+  parses, so it can be repaired through the admin one entry at a time. The
+  full check applies again from the moment the configuration is valid.
+
+A `DELETE` is refused while another stored entry refers to the one being
+removed: an upstream named by a location or a `traffic_splitting` plugin, a
+location listed by a server, a plugin listed by a location, a storage named in
+an `includes`. The check reads the storage, not the configuration the process
+is running, so it holds on a control-panel node and on a node started without
+`--autoreload` as well.
 
 ```bash
 TS=$(date +%s)
@@ -110,6 +152,14 @@ curl -H "Authorization: $TOKEN:$TS" http://127.0.0.1:3018/api/basic
 `pingap --cp --admin=user:pass@127.0.0.1:3018` runs only the admin node: it
 manages configuration in the shared backend (typically etcd) without proxying
 traffic itself. Data-plane instances watch the same backend and hot reload.
+
+A control-panel node checks a write against the references between entries and
+the location patterns only. Upstreams, plugins and certificates are not built
+there, and which plugin categories its own build has is not held against the
+configuration: building reads files (`ca`, a certificate given as a path) that
+belong to the machines the configuration is for. When the stored configuration
+names files that are not on the control-panel node at all, it does not pass
+there as a whole, and writes are then only checked entry by entry.
 
 ## Usage notes
 

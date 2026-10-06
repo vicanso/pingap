@@ -76,7 +76,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::System;
 
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 mod certificates;
 mod config_manager;
@@ -86,6 +86,7 @@ mod process;
 mod quick_start;
 mod server_locations;
 mod upstreams;
+mod validate;
 mod webhook;
 
 // Avoid musl's default allocator due to lackluster performance
@@ -243,11 +244,17 @@ fn new_server_config(
     {
         server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
     }
+    // `0` is one thread per core, as the sample config says and as it is
+    // for a server's own `threads`. Here it used to become 1.
+    let resolve_threads = |threads: usize| match threads {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
+        _ => threads,
+    };
     if let Some(threads) = basic_conf.threads {
-        server_conf.threads = threads.max(1);
+        server_conf.threads = resolve_threads(threads);
     }
     if let Some(threads) = args.threads {
-        server_conf.threads = threads.max(1);
+        server_conf.threads = resolve_threads(threads);
     }
     if let Some(max_blocking_threads) = basic_conf.max_blocking_threads {
         server_conf.max_blocking_threads = Some(max_blocking_threads);
@@ -306,10 +313,21 @@ async fn migrate_config_layout(config_manager: &ConfigManager) {
 /// process that is going to run with it; a command that only reads the
 /// config (`--test`, `--to-hcl`, `--to-kdl`, `--sync`) must leave the
 /// storage as it found it.
+///
+/// Gives the config with every `includes` replaced by what it names, which
+/// is the one to run with, and the document it was read from, which is
+/// the one to print (`--to-hcl`, `--to-kdl`). Only the first has to read
+/// as a config: an entry may take a required field, the `addrs` of an
+/// upstream, from its include.
 fn get_config(
     config_manager: Arc<ConfigManager>,
     migrate_layout: bool,
-) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
+) -> Receiver<
+    Result<
+        (PingapConfig, pingap_config::PingapTomlConfig),
+        pingap_config::Error,
+    >,
+> {
     let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
@@ -325,8 +343,9 @@ fn get_config(
                     }
                     match config_manager.load_all().await {
                         Ok(config) => {
-                            // TODO 原有的load config有admin模式
-                            let result = config.to_pingap_config(true);
+                            let result = config
+                                .to_pingap_config(true)
+                                .map(|resolved| (resolved, config));
                             if let Err(e) = s.send(result) {
                                 println!("sender fail, {e}");
                             }
@@ -351,6 +370,20 @@ fn get_config(
         };
     });
     r
+}
+
+/// The config as it is written, includes left in place, for `--to-hcl`
+/// and `--to-kdl`. Through the typed config where the document reads as
+/// one, which is the form these commands have always printed; an entry
+/// that is only complete with its include does not, and then the document
+/// is printed as it is stored.
+fn as_written_toml(
+    stored: &pingap_config::PingapTomlConfig,
+) -> Result<String, Box<dyn Error>> {
+    match stored.to_pingap_config(false) {
+        Ok(config) => Ok(toml::to_string_pretty(&config)?),
+        Err(_) => Ok(stored.to_toml()?),
+    }
 }
 
 fn sync_config(
@@ -426,6 +459,8 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     })?;
     let (server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
+    // What this node stores is run elsewhere.
+    validate::set_control_panel();
 
     // The admin plugin takes the config manager when it is built, so the
     // manager comes first. The other way round the plugin was never created
@@ -550,56 +585,6 @@ fn parse_arguments() -> Args {
     args
 }
 
-/// Builds each location the way startup does, so `--test` reports what only
-/// building one finds: a path or host regex that does not compile, a
-/// rewrite rule with too many parts. `PingapConfig::validate` cannot do it,
-/// the location type lives in a higher layer.
-fn validate_locations(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
-    for (name, conf) in config.locations.iter() {
-        pingap_location::Location::new(name, conf)
-            .map_err(|e| format!("location \"{name}\" is invalid: {e}"))?;
-    }
-    Ok(())
-}
-
-/// Builds each upstream the way startup does. That is where an `alpn` that
-/// is none of the known ones, a `ca` that does not load or a health check
-/// with a bad parameter is found, and nothing is connected to or started
-/// by it: checks and discovery only run from the background services.
-fn validate_upstreams(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
-    for (name, conf) in config.upstreams.iter() {
-        pingap_upstream::Upstream::new(name, conf, None)
-            .map_err(|e| format!("upstream \"{name}\" is invalid: {e}"))?;
-    }
-    Ok(())
-}
-
-/// Dry-runs each configured plugin through the factory so `--test` reports bad
-/// plugin configs, which `PingapConfig::validate` cannot check (the factory
-/// lives in a higher layer). A feature-gated category that was compiled out
-/// of this build is only warned about, matching runtime behaviour; any other
-/// construction error, an unknown category included, is treated as fatal.
-fn validate_plugins(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
-    let factory = pingap_plugin::get_plugin_factory();
-    for (name, conf) in config.plugins.iter() {
-        match factory.create(conf) {
-            Ok(_) => {},
-            Err(e) if plugin::is_unavailable_in_build(&e) => {
-                warn!(
-                    target: LOG_TARGET,
-                    name = %name,
-                    error = %e,
-                    "plugin category is unavailable in this build, skipping validation"
-                );
-            },
-            Err(e) => {
-                return Err(format!("plugin \"{name}\" is invalid: {e}").into());
-            },
-        }
-    }
-    Ok(())
-}
-
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -674,17 +659,25 @@ fn run() -> Result<(), Box<dyn Error>> {
     // serving the config it loaded, and handing its listeners to a process
     // with nothing configured - because the storage could not be read just
     // now - would answer every request with a 404.
-    let empty_config =
-        |e: Box<dyn Error>| -> Result<PingapConfig, Box<dyn Error>> {
-            if args.admin.is_none() || args.upgrade {
-                return Err(e);
-            }
-            eprintln!(
-                "load config fail, starting with an empty config so it can be fixed through the admin server: {e}"
-            );
-            Ok(PingapConfig::default())
-        };
-    let config = match r.recv() {
+    //
+    // Nor for a command that only reads the config. It starts no admin
+    // server to repair anything with, and the admin address is often there
+    // all the same, from the environment of a container: `--test` then
+    // called a config that does not parse valid, and `--sync` wrote the
+    // empty one over its target.
+    let empty_config = |e: Box<dyn Error>| -> Result<
+        (PingapConfig, pingap_config::PingapTomlConfig),
+        Box<dyn Error>,
+    > {
+        if args.admin.is_none() || args.upgrade || read_only {
+            return Err(e);
+        }
+        eprintln!(
+            "load config fail, starting with an empty config so it can be fixed through the admin server: {e}"
+        );
+        Ok((PingapConfig::default(), Default::default()))
+    };
+    let (config, config_as_stored) = match r.recv() {
         Ok(Ok(conf)) => conf,
         Ok(Err(e)) => empty_config(e.into())?,
         Err(e) => empty_config(e.into())?,
@@ -692,9 +685,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     config_manager.set_current_config(config.clone());
 
-    // Convert config to HCL and output
+    // Convert config to HCL and output. As it is written: with the
+    // includes replaced, the output kept the shared fragments and no entry
+    // that referred to them.
     if args.to_hcl {
-        let toml_str = toml::to_string_pretty(&config)?;
+        let toml_str = as_written_toml(&config_as_stored)?;
         let hcl_str = pingap_config::hcl::convert_toml_to_hcl(&toml_str)?;
         println!("{hcl_str}");
         return Ok(());
@@ -702,7 +697,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Convert config to KDL and output
     if args.to_kdl {
-        let toml_str = toml::to_string_pretty(&config)?;
+        let toml_str = as_written_toml(&config_as_stored)?;
         let kdl_str = pingap_config::kdl::convert_toml_to_kdl(&toml_str)?;
         println!("{kdl_str}");
         return Ok(());
@@ -753,9 +748,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
-        validate_upstreams(&config)?;
-        validate_locations(&config)?;
-        validate_plugins(&config)?;
+        validate::validate_built(&config)?;
         info!(target: LOG_TARGET, "Validate config success");
         return Ok(());
     }
@@ -1202,5 +1195,51 @@ fn main() {
         // reloaded anyway, and a supervisor could not tell a failed start from
         // a clean shutdown.
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// An entry may take a required field from its include, the `addrs`
+    /// of an upstream for one. Such a config only reads as a whole with
+    /// the includes put in, which is all a start may ask of it; printed,
+    /// it keeps them.
+    #[test]
+    fn test_config_that_is_complete_only_with_its_include() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(
+            file.path(),
+            r#"
+[upstreams.api]
+includes = ["pool"]
+
+[storages.pool]
+category = "config"
+value = 'addrs = ["127.0.0.1:9001"]'
+"#,
+        )
+        .unwrap();
+        let manager = Arc::new(
+            pingap_config::new_config_manager(&file.path().to_string_lossy())
+                .unwrap(),
+        );
+        let (config, stored) =
+            get_config(manager, false).recv().unwrap().unwrap();
+        assert_eq!(
+            vec!["127.0.0.1:9001".to_string()],
+            config.upstreams["api"].addrs
+        );
+        assert_eq!(true, stored.to_pingap_config(false).is_err());
+
+        let text = as_written_toml(&stored).unwrap();
+        assert_eq!(true, text.contains(r#"includes = ["pool"]"#), "{text}");
+        let kdl = pingap_config::kdl::convert_toml_to_kdl(&text).unwrap();
+        assert_eq!(true, kdl.contains(r#"includes "pool""#), "{kdl}");
+        assert_eq!(false, kdl.contains("addrs \"127"), "{kdl}");
+        let hcl = pingap_config::hcl::convert_toml_to_hcl(&text).unwrap();
+        assert_eq!(true, hcl.contains("includes"), "{hcl}");
     }
 }

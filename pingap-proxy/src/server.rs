@@ -984,9 +984,16 @@ impl Server {
             .features
             .as_mut()
             .and_then(|features| features.variables.take());
-        location.rewrite(session.req_header_mut(), &mut variables);
+        let original_uri = location
+            .has_rewrite()
+            .then(|| session.req_header().uri.clone());
+        let rewritten =
+            location.rewrite(session.req_header_mut(), &mut variables);
         if let Some(variables) = variables {
             ctx.extend_variables(variables);
+        }
+        if rewritten {
+            ctx.features.get_or_insert_default().original_uri = original_uri;
         }
 
         if self
@@ -1053,6 +1060,15 @@ impl Server {
         };
         if plugins.is_empty() {
             return Ok(false);
+        }
+        // For a plugin that writes its response itself, see
+        // `decorate_plugin_response`.
+        if ctx.response_plugins.is_none()
+            && plugins
+                .iter()
+                .any(|(_, plugin)| plugin.handles_plugin_response())
+        {
+            ctx.response_plugins = Some(plugins.clone());
         }
 
         let result = async {
@@ -1333,6 +1349,7 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
+        pingap_core::merge_cookie_headers(session.req_header_mut());
         // Counted before any routing, so the totals cover requests that
         // match no location, the admin endpoints, ACME challenges and the
         // metrics endpoint itself.
@@ -1469,8 +1486,17 @@ impl ProxyHttp for Server {
             features.upstream_span = Some(span);
         }
         // Count processing only on the first attempt: pingora re-calls
-        // upstream_peer on every retry, and completed() runs once.
-        let first_attempt = ctx.upstream.retries == 0;
+        // upstream_peer on every retry, and completed() runs once. Told by
+        // the upstream being recorded already, not by `retries`: that only
+        // counts failed connects, and a retry after a reused connection
+        // went stale came here looking like a first attempt.
+        let first_attempt = ctx.upstream.upstream_instance.is_none();
+        if !first_attempt {
+            // The body kept for the retry is sent through
+            // `request_body_filter` again; counted twice it could pass
+            // `client_max_body_size` on its own.
+            ctx.state.payload_size = 0;
+        }
         // Async: a transparent upstream resolves the request's host here.
         let Some(peer) = upstream
             .new_http_peer(session, &mut ctx.conn.client_ip, first_attempt)
@@ -1634,7 +1660,7 @@ impl ProxyHttp for Server {
     /// Tracks payload size and enforces size limits.
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         _end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -1646,6 +1672,14 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
+            // After a 101 this is no request body any more but the
+            // client's half of the tunnel, which pingora still passes
+            // through here. It is counted, as before, and not held to
+            // `client_max_body_size`: a websocket was cut off once its
+            // client had sent that many bytes in total.
+            if session.was_upgraded() {
+                return Ok(());
+            }
             if let Some(location) = &ctx.upstream.location_instance {
                 let size = location.client_body_size_limit();
                 if size > 0 && ctx.state.payload_size > size {
@@ -1822,6 +1856,17 @@ impl ProxyHttp for Server {
             crate::cache::handle_cache_headers(session, upstream_response, ctx);
         }
 
+        // The ids of this request. Set here, on what goes to the client,
+        // and not in `upstream_response_filter`: what is set there is
+        // stored with a cached response, and every hit then carried the
+        // ids of the request that filled the cache.
+        #[cfg(feature = "tracing")]
+        inject_telemetry_headers(ctx, upstream_response);
+        if let Some(id) = &ctx.state.request_id {
+            let _ = upstream_response
+                .insert_header(&HTTP_HEADER_NAME_X_REQUEST_ID, id);
+        }
+
         // call response plugin
         self.handle_response_plugin(session, ctx, upstream_response)
             .await?;
@@ -1846,8 +1891,6 @@ impl ProxyHttp for Server {
             return Ok(());
         }
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
-        #[cfg(feature = "tracing")]
-        inject_telemetry_headers(ctx, upstream_response);
         ctx.upstream.status = Some(upstream_response.status);
 
         if ctx.state.status.is_none() {
@@ -1855,11 +1898,6 @@ impl ProxyHttp for Server {
             // start to get upstream response data
             ctx.timing.upstream_response =
                 Some(get_start_time(&ctx.timing.created_at));
-        }
-
-        if let Some(id) = &ctx.state.request_id {
-            let _ = upstream_response
-                .insert_header(&HTTP_HEADER_NAME_X_REQUEST_ID, id);
         }
 
         ctx.timing.upstream_processing = get_latency(
@@ -2047,7 +2085,13 @@ impl ProxyHttp for Server {
                 );
             });
 
-        let _ = server_session.write_response_body(buf, true).await;
+        // The page is the body of a GET. A HEAD is told its length and
+        // gets none of it: HTTP/1.1 drops what is written after the header
+        // of such a response, HTTP/2 does not, and the client reset the
+        // stream with a protocol error instead of reading the status.
+        let is_head = server_session.req_header().method == http::Method::HEAD;
+        let body = if is_head { Bytes::new() } else { buf };
+        let _ = server_session.write_response_body(body, true).await;
         FailToProxy {
             error_code: code,
             can_reuse_downstream: false,
@@ -2767,6 +2811,77 @@ value = 'proxy_set_headers = ["name:value"]'
         assert_eq!(false, done);
     }
 
+    /// What `request_filter` leaves in the context for the plugins that
+    /// write a response themselves: the plugin list, when one of them asks
+    /// to see the responses of the others (`decorate_plugin_response` works
+    /// from it), and the uri the client used, when the location rewrote it.
+    #[tokio::test]
+    async fn test_request_filter_leaves_what_plugins_need() {
+        struct Asks(bool);
+        impl Plugin for Asks {
+            fn handles_plugin_response(&self) -> bool {
+                self.0
+            }
+        }
+        struct Provider(bool);
+        impl PluginProvider for Provider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                Some(Arc::new(Asks(self.0)))
+            }
+        }
+        let run = async |toml: &str, asks: bool, path: &str| {
+            let server = new_server_from(toml, Some(Arc::new(Provider(asks))));
+            let input = format!("GET {path} HTTP/1.1\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            server.request_filter(&mut session, &mut ctx).await.unwrap();
+            let original = ctx
+                .features
+                .as_ref()
+                .and_then(|features| features.original_uri.as_ref())
+                .map(|uri| uri.to_string());
+            (
+                ctx.response_plugins.is_some(),
+                original,
+                session.req_header().uri.to_string(),
+            )
+        };
+
+        // No rewrite: nothing kept. The list is there when asked for.
+        assert_eq!(
+            (true, None, "/vicanso/pingap?a=1".to_string()),
+            run(TEST_TOML, true, "/vicanso/pingap?a=1").await
+        );
+        assert_eq!(
+            (false, None, "/vicanso/pingap?a=1".to_string()),
+            run(TEST_TOML, false, "/vicanso/pingap?a=1").await
+        );
+
+        let rewriting = TEST_TOML.replace(
+            "weight = 1024",
+            "weight = 1024\nrewrite = \"^/vicanso/(.*)$ /$1\"",
+        );
+        assert_eq!(
+            (
+                false,
+                Some("/vicanso/pingap?a=1".to_string()),
+                "/pingap?a=1".to_string()
+            ),
+            run(&rewriting, false, "/vicanso/pingap?a=1").await
+        );
+        // A rule that does not apply to this request leaves it alone.
+        assert_eq!(
+            (false, None, "/other?a=1".to_string()),
+            run(&rewriting, false, "/other?a=1").await
+        );
+    }
+
     #[tokio::test]
     async fn test_cache_key_callback() {
         let server = new_server();
@@ -3184,6 +3299,176 @@ value = 'proxy_set_headers = ["name:value"]'
             .await
             .unwrap();
         assert_eq!(Some(StatusCode::SWITCHING_PROTOCOLS), ctx.state.status);
+    }
+
+    /// Regression: after a 101 the bytes a client sends are its half of the
+    /// tunnel. They were counted as a request body, and a websocket was
+    /// cut off once it had sent `client_max_body_size` in total.
+    #[tokio::test]
+    async fn test_upgraded_connection_is_not_a_request_body() {
+        let toml = TEST_TOML.replace(
+            "weight = 1024",
+            "weight = 1024\nclient_max_body_size = \"1kb\"",
+        );
+        let server = new_server_from(&toml, None);
+        let location = server.location_provider.get("lo").unwrap();
+        let chunk = || Some(Bytes::from(vec![b'a'; 800]));
+
+        // A request body is limited, as before.
+        let (mut session, _client) = new_duplex_session(
+            "POST /upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        ctx.upstream.location_instance = Some(location.clone());
+        server
+            .request_body_filter(&mut session, &mut chunk(), false, &mut ctx)
+            .await
+            .unwrap();
+        let err = server
+            .request_body_filter(&mut session, &mut chunk(), false, &mut ctx)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            true,
+            matches!(err.etype(), pingora::ErrorType::HTTPStatus(413)),
+            "{err}"
+        );
+
+        // What follows a 101 is not.
+        let (mut session, _client) = new_duplex_session(
+            "GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        )
+        .await;
+        let mut switching = ResponseHeader::build(101, None).unwrap();
+        switching.insert_header("Upgrade", "websocket").unwrap();
+        switching.insert_header("Connection", "Upgrade").unwrap();
+        session
+            .write_response_header(Box::new(switching), false)
+            .await
+            .unwrap();
+        assert_eq!(true, session.was_upgraded());
+        let mut ctx = Ctx::default();
+        ctx.upstream.location_instance = Some(location);
+        for _ in 0..5 {
+            server
+                .request_body_filter(
+                    &mut session,
+                    &mut chunk(),
+                    false,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+        }
+        // Still counted, for the access log and the metrics.
+        assert_eq!(5 * 800, ctx.state.payload_size);
+    }
+
+    /// Regression: pingora asks for the peer again when a reused
+    /// connection turns out to be dead, without a failed connect in
+    /// between. Told apart by the count of those, the second call looked
+    /// like a first: the upstream's processing count went up twice and
+    /// came down once, and the body sent again was added to what was
+    /// counted of it the first time.
+    #[tokio::test]
+    async fn test_retry_is_counted_once() {
+        let server = new_server();
+        let upstream = server.upstream_provider.get("charts").unwrap();
+        let mock_io = Builder::new()
+            .read(b"POST /vicanso/pingap HTTP/1.1\r\nContent-Length: 4\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        server
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(1, upstream.stats().processing);
+        server
+            .request_body_filter(
+                &mut session,
+                &mut Some(Bytes::from_static(b"body")),
+                true,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(4, ctx.state.payload_size);
+
+        // The retry: the same request, the same context, no failed connect.
+        assert_eq!(0, ctx.upstream.retries);
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(1, upstream.stats().processing);
+        assert_eq!(0, ctx.state.payload_size);
+
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(0, upstream.stats().processing);
+    }
+
+    /// Regression: the ids of a request were set on the response in
+    /// `upstream_response_filter`, ahead of the cache. Stored with the
+    /// response, they were what every later hit carried: the ids of the
+    /// request that had filled the cache. They are set on the way out.
+    #[tokio::test]
+    async fn test_request_id_is_not_stored_with_the_response() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.state.request_id = Some("first".to_string());
+
+        // What the cache stores is the header as this filter leaves it.
+        let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut resp, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(false, resp.headers.contains_key("x-request-id"));
+
+        // A hit comes back through `response_filter` only, with the stored
+        // header and the context of the request it answers.
+        let mut hit_ctx = Ctx::default();
+        hit_ctx.state.request_id = Some("second".to_string());
+        server
+            .response_filter(&mut session, &mut resp, &mut hit_ctx)
+            .await
+            .unwrap();
+        assert_eq!("second", resp.headers.get("x-request-id").unwrap());
+    }
+
+    /// The cookies of a request are one field by the time anything reads
+    /// them, see `merge_cookie_headers`.
+    #[tokio::test]
+    async fn test_early_request_filter_merges_cookies() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET / HTTP/1.1\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        server
+            .early_request_filter(&mut session, &mut Ctx::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            Some("2"),
+            pingap_core::get_cookie_value(session.req_header(), "b")
+        );
+        assert_eq!(
+            1,
+            session
+                .req_header()
+                .headers
+                .get_all("cookie")
+                .iter()
+                .count()
+        );
     }
 
     /// The upstream's processing count is only taken back for a request

@@ -37,7 +37,9 @@ all validators and exits — run it in CI and before a reload. On top of the
 validators it builds every upstream, location and plugin the way startup does,
 so an unknown `alpn`, a `ca` that does not load, a path or host regex that does
 not compile, a malformed `rewrite` rule or an invalid plugin setting - a value
-of the wrong type included - is reported there and not on the next start. The
+of the wrong type included - is reported there and not on the next start. A
+certificate is loaded with its key, so a key that belongs to another
+certificate is reported as well. The
 validators also check what entries name of each other: a location's upstream
 and plugins, a server's locations, and the upstream of a `traffic_splitting`
 plugin. An `access_log` that is neither a format with a placeholder, a preset,
@@ -76,8 +78,17 @@ client and reuses it for every request; a request that fails is retried once
 on a fresh connection.
 
 A directory is loaded by reading every `*.toml` file in it (or, when there is
-none, every `*.hcl`, then every `*.kdl`), each checked on its own, so a syntax
-error names the file it is in rather than a line in the concatenation.
+none, every `*.hcl`, then every `*.kdl`). Each file is parsed on its own and
+its tables are merged into one document, so a syntax error names the file it
+is in, and a file may use any TOML spelling (`upstreams.extra.addrs = [..]`
+at the top level works like `[upstreams.extra]`). A category can be spread
+over files, but an entry — and `[basic]` — is defined in one of them: the same
+name in two files is an error that names both.
+
+Each file is read once. In a directory mounted from a Kubernetes ConfigMap or
+Secret every file is reachable three ways (the link at the top, `..data`, and
+the timestamped directory behind it); whatever lies under a name starting with
+`..` is left out, and two paths to the same file count once.
 
 A file is written by putting the new content in a temporary file beside it and
 renaming that over it, so a reader - the change check among them - finds the
@@ -126,7 +137,11 @@ arbitrarily named files:
   it only globs `*.toml`.
 
 Commands that only read the configuration — `--test`, `--to-hcl`, `--to-kdl`
-and `--sync` — skip the migration and load whatever layout is there.
+and `--sync` — skip the migration and load whatever layout is there. They fail
+when the configuration does not load, also with an admin address set
+(`--admin` or `PINGAP_ADMIN_ADDR`): starting on an empty configuration so that
+it can be repaired through the admin is for a server that is going to run, not
+for a check or a copy.
 
 Either way the retired path is printed at startup. A directory that is already
 carrying two layouts cannot be migrated — which table should win is not
@@ -208,6 +223,26 @@ server "test" {
       sni       = "api.github.com"
     }
   }
+}
+```
+
+A block is written where it is first used: a location inside the first server
+that lists it, an upstream inside the first location that names it. A location
+shared by several servers — the same routes on port 80 and on 443 — is
+therefore written once, and the other servers refer to it by name:
+
+```hcl
+server "http" {
+  addr = "0.0.0.0:80"
+
+  location "site" {
+    upstream = "web"
+  }
+}
+
+server "https" {
+  addr      = "0.0.0.0:443"
+  locations = ["site"]
 }
 ```
 
@@ -304,7 +339,9 @@ includes = ["commonTimeouts"]
 ```
 
 `to_pingap_config(replace_include)` controls whether includes are expanded; the
-admin UI reads the unexpanded form so edits stay readable. A fragment's keys
+admin UI reads the unexpanded form so edits stay readable. `--to-hcl`,
+`--to-kdl` and `--sync` write the unexpanded form too: the entry keeps its
+`includes` and the fragment stays the one place its keys are defined. A fragment's keys
 override the entry's own, and a later include overrides an earlier one. An
 include that names no `storages` entry, or a storage whose value is not TOML,
 is rejected when the configuration is loaded

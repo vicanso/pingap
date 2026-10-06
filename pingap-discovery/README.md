@@ -22,7 +22,9 @@ Selected with `discovery` in `UpstreamConf`:
 | `docker` | Look up containers by label through the Docker API |
 | `transparent` | No discovery — forward to the address from the request itself |
 
-`update_frequency` controls how often `dns` and `docker` refresh. The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s.
+`update_frequency` controls how often `dns` and `docker` refresh. The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s. It has to be greater than zero for these two: `0s` used to mean "look up once and never again" and is now a configuration error.
+
+`discovery` is one of the four values above, in any case (`DNS` is `dns`). Anything else is a configuration error; it used to be accepted and treated as `static`, so a typo such as `dsn` resolved its hosts once at startup.
 
 ### Static
 

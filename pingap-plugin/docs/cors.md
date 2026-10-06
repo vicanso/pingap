@@ -66,7 +66,7 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 | --- | --- |
 | `OPTIONS` on a matching path | `204 No Content` with all CORS headers; upstream is not called |
 | Any method, request has `Origin` | CORS headers appended to the response |
-| Another plugin of the location answers (a `401`, a `429`, a redirect) | CORS headers appended to that response as well |
+| Another plugin of the location answers (a `401`, a `429`, a redirect, a file of [`directory`](directory.md) of any size) | CORS headers appended to that response as well |
 | Any method, no `Origin` | Response untouched |
 | Path does not match `path` | Plugin skipped in both phases |
 

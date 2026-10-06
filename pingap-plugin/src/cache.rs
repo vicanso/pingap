@@ -113,8 +113,15 @@ pub struct Cache {
 /// - Uses the configured cache size from current config if available
 /// - Falls back to MAX_MEMORY_SIZE (100MB) if not configured
 /// - Ensures only one instance is created using OnceCell
-fn get_eviction_manager(cache_max_size: u64) -> &'static Manager {
-    EVICTION_MANAGER.get_or_init(|| Manager::new(cache_max_size as usize))
+///
+/// In a dry run (`pingap_cache::dry_run`) nothing is created: the manager
+/// is sized by whoever asks first, for good, and that must not be a
+/// configuration that is only being checked.
+fn get_eviction_manager(cache_max_size: u64) -> Option<&'static Manager> {
+    if pingap_cache::is_dry_run() {
+        return EVICTION_MANAGER.get();
+    }
+    Some(EVICTION_MANAGER.get_or_init(|| Manager::new(cache_max_size as usize)))
 }
 
 /// Returns the cache lock for `lock`, creating it on first use.
@@ -137,6 +144,11 @@ fn get_cache_lock(
     if let Some(cache_lock) = locks.get(&lock) {
         return Some(*cache_lock);
     }
+    // A lock is kept for the life of the process; one is not made for a
+    // configuration that is only being checked.
+    if pingap_cache::is_dry_run() {
+        return None;
+    }
     let cache_lock: &'static (dyn CacheKeyLock + Send + Sync) =
         Box::leak(CacheLock::new_boxed(lock));
     locks.insert(lock, cache_lock);
@@ -155,6 +167,18 @@ fn get_cache_lock(
 /// - Ensures only one instance is created using OnceCell
 fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
     PREDICTOR.get_or_init(|| Predictor::new(128, None))
+}
+
+/// The value of a header as one component of the cache key. The
+/// components are joined with `:`, so one inside a value is written
+/// `%3A` (and `%` as `%25`): `Origin: https://a.com` with nothing after it
+/// and `Origin: https` followed by `//a.com:` were one key, and whoever
+/// sent the second chose the response the first was given.
+fn key_slot(value: &str) -> String {
+    if !value.contains([':', '%']) {
+        return value.to_string();
+    }
+    value.replace('%', "%25").replace(':', "%3A")
 }
 
 impl TryFrom<&PluginConf> for Cache {
@@ -187,32 +211,11 @@ impl TryFrom<&PluginConf> for Cache {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let directory = get_str_conf(value, "directory");
-
-        let cache = new_cache_backend(directory.as_str()).map_err(|e| {
-            Error::Invalid {
-                category: "cache".to_string(),
-                message: e.to_string(),
-            }
-        })?;
-        let cache_max_size = cache.max_size;
-
-        let eviction = if value.contains_key("eviction") {
-            if cache_max_size > 0 {
-                let eviction = get_eviction_manager(cache_max_size);
-                Some(eviction as &'static (dyn EvictionManager + Sync))
-            } else {
-                // Eviction needs a bounded backend to evict against. The file
-                // backend does not report a size, so say so instead of leaving
-                // the operator believing the cache is capped.
-                error!(
-                    directory,
-                    "eviction is only supported by the memory cache backend, ignoring it"
-                );
-                None
-            }
-        } else {
-            None
-        };
+        // By their value, not their presence: `eviction = false`, which is
+        // what the admin form saves for "No", switched it on.
+        let eviction = get_bool_conf(value, "eviction");
+        let predictor = get_bool_conf(value, "predictor");
+        let check_cache_control = get_bool_conf(value, "check_cache_control");
 
         let lock = get_str_conf(value, "lock");
         let lock = if !lock.is_empty() {
@@ -258,18 +261,6 @@ impl TryFrom<&PluginConf> for Cache {
             ByteSize::mb(1)
         };
         let namespace = get_str_conf(value, "namespace");
-        if !namespace.is_empty() && cache.directory.is_some() {
-            let path = format!(
-                "{}/{namespace}",
-                cache.directory.clone().unwrap_or_default()
-            );
-            if let Err(e) = std::fs::create_dir_all(&path) {
-                error!(
-                    error = e.to_string(),
-                    path, "create directory of cache fail"
-                );
-            }
-        }
         let namespace = if namespace.is_empty() {
             None
         } else {
@@ -293,12 +284,6 @@ impl TryFrom<&PluginConf> for Cache {
             ))
         };
 
-        let predictor = if value.contains_key("predictor") {
-            Some(get_predictor())
-        } else {
-            None
-        };
-
         let purge_ip_rules =
             IpRules::try_new(&get_str_slice_conf(value, "purge_ip_list"))
                 .map_err(|e| Error::Invalid {
@@ -316,12 +301,57 @@ impl TryFrom<&PluginConf> for Cache {
             })?)
         };
 
+        // The backend comes last, once everything else of the
+        // configuration has been read and found good. Making it is what
+        // reaches outside this plugin: a directory is created, and the
+        // backend of a directory whose parameters changed is replaced.
+        // Done first, a configuration refused for another of its settings
+        // had already taken the backend away from the plugin it was to
+        // replace, which then went on serving with a retired one.
+        if let Some(err) = crate::wrong_types_error("cache") {
+            return Err(err);
+        }
+        let cache = new_cache_backend(directory.as_str()).map_err(|e| {
+            Error::Invalid {
+                category: "cache".to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        let eviction = if !eviction {
+            None
+        } else if cache.max_size > 0 {
+            get_eviction_manager(cache.max_size).map(|eviction| {
+                eviction as &'static (dyn EvictionManager + Sync)
+            })
+        } else {
+            // Eviction needs a bounded backend to evict against. The file
+            // backend does not report a size, so say so instead of leaving
+            // the operator believing the cache is capped.
+            error!(
+                directory,
+                "eviction is only supported by the memory cache backend, ignoring it"
+            );
+            None
+        };
+        if let Some(namespace) = &namespace
+            && let Some(directory) = &cache.directory
+            && !pingap_cache::is_dry_run()
+        {
+            let path = format!("{directory}/{namespace}");
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                error!(
+                    error = e.to_string(),
+                    path, "create directory of cache fail"
+                );
+            }
+        }
+
         let params = Self {
             hash_value,
             http_cache: cache,
             plugin_step: PluginStep::Request,
             eviction,
-            predictor,
+            predictor: predictor.then(get_predictor),
             lock: get_cache_lock(lock),
             lock_retries,
             max_ttl,
@@ -330,7 +360,7 @@ impl TryFrom<&PluginConf> for Cache {
             headers,
             vary_headers,
             purge_ip_rules,
-            check_cache_control: get_bool_conf(value, "check_cache_control"),
+            check_cache_control,
             skip,
         };
         Ok(params)
@@ -430,11 +460,15 @@ impl Plugin for Cache {
             cache_info.namespace = self.namespace.clone();
         }
         if let Some(headers) = &self.headers {
-            for key in headers.iter() {
-                let buf = session.get_header_bytes(key).to_str_lossy();
-                if !buf.is_empty() {
-                    keys.push(buf.to_string());
-                }
+            // One slot per configured header, kept for a header the
+            // request does not have: with the empty ones left out, `X-A: 1`
+            // alone and `X-B: 1` alone gave the same key. A request with
+            // none of them adds nothing, as before.
+            keys.extend(headers.iter().map(|key| {
+                key_slot(&session.get_header_bytes(key).to_str_lossy())
+            }));
+            if keys.iter().all(|value| value.is_empty()) {
+                keys.clear();
             }
         }
         if !keys.is_empty() {
@@ -604,6 +638,100 @@ vary_headers = ["Accept-Encoding", " accept "]
         .unwrap()
         .to_string();
         assert_eq!(true, err.contains("lock_retries"), "{err}");
+    }
+
+    /// Regression: `eviction` and `predictor` were on whenever the key was
+    /// there, so `false` - what the admin form saves for "No" - enabled
+    /// them.
+    #[test]
+    fn test_cache_flags_are_read_by_their_value() {
+        let cache = |conf: &str| {
+            Cache::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+                .unwrap()
+        };
+        let off = cache("eviction = false\npredictor = false");
+        assert_eq!(true, off.eviction.is_none());
+        assert_eq!(true, off.predictor.is_none());
+        let unset = cache("");
+        assert_eq!(true, unset.eviction.is_none());
+        assert_eq!(true, unset.predictor.is_none());
+        let on = cache("eviction = true\npredictor = true");
+        assert_eq!(true, on.eviction.is_some());
+        assert_eq!(true, on.predictor.is_some());
+    }
+
+    /// Regression: the values of the configured headers went into the key
+    /// without their place, the empty ones left out, so `X-A: 1` alone and
+    /// `X-B: 1` alone shared an entry.
+    #[tokio::test]
+    async fn test_cache_key_keeps_a_slot_per_header() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>("headers = [\"X-A\", \"X-B\"]")
+                .unwrap(),
+        )
+        .unwrap();
+        let key_of = async |headers: &str| {
+            let input = format!("GET /a HTTP/1.1\r\n{headers}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            cache
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            ctx.cache
+                .and_then(|info| info.keys)
+                .map(|keys| keys.join(":"))
+        };
+        assert_eq!(Some("1:".to_string()), key_of("X-A: 1\r\n").await);
+        assert_eq!(Some(":1".to_string()), key_of("X-B: 1\r\n").await);
+        assert_eq!(
+            Some("1:2".to_string()),
+            key_of("X-A: 1\r\nX-B: 2\r\n").await
+        );
+        // None of them: nothing is added, as before.
+        assert_eq!(None, key_of("").await);
+        // A `:` in a value cannot move the border between two of them.
+        let split = key_of("X-A: https://a.com\r\n").await;
+        let shifted = key_of("X-A: https\r\nX-B: //a.com:\r\n").await;
+        assert_eq!(Some("https%3A//a.com:".to_string()), split);
+        assert_eq!(Some("https://a.com%3A".to_string()), shifted);
+        assert_eq!(Some("50%25:".to_string()), key_of("X-A: 50%\r\n").await);
+    }
+
+    /// The backend is made once the rest of the configuration is known to
+    /// be good. Made first, a configuration that was then refused had
+    /// created its directory already - and, on a reload, replaced the
+    /// backend of the plugin that stayed in use.
+    #[test]
+    fn test_cache_backend_is_made_last() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("cache");
+        let build = |extra: &str| {
+            crate::build_plugin("cache", || {
+                Cache::try_from(
+                    &toml::from_str::<PluginConf>(&format!(
+                        "directory = \"{}\"\n{extra}",
+                        dir.display()
+                    ))
+                    .unwrap(),
+                )
+            })
+        };
+        for extra in [
+            "max_ttl = \"oops\"",
+            "skip = \"(\"",
+            "purge_ip_list = [\"nope\"]",
+            // of the wrong type, which is only reported after the build
+            "eviction = \"yes\"",
+            "check_cache_control = \"yes\"",
+        ] {
+            assert_eq!(true, build(extra).is_err(), "{extra}");
+            assert_eq!(false, dir.exists(), "{extra}");
+        }
+        assert_eq!(true, build("").is_ok());
+        assert_eq!(true, dir.exists());
     }
 
     /// Regression: only 1, 2 and 3 second locks used to be honoured, every

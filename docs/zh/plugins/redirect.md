@@ -1,6 +1,6 @@
 # redirect
 
-发出 HTTP 重定向，用于强制协议（通常 HTTP → HTTPS）和/或添加路径前缀。
+发出 HTTP 重定向，用于强制 HTTPS 和/或添加路径前缀。
 
 - **步骤：** `request`（固定）
 - **注册名：** `redirect`
@@ -10,7 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `redirect`。 |
-| `http_to_https` | bool | `false` | `true` 强制 HTTPS；`false` 强制明文 HTTP。 |
+| `http_to_https` | bool | `false` | `true` 把明文 HTTP 请求跳转到 HTTPS；`false` 不改变请求的协议。 |
 | `prefix` | string | — | 要前置的路径前缀。缺失前导 `/` 时补上；长度 ≤ 1 的值忽略。 |
 | `status` | int | `307` | `301`、`302`、`303`、`307`、`308` 之一。其他值是配置错误。 |
 
@@ -46,7 +46,9 @@ prefix = "/api"
 
 ## 行为
 
-当协议已符合 `http_to_https` **且** 路径已以 `prefix` 开头时，插件跳过请求。否则以 `status` 响应，`Location` 由目标协议、请求的域名、`prefix` 与原始的路径和查询串构成。
+当协议无需改变 **且** 路径已以 `prefix` 开头时，插件跳过请求。协议需要改变只有一种情况：`http_to_https = true` 而请求是明文 HTTP。否则以 `status` 响应，`Location` 由目标协议、请求的域名、`prefix` 与原始的路径和查询串构成。
+
+不配 `http_to_https` 时插件只补前缀，跳转沿用请求本身的协议：在 HTTPS 监听上，`https://a.test/users` 跳到 `https://a.test/api/users`，`https://a.test/api/users` 直接放行。（不配 `http_to_https` 以前的含义是“强制明文 HTTP”，只配前缀的插件挂在 HTTPS 监听上会把所有请求都跳到 `http://`。本插件不再提供从 HTTPS 跳回 HTTP 的能力。）
 
 只补前缀时保留请求的端口，因为协议不变、监听也不变：`example.com:8080/users` 跳到 `http://example.com:8080/api/users`。改变协议的跳转不带端口，落到新协议的默认端口上，因为旧端口并不提供新协议。
 

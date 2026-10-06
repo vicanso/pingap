@@ -40,12 +40,20 @@
 | --- | --- |
 | `upstream_peer` | 选择后端并应用 location 的重试预算（`max_retries`、`max_retry_window`） |
 | `connected_to_upstream` | 记录复用、TCP 连接与 TLS 握手时序 |
-| `request_body_filter` | 强制 location 的 `client_max_body_size` |
+| `request_body_filter` | 强制 location 的 `client_max_body_size`。`101` 之后客户端发来的是隧道数据而不是请求体，不受这个上限约束：WebSocket 可以发送任意多的数据 |
 | `fail_to_proxy` | 对失败分类，并用配置的模板渲染错误页（见[错误响应](#错误响应)） |
 
 插件在请求的**恰好一个**步骤运行。配置插件未实现的步骤是静默空操作——见 [pingap-plugin](../plugins/#生命周期步骤)。
 
 在 `EarlyRequest` 步骤直接应答的插件会在此结束请求。pingora 只允许请求在 `request_filter` 处停止，因此该步骤会识别已经发出的响应，后续步骤不会再叠加执行。
+
+在任何读取发生之前，`early_request_filter` 会把请求的多个 `Cookie` 头合并成一个。HTTP/2 允许客户端把 Cookie 拆成多个头字段发送（RFC 9113 8.2.3），只看第一个字段的读取方（`cookie` 方式的 `jwt`、`csrf`、粘性 Cookie、`match_cookies`、访问日志的 `{~name}`）会漏掉其余的。转发给上游的也是合并后的单个字段。
+
+`X-Request-Id`（以及 tracing 特性的 `X-Trace-Id` / `X-Span-Id`）在 `response_filter` 里写到发给客户端的响应上，不属于缓存保存的内容，所以命中缓存的响应带的是当前请求的 ID。
+
+插件直接返回的响应，如果按定义没有响应体（`HEAD`、`204`、`304`），写完响应头就结束。后两个状态码也不会带自动生成的 `Content-Length`。
+
+`$proxy_add_x_forwarded_for`（`enable_reverse_proxy_headers` 设置的也是它）是请求里所有 `X-Forwarded-For` 行按顺序拼接，再加上对端地址。前置代理把自己的条目单独写成一行，与追加到已有行的效果相同。
 
 上游的中间响应（如 `103 Early Hints`）会原样转发给客户端。响应阶段的插件、访问日志与指标里的状态码、上游耗时都以最终响应为准；`101` 视为最终响应，因为它结束了 HTTP 交互。
 
@@ -82,6 +90,8 @@
 | 其他 | 500 | 是 |
 
 `499` 是 nginx 表示客户端已离开的状态码。它会记录到访问日志与指标中，但不会向已断开或卡住的连接写任何内容，事件以 `info` 而非 `error` 级别记录，因为服务端无需修复什么。一旦最终响应头已发出，之后的失败（例如上游在响应体中途断开）保留客户端实际看到的状态码，且不会向响应体追加任何内容，与 pingora 自身错误响应的规则一致。
+
+`HEAD` 请求只收到错误页的响应头（含 `Content-Length`），不带响应体。
 
 每次失败只由 pingap 记录一条日志，包含客户端地址、方法、主机与路径、pingora 错误类型和状态码；pingora 对同一错误的日志被抑制。pingap 自身产生的状态码对应的响应头只构建一次然后克隆。
 

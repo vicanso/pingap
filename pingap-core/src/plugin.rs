@@ -299,10 +299,90 @@ pub trait PluginProvider: Send + Sync {
 
 pub type Plugins = AHashMap<String, Arc<dyn Plugin>>;
 
+/// Lets the plugins that ask for it set their headers on a response a
+/// plugin is about to write itself.
+///
+/// A response returned as [`RequestPluginResult::Respond`] gets this from
+/// the proxy. One that a plugin streams to the client on its own - a file
+/// larger than a chunk - never passes there, so it calls this before it
+/// writes the header: without it a small file came with the CORS headers
+/// and a large one did not.
+pub async fn decorate_plugin_response(
+    session: &mut Session,
+    ctx: &mut Ctx,
+    header: &mut ResponseHeader,
+) -> pingora::Result<()> {
+    let Some(plugins) = ctx.response_plugins.take() else {
+        return Ok(());
+    };
+    let mut result = Ok(());
+    for (_, plugin) in plugins.iter() {
+        if !plugin.handles_plugin_response() {
+            continue;
+        }
+        if let Err(e) = plugin.handle_response(session, ctx, header).await {
+            result = Err(e);
+            break;
+        }
+    }
+    ctx.response_plugins = Some(plugins);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NamedPlugin;
     use pretty_assertions::assert_eq;
+
+    struct Marker {
+        asks: bool,
+    }
+
+    #[async_trait]
+    impl Plugin for Marker {
+        fn handles_plugin_response(&self) -> bool {
+            self.asks
+        }
+        async fn handle_response(
+            &self,
+            _session: &mut Session,
+            _ctx: &mut Ctx,
+            upstream_response: &mut ResponseHeader,
+        ) -> pingora::Result<ResponsePluginResult> {
+            upstream_response.append_header("x-marked", "1")?;
+            Ok(ResponsePluginResult::Modified)
+        }
+    }
+
+    /// Only the plugins that ask for the responses of other plugins see
+    /// one, and the list stays in the context for the next.
+    #[tokio::test]
+    async fn test_decorate_plugin_response() {
+        let mut session = crate::new_test_session(&[], "/").await;
+        let marked = |header: &ResponseHeader| {
+            header.headers.get_all("x-marked").iter().count()
+        };
+
+        // Nothing to ask.
+        let mut ctx = Ctx::default();
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        decorate_plugin_response(&mut session, &mut ctx, &mut header)
+            .await
+            .unwrap();
+        assert_eq!(0, marked(&header));
+
+        let plugins: Vec<NamedPlugin> = vec![
+            (Arc::from("asks"), Arc::new(Marker { asks: true })),
+            (Arc::from("does-not"), Arc::new(Marker { asks: false })),
+        ];
+        ctx.response_plugins = Some(Arc::from(plugins));
+        decorate_plugin_response(&mut session, &mut ctx, &mut header)
+            .await
+            .unwrap();
+        assert_eq!(1, marked(&header));
+        assert_eq!(true, ctx.response_plugins.is_some());
+    }
 
     #[test]
     fn test_plugin_step() {

@@ -28,7 +28,7 @@ pub struct PingapConfig {
 | `certificates` | TLS 证书，含 ACME 设置 |
 | `storages` | 可被 `includes` 引用的可复用片段；ACME 也在此保存 challenge 状态 |
 
-每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置（包括类型写错的值），都在这一步报告，而不是等到下次启动。校验器还会检查条目之间的引用：location 的 upstream 和插件、server 的 location，以及 `traffic_splitting` 插件的 upstream。`access_log` 既不是带占位符的格式、也不是预设名、也不是文件路径后跟这两者之一时，会被拒绝。它只读取配置，磁盘上的配置保持原样。
+每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置（包括类型写错的值），都在这一步报告，而不是等到下次启动。证书会和私钥一起加载，所以配了另一张证书的私钥也会在这里报告。校验器还会检查条目之间的引用：location 的 upstream 和插件、server 的 location，以及 `traffic_splitting` 插件的 upstream。`access_log` 既不是带占位符的格式、也不是预设名、也不是文件路径后跟这两者之一时，会被拒绝。它只读取配置，磁盘上的配置保持原样。
 
 ## 存储后端
 
@@ -52,7 +52,9 @@ pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 
 etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`、`connect_timeout`、`user`、`password`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
 
-目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`），每个文件单独检查，因此语法错误会指出所在文件，而不是拼接后文档里的某一行。
+目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`）。每个文件单独解析，再把各自的表合并成一份文档，因此语法错误会指出所在文件，文件里也可以使用任意 TOML 写法（顶层的 `upstreams.extra.addrs = [..]` 与 `[upstreams.extra]` 等价）。同一分类可以分散在多个文件里，但一个条目（以及 `[basic]`）只能定义在其中一个文件：同名条目出现在两个文件里会报错，并指出这两个文件。
+
+每个文件只读一次。Kubernetes 用 ConfigMap 或 Secret 挂载的目录里，每个文件有三条路径可达（顶层的链接、`..data`、以及它背后带时间戳的目录）；名字以 `..` 开头的目录下的内容会被跳过，指向同一个文件的多条路径只算一次。
 
 写文件时先把新内容写到旁边的临时文件，再改名覆盖，所以读取方（包括变更检查）看到的要么是旧内容、要么是新内容，不会读到半个文件。文件的权限和属主保持不变，符号链接会跟随到它指向的文件。无法改名覆盖（例如挂载进容器的单个配置文件）或无法保留属主时，退回为直接写入。
 
@@ -76,7 +78,7 @@ etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 
 - 开启 `enable_history=true` 时，被清理的文件先复制进历史目录再删除；
 - 否则重命名为 `<name>.toml.bak` —— 加载时只 glob `*.toml`，所以改名即可让它不再被读取。
 
-只读取配置的命令（`--test`、`--to-hcl`、`--to-kdl`、`--sync`）不做迁移，按现有的布局加载。
+只读取配置的命令（`--test`、`--to-hcl`、`--to-kdl`、`--sync`）不做迁移，按现有的布局加载。配置加载失败时这些命令直接报错退出，设置了 admin 地址（`--admin` 或 `PINGAP_ADMIN_ADDR`）也一样：“用空配置启动以便通过 admin 修复”只适用于要运行的服务，不适用于检查和复制。
 
 两种方式都会在启动时打印被清理的路径。已经同时存在两种布局的目录无法自动迁移（哪一份表应该胜出是无从判断的），此时启动会报出冲突的文件名并保持原样，交由人工合并。
 
@@ -145,6 +147,23 @@ server "test" {
 }
 ```
 
+块写在它第一次被用到的地方：location 写在第一个列出它的 server 里，upstream 写在第一个引用它的 location 里。被多个 server 共用的 location（80 和 443 用同一组路由）因此只写一次，其余 server 按名字引用：
+
+```hcl
+server "http" {
+  addr = "0.0.0.0:80"
+
+  location "site" {
+    upstream = "web"
+  }
+}
+
+server "https" {
+  addr      = "0.0.0.0:443"
+  locations = ["site"]
+}
+```
+
 KDL 里只有一个值的节点就是这个值，有多个值的节点是列表。固定为列表的字段（`addrs`、`locations`、`plugins`、`includes`、`modules`、`proxy_set_headers`、`proxy_add_headers`、`match_headers`、`match_query`、`match_cookies`、`trusted_proxies`、`webhook_notifications`）只有一个值时也是列表。其他字段（例如插件的字段）要表示只有一个元素的列表时，用 `item` 子节点，`--to-kdl` 输出的也是这种写法：
 
 ```text
@@ -204,7 +223,7 @@ addrs = ["10.0.0.1:8080"]
 includes = ["commonTimeouts"]
 ```
 
-`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。片段的键覆盖条目自身的键，靠后的 include 覆盖靠前的。引用了不存在的 `storages` 条目、或条目内容不是合法 TOML 的 include，会在加载配置时报错（`upstream(api): include(commonTimeouts) is not found`），而不再被静默忽略。
+`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。`--to-hcl`、`--to-kdl`、`--sync` 输出的也是未展开的形式：条目保留自己的 `includes`，片段里的键仍然只在片段这一处定义。片段的键覆盖条目自身的键，靠后的 include 覆盖靠前的。引用了不存在的 `storages` 条目、或条目内容不是合法 TOML 的 include，会在加载配置时报错（`upstream(api): include(commonTimeouts) is not found`），而不再被静默忽略。
 
 ## 用法
 

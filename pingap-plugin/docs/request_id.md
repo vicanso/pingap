@@ -59,6 +59,12 @@ set_headers = ["X-Request-Id: $http_x_request_id"]
 The id is exposed as `{request_id}` in access logs and as
 `ctx.state.request_id` to other plugins.
 
+The response carries the id as `X-Request-Id`. It is set on the way out to the
+client, after the cache: a response served from the cache has the id of the
+request it answers, the one in that request's access log line, and not the id
+of the request that filled the cache. The same holds for the `X-Trace-Id` and
+`X-Span-Id` headers of the OpenTelemetry integration.
+
 ## Usage notes
 
 - Because an existing header is trusted verbatim, a client can choose its own

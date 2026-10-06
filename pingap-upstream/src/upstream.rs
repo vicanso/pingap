@@ -369,19 +369,22 @@ fn new_load_balancer(
     sender: Option<Arc<NotificationSender>>,
     first_round: &Arc<FirstRound>,
 ) -> Result<SelectionLb> {
+    // Determine the service discovery method
+    let discovery_category = conf.guess_discovery();
+    // For transparent discovery, return early with no load balancing. It
+    // has no addresses of its own - a request goes where it points - so
+    // this comes before the check for them: `addrs = []`, which is how the
+    // documentation writes such an upstream, used to be refused.
+    if discovery_category == TRANSPARENT_DISCOVERY {
+        return Ok(SelectionLb::Transparent);
+    }
+
     // Validate that addresses are provided
     if conf.addrs.is_empty() {
         return Err(Error::Common {
             category: "new_upstream".to_string(),
             message: "upstream addrs is empty".to_string(),
         });
-    }
-
-    // Determine the service discovery method
-    let discovery_category = conf.guess_discovery();
-    // For transparent discovery, return early with no load balancing
-    if discovery_category == TRANSPARENT_DISCOVERY {
-        return Ok(SelectionLb::Transparent);
     }
 
     // Determine if TLS should be enabled based on SNI configuration
@@ -1833,6 +1836,27 @@ mod tests {
     /// literal (with or without a port) directly, a name through the
     /// resolver, and a host that does not resolve is `None` rather than a
     /// panic inside pingora's peer constructor.
+    /// Regression: a transparent upstream sends each request where the
+    /// request points and has no addresses to list, yet one without any
+    /// was refused - while the documentation writes it as `addrs = []`.
+    #[test]
+    fn test_transparent_upstream_needs_no_addrs() {
+        let conf = |discovery: Option<&str>| UpstreamConf {
+            addrs: vec![],
+            discovery: discovery.map(|value| value.to_string()),
+            ..Default::default()
+        };
+        let up = Upstream::new("passthrough", &conf(Some("transparent")), None)
+            .unwrap();
+        assert_eq!(true, up.is_transparent());
+        // Any other upstream still needs them.
+        let err = Upstream::new("empty", &conf(None), None)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert_eq!(true, err.contains("upstream addrs is empty"), "{err}");
+    }
+
     #[tokio::test]
     async fn test_transparent_peer() {
         let peer_for = async |host: &str| {

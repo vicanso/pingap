@@ -14,14 +14,14 @@ IP-restricted `PURGE` method.
 | `category` | string | — | Must be `cache`. |
 | `directory` | string | memory | Empty or `memory://…` selects the memory backend; any other value is a file cache directory. |
 | `namespace` | string | — | Isolates entries; with a file backend it becomes a subdirectory. |
-| `headers` | string[] | — | Request headers appended to the cache key (variant caching). |
+| `headers` | string[] | — | Request headers appended to the cache key (variant caching). Each header has its place in the key, kept when the request does not carry it; a `:` inside a value is written `%3A` so that it cannot be taken for the border between two of them. |
 | `vary_headers` | string[] | — | Allow list for the origin's `Vary` response header: only these request headers may create cache variants. Unset honours every header the origin names. |
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
 | `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
 | `lock_retries` | int | `2` | How many times a request that waited on the lock re-checks the cache before it gives up and fetches from upstream itself. |
-| `eviction` | bool | absent | Presence of the key enables LRU eviction. Memory backend only. |
-| `predictor` | bool | absent | Presence of the key enables the cacheability predictor. |
+| `eviction` | bool | `false` | `true` enables LRU eviction. Memory backend only. |
+| `predictor` | bool | `false` | `true` enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
 | `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. See [who may purge](#who-may-purge) for the address that is checked. |
 | `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. |
@@ -166,6 +166,22 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   those versions are not found under the present key: the cache starts cold
   after the upgrade, and the old entries of a file cache stay on disk until
   the inactive sweep removes them.
+- **`eviction` and `predictor` go by their value.** They used to be on whenever
+  the key was present, so `eviction = false` — what the admin form saves for
+  "No" — enabled it. A config that has `false` there to mean "on" has to say
+  `true`.
+- **A request with only some of the `headers` gets a new key.** With
+  `headers = ["X-A", "X-B"]` the values used to be joined without their place,
+  so `X-A: 1` alone and `X-B: 1` alone shared one entry. Each header now keeps
+  its place. Requests that carry all of the listed headers, or none, keep the
+  key they had; entries stored for requests with only some of them are not
+  found again and age out. The same goes for entries whose header value
+  holds a `:` or a `%` (an `Origin`, for one): those characters are now
+  escaped in the key.
+- **`example.com.` is cached apart from `example.com`.** A host with its root
+  label written out is routed like the plain name, but the request goes to
+  the upstream with the `Host` it came with, so its response is kept under a
+  key of its own.
 - **`eviction` needs a bounded backend.** It is only wired up when the backend
   reports a non-zero `max_size`, which the file backend does not — so `eviction`
   is memory-only, and setting it on a file cache logs an error and is ignored.

@@ -114,10 +114,11 @@ where
 
 /// File cache parameters
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
-struct FileCacheParams {
-    /// Cache directory
+pub(crate) struct FileCacheParams {
+    /// Cache directory, resolved: `d`, `./d` and `d?inactive=1h` are one
+    /// directory.
     #[serde(default)]
-    directory: String,
+    pub(crate) directory: String,
     /// Inactive duration when cache file will be removed regardless of their freshness.
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -772,6 +773,15 @@ impl HttpCacheStorage for FileCache {
     }
     fn inactive(&self) -> Option<Duration> {
         Some(self.cache_inactive)
+    }
+
+    /// Gives up the hot layer. The instance lives on, as whoever still
+    /// holds it may be serving a request.
+    fn retire(&self) {
+        if let Some(cache) = &self.cache {
+            *cache.write().unwrap_or_else(|e| e.into_inner()) =
+                MemoryCache::new(CacheMode::Normal, 1);
+        }
     }
 
     /// Removes every cached object under `<directory>/<namespace>`.

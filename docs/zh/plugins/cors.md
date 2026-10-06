@@ -65,7 +65,7 @@ curl -i -X OPTIONS http://127.0.0.1:6188/api/users \
 | --- | --- |
 | 匹配路径上的 `OPTIONS` | `204 No Content` 带全部 CORS 头；不调用上游 |
 | 任意方法，请求有 `Origin` | 向响应追加 CORS 头 |
-| 同一 location 的其他插件直接返回响应（`401`、`429`、重定向） | 同样追加 CORS 头 |
+| 同一 location 的其他插件直接返回响应（`401`、`429`、重定向、[`directory`](directory.md) 返回的任意大小的文件） | 同样追加 CORS 头 |
 | 任意方法，无 `Origin` | 响应不变 |
 | 路径不匹配 `path` | 两阶段均跳过插件 |
 

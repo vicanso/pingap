@@ -652,6 +652,7 @@ impl Plugin for JwtAuth {
             return Ok(RequestPluginResult::Skipped);
         }
         let req_header = session.req_header();
+        let query_value;
         let value = if let Some(key) = &self.header {
             strip_bearer(
                 pingap_core::get_req_header_value(req_header, key)
@@ -660,7 +661,11 @@ impl Plugin for JwtAuth {
         } else if let Some(key) = &self.cookie {
             pingap_core::get_cookie_value(req_header, key).unwrap_or_default()
         } else if let Some(key) = &self.query {
-            pingap_core::get_query_value(req_header, key).unwrap_or_default()
+            query_value = super::decode_query_value(
+                pingap_core::get_query_value(req_header, key)
+                    .unwrap_or_default(),
+            );
+            query_value.as_ref()
         } else {
             ""
         };

@@ -16,6 +16,7 @@ use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::PluginStep;
 use snafu::Snafu;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::str::FromStr;
@@ -74,6 +75,19 @@ fn note_wrong_type(key: &str, expected: &str, value: &toml::Value) {
             ));
         }
     });
+}
+
+/// The error [`build_plugin`] is going to give for the values of the wrong
+/// type noted so far, for a constructor that has something to hold back
+/// until its configuration is known to be good.
+pub(crate) fn wrong_types_error(category: &str) -> Option<Error> {
+    WRONG_TYPES.with_borrow(|notes| {
+        let notes = notes.as_ref().filter(|notes| !notes.is_empty())?;
+        Some(Error::Invalid {
+            category: category.to_string(),
+            message: notes.join(", "),
+        })
+    })
 }
 
 /// Builds one plugin with `build`, and fails when a config value it read
@@ -172,6 +186,17 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
         },
         None => vec![],
     }
+}
+
+/// The value of a query parameter as the client meant it, with its
+/// percent-encoding decoded. `+` stays a plus: that it stands for a space
+/// is a rule of html forms, not of urls. A value that does not decode to
+/// text is compared as it came.
+pub(crate) fn decode_query_value(raw: &str) -> Cow<'_, str> {
+    if !raw.contains('%') {
+        return Cow::Borrowed(raw);
+    }
+    urlencoding::decode(raw).unwrap_or(Cow::Borrowed(raw))
 }
 
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {

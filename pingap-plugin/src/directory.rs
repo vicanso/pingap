@@ -91,68 +91,109 @@ impl ByteRange {
     }
 }
 
+/// What a `Range` header asks for, once checked against the file.
+#[derive(Debug, Clone, Copy)]
+enum RangeRequest {
+    /// A range of the file: answered with a 206.
+    Satisfiable(ByteRange),
+    /// A well formed range that lies outside the file: a 416.
+    Unsatisfiable,
+    /// Not a byte range at all - another unit, or one that does not
+    /// parse. RFC 9110 14.2 has the header ignored then and the whole file
+    /// sent; these used to be a 416 too.
+    Ignored,
+}
+
 /// Parses HTTP Range header value
 ///
 /// # Arguments
 /// * `range_header` - Range header value (e.g., "bytes=0-499")
 /// * `file_size` - Total size of the file
 ///
-/// # Returns
-/// * `Some(ByteRange)` - Valid parsed range
-/// * `None` - Invalid or unsupported range format
-///
 /// # Supported formats
 /// - `bytes=start-end` (e.g., bytes=0-499)
 /// - `bytes=start-` (e.g., bytes=500- means from 500 to end)
 /// - `bytes=-suffix` (e.g., bytes=-500 means last 500 bytes)
-fn parse_range_header(range_header: &str, file_size: u64) -> Option<ByteRange> {
+fn parse_range_header(range_header: &str, file_size: u64) -> RangeRequest {
     // Only support single range for now (not multipart/byteranges)
-    let range_header = range_header.trim();
-    if !range_header.starts_with("bytes=") {
-        return None;
-    }
-
-    let range_spec = &range_header[6..]; // Skip "bytes="
+    let Some(range_spec) = range_header.trim().strip_prefix("bytes=") else {
+        return RangeRequest::Ignored;
+    };
 
     // Handle multiple ranges - for now just take the first one
-    let range_spec = range_spec.split(',').next()?.trim();
+    let range_spec = range_spec.split(',').next().unwrap_or_default().trim();
 
     if let Some(suffix_str) = range_spec.strip_prefix('-') {
         // The last `suffix` bytes, or the whole file when it has fewer:
         // RFC 9110 14.1.2. Asking for more than there is used to be a 416,
         // which is what a player gets that probes with `bytes=-65536`.
-        let suffix = suffix_str.parse::<u64>().ok()?.min(file_size);
+        let Ok(suffix) = suffix_str.parse::<u64>() else {
+            return RangeRequest::Ignored;
+        };
+        let suffix = suffix.min(file_size);
         if suffix == 0 {
-            return None;
+            return RangeRequest::Unsatisfiable;
         }
-        Some(ByteRange {
+        return RangeRequest::Satisfiable(ByteRange {
             start: file_size - suffix,
             end: file_size - 1,
-        })
+        });
+    }
+    // Normal range: bytes=start-end or bytes=start-
+    let Some((first, last)) = range_spec.split_once('-') else {
+        return RangeRequest::Ignored;
+    };
+    let Ok(start) = first.parse::<u64>() else {
+        return RangeRequest::Ignored;
+    };
+    let last = if last.is_empty() {
+        // Open-ended range: bytes=500-
+        None
     } else {
-        // Normal range: bytes=start-end or bytes=start-
-        let parts: Vec<&str> = range_spec.split('-').collect();
-        if parts.len() != 2 {
-            return None;
+        match last.parse::<u64>() {
+            // `bytes=5-2` is not a range.
+            Ok(last) if last >= start => Some(last),
+            _ => return RangeRequest::Ignored,
         }
+    };
+    if start >= file_size {
+        return RangeRequest::Unsatisfiable;
+    }
+    let end = last.map_or(file_size - 1, |last| last.min(file_size - 1));
+    RangeRequest::Satisfiable(ByteRange { start, end })
+}
 
-        let start: u64 = parts[0].parse().ok()?;
-        if start >= file_size {
-            return None;
-        }
+/// Whether the `Range` of a request applies. With an `If-Range` it does
+/// only while the client's copy is the current one, told by the entity tag
+/// the file was sent with: a client resuming a download of a file that has
+/// changed since gets the new file whole instead of a piece of it appended
+/// to the old one. A date never matches, as no `Last-Modified` is sent.
+fn if_range_holds(if_range: Option<&HeaderValue>, etag: Option<&str>) -> bool {
+    let Some(if_range) = if_range else {
+        return true;
+    };
+    etag.is_some_and(|etag| if_range.as_bytes() == etag.as_bytes())
+}
 
-        let end = if parts[1].is_empty() {
-            // Open-ended range: bytes=500-
-            file_size - 1
-        } else {
-            parts[1].parse::<u64>().ok()?.min(file_size - 1)
-        };
-
-        if end < start {
-            return None;
-        }
-
-        Some(ByteRange { start, end })
+/// The redirect for a directory asked for without its closing slash, from
+/// the uri the client used.
+///
+/// Its index page was served under that address, and every relative link
+/// of the page - the entries of a listing included - then resolved one
+/// level up. The target is relative, the last segment plus the slash, so
+/// it is right as well when a proxy in front has taken a prefix off.
+fn redirect_to_directory(uri: &http::Uri) -> HttpResponse {
+    let name = uri.path().rsplit('/').next().unwrap_or_default();
+    let mut target = format!("./{name}/");
+    if let Some(query) = uri.query() {
+        target.push('?');
+        target.push_str(query);
+    }
+    match HeaderValue::from_str(&target) {
+        Ok(value) => HttpResponse::builder(StatusCode::MOVED_PERMANENTLY)
+            .header((header::LOCATION, value))
+            .finish(),
+        Err(_) => HttpResponse::not_found("Not Found"),
     }
 }
 
@@ -578,7 +619,12 @@ impl Directory {
         resp.headers = Some(opt.headers);
 
         ctx.state.status = Some(opt.status);
-        resp.send(session).await?;
+        // The proxy never sees this response, so the plugins that set
+        // headers on what other plugins answer (`cors`) are asked here.
+        let mut header = resp.get_response_header()?;
+        pingap_core::decorate_plugin_response(session, ctx, &mut header)
+            .await?;
+        resp.send_with_header(session, header).await?;
         Ok(RequestPluginResult::Respond(IGNORE_RESPONSE.clone()))
     }
 }
@@ -686,6 +732,31 @@ impl Plugin for Directory {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
+        // Files are read, nothing else: a POST or a DELETE used to be
+        // answered like a GET, with a 200 and the file. An OPTIONS is told
+        // so, with a 2xx: answered by this plugin, it may be the preflight
+        // of a `cors` plugin listed after it, which adds its headers to
+        // the answer and needs it to be a success.
+        let method = &session.req_header().method;
+        if method != http::Method::GET && method != http::Method::HEAD {
+            let allow = (
+                header::ALLOW,
+                HeaderValue::from_static("GET, HEAD, OPTIONS"),
+            );
+            let resp = if method == http::Method::OPTIONS {
+                HttpResponse::builder(StatusCode::NO_CONTENT)
+                    .header(allow)
+                    .finish()
+            } else {
+                HttpResponse::builder(StatusCode::METHOD_NOT_ALLOWED)
+                    .header(allow)
+                    .header(HTTP_HEADER_CONTENT_TEXT.clone())
+                    .body("Method Not Allowed")
+                    .no_store()
+                    .finish()
+            };
+            return Ok(RequestPluginResult::Respond(resp));
+        }
         let path_str = session.req_header().uri.path();
 
         let decoded = decode(path_str).unwrap_or(Cow::Borrowed(path_str));
@@ -728,6 +799,20 @@ impl Plugin for Directory {
         // `docs/index.html` in place.
         let file = match fs::metadata(&file).await {
             Ok(meta) if meta.is_dir() => {
+                // By the address the client used, which is the one its
+                // links resolve against: after a rewrite the path here is
+                // another, and `/static` rewritten to `/assets` was sent
+                // to `./assets/`, out of the location.
+                let client_uri = ctx
+                    .features
+                    .as_ref()
+                    .and_then(|features| features.original_uri.as_ref())
+                    .unwrap_or(&session.req_header().uri);
+                if !client_uri.path().ends_with('/') {
+                    return Ok(RequestPluginResult::Respond(
+                        redirect_to_directory(client_uri),
+                    ));
+                }
                 if self.autoindex {
                     let resp = match get_autoindex_html(&file).await {
                         Ok(html) => HttpResponse::html(html),
@@ -795,11 +880,18 @@ impl Plugin for Directory {
             }));
         }
 
-        let range_header = session
-            .req_header()
-            .headers
+        let req_headers = &session.req_header().headers;
+        let range = match req_headers
             .get(header::RANGE)
-            .and_then(|v| v.to_str().ok());
+            .and_then(|v| v.to_str().ok())
+        {
+            Some(value)
+                if if_range_holds(req_headers.get(header::IF_RANGE), etag) =>
+            {
+                parse_range_header(value, size as u64)
+            },
+            _ => RangeRequest::Ignored,
+        };
         let chunk_size = self.chunk_size.unwrap_or(MIN_CHUNK_SIZE as usize);
         // A HEAD is answered from the metadata. It used to go the way of
         // the GET, reading the file - all of it, chunk by chunk, for a
@@ -807,83 +899,73 @@ impl Plugin for Directory {
         let is_head = session.req_header().method == http::Method::HEAD;
 
         // handle range request
-        if let Some(range_str) = range_header {
-            if let Some(range) = parse_range_header(range_str, size as u64) {
-                let range_len = range.len() as usize;
-                if let Ok(val) = HeaderValue::from_str(&format!(
-                    "bytes {}-{}/{}",
-                    range.start, range.end, size
-                )) {
-                    headers.push((header::CONTENT_RANGE, val));
-                }
-                if is_head {
-                    // The cache headers of the GET: only a streamed range
-                    // carries them.
-                    let streamed = range_len > chunk_size;
-                    return Ok(RequestPluginResult::Respond(
-                        self.head_response(
-                            StatusCode::PARTIAL_CONTENT,
-                            headers,
-                            range_len,
-                            streamed.then_some(cacheable),
-                        ),
-                    ));
-                }
-                if let Err(e) =
-                    f.seek(std::io::SeekFrom::Start(range.start)).await
-                {
-                    return Ok(RequestPluginResult::Respond(
-                        HttpResponse::unknown_error(e.to_string()),
-                    ));
-                }
-
-                if range_len <= chunk_size {
-                    let mut buffer = vec![0; range_len];
-                    return match f.read_exact(&mut buffer).await {
-                        Ok(_) => {
-                            Ok(RequestPluginResult::Respond(HttpResponse {
-                                status: StatusCode::PARTIAL_CONTENT,
-                                headers: Some(headers),
-                                body: buffer.into(),
-                                ..Default::default()
-                            }))
-                        },
-                        Err(e) => Ok(RequestPluginResult::Respond(
-                            HttpResponse::unknown_error(e.to_string()),
-                        )),
-                    };
-                } else {
-                    headers.push((
-                        header::CONTENT_LENGTH,
-                        HeaderValue::from(range_len),
-                    ));
-                    let limited_reader = f.take(range.len());
-                    return self
-                        .send_streaming_response(
-                            session,
-                            ctx,
-                            limited_reader,
-                            StreamOptions {
-                                headers,
-                                status: StatusCode::PARTIAL_CONTENT,
-                                cacheable,
-                                chunk_size,
-                            },
-                        )
-                        .await;
-                }
-            } else {
-                if let Ok(val) =
-                    HeaderValue::from_str(&format!("bytes */{size}"))
-                {
-                    headers.push((header::CONTENT_RANGE, val));
-                }
-                return Ok(RequestPluginResult::Respond(HttpResponse {
-                    status: StatusCode::RANGE_NOT_SATISFIABLE,
-                    headers: Some(headers),
-                    ..Default::default()
-                }));
+        if let RangeRequest::Unsatisfiable = range {
+            if let Ok(val) = HeaderValue::from_str(&format!("bytes */{size}")) {
+                headers.push((header::CONTENT_RANGE, val));
             }
+            return Ok(RequestPluginResult::Respond(HttpResponse {
+                status: StatusCode::RANGE_NOT_SATISFIABLE,
+                headers: Some(headers),
+                ..Default::default()
+            }));
+        }
+        if let RangeRequest::Satisfiable(range) = range {
+            let range_len = range.len() as usize;
+            if let Ok(val) = HeaderValue::from_str(&format!(
+                "bytes {}-{}/{}",
+                range.start, range.end, size
+            )) {
+                headers.push((header::CONTENT_RANGE, val));
+            }
+            if is_head {
+                return Ok(RequestPluginResult::Respond(self.head_response(
+                    StatusCode::PARTIAL_CONTENT,
+                    headers,
+                    range_len,
+                    Some(cacheable),
+                )));
+            }
+            if let Err(e) = f.seek(std::io::SeekFrom::Start(range.start)).await
+            {
+                return Ok(RequestPluginResult::Respond(
+                    HttpResponse::unknown_error(e.to_string()),
+                ));
+            }
+
+            if range_len <= chunk_size {
+                let mut buffer = vec![0; range_len];
+                return match f.read_exact(&mut buffer).await {
+                    // With the cache headers of the file, like the range
+                    // that is streamed: a short one came without them.
+                    Ok(_) => Ok(RequestPluginResult::Respond(HttpResponse {
+                        status: StatusCode::PARTIAL_CONTENT,
+                        max_age: if cacheable { self.max_age } else { None },
+                        cache_private: self.cache_private,
+                        headers: Some(headers),
+                        body: buffer.into(),
+                        ..Default::default()
+                    })),
+                    Err(e) => Ok(RequestPluginResult::Respond(
+                        HttpResponse::unknown_error(e.to_string()),
+                    )),
+                };
+            }
+            headers
+                .push((header::CONTENT_LENGTH, HeaderValue::from(range_len)));
+            let limited_reader = f.take(range.len());
+            return self
+                .send_streaming_response(
+                    session,
+                    ctx,
+                    limited_reader,
+                    StreamOptions {
+                        headers,
+                        status: StatusCode::PARTIAL_CONTENT,
+                        cacheable,
+                        chunk_size,
+                    },
+                )
+                .await;
         }
 
         if is_head {
@@ -1068,8 +1150,6 @@ mod tests {
         let resp = request(&dir, "GET /docs/ HTTP/1.1\r\n\r\n").await;
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(b"<h1>docs</h1>".as_ref(), resp.body.as_ref());
-        let resp = request(&dir, "GET /docs HTTP/1.1\r\n\r\n").await;
-        assert_eq!(200, resp.status.as_u16());
         let resp = request(&dir, "GET /missing/ HTTP/1.1\r\n\r\n").await;
         assert_eq!(404, resp.status.as_u16());
 
@@ -1342,7 +1422,8 @@ follow_symlinks = {follow_symlinks}
         // not. Asking for the directory used to serve it.
         assert_eq!(403, request(&dir, "/sub/index.html").await.status.as_u16());
         assert_eq!(403, request(&dir, "/sub/").await.status.as_u16());
-        assert_eq!(403, request(&dir, "/sub").await.status.as_u16());
+        // Without the slash it is sent to the address above, no further.
+        assert_eq!(301, request(&dir, "/sub").await.status.as_u16());
     }
 
     /// Regression: a HEAD went the way of the GET and read the file, the
@@ -1496,46 +1577,264 @@ follow_symlinks = {follow_symlinks}
         );
     }
 
+    fn header_of(resp: &HttpResponse, name: header::HeaderName) -> String {
+        resp.headers
+            .iter()
+            .flatten()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.to_str().unwrap().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Regression: a directory asked for without its closing slash got its
+    /// index page under that address, and the relative links of the page -
+    /// every entry of a listing among them - pointed one level up.
+    #[tokio::test]
+    async fn test_directory_redirects_to_closing_slash() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("docs")).unwrap();
+        std::fs::write(root.path().join("docs/index.html"), "<h1>docs</h1>")
+            .unwrap();
+
+        for extra in ["", "autoindex = true"] {
+            let dir = new_directory(root.path(), extra);
+            let resp = request(&dir, "GET /docs HTTP/1.1\r\n\r\n").await;
+            assert_eq!(301, resp.status.as_u16(), "{extra}");
+            assert_eq!("./docs/", header_of(&resp, header::LOCATION));
+            assert_eq!(true, resp.body.is_empty());
+
+            let resp =
+                request(&dir, "GET /docs?a=1&b=2 HTTP/1.1\r\n\r\n").await;
+            assert_eq!(301, resp.status.as_u16());
+            assert_eq!("./docs/?a=1&b=2", header_of(&resp, header::LOCATION));
+
+            let resp = request(&dir, "GET /docs/ HTTP/1.1\r\n\r\n").await;
+            assert_eq!(200, resp.status.as_u16());
+        }
+        // A file has no slash to add.
+        let dir = new_directory(root.path(), "");
+        let resp = request(&dir, "GET /docs/index.html HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+
+        // After a rewrite the redirect goes by what the client asked for,
+        // path and query: `/static` served from `/docs` is sent to
+        // `./static/`, not to `./docs/`, which is outside the location.
+        let rewritten = async |original: &'static str| {
+            let mock_io = Builder::new()
+                .read(b"GET /docs?added=1 HTTP/1.1\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            ctx.features.get_or_insert_default().original_uri =
+                Some(http::Uri::from_static(original));
+            let result = dir
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!("result is not Respond");
+            };
+            (resp.status.as_u16(), header_of(&resp, header::LOCATION))
+        };
+        assert_eq!(
+            (301, "./static/?v=2".to_string()),
+            rewritten("/static?v=2").await
+        );
+        // Asked for with the slash: nothing to add, whatever the path
+        // became.
+        assert_eq!((200, String::new()), rewritten("/static/").await);
+    }
+
+    /// Regression: every method was answered like a GET, a POST or a
+    /// DELETE with a 200 and the file.
+    #[tokio::test]
+    async fn test_directory_allows_get_and_head_only() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), "hello").unwrap();
+        let dir = new_directory(root.path(), "");
+
+        for method in ["POST", "PUT", "DELETE", "PATCH"] {
+            let resp = request(
+                &dir,
+                &format!(
+                    "{method} /a.txt HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
+                ),
+            )
+            .await;
+            assert_eq!(405, resp.status.as_u16(), "{method}");
+            assert_eq!("GET, HEAD, OPTIONS", header_of(&resp, header::ALLOW));
+            assert_ne!(b"hello".as_ref(), resp.body.as_ref());
+        }
+        // An OPTIONS is answered, not refused: it may be a preflight that
+        // a `cors` plugin after this one completes.
+        let resp = request(&dir, "OPTIONS /a.txt HTTP/1.1\r\n\r\n").await;
+        assert_eq!(204, resp.status.as_u16());
+        assert_eq!("GET, HEAD, OPTIONS", header_of(&resp, header::ALLOW));
+        assert_eq!(true, resp.body.is_empty());
+        let resp = request(&dir, "GET /a.txt HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(b"hello".as_ref(), resp.body.as_ref());
+        let resp = request(&dir, "HEAD /a.txt HTTP/1.1\r\n\r\n").await;
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(true, resp.body.is_empty());
+    }
+
+    /// Regression: a `Range` that is no byte range was a 416, where RFC
+    /// 9110 has it ignored; `If-Range` was not looked at; and a range short
+    /// enough to be read in one piece came without the cache headers.
+    #[tokio::test]
+    async fn test_directory_range_semantics() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.txt"), "0123456789").unwrap();
+        let dir = new_directory(root.path(), "max_age = \"1h\"");
+        let get = async |headers: &str| {
+            request(&dir, &format!("GET /a.txt HTTP/1.1\r\n{headers}\r\n"))
+                .await
+        };
+
+        let resp = get("Range: bytes=2-5\r\n").await;
+        assert_eq!(206, resp.status.as_u16());
+        assert_eq!(b"2345".as_ref(), resp.body.as_ref());
+        assert_eq!("bytes 2-5/10", header_of(&resp, header::CONTENT_RANGE));
+        assert_eq!(Some(3600), resp.max_age);
+        let etag = header_of(&resp, header::ETAG);
+
+        // Not a range, so the whole file.
+        for range in ["bytes=5-2", "items=0-1", "bytes=a-b", "bytes=-x"] {
+            let resp = get(&format!("Range: {range}\r\n")).await;
+            assert_eq!(200, resp.status.as_u16(), "{range}");
+            assert_eq!(b"0123456789".as_ref(), resp.body.as_ref());
+            assert_eq!("", header_of(&resp, header::CONTENT_RANGE));
+        }
+        // A range, but not of this file.
+        for range in ["bytes=10-", "bytes=20-30", "bytes=-0"] {
+            let resp = get(&format!("Range: {range}\r\n")).await;
+            assert_eq!(416, resp.status.as_u16(), "{range}");
+            assert_eq!("bytes */10", header_of(&resp, header::CONTENT_RANGE));
+        }
+
+        // `If-Range` with the tag of the file as it is: the range.
+        let resp =
+            get(&format!("Range: bytes=2-5\r\nIf-Range: {etag}\r\n")).await;
+        assert_eq!(206, resp.status.as_u16());
+        // With the tag of another version, or a date: the file.
+        for if_range in ["W/\"1-1\"", "Wed, 21 Oct 2015 07:28:00 GMT"] {
+            let resp =
+                get(&format!("Range: bytes=2-5\r\nIf-Range: {if_range}\r\n"))
+                    .await;
+            assert_eq!(200, resp.status.as_u16(), "{if_range}");
+            assert_eq!(b"0123456789".as_ref(), resp.body.as_ref());
+        }
+
+        // The HEAD of a short range carries the cache headers as well.
+        let resp =
+            request(&dir, "HEAD /a.txt HTTP/1.1\r\nRange: bytes=2-5\r\n\r\n")
+                .await;
+        assert_eq!(206, resp.status.as_u16());
+        assert_eq!(Some(3600), resp.max_age);
+    }
+
+    /// Regression: a file larger than a chunk is written by the plugin
+    /// itself and never passed the proxy, which is where `cors` sets its
+    /// headers on what other plugins answer. A small file had them, a
+    /// large one did not.
+    #[tokio::test]
+    async fn test_directory_streamed_response_is_decorated() {
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let root = tempfile::tempdir().unwrap();
+        let size = 3 * MIN_CHUNK_SIZE as usize;
+        std::fs::write(root.path().join("big.bin"), vec![b'a'; size]).unwrap();
+        let dir = new_directory(root.path(), "");
+        let cors: Arc<dyn Plugin> = Arc::new(
+            crate::cors::Cors::new(
+                &toml::from_str::<PluginConf>(
+                    "allow_origin = \"https://a.io\"",
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+
+        let (mut client, server) = tokio::io::duplex(1024 * 1024);
+        client
+            .write_all(b"GET /big.bin HTTP/1.1\r\nOrigin: https://a.io\r\n\r\n")
+            .await
+            .unwrap();
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+        // What the proxy leaves in the context while the request plugins
+        // of a location with such a plugin run.
+        let mut ctx = Ctx {
+            response_plugins: Some(Arc::from(vec![(Arc::from("cors"), cors)])),
+            ..Default::default()
+        };
+        dir.handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        drop(session);
+        let mut buf = vec![];
+        client.read_to_end(&mut buf).await.unwrap();
+        let text = String::from_utf8_lossy(&buf).into_owned();
+        let (head, body) = text.split_once("\r\n\r\n").unwrap();
+        let head = head.to_ascii_lowercase();
+        assert_eq!(
+            true,
+            head.contains("access-control-allow-origin: https://a.io"),
+            "{head}"
+        );
+        assert_eq!(size, body.len());
+        // The list is back where the next response finds it.
+        assert_eq!(true, ctx.response_plugins.is_some());
+    }
+
     #[test]
     fn test_parse_range_header() {
+        let range =
+            |value: &str, size: u64| match parse_range_header(value, size) {
+                RangeRequest::Satisfiable(range) => {
+                    Ok((range.start, range.end))
+                },
+                RangeRequest::Unsatisfiable => Err("unsatisfiable"),
+                RangeRequest::Ignored => Err("ignored"),
+            };
         // Test normal range
-        let range = parse_range_header("bytes=0-499", 1000).unwrap();
-        assert_eq!(0, range.start);
-        assert_eq!(499, range.end);
+        assert_eq!(Ok((0, 499)), range("bytes=0-499", 1000));
 
         // Test open-ended range
-        let range = parse_range_header("bytes=500-", 1000).unwrap();
-        assert_eq!(500, range.start);
-        assert_eq!(999, range.end);
+        assert_eq!(Ok((500, 999)), range("bytes=500-", 1000));
 
         // Test suffix range (last N bytes)
-        let range = parse_range_header("bytes=-500", 1000).unwrap();
-        assert_eq!(500, range.start);
-        assert_eq!(999, range.end);
+        assert_eq!(Ok((500, 999)), range("bytes=-500", 1000));
 
         // Regression: a suffix longer than the file is the whole file, not
         // an unsatisfiable range.
-        let range = parse_range_header("bytes=-1500", 1000).unwrap();
-        assert_eq!(0, range.start);
-        assert_eq!(999, range.end);
-        assert!(parse_range_header("bytes=-0", 1000).is_none());
-        assert!(parse_range_header("bytes=-500", 0).is_none());
+        assert_eq!(Ok((0, 999)), range("bytes=-1500", 1000));
+        assert_eq!(Err("unsatisfiable"), range("bytes=-0", 1000));
+        assert_eq!(Err("unsatisfiable"), range("bytes=-500", 0));
 
         // Test range beyond file size
-        let range = parse_range_header("bytes=0-1999", 1000).unwrap();
-        assert_eq!(0, range.start);
-        assert_eq!(999, range.end);
+        assert_eq!(Ok((0, 999)), range("bytes=0-1999", 1000));
 
         // Test invalid start position
-        assert!(parse_range_header("bytes=1000-", 1000).is_none());
+        assert_eq!(Err("unsatisfiable"), range("bytes=1000-", 1000));
 
-        // Test invalid format
-        assert!(parse_range_header("invalid", 1000).is_none());
-        assert!(parse_range_header("bytes=", 1000).is_none());
+        // Regression: what is not a byte range is ignored, and used to be
+        // unsatisfiable like a range past the end.
+        for value in [
+            "invalid",
+            "bytes=",
+            "bytes=5-2",
+            "items=0-1",
+            "bytes=a-",
+            "bytes=-x",
+        ] {
+            assert_eq!(Err("ignored"), range(value, 1000), "{value}");
+        }
 
         // Test multipart range (only first part used)
-        let range = parse_range_header("bytes=0-100,200-300", 1000).unwrap();
-        assert_eq!(0, range.start);
-        assert_eq!(100, range.end);
+        assert_eq!(Ok((0, 100)), range("bytes=0-100,200-300", 1000));
     }
 }

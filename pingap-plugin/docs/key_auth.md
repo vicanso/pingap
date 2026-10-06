@@ -20,6 +20,12 @@ query parameter and compared, in constant time, against a configured list.
 At least one of `header` / `query` must be set. **If both are set, `query`
 wins** and `header` is ignored — the plugin reads a single location, never both.
 
+The query value is compared as it was sent and, when it carries
+percent-encoding, in its decoded form as well: a key with a character that has
+to be encoded in a query (`+`, `/`, `=`) is sent as `?api_key=a%2Bb` and
+configured as `a+b`. A `+` in the url stays a plus, it is not read as a space.
+A key that was listed in its encoded form (`a%2Bb`) keeps matching.
+
 ## Examples
 
 Header-based:

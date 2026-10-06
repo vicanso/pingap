@@ -235,6 +235,10 @@ pub trait HttpCacheStorage: Sync + Send {
     fn inactive(&self) -> Option<Duration> {
         None
     }
+
+    /// Called on a storage that another one has taken the place of, to
+    /// let go of what it holds in memory.
+    fn retire(&self) {}
 }
 
 /// Sweeps every file backend's inactive files, once every 60 ticks. A

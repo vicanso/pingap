@@ -539,7 +539,15 @@ impl Prometheus {
                 })
                 .inc();
         }
-        if let Some(upstream_processing_time) = ctx.timing.upstream_processing {
+        // Through the getters, which leave out a phase that never
+        // finished. Its field still holds the start marker, a negative
+        // number: a HEAD or a 204 has no body to end the response phase,
+        // an upstream that never answers none to end the processing one,
+        // and each took its marker off the histogram's sum and landed in
+        // the fastest bucket.
+        if let Some(upstream_processing_time) =
+            ctx.get_upstream_processing_time()
+        {
             series
                 .processing_time
                 .get_or_init(|| {
@@ -548,7 +556,7 @@ impl Prometheus {
                 })
                 .observe(upstream_processing_time as f64 / SECOND);
         }
-        if let Some(upstream_response_time) = ctx.timing.upstream_response {
+        if let Some(upstream_response_time) = ctx.get_upstream_response_time() {
             series
                 .response_time
                 .get_or_init(|| {
@@ -1513,6 +1521,72 @@ mod tests {
         );
         // And no per-location series was created.
         assert_eq!(false, buf.contains("location=\"lo\""), "{buf}");
+    }
+
+    /// Regression: a phase that never finished still holds its start
+    /// marker, a negative number - a HEAD or a 204 has no body to end the
+    /// response phase, an upstream that never answers nothing to end the
+    /// processing one. The histograms took the marker for a duration: it
+    /// came off their sum and counted in the fastest bucket.
+    #[tokio::test]
+    async fn test_unfinished_upstream_phases_are_not_observed() {
+        let mock_io = Builder::new()
+            .read(b"HEAD / HTTP/1.1\r\nHost: github.com\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let p = new_prometheus("pingap").unwrap();
+        let request = |processing: i32, response: i32| {
+            p.on_request_start();
+            p.on_location_matched("lo");
+            p.after(
+                &session,
+                &Ctx {
+                    timing: Timing {
+                        created_at: Instant::now(),
+                        upstream_processing: Some(processing),
+                        upstream_response: Some(response),
+                        ..Default::default()
+                    },
+                    state: RequestState {
+                        status: Some(StatusCode::OK),
+                        ..Default::default()
+                    },
+                    upstream: pingap_core::UpstreamInfo {
+                        name: "markers".into(),
+                        location: "lo".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        };
+        let value = |name: &str| {
+            let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+            metric_value(&buf, name, &["upstream=\"markers\""])
+        };
+
+        // Both phases finished: 20ms and 10ms.
+        request(20, 10);
+        assert_eq!(
+            Some("1".to_string()),
+            value("pingap_upstream_response_time_count{")
+        );
+        // Neither did: the markers of a start at 50ms and at 60ms.
+        request(-51, -61);
+        for name in [
+            "pingap_upstream_processing_time",
+            "pingap_upstream_response_time",
+        ] {
+            assert_eq!(
+                Some("1".to_string()),
+                value(&format!("{name}_count{{")),
+                "{name}"
+            );
+            let sum: f64 =
+                value(&format!("{name}_sum{{")).unwrap().parse().unwrap();
+            assert_eq!(true, sum > 0.0, "{name}: {sum}");
+        }
     }
 
     /// The per-upstream series of an upstream that left the configuration

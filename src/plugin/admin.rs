@@ -31,13 +31,14 @@ use humantime::parse_duration;
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
-    BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
-    CertificateConf, ConfigManager, LocationConf, PluginCategory, PluginConf,
-    ServerConf, StorageConf, UpstreamConf, Validate, format_category,
+    BasicConf, CATEGORY_BASIC, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    Category, CertificateConf, ConfigManager, LocationConf, PluginCategory,
+    PluginConf, ServerConf, StorageConf, UpstreamConf, Validate,
+    format_category,
 };
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
-    PingapConfig,
+    PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, TtlLruLimit,
@@ -486,8 +487,18 @@ impl AdminServe {
             pingap_core::new_internal_error(400, e)
         })?;
 
+        // Not only the entry: the configuration the storage would hold
+        // with it, checked the way `--test` checks one. A location with a
+        // regex that does not compile, or a plugin option of the wrong
+        // type, used to be stored; every reload after that failed, and so
+        // did the next start.
         self.manager
-            .update(category, name, &conf)
+            .update_checked(
+                category,
+                name,
+                &conf,
+                Some(crate::validate::check_change),
+            )
             .await
             .map_err(|e| {
                 error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
@@ -560,13 +571,23 @@ impl AdminServe {
                 )
                 .await?;
             },
-            _ => {
+            // `pingap` is what the admin page posts the basic config as.
+            CATEGORY_BASIC | "pingap" => {
                 self.handle_update_config::<BasicConf>(
                     "",
                     &buf,
                     Category::Basic,
                 )
                 .await?;
+            },
+            // Anything else used to be stored as the basic config, which a
+            // body meant for another category - `upstreams/x` for
+            // `upstream/x` - then replaced with an empty one.
+            _ => {
+                return Err(pingap_core::new_internal_error(
+                    400,
+                    format!("invalid category: {category}"),
+                ));
             },
         };
 
@@ -577,10 +598,41 @@ impl AdminServe {
         session: &mut Session,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
-        let config = toml::from_slice(&buf).map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
-            pingap_core::new_internal_error(400, e)
-        })?;
+        let refuse = |message: String| {
+            error!(target: LOG_TARGET, error = message, "import config fail");
+            pingap_core::new_internal_error(400, message)
+        };
+        let table: toml::Table =
+            toml::from_slice(&buf).map_err(|e| refuse(e.to_string()))?;
+        // An import replaces what is stored. One with nothing in it, or
+        // with its sections under names pingap does not read
+        // (`[upstream.x]` for `[upstreams.x]`), reads as an empty
+        // configuration and would replace everything with nothing.
+        if table.is_empty() {
+            return Err(refuse("the config to import is empty".to_string()));
+        }
+        if let Some(key) = table
+            .keys()
+            .find(|key| !IMPORT_SECTIONS.contains(&key.as_str()))
+        {
+            return Err(refuse(format!(
+                "unknown section: {key}, expect one of {}",
+                IMPORT_SECTIONS.join(", ")
+            )));
+        }
+        let config: PingapTomlConfig = toml::Value::Table(table)
+            .try_into()
+            .map_err(|e: toml::de::Error| refuse(e.to_string()))?;
+        // And it has to stand on its own, checked the way `--test` checks
+        // a configuration. It used to be written as it came.
+        let config = tokio::task::spawn_blocking(move || {
+            crate::validate::validate_stored(&config)
+                .map(|_| config)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| refuse(e.to_string()))?
+        .map_err(refuse)?;
         self.manager.save_all(&config).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
@@ -596,6 +648,17 @@ impl AdminServe {
 /// Every failure used to be a 500 - a body that is not JSON, a config that
 /// does not validate - and the message was the error as pingora prints it,
 /// `HTTPStatus context: ... cause:  InternalError`.
+/// The top level sections of a configuration, which an import may have.
+const IMPORT_SECTIONS: [&str; 7] = [
+    "basic",
+    "servers",
+    "upstreams",
+    "locations",
+    "plugins",
+    "certificates",
+    "storages",
+];
+
 fn config_error_response(err: &pingora::Error) -> HttpResponse {
     let status = match err.etype() {
         pingora::ErrorType::HTTPStatus(code) => StatusCode::from_u16(*code)
@@ -648,20 +711,6 @@ async fn handle_request_admin(
     session: &mut Session,
     ctx: &mut Ctx,
 ) -> pingora::Result<Option<HttpResponse>> {
-    // Failed logins are counted by an address the client cannot choose:
-    // the client ip behind trusted proxies, the peer's own without them.
-    // The client ip alone is, without trusted proxies, whatever
-    // `X-Forwarded-For` says, and a new address with every guess was never
-    // locked out.
-    let ip = pingap_core::ensure_verified_client_ip(session, ctx);
-    if !plugin.ip_fail_limit.validate(ip) {
-        return Ok(Some(HttpResponse {
-            status: StatusCode::FORBIDDEN,
-            body: Bytes::from_static(b"Forbidden, too many failures"),
-            ..Default::default()
-        }));
-    }
-
     let header = session.req_header_mut();
     let path = header.uri.path();
     // What is left always starts with `/`. Cutting `plugin.path` by length
@@ -706,8 +755,37 @@ async fn handle_request_admin(
             });
         return Ok(Some(static_file(&path, gzip)));
     };
+    // Failed logins are counted by an address the client cannot choose:
+    // the client ip behind trusted proxies, the peer's own without them.
+    // The client ip alone is, without trusted proxies, whatever
+    // `X-Forwarded-For` says, and a new address with every guess was never
+    // locked out.
+    //
+    // The lock stands in front of the API only. Checked ahead of the
+    // routing it also took the pages of the UI away, and on a server
+    // shared with an application the paths that are not the admin's.
+    let ip = pingap_core::ensure_verified_client_ip(session, ctx);
+    if !plugin.ip_fail_limit.validate(ip) {
+        return Ok(Some(HttpResponse {
+            status: StatusCode::FORBIDDEN,
+            body: Bytes::from_static(b"Forbidden, too many failures"),
+            ..Default::default()
+        }));
+    }
     if !plugin.auth_validate(session.req_header()) {
-        plugin.ip_fail_limit.inc(ip);
+        // A failed login is one that was tried. A request without
+        // credentials - the page polling before the login, or after its
+        // token ran out - is turned away and not counted: ten of those
+        // locked the administrator out, and anyone who could make their
+        // browser send ten requests could do it for them.
+        if session
+            .req_header()
+            .headers
+            .get(header::AUTHORIZATION)
+            .is_some_and(|value| !value.is_empty())
+        {
+            plugin.ip_fail_limit.inc(ip);
+        }
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
             ..Default::default()
@@ -936,10 +1014,13 @@ mod tests {
         handle_request_admin,
     };
     use crate::config_manager::try_init_config_manager;
+    use hex::ToHex;
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, HttpResponse};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
 
@@ -1235,6 +1316,293 @@ mod tests {
         // spellchecker:on
         // No entry at all is the documented way to run without a password.
         assert_eq!(Ok(0), new_admin(""));
+    }
+
+    /// An admin without credentials on a config file of its own. The
+    /// manager the plugin is built with is the one of the process, shared
+    /// by every test; a test that writes gets its own.
+    fn new_admin_on(
+        file: &std::path::Path,
+        conf: &str,
+    ) -> (AdminServe, Arc<pingap_config::ConfigManager>) {
+        try_init_config_manager(&file.to_string_lossy()).unwrap();
+        let mut admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                "category = \"admin\"\n{conf}"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let manager = Arc::new(
+            pingap_config::new_config_manager(&file.to_string_lossy()).unwrap(),
+        );
+        admin.manager = manager.clone();
+        (admin, manager)
+    }
+
+    async fn post(admin: &AdminServe, path: &str, body: &str) -> (u16, String) {
+        let mut session = new_admin_session(&format!(
+            "POST {path} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ))
+        .await;
+        let resp =
+            handle_request_admin(admin, &mut session, &mut Ctx::default())
+                .await
+                .unwrap()
+                .unwrap();
+        // The message of an error, or the body as it is.
+        let body = String::from_utf8_lossy(&resp.body).into_owned();
+        let message = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value.get("message")?.as_str().map(str::to_string)
+            })
+            .unwrap_or(body);
+        (resp.status.as_u16(), message)
+    }
+
+    const STORED: &str = r#"[basic]
+name = "pingap"
+threads = 2
+
+[upstreams.u1]
+addrs = ["127.0.0.1:5000"]
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+"#;
+
+    /// Regression: a post to a category the admin does not know was stored
+    /// as the basic config. With the body of another category - a typo,
+    /// `upstreams/x` for `upstream/x` - that left `[basic]` empty.
+    #[tokio::test]
+    async fn test_update_config_knows_its_categories() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), STORED).unwrap();
+        let (admin, manager) = new_admin_on(file.path(), "");
+        let basic = async || {
+            let config = manager.load_all().await.unwrap();
+            config.to_pingap_config(false).unwrap().basic
+        };
+
+        let upstream = r#"{"addrs":["127.0.0.1:5001"]}"#;
+        for category in ["upstreams", "unknown", "full"] {
+            let (status, body) =
+                post(&admin, &format!("/api/configs/{category}/x"), upstream)
+                    .await;
+            assert_eq!(400, status, "{category}: {body}");
+            assert_eq!(
+                true,
+                body.contains(&format!("invalid category: {category}")),
+                "{body}"
+            );
+        }
+        assert_eq!(Some("pingap".to_string()), basic().await.name);
+        assert_eq!(Some(2), basic().await.threads);
+
+        // The two names the basic config is posted under: the page's, and
+        // the one of the category.
+        for (category, name) in [("pingap", "first"), ("basic", "second")] {
+            let (status, body) = post(
+                &admin,
+                &format!("/api/configs/{category}/basic"),
+                &format!(r#"{{"name":"{name}","threads":2}}"#),
+            )
+            .await;
+            assert_eq!(204, status, "{category}: {body}");
+            assert_eq!(Some(name.to_string()), basic().await.name);
+        }
+        // The right category still works.
+        let (status, body) =
+            post(&admin, "/api/configs/upstream/x", upstream).await;
+        assert_eq!(204, status, "{body}");
+    }
+
+    /// Regression: the admin stored what startup refuses. Only the entry
+    /// itself was looked at, and only as far as its own `validate` goes: a
+    /// location with a regex that does not compile, a plugin option of the
+    /// wrong type and a reference to nothing all went in, and an import
+    /// was not looked at at all.
+    #[tokio::test]
+    async fn test_admin_refuses_what_startup_would() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), STORED).unwrap();
+        let (admin, _) = new_admin_on(file.path(), "");
+        let stored = || std::fs::read_to_string(file.path()).unwrap();
+
+        for (path, body, expected) in [
+            (
+                "/api/configs/location/bad",
+                r#"{"upstream":"u1","path":"~ ^/api/("}"#,
+                "location \"bad\" is invalid",
+            ),
+            (
+                "/api/configs/plugin/limiter",
+                r#"{"category":"limit","type":"inflight","tag":"ip","max":"100"}"#,
+                "plugin \"limiter\" is invalid",
+            ),
+            (
+                "/api/configs/location/lost",
+                r#"{"upstream":"u2"}"#,
+                "upstream(u2) is not found",
+            ),
+            (
+                "/api/configs/import",
+                "[locations.bad]\nupstream = \"u1\"\n",
+                "upstream(u1) is not found",
+            ),
+        ] {
+            let (status, message) = post(&admin, path, body).await;
+            assert_eq!(400, status, "{path}: {message}");
+            assert_eq!(true, message.contains(expected), "{path}: {message}");
+            assert_eq!(STORED, stored(), "{path}");
+        }
+
+        // An import with nothing pingap reads in it would replace what is
+        // stored with nothing.
+        for (body, expected) in [
+            ("", "the config to import is empty"),
+            ("# only a comment\n", "the config to import is empty"),
+            (
+                "[upstream.u1]\naddrs = [\"127.0.0.1:5000\"]\n",
+                "unknown section: upstream",
+            ),
+        ] {
+            let (status, message) =
+                post(&admin, "/api/configs/import", body).await;
+            assert_eq!(400, status, "{body}: {message}");
+            assert_eq!(true, message.contains(expected), "{message}");
+            assert_eq!(STORED, stored());
+        }
+
+        // A cache plugin that is refused has made no directory, and one
+        // that is stored has not either: that is for the reload.
+        let cache_dir = file.path().with_extension("cache");
+        for (extra, expected) in [(r#","max_ttl":"oops""#, 400), ("", 204)] {
+            let (status, message) = post(
+                &admin,
+                "/api/configs/plugin/c",
+                &format!(
+                    r#"{{"category":"cache","directory":"{}?inactive=1m"{extra}}}"#,
+                    cache_dir.display()
+                ),
+            )
+            .await;
+            assert_eq!(expected, status, "{message}");
+            assert_eq!(false, cache_dir.exists());
+        }
+
+        // What is right is stored as before.
+        let (status, message) = post(
+            &admin,
+            "/api/configs/location/good",
+            r#"{"upstream":"u1","path":"~ ^/v[0-9]+/"}"#,
+        )
+        .await;
+        assert_eq!(204, status, "{message}");
+        let (status, message) =
+            post(&admin, "/api/configs/import", STORED).await;
+        assert_eq!(204, status, "{message}");
+    }
+
+    /// A storage that does not pass as it is takes changes: that is the
+    /// admin being used to repair it.
+    #[tokio::test]
+    async fn test_admin_can_repair_a_broken_config() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(
+            file.path(),
+            format!("{STORED}\n[locations.lost]\nupstream = \"u2\"\n"),
+        )
+        .unwrap();
+        let (admin, manager) = new_admin_on(file.path(), "");
+
+        // Still broken after this one, and taken all the same.
+        let (status, message) = post(
+            &admin,
+            "/api/configs/location/other",
+            r#"{"upstream":"u3"}"#,
+        )
+        .await;
+        assert_eq!(204, status, "{message}");
+        for (name, upstream) in [("lost", "u1"), ("other", "u1")] {
+            let (status, message) = post(
+                &admin,
+                &format!("/api/configs/location/{name}"),
+                &format!(r#"{{"upstream":"{upstream}"}}"#),
+            )
+            .await;
+            assert_eq!(204, status, "{message}");
+        }
+        // Repaired, and from here on a change has to keep it that way.
+        let config = manager.load_all().await.unwrap();
+        assert_eq!(true, crate::validate::validate_stored(&config).is_ok());
+        let (status, _) = post(
+            &admin,
+            "/api/configs/location/other",
+            r#"{"upstream":"u3"}"#,
+        )
+        .await;
+        assert_eq!(400, status);
+    }
+
+    /// Regression: a request without credentials counted as a failed
+    /// login, and the lock was looked at before anything else. Ten of them
+    /// - the page polling after its token ran out - locked the address out
+    /// of the admin, the pages of the UI included.
+    #[tokio::test]
+    async fn test_admin_lock_counts_failed_logins_only() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        // spellchecker:off
+        let (admin, _) = new_admin_on(
+            file.path(),
+            "path = \"/admin/\"\nauthorizations = [\"YWRtaW46MTIzMTIz\"]",
+        );
+        // spellchecker:on
+        let status = async |path: &str, authorization: Option<&str>| {
+            let header = authorization
+                .map(|value| format!("Authorization: {value}\r\n"))
+                .unwrap_or_default();
+            let mut session = new_admin_session(&format!(
+                "GET {path} HTTP/1.1\r\n{header}\r\n"
+            ))
+            .await;
+            let mut ctx = Ctx::default();
+            ctx.conn.remote_addr = Some("192.0.2.7".to_string());
+            handle_request_admin(&admin, &mut session, &mut ctx)
+                .await
+                .unwrap()
+                .map(|resp| resp.status.as_u16())
+        };
+        let token = || {
+            let ts = pingap_core::now_sec();
+            let mut hasher = Sha256::new();
+            hasher.update(format!("admin:123123:{ts}").as_bytes());
+            format!("{}:{ts}", hasher.finalize().encode_hex::<String>())
+        };
+
+        // Not logins: turned away, and not held against the address.
+        for _ in 0..30 {
+            assert_eq!(Some(401), status("/admin/api/basic", None).await);
+        }
+        assert_eq!(Some(200), status("/admin/api/basic", Some(&token())).await);
+
+        // Failed logins are, up to the limit of ten.
+        let wrong = format!("{}:{}", "0".repeat(64), pingap_core::now_sec());
+        for _ in 0..10 {
+            assert_eq!(
+                Some(401),
+                status("/admin/api/basic", Some(&wrong)).await
+            );
+        }
+        assert_eq!(Some(403), status("/admin/api/basic", Some(&wrong)).await);
+        assert_eq!(Some(403), status("/admin/api/basic", Some(&token())).await);
+        // The lock is on the API. The pages still load, and what is not
+        // under the admin's prefix was never its to refuse.
+        assert_eq!(Some(200), status("/admin/", None).await);
+        assert_eq!(None, status("/app/orders", None).await);
     }
 
     /// Regression: `/config-history/{category}` without the trailing name used

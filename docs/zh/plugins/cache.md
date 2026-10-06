@@ -12,14 +12,14 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `category` | string | — | 必须为 `cache`。 |
 | `directory` | string | 内存 | 空或 `memory://…` 选内存后端；其他值作为文件缓存目录。 |
 | `namespace` | string | — | 隔离条目；文件后端时成为子目录。 |
-| `headers` | string[] | — | 追加到缓存键的请求头（变体缓存）。 |
+| `headers` | string[] | — | 追加到缓存键的请求头（变体缓存）。每个头在键里占一个固定位置，请求没带这个头时位置也保留；值里的 `:` 写成 `%3A`，不会被当成两个位置之间的分隔。 |
 | `vary_headers` | string[] | — | 源站 `Vary` 响应头的白名单：只有这些请求头可以产生缓存变体。不设则按源站列出的全部处理。 |
 | `max_ttl` | duration | — | 条目寿命上限，封顶上游 `Cache-Control`。 |
 | `max_file_size` | bytesize | `1mb` | 大于此尺寸的响应不缓存。 |
 | `lock` | duration | `1s` | 防惊群的缓存锁窗口。任意非零时长都有效；`0s` 关闭锁定。 |
 | `lock_retries` | int | `2` | 等锁的请求在放弃、自行回源之前重新查询缓存的次数。 |
-| `eviction` | bool | 缺席 | 键存在即启用 LRU 淘汰。 |
-| `predictor` | bool | 缺席 | 键存在即启用可缓存性预测。 |
+| `eviction` | bool | `false` | `true` 启用 LRU 淘汰。仅内存后端有效。 |
+| `predictor` | bool | `false` | `true` 启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
 | `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。校验的是哪个地址见[谁可以清理](#谁可以清理)。 |
 | `skip` | string | — | 路径+查询串的正则；匹配的请求完全绕过缓存。 |
@@ -103,6 +103,9 @@ curl -X PURGE http://127.0.0.1:6188/*
 
 - **没有配置 `basic.trusted_proxies` 时，`PURGE` 不再采用 `X-Forwarded-For`。** 到 0.15.0 为止，任何来源的这个头都会被采用。经过未列入可信代理的代理发送的清理请求，升级后会返回 `403`；把该代理加入列表即可，见[谁可以清理](#谁可以清理)。
 - **从 0.15.0 及更早版本升级后缓存会清空。** 到该版本为止，只有 HTTP/2 请求的键包含域名，HTTP/1.1 下同一个 `cache` 插件后面的两个站点共用条目。这些版本写入的条目在现在的键下找不到：升级后缓存从空开始，文件缓存里的旧条目留在磁盘上，由 inactive 扫描清除。
+- **`eviction` 与 `predictor` 按取值生效。** 以前只要键存在就开启，所以 `eviction = false`（admin 表单选“否”时保存的值）反而会开启。如果配置里靠写 `false` 来表示开启，需要改成 `true`。
+- **只带了部分 `headers` 的请求会换一个缓存键。** `headers = ["X-A", "X-B"]` 时，以前各个值直接拼接、不保留位置，只带 `X-A: 1` 的请求和只带 `X-B: 1` 的请求共用一个条目。现在每个头占一个位置。所列的头全带或全不带的请求，键不变；只带了其中一部分的请求以前写入的条目不会再被命中，等过期后回收。头的值里含有 `:` 或 `%`（例如 `Origin`）的条目同理：这两个字符现在在键里会被转义。
+- **`example.com.` 与 `example.com` 分开缓存。** 域名末尾写出根标签时，路由按不带点的域名处理，但转发给上游的 `Host` 保持原样，所以它的响应用单独的键保存。
 - **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。
 - **每个进程只有一个内存后端。** 第一个请求内存缓存的 `cache` 插件创建进程级单例；第二个声明不同 `max_size` 或 `mode` 时会静默复用第一个。用 `namespace` 分隔内容，不要再声明第二个 `directory`。
 - 每个不同的 `lock` 时长会在进程生命周期内分配一把共享锁，因此重要的是不同取值的数量，而不是插件实例数。

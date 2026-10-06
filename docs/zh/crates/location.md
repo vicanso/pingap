@@ -39,6 +39,8 @@
 
 例如，模式为 `~(?<name>.+)\.npmtrend\.com` 的 `HostSelector` 会匹配 `charts.npmtrend.com`，并把 `charts` 捕获到 `name` 变量。
 
+域名末尾写出根标签（多一个点）时指的仍是同一个域名：`Host: example.com.` 的请求按 `example.com` 匹配，配置里的域名末尾带点时同样会去掉。以前按原样匹配时，这样的请求匹配不到该域名的 location，会落到兜底的 location 上，绕过保护这个域名的插件。
+
 精确与通配模式以小写存储，与请求主机就地比较，因此 `Host: API.Example.COM` 能匹配 `api.example.com`，且不会为每个模式复制一份小写主机名。没有命名分组的正则（主机或路径）只做普通匹配，正则引擎不必跟踪分组位置；只有带 `(?<name>...)` 的模式才付出提取的开销。
 
 ### `LocationHostIndex` / `ServerLocationRoute`

@@ -16,7 +16,10 @@ use super::{Error, Result};
 use crate::PingapTomlConfig;
 use bytesize::ByteSize;
 use pingap_core::ACCESS_LOG_PRESETS;
-use pingap_discovery::{DNS_DISCOVERY, is_static_discovery};
+use pingap_discovery::{
+    DNS_DISCOVERY, DOCKER_DISCOVERY, STATIC_DISCOVERY, TRANSPARENT_DISCOVERY,
+    is_static_discovery,
+};
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
 use rustls_pki_types::pem::PemObject;
@@ -295,6 +298,16 @@ impl Validate for CertificateConf {
     }
 }
 
+/// Accepted values of `UpstreamConf::discovery`, as `guess_discovery`
+/// gives them: empty for static addresses that name none.
+const KNOWN_DISCOVERIES: [&str; 5] = [
+    "",
+    STATIC_DISCOVERY,
+    DNS_DISCOVERY,
+    DOCKER_DISCOVERY,
+    TRANSPARENT_DISCOVERY,
+];
+
 /// Accepted values of `UpstreamConf::h1_upgrade`, matched case-insensitively.
 /// They mirror pingora's `H1UpgradePolicy` variants; the upstream crate maps
 /// them, this crate only validates them.
@@ -535,9 +548,11 @@ impl UpstreamConf {
     /// - Returns DNS discovery if any address contains a hostname
     /// - Returns empty string (static discovery) otherwise
     pub fn guess_discovery(&self) -> String {
-        // Return explicitly configured discovery if set
+        // Return explicitly configured discovery if set. In lower case,
+        // which is how every reader of it compares: `DNS` was no discovery
+        // any of them knew, and the upstream was built as a static one.
         if let Some(discovery) = &self.discovery {
-            return discovery.clone();
+            return discovery.trim().to_ascii_lowercase();
         }
 
         // Check if any address contains a hostname (non-IP)
@@ -566,8 +581,41 @@ impl UpstreamConf {
         }
     }
 
+    /// The discovery has to be one this build knows. Anything else was
+    /// taken for static addresses when the upstream was built, so a typo
+    /// (`dsn`) resolved its hosts once at startup and never again.
+    fn validate_discovery(&self) -> Result<()> {
+        let discovery = self.guess_discovery();
+        if !KNOWN_DISCOVERIES.contains(&discovery.as_str()) {
+            return Err(Error::Invalid {
+                message: format!(
+                    "upstream discovery should be one of {}, got {:?}",
+                    KNOWN_DISCOVERIES[1..].join(", "),
+                    self.discovery.as_deref().unwrap_or_default()
+                ),
+            });
+        }
+        // The refresh of a discovery runs every `update_frequency`; with
+        // zero it never ran after the first lookup.
+        if self.update_frequency.is_some_and(|value| value.is_zero())
+            && matches!(discovery.as_str(), DNS_DISCOVERY | DOCKER_DISCOVERY)
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "upstream update_frequency should be greater than 0 for {discovery} discovery"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn validate_addresses(&self) -> Result<()> {
-        if self.addrs.is_empty() {
+        self.validate_discovery()?;
+        // A transparent upstream sends each request where the request
+        // itself points, and has no addresses to list.
+        if self.addrs.is_empty()
+            && self.guess_discovery() != TRANSPARENT_DISCOVERY
+        {
             return Err(Error::Invalid {
                 message: "upstream addrs is empty".to_string(),
             });
@@ -613,15 +661,20 @@ impl UpstreamConf {
             let parts: Vec<_> = addr.split_whitespace().collect();
             let host_port = parts[0].to_string();
 
-            let host = if host_port.starts_with('[') {
-                host_port
-                    .find(']')
-                    .map_or(host_port.as_str(), |i| &host_port[1..i])
-            } else {
-                host_port
-                    .split_once(':')
-                    .map_or(host_port.as_str(), |(h, _)| h)
-            };
+            // `[v6]`, `[v6]:port`, a bare `v6` (more than one colon, no
+            // port), `host` or `host:port`.
+            let (host, has_port) =
+                if let Some(rest) = host_port.strip_prefix('[') {
+                    rest.split_once(']').map_or((rest, false), |(h, after)| {
+                        (h, after.starts_with(':'))
+                    })
+                } else if host_port.matches(':').count() > 1 {
+                    (host_port.as_str(), false)
+                } else {
+                    host_port
+                        .split_once(':')
+                        .map_or((host_port.as_str(), false), |(h, _)| (h, true))
+                };
 
             if let Ok(ip) = host.parse::<IpAddr>()
                 && !is_valid_upstream_ip(ip)
@@ -634,17 +687,22 @@ impl UpstreamConf {
                 });
             }
 
-            // Add default port 80 if not specified
-            let addr_to_check = if !host_port.contains(':') {
-                format!("{host_port}:80")
+            // Add default port 80 if not specified. An IPv6 literal
+            // without one used to be taken as having it, for its colons,
+            // and failed with `invalid port value`.
+            let addr_to_check = if has_port {
+                host_port.clone()
+            } else if host.contains(':') {
+                format!("[{host}]:80")
             } else {
-                host_port
+                format!("{host}:80")
             };
 
             // Validate socket address
-            addr_to_check.to_socket_addrs().map_err(|e| Error::Io {
-                source: e,
-                file: addr_to_check,
+            addr_to_check.to_socket_addrs().map_err(|e| Error::Invalid {
+                message: format!(
+                    "upstream addr({addr}) is invalid: {e}, expect host, host:port or [ipv6]:port"
+                ),
             })?;
         }
 
@@ -1761,7 +1819,16 @@ impl PingapConfig {
         self.basic.validate()?;
         let mut upstream_names = vec![];
         for (name, upstream) in self.upstreams.iter() {
-            upstream.validate()?;
+            // With the name of the upstream: `upstream addrs is empty`
+            // does not say which of them.
+            upstream.validate().map_err(|e| Error::Invalid {
+                message: match e {
+                    Error::Invalid { message } => {
+                        format!("upstream({name}): {message}")
+                    },
+                    other => format!("upstream({name}): {other}"),
+                },
+            })?;
             upstream_names.push(name.to_string());
         }
         let mut location_names = vec![];
@@ -1832,8 +1899,10 @@ impl PingapConfig {
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
         Ok(format!("{hash:X}"))
     }
-    /// Whether `name` in `category` can be removed: an upstream, location or
-    /// plugin still referenced by another entry cannot.
+    /// Whether `name` in `category` can be removed: an upstream, location,
+    /// plugin or storage still referenced by another entry cannot. The
+    /// `includes` that refer to a storage are only there in a config
+    /// loaded without replacing them.
     pub fn check_removable(&self, category: &str, name: &str) -> Result<()> {
         let in_use = |kind: &str, by: &str, by_name: &str| Error::Invalid {
             message: format!("{kind}({name}) is in used by {by}({by_name})"),
@@ -1878,6 +1947,31 @@ impl PingapConfig {
                         "location",
                         location_name,
                     ));
+                }
+            },
+            CATEGORY_STORAGE => {
+                let includes = |list: &Option<Vec<String>>| {
+                    list.iter().flatten().any(|item| item == name)
+                };
+                let upstreams = self
+                    .upstreams
+                    .iter()
+                    .filter(|(_, conf)| includes(&conf.includes))
+                    .map(|(by, _)| ("upstream", by));
+                let locations = self
+                    .locations
+                    .iter()
+                    .filter(|(_, conf)| includes(&conf.includes))
+                    .map(|(by, _)| ("location", by));
+                let servers = self
+                    .servers
+                    .iter()
+                    .filter(|(_, conf)| includes(&conf.includes))
+                    .map(|(by, _)| ("server", by));
+                if let Some((by, by_name)) =
+                    upstreams.chain(locations).chain(servers).next()
+                {
+                    return Err(in_use("storage", by, by_name));
                 }
             },
             _ => {},
@@ -2083,7 +2177,10 @@ mod tests {
     use super::{
         BasicConf, LocationConf, PluginCategory, ServerConf, UpstreamConf,
     };
-    use super::{CATEGORY_BASIC, CATEGORY_UPSTREAM, convert_pingap_config};
+    use super::{
+        CATEGORY_BASIC, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
+        convert_pingap_config,
+    };
     use super::{
         CertificateConf, Hashable, PingapConfig, Validate, validate_cert,
     };
@@ -2286,12 +2383,11 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         conf.discovery = Some("static".to_string());
         let result = conf.validate();
         assert_eq!(true, result.is_err());
+        let message = result.expect_err("").to_string();
         assert_eq!(
             true,
-            result
-                .expect_err("")
-                .to_string()
-                .contains("Io error failed to lookup address information")
+            message.starts_with("Invalid error upstream addr(github) is invalid: failed to lookup address information"),
+            "{message}"
         );
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github.com".to_string()];
@@ -2306,6 +2402,141 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         conf.health_check = Some("http://github.com/".to_string());
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
+    }
+
+    /// Regression: the validation let through what the upstream is not
+    /// built as - an unknown discovery, a refresh interval of zero - and
+    /// refused what it is built from. (The building itself is tested in
+    /// `pingap-upstream`.)
+    #[test]
+    fn test_upstream_discovery_is_validated() {
+        let conf = |discovery: Option<&str>, addrs: &[&str]| UpstreamConf {
+            addrs: addrs.iter().map(|addr| addr.to_string()).collect(),
+            discovery: discovery.map(|value| value.to_string()),
+            ..Default::default()
+        };
+        let error = |conf: &UpstreamConf| {
+            conf.validate()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+
+        // A discovery nothing knows was built as static addresses.
+        assert_eq!(
+            "Invalid error upstream discovery should be one of static, dns, docker, transparent, got \"dsn\"",
+            error(&conf(Some("dsn"), &["example.com:80"]))
+        );
+        // Case is not what tells them apart.
+        let upper = conf(Some("DNS"), &["example.com:80"]);
+        assert_eq!("", error(&upper));
+        assert_eq!("dns", upper.guess_discovery());
+        for discovery in ["static", "dns", "docker", "transparent", ""] {
+            assert_eq!(
+                "",
+                error(&conf(Some(discovery), &["127.0.0.1:80"])),
+                "{discovery}"
+            );
+        }
+
+        // A refresh interval of zero never refreshed.
+        let mut never = conf(Some("dns"), &["example.com:80"]);
+        never.update_frequency = Some(Duration::ZERO);
+        assert_eq!(
+            "Invalid error upstream update_frequency should be greater than 0 for dns discovery",
+            error(&never)
+        );
+        never.update_frequency = Some(Duration::from_secs(30));
+        assert_eq!("", error(&never));
+        // Static addresses are not refreshed, whatever it says.
+        let mut fixed = conf(None, &["127.0.0.1:80"]);
+        fixed.update_frequency = Some(Duration::ZERO);
+        assert_eq!("", error(&fixed));
+
+        // A transparent upstream has no addresses to give.
+        assert_eq!("", error(&conf(Some("transparent"), &[])));
+        assert_eq!(
+            "Invalid error upstream addrs is empty",
+            error(&conf(None, &[]))
+        );
+
+        // An IPv6 address without a port gets the default one like any
+        // other host, and a bad address is named.
+        for addr in ["[::1]", "::1", "[::1]:8080", "127.0.0.1", "127.0.0.1:80"]
+        {
+            assert_eq!("", error(&conf(Some("static"), &[addr])), "{addr}");
+        }
+        let message = error(&conf(Some("static"), &["127.0.0.1:port"]));
+        assert_eq!(
+            true,
+            message.starts_with(
+                "Invalid error upstream addr(127.0.0.1:port) is invalid: "
+            ),
+            "{message}"
+        );
+    }
+
+    /// The upstream an error is about is named.
+    #[test]
+    fn test_validate_names_the_upstream() {
+        let config = PingapConfig::new(
+            b"[upstreams.api]\naddrs = []\n\n[upstreams.web]\naddrs = [\"127.0.0.1:80\"]\n",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            "Invalid error upstream(api): upstream addrs is empty",
+            config.validate().unwrap_err().to_string()
+        );
+    }
+
+    /// A storage that an entry includes cannot be removed. The includes
+    /// are there in a config loaded as it is written.
+    #[test]
+    fn test_storage_in_use_is_not_removable() {
+        let config = PingapConfig::new(
+            br#"
+[servers.web]
+addr = "127.0.0.1:80"
+includes = ["tls"]
+
+[upstreams.api]
+addrs = ["127.0.0.1:9001"]
+includes = ["timeouts"]
+
+[storages.timeouts]
+category = "config"
+value = 'read_timeout = "7s"'
+
+[storages.tls]
+category = "config"
+value = 'tls_min_version = "tlsv1.2"'
+
+[storages.unused]
+category = "config"
+value = ''
+"#,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            "Invalid error storage(timeouts) is in used by upstream(api)",
+            config
+                .check_removable(CATEGORY_STORAGE, "timeouts")
+                .unwrap_err()
+                .to_string()
+        );
+        assert_eq!(
+            "Invalid error storage(tls) is in used by server(web)",
+            config
+                .check_removable(CATEGORY_STORAGE, "tls")
+                .unwrap_err()
+                .to_string()
+        );
+        assert_eq!(
+            true,
+            config.check_removable(CATEGORY_STORAGE, "unused").is_ok()
+        );
     }
 
     #[test]

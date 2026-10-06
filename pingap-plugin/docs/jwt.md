@@ -34,7 +34,7 @@ order:
 | `category` | string | — | Must be `jwt`. |
 | `header` | string | — | Header holding the token; a `Bearer` scheme (any case) is stripped. |
 | `cookie` | string | — | Cookie holding the token. |
-| `query` | string | — | Query parameter holding the token. |
+| `query` | string | — | Query parameter holding the token. The value is percent-decoded before it is verified. |
 | `secret` | string | — | HMAC shared secret. Required unless `public_key` or `jwks_url` is set. |
 | `algorithm` | string | `HS256` | Signing algorithm; also the algorithm used when minting. |
 | `public_key` | string | — | PEM public key, required for asymmetric `algorithm`. |

@@ -394,6 +394,12 @@ impl Storage for FileStorage {
         let mut keys = vec![];
         for entry in entries {
             let file = entry.map_err(|e| Error::Glob { source: e })?;
+            // What the loader leaves out is no part of the layout either:
+            // seen here, the copies under `..data` of a mounted ConfigMap
+            // made every start look like a layout to migrate.
+            if crate::is_under_hidden_dir(&base, &file) {
+                continue;
+            }
             if let Ok(rel) = file.strip_prefix(&self.path) {
                 keys.push(rel.to_string_lossy().replace('\\', "/"));
             }
@@ -490,9 +496,9 @@ mod tests {
         let data = storage.fetch("servers.toml").await.unwrap();
         assert_eq!("[servers]", data);
 
-        // fetch all (concatenated)
+        // fetch all (the files merged into one document)
         let data = storage.fetch("").await.unwrap();
-        assert_eq!("[locations]\n[servers]", data);
+        assert_eq!("[locations]\n\n[servers]", data);
 
         storage.delete("servers.toml").await.unwrap();
         let data = storage.fetch("servers.toml").await.unwrap();

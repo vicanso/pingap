@@ -39,6 +39,8 @@ How the request `Host` header is matched:
 
 Example: `~(?<name>.+)\.npmtrend\.com` matches `charts.npmtrend.com` and captures `charts` as `name`.
 
+A host with its root label written out names the same host: a request for `Host: example.com.` is matched as `example.com`, and a trailing dot in a configured pattern is dropped as well. Matched as it came, such a request missed the locations of the host and fell through to the catch-all, past the plugins that guard the host.
+
 Exact and wildcard patterns are stored lowercased and compared to the request host in place, so a request with `Host: API.Example.COM` matches `api.example.com` without a lowercased copy being made per pattern. A regex pattern (host or path) that declares no named groups is tested with a plain match, which lets the regex engine skip tracking group positions; only a pattern with `(?<name>...)` groups pays for extracting them.
 
 ### `LocationHostIndex` / `ServerLocationRoute`

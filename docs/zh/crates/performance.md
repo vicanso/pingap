@@ -70,6 +70,8 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 | `pingap_fd_count` | gauge | — | 打开的文件描述符 |
 | `pingap_tcp_count` / `pingap_tcp6_count` | gauge | — | 进程所在**网络命名空间**中的 IPv4 / IPv6 TCP 套接字，不只是 Pingap 自己的：数据源是 `/proc/<pid>/net/tcp`，因此在没有独立命名空间的宿主机上会把其他进程的套接字一并计入（仅 Linux）|
 
+`pingap_upstream_processing_time` 和 `pingap_upstream_response_time` 只统计已经结束的阶段。没有响应体的响应（`HEAD`、`204`、`304`）没有可计时的响应阶段，始终不应答的上游也没有处理耗时，这类请求不会进入这两个直方图，所以它们的 count 可能小于该上游的请求数。
+
 多数延迟指标按 location 或 upstream 打标签，仪表盘可在无额外埋点的情况下把回归归因到具体路由或后端。
 
 空 `location` 标签即总量，而且确实是全部请求：未匹配任何 location 的请求（404）、admin 端点、ACME challenge，以及对该指标端点自身的抓取都计入其中。只有被路由到某处的请求才另外带上具体的 `location`。

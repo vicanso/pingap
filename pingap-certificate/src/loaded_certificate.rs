@@ -75,6 +75,21 @@ mod imp {
                 }
             })?;
             let cert = certs.remove(0);
+            // The key has to be the certificate's. OpenSSL finds out when
+            // the pair is installed on a handshake, so a mismatch loaded
+            // and validated fine and then failed every handshake of its
+            // domains. rustls refuses the pair when it is built; this is
+            // the same check, made at the same time.
+            let is_pair = cert
+                .public_key()
+                .is_ok_and(|public_key| public_key.public_eq(&key));
+            if !is_pair {
+                return Err(Error::Invalid {
+                    category: ERROR_PRIVATE_KEY.to_string(),
+                    message: "private key does not match the certificate"
+                        .to_string(),
+                });
+            }
             Ok(Self {
                 cert,
                 key,
