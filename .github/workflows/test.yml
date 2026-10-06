@@ -38,20 +38,21 @@ jobs:
         ports:
           - 2379:2379
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: true
-
-          # all of these default to true, but feel free to set to
-          # "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
+      - name: Free disk space
+        run: |
+          df -k /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup "$AGENT_TOOLSDIRECTORY"
+          # One per command: apt-get rejects a list with any unknown name.
+          for pkg in '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' \
+            '^mysql-.*' azure-cli google-chrome-stable firefox powershell mono-devel \
+            libgl1-mesa-dri google-cloud-sdk google-cloud-cli; do
+            sudo apt-get remove -y --fix-missing "$pkg" || true
+          done
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean
+          sudo docker image prune --all --force || true
+          df -k /
       - uses: actions/checkout@v7
       - uses: ilammy/setup-nasm@v1
       - name: setup node
@@ -181,20 +182,21 @@ jobs:
           - { arch: "linux/arm64", tag: "arm64", runs-on: "ubuntu-22.04-arm" }
         features: ['latest', 'full', 'rustls-full']
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: true
-
-          # all of these default to true, but feel free to set to
-          # "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
+      - name: Free disk space
+        run: |
+          df -k /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup "$AGENT_TOOLSDIRECTORY"
+          # One per command: apt-get rejects a list with any unknown name.
+          for pkg in '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' \
+            '^mysql-.*' azure-cli google-chrome-stable firefox powershell mono-devel \
+            libgl1-mesa-dri google-cloud-sdk google-cloud-cli; do
+            sudo apt-get remove -y --fix-missing "$pkg" || true
+          done
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean
+          sudo docker image prune --all --force || true
+          df -k /
       - name: Change Swap Space
         run: |
           set -euo pipefail
