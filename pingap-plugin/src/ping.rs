@@ -54,7 +54,10 @@ impl Ping {
     /// # Returns
     /// * `Result<Self>` - New Ping instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new ping plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new ping plugin"
+        );
         let hash_value = get_hash_key(params);
         let path = get_str_conf(params, "path");
         // No request path is empty, so an unset `path` was a plugin that

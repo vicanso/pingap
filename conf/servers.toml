@@ -123,7 +123,7 @@ locations = ["lo"]
 # TFO allows data exchange during the initial handshake, reducing latency
 # Higher values allow more pending TFO connections but consume more memory
 # Default `none`
-# tcp_fast_open = 10
+# tcp_fastopen = 10
 
 # Enable prometheus metrics, it can be a push gateway url or pull metrics path (default none), it's supported only on full feature release.
 # Examples:

@@ -84,8 +84,10 @@ address the database does not know. An IPv4 client of a dual-stack listener
   network access — but the data ages with the crate version. Country assignments
   for a given IP can be wrong, especially for mobile carriers, VPNs and cloud
   ranges.
-- Client IP resolution follows `basic.trusted_proxies`; without it, a forged
-  `X-Forwarded-For` picks the country. See
+- The country is that of an address the client cannot choose: through a proxy
+  listed in `basic.trusted_proxies` the forwarded address, otherwise the
+  peer's own. Behind a proxy that is not listed, every request has the
+  proxy's country. See
   [`ip_restriction`](ip_restriction.md#client-ip-resolution).
 - Run `type = "reporting"` in production for a while and check the logs before
   turning on `allow`, which blocks everything the database cannot classify.

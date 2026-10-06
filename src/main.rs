@@ -203,6 +203,12 @@ struct Args {
     /// Default threads for each server
     #[arg(long)]
     threads: Option<usize>,
+    /// Whether `conf` and `admin` were taken from the environment
+    /// (`PINGAP_CONF`, `PINGAP_ADMIN_*`) and not from the command line.
+    #[arg(skip)]
+    conf_from_env: bool,
+    #[arg(skip)]
+    admin_from_env: bool,
 }
 
 const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
@@ -372,6 +378,58 @@ fn get_config(
     r
 }
 
+/// The arguments the replacement process of a restart is started with.
+fn restart_arguments(args: &Args) -> Vec<String> {
+    // What came from the environment stays there: the replacement
+    // inherits it, and reads it the same way. Written out as
+    // arguments, the password of the admin and the one in an etcd
+    // address were in the process list for anyone on the machine,
+    // which is what giving them through the environment avoids.
+    let mut new_args = vec!["-d".to_string(), "-u".to_string()];
+    if let Some(conf) = args.conf.as_ref().filter(|_| !args.conf_from_env) {
+        let conf_path = if conf.starts_with(ETCD_PROTOCOL) {
+            conf.clone()
+        } else {
+            pingap_util::resolve_path(conf)
+        };
+        new_args.push(format!("-c={conf_path}"));
+    }
+    // The command line proxy has no config file to point the new process
+    // at, so pass the arguments it was built from instead.
+    for (name, value) in [
+        ("upstream", &args.upstream),
+        ("domain", &args.domain),
+        ("cert", &args.cert),
+        ("key", &args.key),
+        ("addr", &args.addr),
+    ] {
+        if let Some(value) = value {
+            new_args.push(format!("--{name}={value}"));
+        }
+    }
+    if let Some(log) = &args.log {
+        new_args.push(format!("--log={log}"));
+    }
+    if let Some(admin) = args.admin.as_ref().filter(|_| !args.admin_from_env) {
+        new_args.push(format!("--admin={admin}"));
+    }
+    // Only on the command line: it overrides `basic.threads`, so leaving it
+    // out silently drops the replacement process back to the configured
+    // value, or to one thread.
+    if let Some(threads) = args.threads {
+        new_args.push(format!("--threads={threads}"));
+    }
+    // `--autorestart` implies `--autoreload`. Started with the latter
+    // alone, a process restarted from the admin used to come back with
+    // neither, and no longer followed its config.
+    if args.autorestart {
+        new_args.push("--autorestart".to_string());
+    } else if args.autoreload {
+        new_args.push("--autoreload".to_string());
+    }
+    new_args
+}
+
 /// The config as it is written, includes left in place, for `--to-hcl`
 /// and `--to-kdl`. Through the typed config where the document reads as
 /// one, which is the form these commands have always printed; an entry
@@ -527,10 +585,12 @@ fn parse_arguments() -> Args {
         }
         arr.push(arg);
     }
+    let mut conf_from_env = false;
     if !exist_config_argument {
         let conf = get_from_env("conf");
         if !conf.is_empty() {
             arr.push(format!("-c={conf}").into());
+            conf_from_env = true;
         }
     }
 
@@ -541,6 +601,7 @@ fn parse_arguments() -> Args {
         };
     }
     let mut args = Args::parse_from(arr);
+    args.conf_from_env = conf_from_env;
 
     if !args.daemon && !get_from_env("daemon").is_empty() {
         args.daemon = true;
@@ -562,7 +623,8 @@ fn parse_arguments() -> Args {
             let data = format!("{user}:{password}");
             addr = format!("{}@{addr}", pingap_util::base64_encode(&data));
         }
-        args.admin = Some(addr)
+        args.admin = Some(addr);
+        args.admin_from_env = true;
     }
     if !args.cp && !get_from_env("cp").is_empty() {
         args.cp = true;
@@ -720,6 +782,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(log_path) = log_path {
         application_log_paths.push(log_path);
     }
+    // After the logger is there, so that `--test` shows it like a start
+    // does: the document is valid, and says something pingap does not read.
+    validate::report_unknown_keys(&config_as_stored);
 
     // TODO a better way
     // since the cache will be initialized in validate function
@@ -770,48 +835,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Ok(env) = std::env::var("RUST_LOG") {
             cmd.log_level = env;
         }
-        let mut new_args = vec!["-d".to_string(), "-u".to_string()];
-        if let Some(conf) = &args.conf {
-            let conf_path = if conf.starts_with(ETCD_PROTOCOL) {
-                conf.clone()
-            } else {
-                pingap_util::resolve_path(conf)
-            };
-            new_args.push(format!("-c={conf_path}"));
-        }
-        // The command line proxy has no config file to point the new process
-        // at, so pass the arguments it was built from instead.
-        for (name, value) in [
-            ("upstream", &args.upstream),
-            ("domain", &args.domain),
-            ("cert", &args.cert),
-            ("key", &args.key),
-            ("addr", &args.addr),
-        ] {
-            if let Some(value) = value {
-                new_args.push(format!("--{name}={value}"));
-            }
-        }
-        if let Some(log) = &args.log {
-            new_args.push(format!("--log={log}"));
-        }
-        if let Some(admin) = &args.admin {
-            new_args.push(format!("--admin={admin}"));
-        }
-        // Only on the command line: it overrides `basic.threads`, so leaving it
-        // out silently drops the replacement process back to the configured
-        // value, or to one thread.
-        if let Some(threads) = args.threads {
-            new_args.push(format!("--threads={threads}"));
-        }
-        // `--autorestart` implies `--autoreload`. Started with the latter
-        // alone, a process restarted from the admin used to come back with
-        // neither, and no longer followed its config.
-        if args.autorestart {
-            new_args.push("--autorestart".to_string());
-        } else if args.autoreload {
-            new_args.push("--autoreload".to_string());
-        }
+        let new_args = restart_arguments(&args);
         // The readiness channel for the hand-over: a unix socket next to the
         // upgrade socket, plus the pid file both generations share so that a
         // daemon dying before it reports is noticed.
@@ -1202,6 +1226,38 @@ fn main() {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// Regression: a restart handed the admin credentials and the config
+    /// address to the new process as arguments, also when this process had
+    /// been given them through the environment - which is done to keep
+    /// them out of the process list.
+    #[test]
+    fn test_restart_arguments_leave_the_environment_alone() {
+        let args = Args {
+            conf: Some("etcd://user:pass@127.0.0.1:2379/pingap".to_string()),
+            admin: Some("YWRtaW46MTIzMTIz@127.0.0.1:3018".to_string()),
+            autoreload: true,
+            ..Default::default()
+        };
+        // Given on the command line: passed on as they were.
+        assert_eq!(
+            vec![
+                "-d",
+                "-u",
+                "-c=etcd://user:pass@127.0.0.1:2379/pingap",
+                "--admin=YWRtaW46MTIzMTIz@127.0.0.1:3018",
+                "--autoreload",
+            ],
+            restart_arguments(&args)
+        );
+        // Taken from the environment: the new process finds them there.
+        let args = Args {
+            conf_from_env: true,
+            admin_from_env: true,
+            ..args
+        };
+        assert_eq!(vec!["-d", "-u", "--autoreload"], restart_arguments(&args));
+    }
 
     /// An entry may take a required field from its include, the `addrs`
     /// of an upstream for one. Such a config only reads as a whole with

@@ -187,7 +187,10 @@ impl ResponseHeaders {
     /// * `Ok(ResponseHeaders)` - Successfully created plugin instance
     /// * `Err(Error)` - If configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new response headers plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new response headers plugin"
+        );
         Self::try_from(params)
     }
 

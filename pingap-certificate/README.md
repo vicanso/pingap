@@ -48,6 +48,14 @@ domains failed at runtime.) An entry that fails to build on a reload is
 reported and the certificate it was to replace goes on serving the domains it
 had; the `domains` and `is_default` of the entry that failed are not applied.
 
+A certificate whose `tls_cert` / `tls_key` are file paths is loaded again when
+the files change, without a change to the configuration: the reload service
+hashes them on every pass (`CertificateConf::reads_files`, `hash_key`). A
+renewal that replaces `fullchain.pem` and `privkey.pem` in place is picked up
+within a few seconds. Like every reload this needs the process to run with
+`--autoreload` or `--autorestart`. Certificates managed by ACME in the same
+configuration are left to their own service and are not affected.
+
 Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
 `tls_max_version` that OpenSSL rejects (or a version name other than
 `tlsv1.1`/`tlsv1.2`/`tlsv1.3`, case-insensitive) is an error when the listener

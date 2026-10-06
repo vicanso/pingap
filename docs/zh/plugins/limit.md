@@ -16,18 +16,26 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `limit`。 |
 | `type` | string | `rate` | `rate` 或 `inflight`。其他值是配置错误。 |
-| `tag` | string | `ip` | `ip`、`header`、`cookie` 或 `query`。其他值是配置错误。 |
+| `tag` | string | `ip` | `ip`、`header`、`cookie` 或 `query`。其他值是配置错误。`ip` 指连接的对端地址；请求经过 `basic.trusted_proxies` 里的代理时，用转发头里的地址。 |
 | `key` | string | — | header / cookie / query 参数名。除 `tag = "ip"` 外**必填**。 |
 | `max` | int | — | **必填。**每个 `interval` 允许的请求数（rate），或并发数（inflight）。负数是配置错误。 |
-| `interval` | duration | `10s` | 速率窗口，必须大于零。`inflight` 忽略。 |
-| `weight` | int | `50` | 0–100。当前窗口相对上一窗口的权重。 |
+| `interval` | duration | `10s` | rate 的窗口，至少 `1ms`。`inflight` 忽略。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
 
 ### `max` 与 `interval` 如何作用
 
-对 `type = "rate"`，`max` 除以 `interval` 秒数（下限为 1）得到每秒预算，再与滑动窗口估计比较。因此 `max = 600, interval = "60s"` 表示“平均每秒约 10 次”，而不是“任意 60 秒桶内 600 次”。
+对 `type = "rate"`，`max` 是同一个键在任意一个 `interval` 内允许的请求数。限流器为每个键保留两个计数（当前窗口和上一个窗口），按下面的方式估算最近一个 `interval` 内的请求数：
 
-`weight` 在估计当前速率时混合上一窗口与当前窗口：`(prev * (1 - w) + curr * w) / interval`。较低值更平滑突发，较高值反应更快。`weight = 0` 回退为仅使用上一窗口。
+```
+上一窗口 × (1 − 当前窗口已经过去的比例) + 当前窗口
+```
+
+会让估算值超过 `max` 的请求返回 `429`。所以 `max = 600, interval = "60s"` 允许一个之前空闲的客户端一次发出 600 个请求，之后把它限制在每秒 10 个左右。
+
+- 被拒绝的请求不计数。超限的客户端每个 interval 仍然能得到 `max` 个请求，不会因为不断重试而一直被拒绝。
+- 这是估算，不是逐条记录：估算时假设上一窗口的请求是均匀分布的。如果客户端把 `max` 个请求全压在一个窗口的末尾，随着这个窗口的权重衰减，它在下一个窗口里还能再通过几个，最坏情况下在一个 interval 长度的时间段内接近 `2 × max`。长期平均下来速率被限制在 `max`。反过来，`max` 很小（1 或 2）时，恰好按 `max` 的速率发送的客户端会有一部分请求被拒绝，这类限制请留一点余量。
+
+`weight` 已废弃。它按固定比例（默认 `50`）混合两个窗口，对限流器来说是新面孔的客户端因此能发出两倍于 `max` 的请求，`weight = 0` 时则完全不受限。配置里仍然写着这个键时可以正常加载，会打印一条告警并忽略它。**限额比以前严格**：以前每个 interval 最多能放行 `2 × max`，现在是 `max`。
 
 ## 示例
 
@@ -75,6 +83,7 @@ step = "proxy_upstream"
 
 ## 使用说明
 
+- `tag = "ip"` 且没有配置 `basic.trusted_proxies` 时不看 `X-Forwarded-For`：前面有代理而没有列入时，所有客户端都是代理的地址，共用一份额度。请把代理加进去。（以前任何来源的转发头都会被采用，每次请求换一个值就永远不会被限。）
 - 空键放行很重要：`tag = "header"` 且 `key = "X-API-Key"` 时，匿名请求完全不受限。请在前面串认证插件，或再加一个按 `ip` 的 `limit`。
 - 计数器按进程。负载均衡后多个 Pingap 实例时，有效限额约为实例数倍。
 - `step = "proxy_upstream"` 在缓存插件之后运行，缓存命中不消耗配额——适合保护源站，不适合防滥用。

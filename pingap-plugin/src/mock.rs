@@ -85,7 +85,10 @@ impl MockResponse {
     /// # Returns
     /// Result<MockResponse> - Configured mock handler or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new mock plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new mock plugin"
+        );
 
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);

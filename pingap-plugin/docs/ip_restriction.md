@@ -45,11 +45,10 @@ ip_list = ["1.2.3.4", "203.0.113.0/24"]
 
 ## Client IP resolution
 
-The client IP comes from `pingap_core::get_client_ip`, which prefers
-`X-Forwarded-For` / `X-Real-IP` and falls back to the peer address. Configure
-`basic.trusted_proxies` so those headers are only honoured for connections coming
-from your real load balancers — otherwise any client can spoof its IP and walk
-straight past an allow-list.
+The list is checked against an address the client cannot choose. Directly
+connected, that is the address of the connection. Behind a load balancer or a
+CDN it is the address that proxy reports in `X-Forwarded-For` / `X-Real-IP` —
+but only when the proxy is named in `basic.trusted_proxies`:
 
 ```toml
 [basic]
@@ -75,8 +74,17 @@ not send that header at all, set `X-Real-IP` itself. A proxy that passes either
 header through as the client sent it leaves the client in charge of its
 address.
 
-Without `trusted_proxies` the first `X-Forwarded-For` entry is taken from
-anyone, which is only safe when no client can reach pingap directly.
+Without `trusted_proxies` the forwarded headers are not looked at and the
+address is the peer's own. Behind a proxy that is not listed there, every
+request therefore has the proxy's address: an allow list lets everyone in or
+no one, a deny list never matches a client. List the proxy.
+
+(The headers used to be believed from anyone when no proxy was configured: an
+allow list for `10.0.0.0/8` let in whoever sent `X-Forwarded-For: 10.1.2.3`.
+The same rule now holds for [`limit`](limit.md) by ip,
+[`geo_restriction`](geo_restriction.md) and the `ip_list` of
+[`combined_auth`](combined_auth.md). The access log's client ip and
+`hash:ip` are not checks and still read the headers as before.)
 
 An IPv4 client of a dual-stack listener (`[::]:80`) has the address
 `::ffff:1.2.3.4`. It is matched, logged and counted as `1.2.3.4`, so IPv4

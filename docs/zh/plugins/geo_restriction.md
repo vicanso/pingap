@@ -69,5 +69,5 @@ type = "reporting"
 ## 使用说明
 
 - GeoIP 数据来自 [`tor-geoip`](https://crates.io/crates/tor-geoip) 的 `embedded-db` feature，随二进制一起编译，查找无需网络——但数据随 crate 版本老化。特定 IP 的国家归属可能不准，尤其是移动运营商、VPN 与云网段。
-- 客户端 IP 解析遵循 `basic.trusted_proxies`；未配置时，伪造的 `X-Forwarded-For` 会决定国家。见 [`ip_restriction`](ip_restriction.md#客户端-ip-解析)。
+- 按客户端无法自行指定的地址判断国家：经过 `basic.trusted_proxies` 里的代理时用转发头里的地址，否则用对端地址。前面有代理而没有列入时，所有请求都算作代理所在的国家。见 [`ip_restriction`](ip_restriction.md#客户端-ip-解析)。
 - 建议先在生产用 `type = "reporting"` 观察日志，再开启会拦截数据库无法分类国家的 `allow`。

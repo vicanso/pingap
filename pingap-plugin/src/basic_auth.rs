@@ -226,7 +226,10 @@ fn basic_credentials(value: &[u8]) -> Option<&[u8]> {
 
 impl BasicAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new basic auth plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new basic auth plugin"
+        );
         Self::try_from(params)
     }
 }

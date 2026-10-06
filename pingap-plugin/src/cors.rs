@@ -197,7 +197,10 @@ impl Cors {
     /// # Returns
     /// * `Result<Self>` - Configured CORS plugin or error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new cors plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new cors plugin"
+        );
         Self::try_from(params)
     }
 

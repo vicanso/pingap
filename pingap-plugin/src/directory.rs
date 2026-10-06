@@ -547,7 +547,10 @@ impl Directory {
     /// - Sets default values for optional parameters
     /// - Resolves relative paths to absolute
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new serve static file plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new serve static file plugin"
+        );
         Self::try_from(params)
     }
 

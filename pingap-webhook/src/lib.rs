@@ -383,10 +383,12 @@ impl Inner {
                 }
             },
             Err(e) => {
+                // Without the url: the error names the address it was
+                // sent to, and the key of a webhook is part of that.
                 error!(
                     target: LOG_TARGET,
                     count,
-                    error = %e,
+                    error = %e.without_url(),
                     "send webhook fail"
                 );
             },

@@ -389,7 +389,10 @@ impl Cache {
     }
 
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new http cache plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new http cache plugin"
+        );
         Self::try_from(params)
     }
 }

@@ -125,7 +125,10 @@ impl Csrf {
     /// # Returns
     /// Result containing the configured CSRF plugin or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new csrf plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new csrf plugin"
+        );
         Csrf::try_from(params)
     }
 }

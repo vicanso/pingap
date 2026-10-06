@@ -44,7 +44,7 @@ ip_list = ["1.2.3.4", "203.0.113.0/24"]
 
 ## 客户端 IP 解析
 
-客户端 IP 来自 `pingap_core::get_client_ip`，优先 `X-Forwarded-For` / `X-Real-IP`，否则回退到对端地址。请配置 `basic.trusted_proxies`，仅在来自真实负载均衡的连接上信任这些头——否则任意客户端可伪造 IP 绕过允许列表。
+列表比对的是一个客户端无法自行指定的地址。直连时就是连接的对端地址；在负载均衡或 CDN 之后，是该代理通过 `X-Forwarded-For` / `X-Real-IP` 报告的地址——但前提是这个代理写在了 `basic.trusted_proxies` 里：
 
 ```toml
 [basic]
@@ -59,7 +59,9 @@ trusted_proxies = ["10.0.0.0/8"]
 
 可信代理自己也要配置正确：把来源地址追加到 `X-Forwarded-For`（nginx：`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`）；如果它根本不发送这个头，就要由它来设置 `X-Real-IP`。代理把这两个头按客户端发来的样子原样转发时，客户端 IP 仍然由客户端说了算。
 
-没有配置 `trusted_proxies` 时，任何来源的 `X-Forwarded-For` 的第一个条目都会被采用，只有在客户端无法直连 pingap 时才安全。
+没有配置 `trusted_proxies` 时不看转发头，地址就是对端地址。如果 pingap 前面有代理而代理没有列在其中，所有请求的地址都是这个代理的地址：允许列表要么全部放行、要么全部拒绝，拒绝列表永远匹配不到客户端。请把代理加进 `trusted_proxies`。
+
+（以前没有配置可信代理时，任何来源的转发头都会被采用：`10.0.0.0/8` 的允许列表会放行任何发送 `X-Forwarded-For: 10.1.2.3` 的客户端。现在按 IP 的 [`limit`](limit.md)、[`geo_restriction`](geo_restriction.md) 以及 [`combined_auth`](combined_auth.md) 的 `ip_list` 也遵循同一规则。访问日志里的客户端 IP 和 `hash:ip` 不是访问控制，仍按原来的方式读取转发头。）
 
 通过双栈监听（`[::]:80`）接入的 IPv4 客户端，地址是 `::ffff:1.2.3.4`。它按 `1.2.3.4` 匹配、记录和计数，`ip_list` 和 `trusted_proxies` 里的 IPv4 条目对它同样生效。
 

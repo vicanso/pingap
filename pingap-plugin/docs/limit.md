@@ -2,7 +2,7 @@
 
 Two limiters in one plugin:
 
-- **`rate`** — requests per interval, measured with a sliding window.
+- **`rate`** — requests per interval, counted over a sliding window.
 - **`inflight`** — concurrent in-progress requests, tracked with an atomic
   counter released automatically when the request finishes.
 
@@ -17,23 +17,43 @@ Either one can be keyed by client IP, a header, a cookie or a query parameter.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `limit`. |
 | `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
-| `tag` | string | `ip` | `ip`, `header`, `cookie` or `query`. Anything else is a configuration error. |
+| `tag` | string | `ip` | `ip`, `header`, `cookie` or `query`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. |
 | `key` | string | — | Name of the header / cookie / query parameter. **Required** unless `tag = "ip"`. |
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
-| `interval` | duration | `10s` | Rate window, greater than zero. Ignored by `inflight`. |
-| `weight` | int | `50` | 0–100. How much the current window counts versus the previous one. |
+| `interval` | duration | `10s` | Rate window, at least `1ms`. Ignored by `inflight`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
 
 ### How `max` and `interval` interact
 
-For `type = "rate"`, `max` is divided by `interval` in seconds (floored at 1) to
-get a per-second budget, and the limiter compares that against a sliding-window
-estimate. `max = 600, interval = "60s"` therefore means "10 requests per second
-on average", not "600 in any 60 second bucket".
+For `type = "rate"`, `max` is the number of requests a key gets in any one
+`interval`. The limiter keeps two counters per key, for the current window
+and the one before it, and estimates the requests of the last `interval` as
 
-`weight` blends the previous and current window when estimating the current rate:
-`(prev * (1 - w) + curr * w) / interval`. Lower values smooth bursts, higher
-values react faster. `weight = 0` falls back to using the previous window alone.
+```
+previous window × (1 − elapsed share of the current window) + current window
+```
+
+A request that would take the estimate above `max` is answered `429`. So
+`max = 600, interval = "60s"` lets a client that was idle send 600 requests at
+once and then holds it to about 10 per second.
+
+- A request that is turned away is not counted. A client over its limit keeps
+  getting `max` per interval; it is not locked out for as long as it retries.
+- It is an estimate, not a log of every request: it assumes the requests of
+  the previous window were spread evenly over it. A client that sends its
+  `max` at the very end of one window is then let through a few more times
+  as that window fades, and can reach close to twice `max` within one
+  interval-long span in the worst case. Averaged over time the rate is held
+  to `max`. The other way round, a client sending exactly `max` per interval
+  with a very small `max` (1 or 2) will see some of its requests refused;
+  give such limits a little room.
+
+`weight` is gone. It blended the two windows by a fixed share (`50` by
+default), which let a client that was new to the limiter through twice as
+often as `max` says, and with `weight = 0` every time. A config that still has
+the key loads, logs a warning and ignores it. **Limits are stricter than they
+were**: what used to pass at up to `2 × max` per interval is now held to
+`max`.
 
 ## Examples
 
@@ -82,6 +102,10 @@ step = "proxy_upstream"
 
 ## Usage notes
 
+- With `tag = "ip"` and no `basic.trusted_proxies`, `X-Forwarded-For` is not
+  looked at: behind a proxy that is not listed there every client shares the
+  proxy's address and so one budget. List the proxy. (The header used to be
+  believed from anyone, and a new value with every request was never limited.)
 - The empty-key pass-through matters: with `tag = "header"` and `key =
   "X-API-Key"`, anonymous requests are entirely unlimited. Chain an
   authentication plugin in front, or add a second `limit` on `ip`.

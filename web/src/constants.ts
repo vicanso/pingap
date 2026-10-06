@@ -38,6 +38,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.IMAGE_OPTIM] = [2];
   pluginSupportSteps[PluginCategory.TRAFFIC_SPLITTING] = [0];
   pluginSupportSteps[PluginCategory.GEO_RESTRICTION] = [0];
+  pluginSupportSteps[PluginCategory.FORWARD_AUTH] = [0];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -145,4 +146,5 @@ export enum PluginCategory {
   CORS = "cors",
   TRAFFIC_SPLITTING = "traffic_splitting",
   GEO_RESTRICTION = "geo_restriction",
+  FORWARD_AUTH = "forward_auth",
 }

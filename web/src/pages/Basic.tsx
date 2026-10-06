@@ -446,7 +446,6 @@ export default function Basic() {
     auto_restart_check_interval: newZodDuration().optional(),
     restart_ready_timeout: newZodDuration().optional(),
     webhook_batch_window: newZodDuration().optional(),
-    cache_max_size: newZodBytes().optional(),
   });
 
   return (

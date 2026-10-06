@@ -31,7 +31,11 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 ```
 
 Equivalent environment variables: `PINGAP_ADMIN_ADDR`, `PINGAP_ADMIN_USER`,
-`PINGAP_ADMIN_PASSWORD`.
+`PINGAP_ADMIN_PASSWORD`. Prefer them where other users of the machine can
+see the process list: the command line of a process is public, its
+environment is not. A graceful restart keeps it that way - what came from the
+environment (these three, and `PINGAP_CONF`) is inherited by the replacement
+process and not written out as arguments.
 
 The credentials are `user:password`, or the base64 of `user:password` in place
 of the user. A user without a password that is not such a base64 value

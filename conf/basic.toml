@@ -127,14 +127,6 @@
 # At least `1s`. Default `90s`
 # auto_restart_check_interval = "90s"
 
-# Set the file cache directory. Format: "/path/to/cache?reading_max=1000&writing_max=200&cache_max=100&cache_file_max_size=40960"
-# - reading_max: maximum number of concurrent read operations
-# - writing_max: maximum number of concurrent write operations
-# - cache_max: maximum number of tinyufo items for file cache
-# - cache_file_max_size: maximum size of file for tinyufo, if file size is greater than this value, it will be cached in file not tinyufo.
-# cache_directory = ""
-
-# Maximum size of the in-memory cache for file caching. This limit applies when no cache_directory is set.
-# Increasing this value will allow more files to be cached but consume more memory. It is not limited for file cache.
-# Default `100MB`
-# cache_max_size = "100MB"
+# The cache is set up per `cache` plugin, with its `directory` option: a
+# path for a file cache, `memory://?max_size=100mb` for the memory cache.
+# There is no cache setting here.

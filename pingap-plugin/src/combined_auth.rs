@@ -25,7 +25,7 @@ use pingap_core::{
     Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
     RequestPluginResult,
 };
-use pingap_core::{ensure_client_ip, get_query_value, now_sec};
+use pingap_core::{ensure_verified_client_ip, get_query_value, now_sec};
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -166,7 +166,10 @@ impl CombinedAuth {
     /// # Returns
     /// * `Result<Self>` - A new plugin instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new combined auth plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new combined auth plugin"
+        );
         Self::try_from(params)
     }
 
@@ -218,10 +221,11 @@ impl CombinedAuth {
         }
 
         // Step 4: IP validation (if configured)
-        // Checks if the client IP is in the allowed list
-        // Uses X-Forwarded-For header for IP detection behind proxies
+        // Checks if the client IP is in the allowed list: through
+        // trusted proxies the forwarded address, without them the peer's
+        // own, which a request cannot make up.
         if let Some(ip_rules) = &auth_param.ip_rules {
-            let ip = ensure_client_ip(session, ctx);
+            let ip = ensure_verified_client_ip(session, ctx);
             if !ip_rules.is_match(ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),
@@ -407,6 +411,13 @@ secret = "*"
             hash_value: "".to_string(),
             auths,
         };
+        // The context of a request from `peer`: no trusted proxies are
+        // configured here, so the peer's address is the one that counts.
+        let from_peer = |peer: &str| {
+            let mut ctx = Ctx::default();
+            ctx.conn.remote_addr = Some(peer.to_string());
+            ctx
+        };
 
         // no app id
         let headers = [""].join("\r\n");
@@ -437,15 +448,18 @@ secret = "*"
             result.unwrap_err().to_string()
         );
 
-        // ip is invalid
-        let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
+        // ip is invalid. Regression: the address was taken from the
+        // request, so a client outside the list only had to claim one
+        // that is on it.
+        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap HTTP/1.1\r\n{headers}\r\n\r\n"
         );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("1.1.1.1"));
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: ip is invalid",
@@ -453,14 +467,15 @@ secret = "*"
         );
 
         // timestamp is empty
-        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
+        let headers = [""].join("\r\n");
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap HTTP/1.1\r\n{headers}\r\n\r\n"
         );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("192.168.1.10"));
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: timestamp is empty",
@@ -468,14 +483,15 @@ secret = "*"
         );
 
         // timestamp is invalid
-        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
+        let headers = [""].join("\r\n");
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts=123 HTTP/1.1\r\n{headers}\r\n\r\n"
         );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("192.168.1.10"));
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: timestamp deviation is invalid",
@@ -483,7 +499,7 @@ secret = "*"
         );
 
         // digest is empty
-        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
+        let headers = [""].join("\r\n");
         let ts = pingap_core::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts} HTTP/1.1\r\n{headers}\r\n\r\n"
@@ -491,7 +507,8 @@ secret = "*"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("192.168.1.10"));
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: digest is empty",
@@ -499,7 +516,7 @@ secret = "*"
         );
 
         // digest is invalid
-        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
+        let headers = [""].join("\r\n");
         let ts = pingap_core::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts}&digest=abc HTTP/1.1\r\n{headers}\r\n\r\n"
@@ -507,14 +524,15 @@ secret = "*"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("192.168.1.10"));
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: digest is invalid",
             result.unwrap_err().to_string()
         );
 
-        let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
+        let headers = [""].join("\r\n");
         let ts = pingap_core::now_sec() as i64;
         let mut hasher = Sha256::new();
         hasher.update(format!("{secret}:{ts}",).as_bytes());
@@ -526,7 +544,8 @@ secret = "*"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session, &mut Ctx::default());
+        let result =
+            combined_auth.validate(&session, &mut from_peer("192.168.1.10"));
         assert_eq!(true, result.is_ok());
     }
 }

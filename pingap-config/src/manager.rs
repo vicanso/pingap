@@ -67,6 +67,11 @@ pub struct PingapTomlConfig {
     pub plugins: Option<Map<String, Value>>,
     pub certificates: Option<Map<String, Value>>,
     pub storages: Option<Map<String, Value>>,
+    /// What the document has at its top level besides the sections above.
+    /// Kept so that it can be reported ([`PingapTomlConfig::unknown_keys`]);
+    /// it is not written back.
+    #[serde(flatten, skip_serializing)]
+    pub unknown: Map<String, Value>,
 }
 
 /// The document holding just `value` as `[category]` (basic) or
@@ -827,6 +832,7 @@ mod tests {
             plugins: Some(toml::from_str(plugin_config).unwrap()),
             certificates: Some(toml::from_str(certificate_config).unwrap()),
             storages: Some(toml::from_str(storage_config).unwrap()),
+            ..Default::default()
         }
     }
 

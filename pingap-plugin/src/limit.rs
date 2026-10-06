@@ -13,8 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_int_conf_or_default,
-    get_step_conf_in, get_str_conf,
+    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
 };
 use async_trait::async_trait;
 use http::header::RETRY_AFTER;
@@ -26,22 +25,23 @@ use pingap_core::{
     RequestPluginResult,
 };
 use pingap_core::{
-    ensure_client_ip, get_cookie_value, get_query_value, get_req_header_value,
+    ensure_verified_client_ip, get_cookie_value, get_query_value,
+    get_req_header_value,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // LimitTag determines what value will be used as the rate limiting key
 #[derive(PartialEq, Eq, Debug)]
 pub enum LimitTag {
-    Ip,            // Use client IP (from X-Forwarded-For or direct connection)
+    Ip, // Use the client IP: through trusted proxies, else the peer's own
     RequestHeader, // Use value from a specified HTTP request header
-    Cookie,        // Use value from a specified cookie
-    Query,         // Use value from a specified URL query parameter
+    Cookie, // Use value from a specified cookie
+    Query, // Use value from a specified URL query parameter
 }
 
 // Limiter implements rate limiting and concurrent request limiting
@@ -59,8 +59,8 @@ pub struct Limiter {
     /// Determines what value will be used as the rate limiting key (IP, header, cookie, or query param)
     tag: LimitTag,
 
-    /// Maximum number of requests/connections allowed within the interval (for rate limiting)
-    /// or at the same time (for inflight limiting)
+    /// Maximum number of requests allowed within any one interval (for rate
+    /// limiting) or at the same time (for inflight limiting)
     max: f64,
 
     /// The name of the header/cookie/query parameter to use as the limiting key
@@ -85,9 +85,6 @@ pub struct Limiter {
     /// Unique identifier for this limiter instance, used to distinguish between
     /// different limiters in the same application
     hash_value: String,
-
-    /// The weight of current slot
-    weight: f64,
 
     /// `Retry-After` for a rate limiter's 429: the window length, the
     /// soonest the budget can have moved on.
@@ -172,23 +169,22 @@ impl TryFrom<&PluginConf> for Limiter {
         } else {
             Duration::from_secs(10)
         };
-        if interval.is_zero() {
-            return Err(invalid(
-                "interval must be greater than zero".to_string(),
-            ));
+        // The counter keeps its windows in milliseconds, and divides by
+        // their length: one shorter than that is a division by zero on
+        // the first request.
+        if interval < Duration::from_millis(1) {
+            return Err(invalid("interval must be at least 1ms".to_string()));
         }
 
         // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
         let mut retry_after = None;
-        let mut max = max as f64;
+        let max = max as f64;
         if is_inflight {
             // Inflight limiter uses atomic counters to track concurrent requests
             inflight = Some(Inflight::new());
         } else {
-            // convert it to rps
-            max /= interval.as_secs_f64().max(1.0);
             // Rate limiter uses time-bucketed counters
             rate = Some(Rate::new(interval));
             retry_after = Some((
@@ -197,9 +193,14 @@ impl TryFrom<&PluginConf> for Limiter {
             ));
         }
 
-        let weight = get_int_conf_or_default(value, "weight", 50).clamp(0, 100)
-            as f64
-            / 100.0;
+        // `weight` blended the previous window into the estimate by a fixed
+        // share. It has no part in the sliding window that replaced that,
+        // and a config that still has it is told so instead of refused.
+        if value.contains_key("weight") {
+            warn!(
+                "the weight of the limit plugin is no longer used: max is the number of requests in any one interval"
+            );
+        }
 
         Ok(Self {
             hash_value,
@@ -209,7 +210,6 @@ impl TryFrom<&PluginConf> for Limiter {
             inflight,
             rate,
             plugin_step: step,
-            weight,
             retry_after,
         })
     }
@@ -233,7 +233,10 @@ impl Limiter {
     /// interval = "60s"      # time window for rate limiting
     /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new limit plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new limit plugin"
+        );
         Self::try_from(params)
     }
     /// Increments and checks the limit counter for the current request
@@ -265,7 +268,11 @@ impl Limiter {
                 get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default(),
             ),
-            _ => Cow::Borrowed(ensure_client_ip(session, ctx)),
+            // An address the client cannot choose: its own behind
+            // trusted proxies, the peer's without them. By whatever
+            // `X-Forwarded-For` said, a new value with every request was a
+            // new client every time and nothing was ever limited.
+            _ => Cow::Borrowed(ensure_verified_client_ip(session, ctx)),
         };
 
         // Skip limiting if no key found (e.g., missing header/cookie)
@@ -278,16 +285,27 @@ impl Limiter {
         let value = if let Some(rate) = &self.rate {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request
-            if self.weight > 0.0 {
-                rate.rate_with(&key, |rate_info| {
-                    let prev =
-                        rate_info.prev_samples as f64 * (1. - self.weight);
-                    let curr = rate_info.curr_samples as f64 * self.weight;
-                    (prev + curr) / rate_info.interval.as_secs_f64()
-                })
-            } else {
-                rate.rate(&key) // get the per second rate estimation of previous time window
+            // The requests of the last `interval`, this one included: all
+            // of the current window, and of the previous one the share
+            // that still lies within an interval from now. It used to be
+            // half of each, as a rate per second, so a client new to the
+            // limiter - nothing in its previous window - got twice `max`
+            // before it was stopped.
+            let value = rate.rate_with(&key, |info| {
+                info.prev_samples.max(0) as f64
+                    * (1.0 - info.current_interval_fraction)
+                    + info.curr_samples.max(0) as f64
+            });
+            // A request that is turned away is taken off again, so what is
+            // counted is what was let through: a client over its limit
+            // goes on getting `max` per interval and not, for as long as
+            // it keeps asking, nothing at all. It is counted first and
+            // checked after so that requests arriving together see each
+            // other.
+            if value > self.max {
+                rate.observe(&key, -1);
             }
+            value
         } else if let Some(inflight) = &self.inflight {
             // For inflight limiting:
             // Increment counter
@@ -377,6 +395,14 @@ mod tests {
     use std::time::Duration;
     use tokio_test::io::Builder;
 
+    /// The context of a request from `peer`. No trusted proxies are
+    /// configured in a unit test, so the peer's address is the client ip.
+    fn from_peer(peer: &str) -> Ctx {
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some(peer.to_string());
+        ctx
+    }
+
     async fn new_session() -> Session {
         let headers = [
             "Host: github.com",
@@ -442,7 +468,16 @@ max = 10
             ("type = \"inflght\"\nmax = 1", "Invalid type(inflght)"),
             ("type = \"rate\"", "max is required"),
             ("max = -1", "max must not be negative"),
-            ("max = 1\ninterval = \"0s\"", "interval must be greater"),
+            (
+                "max = 1\ninterval = \"0s\"",
+                "interval must be at least 1ms",
+            ),
+            // Regression: shorter than the counter's unit, which divided
+            // by it and brought the process down on the first request.
+            (
+                "max = 1\ninterval = \"500us\"",
+                "interval must be at least 1ms",
+            ),
         ] {
             let err =
                 Limiter::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
@@ -556,9 +591,7 @@ max = 10
         )
         .unwrap();
         assert_eq!(LimitTag::Ip, limiter.tag);
-        let mut ctx = Ctx {
-            ..Default::default()
-        };
+        let mut ctx = from_peer("1.1.1.1");
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
@@ -587,7 +620,7 @@ max = 0
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
@@ -611,7 +644,7 @@ max = 1
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
@@ -707,7 +740,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
@@ -718,7 +751,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
@@ -729,7 +762,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
@@ -751,10 +784,104 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut Ctx::default(),
+                &mut from_peer("1.1.1.1"),
             )
             .await
             .unwrap();
         assert_eq!(true, result == RequestPluginResult::Continue);
+    }
+
+    /// How many of `total` requests in a row a limiter lets through.
+    async fn admitted(
+        limiter: &Limiter,
+        total: usize,
+        peer: &str,
+        headers: impl Fn(usize) -> String,
+    ) -> usize {
+        let mut count = 0;
+        for index in 0..total {
+            let input = format!(
+                "GET /vicanso/pingap HTTP/1.1\r\n{}\r\n",
+                headers(index)
+            );
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = limiter
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut from_peer(peer),
+                )
+                .await
+                .unwrap();
+            if result == RequestPluginResult::Continue {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn new_rate_limiter(conf: &str) -> Limiter {
+        Limiter::new(
+            &toml::from_str::<PluginConf>(&format!("type = \"rate\"\n{conf}"))
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Regression: `max` is the number of requests in an interval. The
+    /// estimate took half of the current window and half of the previous
+    /// one, so a client with nothing in its previous window got through
+    /// twice as often before it was stopped - and with `weight = 0`,
+    /// which looked at the previous window alone, every time.
+    #[tokio::test]
+    async fn test_rate_limit_admits_max_per_interval() {
+        let no_headers = |_: usize| String::new();
+        let limiter = new_rate_limiter("max = 5\ninterval = \"1m\"");
+        assert_eq!(5, admitted(&limiter, 30, "1.1.1.1", no_headers).await);
+        // Another client has its own count.
+        assert_eq!(5, admitted(&limiter, 30, "1.1.1.2", no_headers).await);
+        // What was turned away is not counted: the first client is at its
+        // limit, not beyond it.
+        let count = limiter
+            .rate
+            .as_ref()
+            .unwrap()
+            .rate_with(&Cow::Borrowed("1.1.1.1"), |info| {
+                info.curr_samples + info.prev_samples
+            });
+        assert_eq!(5, count);
+
+        // `weight` is accepted and changes nothing.
+        for weight in [0, 50, 100] {
+            let limiter = new_rate_limiter(&format!(
+                "max = 5\ninterval = \"1m\"\nweight = {weight}"
+            ));
+            assert_eq!(
+                5,
+                admitted(&limiter, 30, "1.1.1.1", no_headers).await,
+                "{weight}"
+            );
+        }
+
+        // An interval shorter than a second is counted like any other;
+        // `max` used to be taken per second there and the estimate per
+        // interval.
+        let limiter = new_rate_limiter("max = 3\ninterval = \"500ms\"");
+        assert_eq!(3, admitted(&limiter, 10, "1.1.1.1", no_headers).await);
+    }
+
+    /// Regression: the client ip was whatever `X-Forwarded-For` said when
+    /// no trusted proxies are configured. A new value with every request
+    /// was a new client every time, and nothing was limited.
+    #[tokio::test]
+    async fn test_limit_by_ip_ignores_a_forged_address() {
+        let limiter = new_rate_limiter("max = 5\ninterval = \"1m\"");
+        let forged =
+            |index: usize| format!("X-Forwarded-For: 9.9.9.{index}\r\n");
+        assert_eq!(5, admitted(&limiter, 30, "1.1.1.1", forged).await);
+        let forged = |index: usize| format!("X-Real-IP: 9.9.8.{index}\r\n");
+        assert_eq!(0, admitted(&limiter, 30, "1.1.1.1", forged).await);
     }
 }

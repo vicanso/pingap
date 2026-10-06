@@ -66,7 +66,11 @@ curl "http://127.0.0.1:6188/api/orders?app_id=$APP_ID&ts=$TS&digest=$DIGEST"
 
 1. `app_id` present and known — otherwise 401.
 2. `secret == "*"` → allow immediately (skips IP, timestamp and digest checks).
-3. `ip_list`, when configured, must match the client IP.
+3. `ip_list`, when configured, must match the client IP: the address of the
+   connection, or the forwarded one when the request comes through a proxy
+   listed in `basic.trusted_proxies` (see
+   [`ip_restriction`](ip_restriction.md#client-ip-resolution)). A forwarded
+   header from anyone else is not believed.
 4. `ts` present, numeric, and `|now - ts| <= deviation`.
 5. `digest` present and equal to the expected value, compared in constant time.
 

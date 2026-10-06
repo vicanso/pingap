@@ -332,7 +332,7 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
 
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(target: LOG_TARGET, params = params.to_string(), "new admin server plugin");
+        debug!(target: LOG_TARGET, params = pingap_config::masked_toml(params), "new admin server plugin");
         let serve = AdminServe::try_from(params)?;
 
         Ok(serve)

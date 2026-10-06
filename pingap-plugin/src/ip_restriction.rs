@@ -22,7 +22,7 @@ use http::StatusCode;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_client_ip,
+    ensure_verified_client_ip,
 };
 use pingap_util::IpRules;
 use pingora::proxy::Session;
@@ -104,7 +104,10 @@ impl IpRestriction {
     /// # Returns
     /// * `Result<Self>` - New plugin instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new ip restriction plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new ip restriction plugin"
+        );
         Self::try_from(params)
     }
 }
@@ -147,9 +150,12 @@ impl Plugin for IpRestriction {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        // Get client IP address, using cached value if available
-        // Otherwise extract from X-Forwarded-For or remote address
-        let ip = ensure_client_ip(session, ctx);
+        // The address the list is checked against is one the client
+        // cannot choose: its own behind trusted proxies, the peer's
+        // without them. Without them `X-Forwarded-For` is simply what the
+        // request says, and an allow list for `10.0.0.0/8` let in anyone
+        // who sent `X-Forwarded-For: 10.1.2.3`.
+        let ip = ensure_verified_client_ip(session, ctx);
 
         // Check if IP matches any configured rules
         // Returns error if IP is malformed
@@ -181,7 +187,6 @@ register_plugin!("ip_restriction", IpRestriction);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http::StatusCode;
     use pingap_config::PluginConf;
     use pingap_core::{ConnectionInfo, Ctx, PluginStep};
     use pingora::proxy::Session;
@@ -219,136 +224,100 @@ type = "deny"
         assert_eq!(true, description.contains("192.168.1.1"));
     }
 
-    /// Tests IP restriction functionality.
-    /// Verifies:
-    /// - Deny list blocks matching IPs
-    /// - Allow list permits matching IPs
-    /// - CIDR range matching works correctly
-    /// - IP caching in context functions properly
-    /// - Correct response codes are returned
+    /// The status the plugin answers a request with, `None` when it lets
+    /// it through. `peer` is the address of the connection, which the
+    /// proxy records in the context when the request comes in.
+    async fn check(
+        plugin: &IpRestriction,
+        peer: Option<&str>,
+        headers: &str,
+    ) -> Option<u16> {
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx {
+            conn: ConnectionInfo {
+                remote_addr: peer.map(|addr| addr.to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = plugin
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        match result {
+            RequestPluginResult::Respond(resp) => Some(resp.status.as_u16()),
+            _ => None,
+        }
+    }
+
+    fn new_restriction(category: &str) -> IpRestriction {
+        IpRestriction::new(
+            &toml::from_str::<PluginConf>(&format!(
+                r###"
+type = "{category}"
+ip_list = [
+    "192.168.1.1",
+    "1.1.1.0/24",
+]
+    "###
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// The lists are checked against the address of the peer (no trusted
+    /// proxies are configured in a unit test).
     #[tokio::test]
     async fn test_ip_limit() {
-        let deny = IpRestriction::new(
-            &toml::from_str::<PluginConf>(
-                r###"
-type = "deny"
-ip_list = [
-    "192.168.1.1",
-    "1.1.1.0/24",
-]
-    "###,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let deny = new_restriction("deny");
+        assert_eq!(None, check(&deny, Some("2.1.1.2"), "").await);
+        assert_eq!(Some(403), check(&deny, Some("192.168.1.1"), "").await);
+        assert_eq!(Some(403), check(&deny, Some("1.1.1.2"), "").await);
 
-        let headers = ["X-Forwarded-For: 2.1.1.2"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
+        let allow = new_restriction("allow");
+        assert_eq!(None, check(&allow, Some("192.168.1.1"), "").await);
+        assert_eq!(None, check(&allow, Some("1.1.1.2"), "").await);
+        assert_eq!(Some(403), check(&allow, Some("2.1.1.2"), "").await);
+        // No address at all is not let through either way.
+        assert_eq!(Some(400), check(&allow, None, "").await);
+        assert_eq!(Some(400), check(&deny, None, "").await);
+    }
 
-        let result = deny
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx::default(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
+    /// Regression: without trusted proxies the address was whatever the
+    /// request claimed. An allow list let in anyone who sent an address
+    /// that is on it, and a deny list was passed by sending one that is
+    /// not.
+    #[tokio::test]
+    async fn test_ip_limit_ignores_a_forged_address() {
+        let allow = new_restriction("allow");
+        for headers in [
+            "X-Forwarded-For: 192.168.1.1\r\n",
+            "X-Real-IP: 192.168.1.1\r\n",
+            "X-Forwarded-For: 1.1.1.9, 10.0.0.1\r\n",
+        ] {
+            assert_eq!(
+                Some(403),
+                check(&allow, Some("2.1.1.2"), headers).await,
+                "{headers}"
+            );
+        }
+        // The peer is what counts, whatever else the request says.
+        assert_eq!(
+            None,
+            check(&allow, Some("192.168.1.1"), "X-Forwarded-For: 2.1.1.2\r\n")
+                .await
+        );
 
-        let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let result = deny
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx::default(),
-            )
-            .await
-            .unwrap();
-        let RequestPluginResult::Respond(resp) = result else {
-            panic!("result is not Respond");
-        };
-        assert_eq!(403, resp.status.as_u16());
-
-        let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let result = deny
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx {
-                    conn: ConnectionInfo {
-                        client_ip: Some("2.1.1.2".to_string()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
-
-        let result = deny
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx {
-                    conn: ConnectionInfo {
-                        client_ip: Some("1.1.1.2".to_string()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        let RequestPluginResult::Respond(resp) = result else {
-            panic!("result is not Respond");
-        };
-        assert_eq!(StatusCode::FORBIDDEN, resp.status);
-
-        let allow = IpRestriction::new(
-            &toml::from_str::<PluginConf>(
-                r###"
-type = "allow"
-ip_list = [
-    "192.168.1.1",
-    "1.1.1.0/24",
-]
-    "###,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let result = allow
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx::default(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
+        let deny = new_restriction("deny");
+        assert_eq!(
+            Some(403),
+            check(&deny, Some("192.168.1.1"), "X-Forwarded-For: 2.1.1.2\r\n")
+                .await
+        );
     }
 }

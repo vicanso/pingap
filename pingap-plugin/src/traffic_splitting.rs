@@ -99,7 +99,10 @@ impl TryFrom<&PluginConf> for TrafficSplitting {
 
 impl TrafficSplitting {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new traffic splitting plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new traffic splitting plugin"
+        );
         TrafficSplitting::try_from(params)
     }
     fn get_sticky_value<'a>(&self, session: &'a Session) -> Option<&'a str> {

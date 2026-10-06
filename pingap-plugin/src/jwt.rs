@@ -370,8 +370,11 @@ impl JwksSource {
             .get(&self.url)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
-        let set = resp.json::<JwkSet>().await.map_err(|e| e.to_string())?;
+            .map_err(|e| e.without_url().to_string())?;
+        let set = resp
+            .json::<JwkSet>()
+            .await
+            .map_err(|e| e.without_url().to_string())?;
         let keys = set
             .keys
             .iter()
@@ -609,7 +612,10 @@ impl JwtAuth {
     /// # Returns
     /// * `Result<Self>` - New JwtAuth instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new jwt auth plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new jwt auth plugin"
+        );
         Self::try_from(params)
     }
 }

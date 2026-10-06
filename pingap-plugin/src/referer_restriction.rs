@@ -137,7 +137,7 @@ impl RefererRestriction {
     /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(
-            params = params.to_string(),
+            params = pingap_config::masked_toml(params),
             "new referer restriction plugin"
         );
         Self::try_from(params)

@@ -81,7 +81,10 @@ impl AcceptEncoding {
     /// # Returns
     /// * `Result<Self>` - A new AcceptEncoding instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new accept encoding plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new accept encoding plugin"
+        );
         Self::try_from(params)
     }
 }

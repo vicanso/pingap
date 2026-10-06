@@ -70,7 +70,10 @@ impl Redirect {
     /// - Plugin step is not set to "request"
     /// - Required configuration parameters are missing
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new redirect plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new redirect plugin"
+        );
         let hash_value = get_hash_key(params);
 
         // Normalize prefix handling:

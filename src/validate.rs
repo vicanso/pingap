@@ -27,7 +27,8 @@ use crate::plugin;
 use pingap_certificate::{TlsCertificate, validate_servers_tls_for_backend};
 use pingap_config::{PingapConfig, PingapTomlConfig};
 use std::error::Error;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::warn;
 
 static LOG_TARGET: &str = "validate";
@@ -144,6 +145,26 @@ pub fn validate_stored(
     plugin::validate_plugin_references(&config)?;
     validate_servers_tls_for_backend(&config.servers)?;
     pingap_cache::dry_run(|| validate_built(&config))
+}
+
+/// The hash of the unknown keys that were last reported.
+static UNKNOWN_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
+
+/// Warns about what `document` has that pingap does not read, see
+/// [`PingapTomlConfig::unknown_keys`]. The same findings are reported
+/// once, however often the document is looked at: at startup, and then by
+/// every pass of the reload that reads it again.
+pub fn report_unknown_keys(document: &PingapTomlConfig) {
+    let found = document.unknown_keys();
+    let mut hasher = DefaultHasher::new();
+    found.hash(&mut hasher);
+    let hash = if found.is_empty() { 0 } else { hasher.finish() };
+    if UNKNOWN_KEYS_REPORTED.swap(hash, Ordering::Relaxed) == hash {
+        return;
+    }
+    for message in found {
+        warn!(target: LOG_TARGET, "config: {message}");
+    }
 }
 
 /// The answer to a change the admin is about to store, for

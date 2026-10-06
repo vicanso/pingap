@@ -14,6 +14,7 @@
 
 use super::{Error, Result};
 use crate::PingapTomlConfig;
+use crate::secrets::{masked_entry, masked_fragment};
 use bytesize::ByteSize;
 use pingap_core::ACCESS_LOG_PRESETS;
 use pingap_discovery::{
@@ -30,7 +31,6 @@ use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufReader, Read};
 use std::net::{IpAddr, ToSocketAddrs};
-use std::path::Path;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
@@ -198,6 +198,26 @@ fn validate_cert(value: &str) -> Result<()> {
     Ok(())
 }
 
+impl CertificateConf {
+    /// The files the certificate and its key are read from, when they are
+    /// given as paths and not as their content.
+    fn files(&self) -> impl Iterator<Item = std::path::PathBuf> + '_ {
+        [&self.tls_cert, &self.tls_key]
+            .into_iter()
+            .flatten()
+            .filter(|value| !is_pem(value))
+            .map(|value| std::path::PathBuf::from(resolve_path(value)))
+            .filter(|path| path.is_file())
+    }
+    /// Whether the certificate or its key comes from a file. Its
+    /// [`Hashable::hash_key`] then changes with the content of the file,
+    /// which the configuration document does not show: whoever watches
+    /// the document for changes has to look at these separately.
+    pub fn reads_files(&self) -> bool {
+        self.files().next().is_some()
+    }
+}
+
 // Generate hash key for certificate configuration
 // Add the content of the certificate and key files to the hash key
 impl Hashable for CertificateConf {
@@ -209,17 +229,8 @@ impl Hashable for CertificateConf {
         self.hash(&mut hasher);
 
         // 2. Iterate through the optional certificate and key file paths.
-        for value in [&self.tls_cert, &self.tls_key].into_iter().flatten() {
-            if is_pem(value) {
-                continue;
-            }
-            let file_path = resolve_path(value);
-            let path = Path::new(&file_path);
-            if !path.is_file() {
-                continue;
-            }
-
-            match File::open(path) {
+        for path in self.files() {
+            match File::open(&path) {
                 Ok(file) => {
                     let mut reader = BufReader::new(file);
                     let mut buffer = [0; 8192];
@@ -1703,7 +1714,7 @@ fn parse_entry<T: DeserializeOwned>(
 /// include that names no storage, or a storage whose value is not TOML,
 /// is a configuration error: it used to be dropped without a word, leaving
 /// the entry without the settings it was meant to share.
-fn expand_includes(
+pub(crate) fn expand_includes(
     storages: &HashMap<String, StorageConf>,
     kind: &str,
     name: &str,
@@ -2010,75 +2021,64 @@ impl PingapConfig {
         }
         let value = self;
         let mut descriptions = vec![];
+        // Every entry is printed with its credentials replaced by their
+        // checksums (see `secrets`): what is made here ends up in the log
+        // and in the webhook as the difference of a reload. A checksum
+        // changes with the value, so a changed secret still shows as a
+        // change, here and to whoever goes by `diff` to decide what to
+        // reload.
         for (name, data) in value.servers.iter() {
             descriptions.push(Description {
                 category: CATEGORY_SERVER.to_string(),
                 name: format!("server:{name}"),
-                data: toml::to_string_pretty(data).unwrap_or_default(),
+                data: masked_entry(data),
             });
         }
         for (name, data) in value.locations.iter() {
             descriptions.push(Description {
                 category: CATEGORY_LOCATION.to_string(),
                 name: format!("location:{name}"),
-                data: toml::to_string_pretty(data).unwrap_or_default(),
+                data: masked_entry(data),
             });
         }
         for (name, data) in value.upstreams.iter() {
             descriptions.push(Description {
                 category: CATEGORY_UPSTREAM.to_string(),
                 name: format!("upstream:{name}"),
-                data: toml::to_string_pretty(data).unwrap_or_default(),
+                data: masked_entry(data),
             });
         }
         for (name, data) in value.plugins.iter() {
             descriptions.push(Description {
                 category: CATEGORY_PLUGIN.to_string(),
                 name: format!("plugin:{name}"),
-                data: toml::to_string_pretty(data).unwrap_or_default(),
+                data: masked_entry(data),
             });
         }
         for (name, data) in value.certificates.iter() {
-            let mut clone_data = data.clone();
-            if let Some(cert) = &clone_data.tls_cert {
-                clone_data.tls_cert = Some(format!(
-                    "crc32:{:X}",
-                    crc32fast::hash(cert.as_bytes())
-                ));
-            }
-            if let Some(key) = &clone_data.tls_key {
-                clone_data.tls_key = Some(format!(
-                    "crc32:{:X}",
-                    crc32fast::hash(key.as_bytes())
-                ));
-            }
             descriptions.push(Description {
                 category: CATEGORY_CERTIFICATE.to_string(),
                 name: format!("certificate:{name}"),
-                data: toml::to_string_pretty(&clone_data).unwrap_or_default(),
+                data: masked_entry(data),
             });
         }
         for (name, data) in value.storages.iter() {
+            // What a storage holds is a fragment of configuration or a
+            // secret, and either may carry credentials.
             let mut clone_data = data.clone();
-            if let Some(secret) = &clone_data.secret {
-                clone_data.secret = Some(format!(
-                    "crc32:{:X}",
-                    crc32fast::hash(secret.as_bytes())
-                ));
-            }
+            clone_data.value = masked_fragment(&clone_data.value);
             descriptions.push(Description {
                 category: CATEGORY_STORAGE.to_string(),
                 name: format!("storage:{name}"),
-                data: toml::to_string_pretty(&clone_data).unwrap_or_default(),
+                data: masked_entry(&clone_data),
             });
         }
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
-            data: toml::to_string_pretty(&BasicOnly {
+            data: masked_entry(&BasicOnly {
                 basic: &value.basic,
-            })
-            .unwrap_or_default(),
+            }),
         });
         descriptions.sort_by_key(|d| d.name.clone());
         descriptions
@@ -2253,6 +2253,103 @@ addrs = ["127.0.0.1:6000"]
         basic_changed.basic.name = Some("renamed".to_string());
         let (categories, _) = base.diff(&basic_changed);
         assert_eq!(vec![CATEGORY_BASIC.to_string()], categories);
+    }
+
+    /// Regression: the difference of a reload goes to the log and to the
+    /// webhook, and carried the credentials of whatever had changed - the
+    /// old value and the new - as they are written in the config.
+    #[test]
+    fn test_config_diff_has_no_credentials() {
+        let config = |secret: &str| {
+            convert_pingap_config(
+                format!(
+                    r#"
+[basic]
+webhook = "https://hook.test/send?key={secret}"
+
+[plugins.auth]
+category = "basic_auth"
+authorizations = ["{secret}"]
+
+[plugins.token]
+category = "jwt"
+secret = "{secret}"
+header = "Authorization"
+
+[plugins.api]
+category = "key_auth"
+query = "apikey"
+keys = ["{secret}", "other"]
+
+[plugins.limiter]
+category = "limit"
+tag = "header"
+key = "X-Client"
+max = 10
+
+[locations.app]
+proxy_set_headers = ["Authorization: Bearer {secret}", "X-Mode: {secret}"]
+
+[servers.web]
+addr = "127.0.0.1:80"
+prometheus_metrics = "http://user:{secret}@push.test/metrics"
+
+[storages.shared]
+category = "config"
+value = 'proxy_add_headers = ["X-Api-Key: {secret}"]'
+"#
+                )
+                .as_bytes(),
+                false,
+            )
+            .unwrap()
+        };
+        let old = config("0ld-s3cret");
+        let new = config("n3w-s3cret");
+
+        let (mut categories, detail) = old.diff(&new);
+        categories.sort();
+        // Every one of them is still seen to have changed.
+        assert_eq!(
+            vec!["basic", "location", "plugin", "server", "storage"],
+            categories
+        );
+        let text = detail.join("\n");
+        for name in ["plugin:auth", "plugin:token", "plugin:api", "basic"] {
+            assert_eq!(
+                true,
+                text.contains(&format!("[MODIFIED] {name}")),
+                "{name}: {text}"
+            );
+        }
+        // The one header that is no credential is the only place either
+        // value may show.
+        let leaked: Vec<&str> = text
+            .lines()
+            .filter(|line| line.contains("s3cret"))
+            .collect();
+        assert_eq!(2, leaked.len(), "{leaked:?}");
+        assert_eq!(
+            true,
+            leaked.iter().all(|line| line.contains("X-Mode")),
+            "{leaked:?}"
+        );
+        // What is not a credential reads as before.
+        let (_, detail) = old.diff(&{
+            let mut renamed = old.clone();
+            renamed
+                .plugins
+                .get_mut("limiter")
+                .unwrap()
+                .insert("key".to_string(), "X-User".into());
+            renamed
+        });
+        let text = detail.join("\n");
+        assert_eq!(true, text.contains(r#"- key = "X-Client""#), "{text}");
+        assert_eq!(true, text.contains(r#"+ key = "X-User""#), "{text}");
+
+        // The hash goes by the same text and still tells the two apart.
+        assert_ne!(old.hash().unwrap(), new.hash().unwrap());
     }
 
     #[test]

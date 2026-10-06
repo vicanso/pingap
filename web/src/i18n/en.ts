@@ -660,6 +660,9 @@ export default {
     dirCharset: "Charset",
     dirCharsetPlaceholder: "Input the charset of file response",
     dirDownload: "Support Download",
+    dirFollowSymlinks: "Follow Symlinks",
+    dirFollowSymlinksTips:
+      "Unset or yes serves whatever a link inside the directory points at. No refuses a file that resolves to somewhere outside it.",
     dirHeaderName: "Response Headers",
     dirHeaderNamePlaceholder:
       "Input the response header name : Input the response header value",
@@ -765,8 +768,33 @@ export default {
     jwtAuthFailDelay: "Fail Delay",
     jwtAuthFailDelayPlaceholder: "Input the delay duration of fail auth",
     jwtSignAlgorithm: "Algorithm",
+    jwtSignAlgorithmTips:
+      "HS256 or HS512 with a secret; an RS, PS, ES or EdDSA algorithm with a public key. Not used with a JWKS url, where each key names its own.",
     jwtAuthSecret: "Secret",
     jwtAuthSecretPlaceholder: "Input the secret for jwt",
+    jwtPublicKey: "Public Key",
+    jwtPublicKeyPlaceholder: "Input the public key in PEM format",
+    jwtPublicKeyTips:
+      "Verifies tokens signed with the matching private key. Needs an asymmetric algorithm.",
+    jwtJwksUrl: "JWKS Url",
+    jwtJwksUrlPlaceholder: "Input the url of the JWKS endpoint",
+    jwtJwksUrlTips:
+      "The keys are fetched from this url and picked by the kid of the token. Takes precedence over the public key and the secret.",
+    jwtJwksTtl: "JWKS TTL",
+    jwtJwksTtlPlaceholder: "How long fetched keys stay fresh, default: 1h",
+    forwardAuthUrl: "Auth Url",
+    forwardAuthUrlPlaceholder: "Input the url of the auth service",
+    forwardAuthTimeout: "Timeout",
+    forwardAuthTimeoutPlaceholder: "Timeout of the auth request, default: 10s",
+    forwardAuthRequestHeaders: "Request Headers",
+    forwardAuthRequestHeadersPlaceholder: "Input the name of a request header",
+    forwardAuthRequestHeadersTips:
+      "The request headers sent to the auth service. Leave empty to send all of them.",
+    forwardAuthAddHeaders: "Add Headers",
+    forwardAuthAddHeadersPlaceholder:
+      "Input the name of a header of the auth response",
+    forwardAuthAddHeadersTips:
+      "Headers of the auth response that are set on the request to the upstream when the auth succeeds.",
     limitCategory: "Type",
     limitTag: "Category",
     limitKey: "Key",
@@ -775,9 +803,6 @@ export default {
     limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
-    limitWeight: "Weight",
-    limitWeightPlaceholder:
-      "Input the weight of current slot(0-100), default: 50",
     ipRestrictionMode: "Restriction Mode",
     ipList: "Ip List",
     ipListPlaceholder: "Input the ip for restriction",

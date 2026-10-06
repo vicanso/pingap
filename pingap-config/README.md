@@ -46,6 +46,21 @@ plugin. An `access_log` that is neither a format with a placeholder, a preset,
 nor a file followed by one of the two is rejected. It only
 reads: the configuration is left exactly as it is on disk.
 
+A key or a section pingap does not know is left out when the document is read.
+It is not an error, but it is reported: `--test`, a start and every reload of
+a changed document log one warning per finding, with the name it was probably
+meant to be.
+
+```
+config: unknown section [server], did you mean [servers]?
+config: basic: unknown key "trusted_proxy", did you mean "trusted_proxies"?
+config: location(api): unknown key "client_max_body_sizes", did you mean "client_max_body_size"?
+```
+
+The keys of an entry are checked with its `includes` put in, so a typo inside
+a storage fragment is reported for the entry that includes it. Plugin settings
+are not checked this way: which keys a plugin takes is for the plugin to say.
+
 ## Storage backends
 
 The backend is chosen from the value of `-c` / `PINGAP_CONF`:
@@ -96,6 +111,17 @@ old content or the new and never half a file. The mode and the owner of the
 file are kept, and a symlink is followed to the file it points at. Where the
 name cannot be taken over (a single config file mounted into a container) or
 the owner cannot be kept, the file is written in place.
+
+A file that is new is no more open than the directory it is created in, less
+the right to execute: in a config directory that only its owner can enter
+(`0700`), a new entry file is `0600`, and the directory of a category created
+for it is `0700`. That is a ceiling, asked for when the file is created, so
+the umask of the process still narrows it. The file is given to the owner of
+the directory where the process may do that (it was started as root and the
+directory belongs to the user it runs as). The history directory is created
+like the config directory, and a copy kept there is no more open than the
+file it copies. The temporary file a save goes through is private from the
+moment it exists.
 
 Importing a configuration (`POST /api/configs/import`, `--sync`) replaces what is
 stored: an entry the imported configuration does not have is removed, in every
@@ -309,6 +335,20 @@ not build, exits and leaves the running one in place, `--admin` or not.
 A change that only touches `storages` never restarts the process: an entry
 there has no effect of its own, and what another entry includes from it shows
 up as a change of that entry.
+A certificate given as a file path is watched on the same schedule: when the
+document is unchanged, the files of such certificates are hashed, and one
+whose file was replaced - by a renewal with certbot, say - is loaded again.
+This needs `--autoreload` or `--autorestart` like any other reload. It also
+works next to certificates managed by ACME: only the certificates that come
+from files are touched.
+What a reload changed is logged, and sent to the webhook, as the difference
+between the two configurations. Credentials in it are replaced by a checksum
+(`secret = "crc32:8D9A1B2C"`), so that a change still shows as one: values
+under keys such as `secret`, `password`, `token`, `key`, `keys` and
+`authorizations`, the user and password of any url, the query or path of the
+urls that carry keys (`webhook`, `sentry`, `*_url`), the value of headers like
+`Authorization`, and what a storage holds. The same goes for the settings a
+plugin logs at debug level.
 `--autoreload` swaps the configuration in place, which is what you want in
 containers. A change to a location takes effect in routing as well: the hosts
 and paths a server routes by are rebuilt whenever its locations change. `--autorestart` performs a zero-downtime graceful restart, which is

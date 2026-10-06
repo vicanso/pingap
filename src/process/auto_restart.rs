@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use super::restart;
-use crate::certificates::try_update_certificates;
+use crate::certificates::{
+    try_reload_certificate_files, try_update_certificates,
+};
 use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
@@ -55,6 +57,54 @@ struct LastSeen {
 
 static LAST_SEEN: ArcSwapOption<LastSeen> = ArcSwapOption::const_empty();
 
+/// Loads the certificates whose files have changed.
+///
+/// A certificate given as a path is not in the configuration document, only
+/// the path is. Replacing the file - what certbot does on every renewal -
+/// changed nothing the check of the document could see, and the old
+/// certificate was served until the next restart.
+///
+/// Run on every pass, whatever became of the document: a document that
+/// does not load keeps the certificates it had, and their files may be
+/// renewed all the same.
+async fn reload_changed_certificate_files(config_manager: &ConfigManager) {
+    let config = config_manager.get_current_config();
+    let (updated, errors) = try_reload_certificate_files(&config.certificates);
+    report_certificate_reload(updated, errors).await;
+}
+
+/// Logs and notifies what a reload of the certificates did.
+async fn report_certificate_reload(updated: Vec<String>, errors: String) {
+    if !updated.is_empty() {
+        info!(
+            target: LOG_TARGET,
+            certificates = updated.join(","),
+            "reload certificate success"
+        );
+        send_notification(NotificationData {
+            category: "reload_config".to_string(),
+            level: NotificationLevel::Info,
+            message: format!("Certificate: {}", updated.join(", ")),
+            ..Default::default()
+        })
+        .await;
+    }
+    if !errors.is_empty() {
+        error!(
+            target: LOG_TARGET,
+            error = errors,
+            "parse certificate fail"
+        );
+        send_notification(NotificationData {
+            category: "parse_certificate_fail".to_string(),
+            level: NotificationLevel::Error,
+            message: errors,
+            ..Default::default()
+        })
+        .await;
+    }
+}
+
 fn raw_hash(raw: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     raw.hash(&mut hasher);
@@ -90,8 +140,9 @@ async fn diff_and_update_config(
         debug!(target: LOG_TARGET, "config is unchanged");
         return Ok(None);
     }
-    let new_config =
-        PingapTomlConfig::from_toml(&raw)?.to_pingap_config(true)?;
+    let document = PingapTomlConfig::from_toml(&raw)?;
+    crate::validate::report_unknown_keys(&document);
+    let new_config = document.to_pingap_config(true)?;
     let restart_requested =
         apply_config(config_manager, &new_config, hot_reload_only).await?;
     // Recorded only after a pass that finished. An error - the document
@@ -707,17 +758,23 @@ async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
 ) -> Option<PingapConfig> {
-    match diff_and_update_config(config_manager, hot_reload_only).await {
-        Ok(new_config) => new_config,
-        Err(e) => {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                "update config fail",
-            );
-            None
-        },
-    }
+    let new_config =
+        match diff_and_update_config(config_manager.clone(), hot_reload_only)
+            .await
+        {
+            Ok(new_config) => new_config,
+            Err(e) => {
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    "update config fail",
+                );
+                None
+            },
+        };
+    // The document may be as it was while the files it points at are not.
+    reload_changed_certificate_files(&config_manager).await;
+    new_config
 }
 
 #[async_trait]

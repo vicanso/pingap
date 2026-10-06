@@ -153,7 +153,10 @@ impl RequestId {
     /// # Returns
     /// * `Result<RequestId>` - The created plugin instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new request id plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new request id plugin"
+        );
         Self::try_from(params)
     }
 }

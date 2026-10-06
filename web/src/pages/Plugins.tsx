@@ -14,7 +14,7 @@ import { PLUGIN_FIELDS } from "@/plugin-fields";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
-import { omitEmptyArrayString } from "@/helpers/util";
+import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
 import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
@@ -218,6 +218,8 @@ export default function Plugins() {
 
   const schema = z.object({
     step: z.string().optional(),
+    timeout: newZodDuration().optional(),
+    jwks_ttl: newZodDuration().optional(),
   });
   let key = `${currentPlugin}-${version}`;
   if (currentPlugin == newPlugin) {

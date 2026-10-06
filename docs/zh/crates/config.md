@@ -30,6 +30,16 @@ pub struct PingapConfig {
 
 每个 section 实现 `Validate`。`pingap -t` 加载配置、运行全部校验器后退出——可在 CI 与重载前使用。除了校验器之外，它还会按启动时的方式构建每一个 upstream、location 和插件，所以未知的 `alpn`、加载不了的 `ca`、编译不过的路径或域名正则、格式不对的 `rewrite` 规则、无效的插件配置（包括类型写错的值），都在这一步报告，而不是等到下次启动。证书会和私钥一起加载，所以配了另一张证书的私钥也会在这里报告。校验器还会检查条目之间的引用：location 的 upstream 和插件、server 的 location，以及 `traffic_splitting` 插件的 upstream。`access_log` 既不是带占位符的格式、也不是预设名、也不是文件路径后跟这两者之一时，会被拒绝。它只读取配置，磁盘上的配置保持原样。
 
+pingap 不认识的键和分段在读取时会被忽略。这不算错误，但会被报告：`--test`、启动、以及每次重载有变化的配置时，每一处都会打印一条告警，并给出最可能的正确写法：
+
+```
+config: unknown section [server], did you mean [servers]?
+config: basic: unknown key "trusted_proxy", did you mean "trusted_proxies"?
+config: location(api): unknown key "client_max_body_sizes", did you mean "client_max_body_size"?
+```
+
+条目的键是在展开 `includes` 之后检查的，所以 storage 片段里写错的键会报在引用它的条目上。插件的配置不做这项检查：插件接受哪些键由插件自己决定。
+
 ## 存储后端
 
 由 `-c` / `PINGAP_CONF` 的值选择后端：
@@ -57,6 +67,8 @@ etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 
 每个文件只读一次。Kubernetes 用 ConfigMap 或 Secret 挂载的目录里，每个文件有三条路径可达（顶层的链接、`..data`、以及它背后带时间戳的目录）；名字以 `..` 开头的目录下的内容会被跳过，指向同一个文件的多条路径只算一次。
 
 写文件时先把新内容写到旁边的临时文件，再改名覆盖，所以读取方（包括变更检查）看到的要么是旧内容、要么是新内容，不会读到半个文件。文件的权限和属主保持不变，符号链接会跟随到它指向的文件。无法改名覆盖（例如挂载进容器的单个配置文件）或无法保留属主时，退回为直接写入。
+
+新建文件的权限不会比所在目录更宽（去掉执行位）：在只有属主能进入的配置目录（`0700`）里，新建的条目文件是 `0600`，为它新建的分类目录是 `0700`。这是上限，在创建文件时指定，所以进程的 umask 仍然会进一步收紧它。在进程有权限的情况下（以 root 启动、目录属于实际运行的用户），新文件的属主会设成目录的属主。历史目录按配置目录的权限创建，其中的副本不会比被复制的文件更宽。保存时用到的临时文件从创建那一刻起就是私有的。
 
 导入配置（`POST /api/configs/import`、`--sync`）是整体替换：导入的配置里没有的条目会被删除，各种布局都一样。
 
@@ -204,7 +216,7 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 - **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。监听使用独立的连接；连接中断或被服务端结束后会重新建立，etcd 持续不可达时重试间隔从 500ms 逐步增加到一分钟，恢复后立即再比较一次配置。不论监听是否正常，存储里的配置每隔 `basic.auto_restart_check_interval` 也会重新读取一次。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。以文件路径给出的证书按同样的周期检查：配置文档没有变化时，会对这类证书的文件计算 hash，文件被替换（例如 certbot 续期）的证书会重新加载。这和其他重载一样需要 `--autoreload` 或 `--autorestart`。配置里同时有 ACME 证书时同样有效：只会改动来自文件的证书。重载改了什么，会以两份配置的差异写入日志并发送到 webhook。差异里的凭据会替换成校验值（`secret = "crc32:8D9A1B2C"`），这样值变了仍然能看出来：包括 `secret`、`password`、`token`、`key`、`keys`、`authorizations` 这类键的值，任何 URL 里的用户名和密码，带密钥的 URL（`webhook`、`sentry`、`*_url`）的查询串或路径，`Authorization` 这类请求头的值，以及 storage 里保存的内容。插件在 debug 级别打印的配置同样处理。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
 
 ## Includes
 

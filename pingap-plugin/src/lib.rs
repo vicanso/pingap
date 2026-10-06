@@ -69,8 +69,16 @@ thread_local! {
 fn note_wrong_type(key: &str, expected: &str, value: &toml::Value) {
     WRONG_TYPES.with_borrow_mut(|notes| {
         if let Some(notes) = notes {
+            // The value is what tells a typo apart, but not when it is a
+            // credential: this note ends up in the log and in the
+            // notification of a failed reload.
+            let shown = if pingap_config::is_secret_key(key) {
+                String::new()
+            } else {
+                format!(" {value}")
+            };
             notes.push(format!(
-                "{key} must be {expected}, got {} {value}",
+                "{key} must be {expected}, got {}{shown}",
                 value.type_str()
             ));
         }
@@ -432,9 +440,11 @@ mod tests {
                 format!("{limit}max = 10\ninterval = 10"),
                 "interval must be a string, got integer 10",
             ),
+            // The value of what is a credential is not repeated: this
+            // message goes to the log and to the webhook.
             (
                 format!("{key_auth}keys = [\"a\", 123]"),
-                "keys must be a list of strings, got integer 123",
+                "keys must be a list of strings, got integer",
             ),
             (
                 format!("{key_auth}keys = [\"a\"]\nhide_credentials = \"true\""),

@@ -26,7 +26,7 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@127.0.0.1:3018
 pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 ```
 
-等价环境变量：`PINGAP_ADMIN_ADDR`、`PINGAP_ADMIN_USER`、`PINGAP_ADMIN_PASSWORD`。
+等价环境变量：`PINGAP_ADMIN_ADDR`、`PINGAP_ADMIN_USER`、`PINGAP_ADMIN_PASSWORD`。机器上的其他用户能看到进程列表时，建议用环境变量：进程的命令行是公开的，环境变量不是。优雅重启时同样如此——来自环境变量的设置（这三个，以及 `PINGAP_CONF`）由新进程继承，不会被写成命令行参数。
 
 凭证写成 `user:password`，或者在用户名的位置写 `user:password` 的 Base64。只有用户名、没有密码，且用户名又不是这样的 Base64 值时（`--admin=root@127.0.0.1:3018`）是错误，进程不会启动。在 URL 里有特殊含义的字符用百分号编码（`p@ss` 写成 `p%40ss`），密码取解码后的值。
 

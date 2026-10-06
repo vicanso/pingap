@@ -245,7 +245,10 @@ impl Compression {
     /// # Returns
     /// * `Result<Self>` - New compression plugin instance or error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new compression plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new compression plugin"
+        );
         Self::try_from(params)
     }
     fn get_compress_level(&self, session: &Session) -> (u32, u32, u32) {

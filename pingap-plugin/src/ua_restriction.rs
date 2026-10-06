@@ -136,7 +136,7 @@ impl UaRestriction {
     /// * `Result<Self>` - New plugin instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(
-            params = params.to_string(),
+            params = pingap_config::masked_toml(params),
             "new user agent restriction plugin"
         );
         Self::try_from(params)

@@ -19,7 +19,7 @@ use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_client_ip,
+    ensure_verified_client_ip,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -120,7 +120,10 @@ impl TryFrom<&PluginConf> for GeoRestriction {
 
 impl GeoRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new geo restriction plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new geo restriction plugin"
+        );
         LazyLock::force(&GEO_DB);
         let result = Self::try_from(params)?;
         info!(
@@ -150,7 +153,10 @@ impl Plugin for GeoRestriction {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        let ip = ensure_client_ip(session, ctx);
+        // By an address the client cannot choose, see `ip_restriction`:
+        // the country of whatever `X-Forwarded-For` claimed was the
+        // country the client picked.
+        let ip = ensure_verified_client_ip(session, ctx);
 
         // `::ffff:1.2.3.4` is looked up as `1.2.3.4`: as an IPv6 address
         // it has no country. Something that is no address has none either,
@@ -227,37 +233,53 @@ message = "Country not allowed"
         )
         .unwrap();
 
-        let headers = ["X-Forwarded-For: 8.8.8.8"].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let result = geo
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut Ctx::default(),
-            )
-            .await
-            .unwrap();
-        assert!(result == RequestPluginResult::Continue);
+        assert!(allowed(&geo, "8.8.8.8").await);
     }
 
-    async fn allowed(geo: &GeoRestriction, client_ip: &str) -> bool {
-        let mock_io = Builder::new()
-            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
-            .build();
+    /// Whether a request from the peer `peer` is let through. No trusted
+    /// proxies are configured in a unit test, so the peer's address is the
+    /// one that is looked up.
+    async fn allowed(geo: &GeoRestriction, peer: &str) -> bool {
+        allowed_with(geo, peer, "").await
+    }
+
+    async fn allowed_with(
+        geo: &GeoRestriction,
+        peer: &str,
+        headers: &str,
+    ) -> bool {
+        let input = format!("GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n");
+        let mock_io = Builder::new().read(input.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let mut ctx = Ctx::default();
-        ctx.conn.client_ip = Some(client_ip.to_string());
+        ctx.conn.remote_addr = Some(peer.to_string());
         let result = geo
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
             .unwrap();
         result == RequestPluginResult::Continue
+    }
+
+    /// Regression: without trusted proxies the country was that of
+    /// whatever address the request claimed, so the client picked it.
+    #[tokio::test]
+    async fn test_geo_restriction_ignores_a_forged_address() {
+        // 8.8.8.8 is in the US; 127.0.0.1 has no country.
+        let allow = new_geo("allow");
+        for headers in
+            ["X-Forwarded-For: 8.8.8.8\r\n", "X-Real-IP: 8.8.8.8\r\n"]
+        {
+            assert!(
+                !allowed_with(&allow, "127.0.0.1", headers).await,
+                "{headers}"
+            );
+        }
+        let deny = new_geo("deny");
+        assert!(
+            !allowed_with(&deny, "8.8.8.8", "X-Forwarded-For: 127.0.0.1\r\n")
+                .await
+        );
     }
 
     fn new_geo(kind: &str) -> GeoRestriction {

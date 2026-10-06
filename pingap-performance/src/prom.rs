@@ -791,10 +791,11 @@ async fn do_push(
             }
         },
         Err(e) => {
+            // Without the url, which may carry a token in its query.
             error!(
                 target: LOG_TARGET,
                 name = params.name,
-                error = %e,
+                error = %e.without_url(),
                 "push prometheus fail"
             );
         },

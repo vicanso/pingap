@@ -196,8 +196,6 @@ interface Basic {
   log_compress_time_point_hour?: number;
   log_level?: string;
   auto_restart_check_interval?: string;
-  cache_max_size?: number;
-  cache_directory?: string;
   sentry?: string;
   pyroscope?: string;
   webhook?: string;

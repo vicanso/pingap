@@ -33,6 +33,8 @@ crate 核心是 `GlobalCertificate`：SNI 选择逻辑（精确 → 通配 → �
 
 证书与私钥是一起加载的，私钥与证书不配对在两种 TLS 后端下都是错误，`pingap -t` 和 admin 保存时都会报告。（OpenSSL 自身只在握手时安装这一对的时候才会报错，以前的结果是受影响域名的每次握手都在运行时失败。）热更新时某个条目构建失败会被上报，它原本要替换的证书继续为原来的域名提供服务；失败条目里新的 `domains` 和 `is_default` 不会生效。
 
+`tls_cert` / `tls_key` 以文件路径给出的证书，在文件内容变化时会重新加载，不需要改配置：重载服务每一轮都会对这些文件计算 hash（`CertificateConf::reads_files`、`hash_key`）。原地替换 `fullchain.pem` 和 `privkey.pem` 的续期，几秒之内生效。和其他重载一样，需要进程带 `--autoreload` 或 `--autorestart` 运行。同一份配置里由 ACME 管理的证书仍由 ACME 服务负责，不受影响。
+
 OpenSSL 后端下，被 OpenSSL 拒绝的 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（或 `tlsv1.1`/`tlsv1.2`/`tlsv1.3` 以外的版本名；大小写不敏感）在构建监听器时报错，服务器不会带着与配置不同的设置启动。
 
 ## 模块

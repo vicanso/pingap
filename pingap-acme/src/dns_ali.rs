@@ -104,7 +104,13 @@ async fn ali_api_request(
         percent_encode(&signature)
     );
 
-    let response = client.get(&request_url).send().await.map_err(new_error)?;
+    // Without the url in the error: it has the access key id and the
+    // signature of the request in its query.
+    let response = client
+        .get(&request_url)
+        .send()
+        .await
+        .map_err(|e| new_error(e.without_url()))?;
 
     if response.status().is_success() {
         Ok(response.text().await.map_err(new_error)?)

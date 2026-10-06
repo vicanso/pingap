@@ -156,7 +156,10 @@ impl TryFrom<&PluginConf> for ForwardAuth {
 
 impl ForwardAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new forward auth plugin");
+        debug!(
+            params = pingap_config::masked_toml(params),
+            "new forward auth plugin"
+        );
         Self::try_from(params)
     }
 }
@@ -228,9 +231,11 @@ impl Plugin for ForwardAuth {
         let resp = match builder.send().await {
             Ok(resp) => resp,
             Err(e) => {
+                // Without the url, which is the configured `auth_url`
+                // and may have a credential in it.
                 error!(
                     category = CATEGORY,
-                    error = %e,
+                    error = %e.without_url(),
                     "forward auth subrequest failed"
                 );
                 return Ok(RequestPluginResult::Respond(HttpResponse {

@@ -131,7 +131,7 @@ impl Stats {
     ///
     /// Returns a Result containing the Stats plugin instance or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(target: LOG_TARGET, params = params.to_string(), "new stats plugin");
+        debug!(target: LOG_TARGET, params = pingap_config::masked_toml(params), "new stats plugin");
         Self::try_from(params)
     }
 }

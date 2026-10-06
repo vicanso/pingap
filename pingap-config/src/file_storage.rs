@@ -137,6 +137,97 @@ async fn keep_owner(
     Ok(())
 }
 
+/// Writes `value` to a file that is created for it, with `mode` as the
+/// most it may be open to. A config holds keys and passwords, and a file
+/// made with the default mode was readable by every user of the machine
+/// until - and unless - it was given the mode of the file it stood in for.
+///
+/// The mode is given at creation and not set afterwards, so the umask of
+/// the process still applies: a file is never opened wider than the
+/// process was told to make files.
+#[cfg(unix)]
+async fn write_new(file: &Path, value: &str, mode: u32) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut created = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(mode)
+        .open(file)
+        .await?;
+    created.write_all(value.as_bytes()).await?;
+    created.flush().await
+}
+
+#[cfg(not(unix))]
+async fn write_new(
+    file: &Path,
+    value: &str,
+    _mode: u32,
+) -> std::io::Result<()> {
+    fs::write(file, value).await
+}
+
+/// The most a file that is new to `dir` may be open to: what the directory
+/// allows, less the right to execute. A directory only its owner can enter
+/// gets files only its owner can read. Private when the directory cannot be
+/// looked at.
+fn mode_of_new_file(dir: Option<&std::fs::Metadata>) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        dir.map_or(0o600, |meta| meta.permissions().mode() & 0o666)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        0o600
+    }
+}
+
+/// Gives `file` to the owner of the directory it was created in, where
+/// this process may do that: started as root with a config directory that
+/// belongs to the user it is going to run as, it would otherwise leave
+/// files there that only root can read. Not being allowed to is no error.
+async fn give_to_owner_of(file: &Path, dir: Option<&std::fs::Metadata>) {
+    if let Some(meta) = dir {
+        let _ = keep_owner(file, meta).await;
+    }
+}
+
+/// Creates `dir` and whatever is missing above it, each no more open than
+/// the directory it is created in: the directory of a category in a config
+/// directory that only its owner can enter is as closed as that one.
+async fn create_dir_like_its_parent(dir: &Path) -> std::io::Result<()> {
+    if fs::metadata(dir).await.is_ok() {
+        return Ok(());
+    }
+    let mut missing = vec![dir.to_path_buf()];
+    let mut existing = None;
+    let mut current = dir;
+    while let Some(parent) = current.parent() {
+        if let Ok(meta) = fs::metadata(parent).await {
+            existing = Some(meta);
+            break;
+        }
+        missing.push(parent.to_path_buf());
+        current = parent;
+    }
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    if let Some(meta) = &existing {
+        use std::os::unix::fs::PermissionsExt;
+        builder.mode(meta.permissions().mode() & 0o777);
+    }
+    builder.create(dir).await?;
+    for created in missing {
+        give_to_owner_of(&created, existing.as_ref()).await;
+    }
+    Ok(())
+}
+
 /// Writes `value` to `file` so that whoever reads it finds the old content
 /// or the new, never part of either.
 ///
@@ -165,15 +256,24 @@ async fn write_atomic(file: &Path, value: &str) -> std::io::Result<()> {
         TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
     ));
     let replaced = async {
-        fs::write(&tmp, value).await?;
         // With the mode and the owner of the file it replaces: a config
         // readable by its owner alone stays that way, and one that belongs
         // to somebody else - the process runs as root, or writes through
         // its group - stays theirs. Where the owner cannot be kept the
-        // file is written in place instead.
-        if let Ok(meta) = fs::metadata(&target).await {
-            fs::set_permissions(&tmp, meta.permissions()).await?;
-            keep_owner(&tmp, &meta).await?;
+        // file is written in place instead. A file that is new goes by
+        // its directory.
+        match fs::metadata(&target).await {
+            Ok(meta) => {
+                write_new(&tmp, value, 0o600).await?;
+                fs::set_permissions(&tmp, meta.permissions()).await?;
+                keep_owner(&tmp, &meta).await?;
+            },
+            Err(_) => {
+                let dir_meta = fs::metadata(dir).await.ok();
+                let mode = mode_of_new_file(dir_meta.as_ref());
+                write_new(&tmp, value, mode).await?;
+                give_to_owner_of(&tmp, dir_meta.as_ref()).await;
+            },
         }
         fs::rename(&tmp, &target).await
     }
@@ -219,10 +319,36 @@ impl FileStorage {
     pub fn with_history_path(&mut self, history_path: &str) -> Result<()> {
         let filepath = resolve_path(history_path);
         let path = Path::new(&filepath);
-        std::fs::create_dir_all(path).map_err(|e| Error::Io {
-            source: e,
-            file: filepath.clone(),
-        })?;
+        // It holds copies of the config and stands beside it, not inside:
+        // it is made no more open than the config directory is.
+        let like = if self.is_dir {
+            Some(self.path.as_path())
+        } else {
+            self.path.parent()
+        };
+        let like = like.and_then(|dir| std::fs::metadata(dir).ok());
+        if !path.exists() {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true);
+            #[cfg(unix)]
+            if let Some(meta) = &like {
+                use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+                builder.mode(meta.permissions().mode() & 0o777);
+            }
+            builder.create(path).map_err(|e| Error::Io {
+                source: e,
+                file: filepath.clone(),
+            })?;
+            #[cfg(unix)]
+            if let Some(meta) = &like {
+                use std::os::unix::fs::MetadataExt;
+                let _ = std::os::unix::fs::chown(
+                    path,
+                    Some(meta.uid()),
+                    Some(meta.gid()),
+                );
+            }
+        }
         self.history_path = Some(path.to_path_buf());
         Ok(())
     }
@@ -279,7 +405,24 @@ impl FileStorage {
         }
         let name = format!("{}-{}", self.convert_history_key(key), now_sec());
         let file = history_path.join(name).clone();
-        fs::write(&file, value).await.map_err(|e| Error::Io {
+        // A copy of the config is as private as the config - it has the
+        // same keys in it - and no more open than the history directory.
+        let dir_meta = fs::metadata(history_path).await.ok();
+        #[allow(unused_mut)]
+        let mut mode = mode_of_new_file(dir_meta.as_ref());
+        #[cfg(unix)]
+        if let Ok(source) = fs::metadata(self.get_target_path(key)).await
+            && source.is_file()
+        {
+            use std::os::unix::fs::PermissionsExt;
+            mode &= source.permissions().mode();
+        }
+        let written = async {
+            write_new(&file, &value, mode).await?;
+            give_to_owner_of(&file, dir_meta.as_ref()).await;
+            Ok::<(), std::io::Error>(())
+        };
+        written.await.map_err(|e| Error::Io {
             source: e,
             file: file.to_string_lossy().to_string(),
         })?;
@@ -345,9 +488,11 @@ impl Storage for FileStorage {
         let value = &encode_for_file(&file, value)?;
         self.save_history(key).await?;
         if let Some(parent) = file.parent() {
-            fs::create_dir_all(parent).await.map_err(|e| Error::Io {
-                source: e,
-                file: file.to_string_lossy().to_string(),
+            create_dir_like_its_parent(parent).await.map_err(|e| {
+                Error::Io {
+                    source: e,
+                    file: file.to_string_lossy().to_string(),
+                }
             })?;
         }
         write_atomic(&file, value).await.map_err(|e| Error::Io {
@@ -484,6 +629,70 @@ mod tests {
     use crate::storage::Storage;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
+
+    /// Regression: a file that is new - an entry of its own, a copy for
+    /// the history, the temporary file a save goes through - was created
+    /// with the default mode, readable by every user, whatever the mode of
+    /// the config it belongs to.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_new_files_are_as_private_as_the_config() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = |file: &std::path::Path| {
+            std::fs::metadata(file).unwrap().permissions().mode() & 0o777
+        };
+        let dir = tempdir().unwrap();
+        let conf = dir.path().join("conf");
+        std::fs::create_dir(&conf).unwrap();
+        std::fs::set_permissions(&conf, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        let mut storage = FileStorage::new(&conf.to_string_lossy()).unwrap();
+        storage
+            .with_history_path(&dir.path().join("history").to_string_lossy())
+            .unwrap();
+
+        // The history stands beside the config and is as closed.
+        assert_eq!(0o700, mode(&dir.path().join("history")));
+
+        // New in a directory only its owner can enter: the file, and the
+        // directory of its category that was made for it.
+        storage
+            .save("upstreams/a.toml", "[upstreams.a]")
+            .await
+            .unwrap();
+        assert_eq!(0o600, mode(&conf.join("upstreams/a.toml")));
+        assert_eq!(0o700, mode(&conf.join("upstreams")));
+        // Saved again: the copy for the history has the mode of the file,
+        // and the file keeps its own.
+        storage
+            .save("upstreams/a.toml", "[upstreams.a]\n")
+            .await
+            .unwrap();
+        assert_eq!(0o600, mode(&conf.join("upstreams/a.toml")));
+        let copies: Vec<_> = std::fs::read_dir(dir.path().join("history"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(1, copies.len());
+        assert_eq!(0o600, mode(&copies[0]));
+
+        // A directory open to its group gives files open to its group.
+        std::fs::set_permissions(&conf, std::fs::Permissions::from_mode(0o750))
+            .unwrap();
+        storage.save("basic.toml", "[basic]").await.unwrap();
+        assert_eq!(0o640, mode(&conf.join("basic.toml")));
+
+        // The mode is asked for when the file is created, so the umask
+        // still has its say: a directory open to all does not open a file
+        // further than this process makes files (0644 with the usual 022).
+        std::fs::set_permissions(&conf, std::fs::Permissions::from_mode(0o777))
+            .unwrap();
+        storage.save("servers.toml", "[servers]").await.unwrap();
+        let probe = dir.path().join("probe");
+        std::fs::write(&probe, "").unwrap();
+        assert_eq!(mode(&probe), mode(&conf.join("servers.toml")));
+    }
 
     #[tokio::test]
     async fn test_dir_storage() {

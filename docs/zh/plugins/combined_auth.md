@@ -62,7 +62,7 @@ curl "http://127.0.0.1:6188/api/orders?app_id=$APP_ID&ts=$TS&digest=$DIGEST"
 
 1. `app_id` 存在且已知——否则 401。
 2. `secret == "*"` → 立即放行（跳过 IP、时间戳与摘要检查）。
-3. 配置了 `ip_list` 时，客户端 IP 必须匹配。
+3. 配置了 `ip_list` 时，客户端 IP 必须匹配：即连接的对端地址；请求经过 `basic.trusted_proxies` 里的代理时，用转发头里的地址（见 [`ip_restriction`](ip_restriction.md#客户端-ip-解析)）。其他来源的转发头不被采信。
 4. `ts` 存在、为数字，且 `|now - ts| <= deviation`。
 5. `digest` 存在且等于期望值，常量时间比较。
 
