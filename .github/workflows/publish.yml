@@ -83,19 +83,14 @@ jobs:
       - name: build-web
         run: make build-web
       - name: release
-        uses: addnab/docker-run-action@v3
-        with:
-          image: messense/rust-musl-cross:x86_64-musl
-          options: -v ${{ github.workspace }}:/home/rust/src
-          run: |
+        # The checkout belongs to the runner user and the build runs as root,
+        # so without safe.directory vergen cannot read the commit sha.
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/home/rust/src" \
+            messense/rust-musl-cross:x86_64-musl sh -ec '
             apt-get update
             apt-get install protobuf-compiler -y
-            # The checkout is bind-mounted from the runner and owned by its
-            # user, while this container builds as root. libgit2 refuses a
-            # repository owned by someone else (the same check as git's
-            # safe.directory), which left vergen without a commit sha:
-            # every musl release so far carried VERGEN_IDEMPOTENT_OUTPUT.
-            printf '[safe]\n\tdirectory = *\n' >> ~/.gitconfig
+            printf "[safe]\n\tdirectory = *\n" >> ~/.gitconfig
             make release-full
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86-full
             make release-rustls-full
@@ -104,6 +99,7 @@ jobs:
             # the target directory in the next step, so it is copied, not moved.
             make release
             cp target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
+          '
       # Best effort: a broken deb must not cost the release its tarballs, which
       # are what the install instructions actually point at. The upload step
       # skips the file when this did not produce one.
@@ -151,19 +147,14 @@ jobs:
       - name: build-web
         run: make build-web
       - name: release
-        uses: addnab/docker-run-action@v3
-        with:
-          image: messense/rust-musl-cross:aarch64-musl
-          options: -v ${{ github.workspace }}:/home/rust/src
-          run: |
+        # The checkout belongs to the runner user and the build runs as root,
+        # so without safe.directory vergen cannot read the commit sha.
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/home/rust/src" \
+            messense/rust-musl-cross:aarch64-musl sh -ec '
             apt-get update
             apt-get install protobuf-compiler -y
-            # The checkout is bind-mounted from the runner and owned by its
-            # user, while this container builds as root. libgit2 refuses a
-            # repository owned by someone else (the same check as git's
-            # safe.directory), which left vergen without a commit sha:
-            # every musl release so far carried VERGEN_IDEMPOTENT_OUTPUT.
-            printf '[safe]\n\tdirectory = *\n' >> ~/.gitconfig
+            printf "[safe]\n\tdirectory = *\n" >> ~/.gitconfig
             make release-full
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64-full
             make release-rustls-full
@@ -172,6 +163,7 @@ jobs:
             # the target directory in the next step, so it is copied, not moved.
             make release
             cp target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
+          '
       # Best effort: a broken deb must not cost the release its tarballs, which
       # are what the install instructions actually point at. The upload step
       # skips the file when this did not produce one.
@@ -332,20 +324,21 @@ jobs:
           - { arch: "linux/arm64", tag: "arm64", runs-on: "ubuntu-22.04-arm" }
         features: ['latest', 'full', 'rustls-full']
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: true
-          
-          # all of these default to true, but feel free to set to
-          # "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
+      - name: Free disk space
+        run: |
+          df -k /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup "$AGENT_TOOLSDIRECTORY"
+          # One per command: apt-get rejects a list with any unknown name.
+          for pkg in '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' \
+            '^mysql-.*' azure-cli google-chrome-stable firefox powershell mono-devel \
+            libgl1-mesa-dri google-cloud-sdk google-cloud-cli; do
+            sudo apt-get remove -y --fix-missing "$pkg" || true
+          done
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean
+          sudo docker image prune --all --force || true
+          df -k /
       - name: Change Swap Space
         run: |
           set -euo pipefail
