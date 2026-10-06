@@ -23,11 +23,11 @@ jobs:
       issues: write # for rustsec/audit-check to create issues
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Audit Check
         # https://github.com/rustsec/audit-check/issues/2
-        uses: rustsec/audit-check@v2.0.0
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           # The built-in token, which cannot expire. The job permissions above
           # already grant the checks/issues write access the action needs.
