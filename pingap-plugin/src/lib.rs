@@ -452,6 +452,7 @@ mod ip_restriction;
 mod jwt;
 mod key_auth;
 mod limit;
+mod maintenance;
 mod mock;
 mod ping;
 mod redirect;

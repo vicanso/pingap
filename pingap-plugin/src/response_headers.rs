@@ -11,12 +11,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+};
 use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::ModifiedMode;
+use pingap_core::client_used_https;
 use pingap_core::{
     Ctx, HttpHeader, Plugin, ResponsePluginResult, convert_header,
     convert_header_value, resolve_static_header_value,
@@ -67,12 +70,51 @@ pub struct ResponseHeaders {
     ///   Example: [("x-default-header", "default-value")]
     set_headers_not_exists: Vec<HttpHeader>,
 
+    /// The headers of a `preset`, set where the response has none of
+    /// the name: what the upstream or a rule of this plugin says of one of
+    /// them stands.
+    preset_headers: Vec<HttpHeader>,
+
+    /// Whether the preset has `Strict-Transport-Security`, which is only
+    /// for a response that went out over TLS.
+    preset_hsts: bool,
+
+    /// Whether the rules are also for what did not come from the
+    /// upstream: the response another plugin of the location answers
+    /// with, and the error page of the proxy itself.
+    always: bool,
+
     // upstream or response
     mode: ModifiedMode,
 
     /// Unique identifier for this plugin instance
     /// Generated from the plugin configuration to track changes
     hash_value: String,
+}
+
+/// A year, which is what browsers and the preload lists go by.
+static HSTS: HttpHeader = (
+    http::header::STRICT_TRANSPORT_SECURITY,
+    HeaderValue::from_static("max-age=31536000"),
+);
+
+/// The headers of the `security` preset: what a site is usually better off
+/// with, and what is left out of an error page more often than not.
+fn security_preset() -> Vec<HttpHeader> {
+    vec![
+        (
+            http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ),
+        (
+            http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("SAMEORIGIN"),
+        ),
+        (
+            http::header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ),
+    ]
 }
 
 impl TryFrom<&PluginConf> for ResponseHeaders {
@@ -159,6 +201,27 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             },
         };
 
+        let (preset_headers, preset_hsts) =
+            match get_str_conf(value, "preset").as_str() {
+                "" => (vec![], false),
+                "security" => (security_preset(), true),
+                other => {
+                    return Err(invalid(format!(
+                        "preset should be security, got {other:?}"
+                    )));
+                },
+            };
+        // The response of another plugin and the error page never pass
+        // the hook of the upstream's response, which is the one
+        // `mode = "upstream"` is for.
+        let always = get_bool_conf(value, "always");
+        if always && mode == ModifiedMode::Upstream {
+            return Err(invalid(
+                "always is for mode response, the upstream mode only sees what the upstream sent"
+                    .to_string(),
+            ));
+        }
+
         let params = Self {
             hash_value,
             add_headers,
@@ -166,6 +229,9 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers,
             rename_headers,
             set_headers_not_exists,
+            preset_headers,
+            preset_hsts,
+            always,
             mode,
         };
 
@@ -239,6 +305,24 @@ impl ResponseHeaders {
                 let value = resolve(value, session, ctx);
                 let _ = upstream_response.insert_header(name, value);
             }
+        }
+
+        // The preset, where nothing above and nothing from the upstream
+        // has said otherwise.
+        for (name, value) in &self.preset_headers {
+            if !upstream_response.headers.contains_key(name) {
+                let _ = upstream_response.insert_header(name, value);
+            }
+        }
+        // Over TLS only: a browser takes no notice of it on plain http,
+        // and on a site that has no https it would be a promise of one.
+        // TLS as the client has it, which behind a trusted proxy that
+        // ends it is not this connection.
+        if self.preset_hsts
+            && !upstream_response.headers.contains_key(&HSTS.0)
+            && client_used_https(session, ctx)
+        {
+            let _ = upstream_response.insert_header(&HSTS.0, &HSTS.1);
         }
 
         // Rename headers: every value moves. `remove_header` hands back
@@ -316,6 +400,15 @@ impl Plugin for ResponseHeaders {
         }
         self.handle_headers(session, ctx, upstream_response)
     }
+
+    /// With `always`, a `401` of an auth plugin, a redirect or the error
+    /// page for an upstream that is down leaves with the same headers as
+    /// everything else of the location. They are the responses a security
+    /// header is most often missing from.
+    #[inline]
+    fn handles_plugin_response(&self) -> bool {
+        self.always
+    }
 }
 
 register_plugin!("response_headers", ResponseHeaders);
@@ -329,6 +422,107 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    /// `preset = "security"` and `always`: the usual security headers,
+    /// where nothing has set them, on every response of the location.
+    #[tokio::test]
+    async fn test_response_headers_preset_and_always() {
+        let new = |conf: &str| {
+            ResponseHeaders::new(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        let headers_after =
+            async |plugin: &ResponseHeaders,
+                   tls: bool,
+                   upstream: &[(&str, &str)]| {
+                let mock_io =
+                    Builder::new().read(b"GET / HTTP/1.1\r\n\r\n").build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                let mut ctx = Ctx::default();
+                if tls {
+                    ctx.conn.tls_version = Some("TLSv1.3".into());
+                }
+                let mut header = ResponseHeader::build(200, None).unwrap();
+                for (name, value) in upstream {
+                    header
+                        .insert_header(name.to_string(), value.to_string())
+                        .unwrap();
+                }
+                plugin
+                    .handle_response(&mut session, &mut ctx, &mut header)
+                    .await
+                    .unwrap();
+                let mut headers: Vec<String> = header
+                    .headers
+                    .iter()
+                    .map(|(name, value)| {
+                        format!("{name}: {}", value.to_str().unwrap())
+                    })
+                    .collect();
+                headers.sort();
+                headers
+            };
+
+        let preset = new("preset = \"security\"").unwrap();
+        assert_eq!(false, preset.handles_plugin_response());
+        assert_eq!(
+            vec![
+                "referrer-policy: strict-origin-when-cross-origin",
+                "x-content-type-options: nosniff",
+                "x-frame-options: SAMEORIGIN",
+            ],
+            headers_after(&preset, false, &[]).await
+        );
+        // `Strict-Transport-Security` is for a response that went out
+        // over TLS, and what the upstream says of a header stands.
+        assert_eq!(
+            vec![
+                "referrer-policy: strict-origin-when-cross-origin",
+                "strict-transport-security: max-age=31536000",
+                "x-content-type-options: nosniff",
+                "x-frame-options: DENY",
+            ],
+            headers_after(&preset, true, &[("X-Frame-Options", "DENY")]).await
+        );
+        assert_eq!(
+            true,
+            headers_after(
+                &preset,
+                true,
+                &[("Strict-Transport-Security", "max-age=60")]
+            )
+            .await
+            .contains(&"strict-transport-security: max-age=60".to_string())
+        );
+        // And so does a rule of the plugin itself.
+        let own = new(
+            "preset = \"security\"\nset_headers = [\"Referrer-Policy: no-referrer\"]",
+        )
+        .unwrap();
+        assert_eq!(
+            true,
+            headers_after(&own, false, &[])
+                .await
+                .contains(&"referrer-policy: no-referrer".to_string())
+        );
+
+        // `always`: also for what another plugin answers and for the
+        // error page, which is what `handles_plugin_response` is asked
+        // for.
+        let always = new("preset = \"security\"\nalways = true").unwrap();
+        assert_eq!(true, always.handles_plugin_response());
+        assert_eq!(false, new("").unwrap().handles_plugin_response());
+
+        let error = |conf: &str| new(conf).err().unwrap().to_string();
+        assert_eq!(
+            "Plugin response_headers invalid, message: preset should be security, got \"strict\"",
+            error("preset = \"strict\"")
+        );
+        assert_eq!(
+            "Plugin response_headers invalid, message: always is for mode response, the upstream mode only sees what the upstream sent",
+            error("always = true\nmode = \"upstream\"")
+        );
+    }
 
     /// Regression: an entry without its colon was dropped, and a mode that
     /// is neither of the two was the default one. Either way the plugin

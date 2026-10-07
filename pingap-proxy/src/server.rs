@@ -14,8 +14,8 @@
 
 #[cfg(feature = "tracing")]
 use super::tracing::{
-    initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
-    set_otel_upstream_attrs,
+    initialize_telemetry, inject_telemetry_headers, inject_trace_context,
+    set_otel_request_attrs, set_otel_upstream_attrs,
 };
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
@@ -1688,6 +1688,9 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> upstream request filter");
         defer!(debug!(target: LOG_TARGET, "<-- upstream request filter"););
+        // Ahead of the location's headers, which may say otherwise.
+        #[cfg(feature = "tracing")]
+        inject_trace_context(ctx, upstream_response);
         set_append_proxy_headers(session, ctx, upstream_response);
         Ok(())
     }
@@ -2116,8 +2119,29 @@ impl ProxyHttp for Server {
         };
         let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
         let _ = resp.insert_header("X-Pingap-EType", error_type);
+        // The page of a request that had a location is a response of that
+        // location: the plugins that set headers on what other plugins
+        // answer set them here as well. A `502` without the CORS headers
+        // is withheld from the page by the browser, which then reports a
+        // failed request and not the status, and a security header is no
+        // less wanted on an error. A plugin that fails at it is no reason
+        // to leave the client without the page.
+        if let Err(e) =
+            pingap_core::decorate_plugin_response(session, ctx, &mut resp).await
+        {
+            error!(
+                target: LOG_TARGET,
+                error = %e,
+                "set the headers of the location on the error page fail"
+            );
+        }
+        // After the plugins: how long the page is and what it is are not
+        // theirs to say. A rule that takes `Content-Length` off every
+        // response would leave this one with no end but the connection's.
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
+        let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
+        let server_session = session.as_mut();
 
         // The connection is as good as it was when the request was refused
         // by one of the filters - no location for it, a plugin or a limit
@@ -4378,6 +4402,66 @@ value = 'proxy_set_headers = ["name:value"]'
         assert_eq!(400, result.error_code);
         assert_eq!(false, result.can_reuse_downstream);
         assert_eq!(true, response.contains("connection: close"), "{response}");
+    }
+
+    /// The error page of a request that had a location carries what the
+    /// plugins of that location set on the responses of other plugins.
+    /// Without them a `502` had no CORS headers, so the page never saw
+    /// the status, and none of the security headers of the site.
+    #[tokio::test]
+    async fn test_error_page_carries_the_headers_of_the_location() {
+        struct Marks {
+            asks: bool,
+        }
+        #[async_trait]
+        impl pingap_core::Plugin for Marks {
+            fn handles_plugin_response(&self) -> bool {
+                self.asks
+            }
+            async fn handle_response(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                upstream_response: &mut ResponseHeader,
+            ) -> pingora::Result<pingap_core::ResponsePluginResult>
+            {
+                let name = if self.asks { "x-asked" } else { "x-not-asked" };
+                upstream_response.insert_header(name, "1")?;
+                Ok(pingap_core::ResponsePluginResult::Modified)
+            }
+        }
+        let server = new_server();
+        let page = async |plugins: Option<Vec<pingap_core::NamedPlugin>>| {
+            let (mut session, client) =
+                new_duplex_session("GET /x HTTP/1.1\r\nHost: a.test\r\n\r\n")
+                    .await;
+            let mut ctx = Ctx::default();
+            ctx.state.proxying = true;
+            ctx.response_plugins = plugins.map(Arc::from);
+            let error =
+                pingora::Error::new_up(pingora::ErrorType::ConnectRefused);
+            let result =
+                server.fail_to_proxy(&mut session, &error, &mut ctx).await;
+            drop(session);
+            (
+                result.error_code,
+                read_response(client).await.to_lowercase(),
+            )
+        };
+        let plugins: Vec<pingap_core::NamedPlugin> = vec![
+            ("asks".into(), Arc::new(Marks { asks: true })),
+            ("other".into(), Arc::new(Marks { asks: false })),
+        ];
+        let (code, response) = page(Some(plugins)).await;
+        assert_eq!(502, code);
+        assert_eq!(true, response.contains("x-asked: 1"), "{response}");
+        assert_eq!(false, response.contains("x-not-asked"), "{response}");
+        // The page is still the page.
+        assert_eq!(true, response.contains("x-pingap-etype:"), "{response}");
+        // No location, no plugins: as before.
+        let (code, response) = page(None).await;
+        assert_eq!(502, code);
+        assert_eq!(false, response.contains("x-asked"), "{response}");
     }
 
     /// Once a final header is out the rest of the response is not ours to

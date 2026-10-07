@@ -36,6 +36,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info, warn};
 
 mod admin;
+mod health;
 mod stats;
 
 /// UUID for the admin server plugin, generated at runtime

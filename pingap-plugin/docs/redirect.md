@@ -1,6 +1,7 @@
 # redirect
 
-Issues HTTP redirects to force HTTPS and/or to add a path prefix.
+Issues HTTP redirects: to HTTPS, to the name a site goes by, to a path with a
+prefix, or wherever a rule sends the path of the request.
 
 - **Step:** `request` (fixed)
 - **Registered as:** `redirect`
@@ -12,6 +13,8 @@ Issues HTTP redirects to force HTTPS and/or to add a path prefix.
 | `category` | string | — | Must be `redirect`. |
 | `http_to_https` | bool | `false` | `true` sends plain HTTP requests to HTTPS. `false` leaves the scheme of the request as it is. |
 | `prefix` | string | — | Path prefix to prepend. A leading `/` is added if missing; values of length ≤ 1 are ignored. |
+| `host` | string | — | The name the site goes by, with a port where it is not on the default one. A request for any other host is redirected to it. |
+| `rules` | string[] | — | `"<pattern> <target> [status]"`: a path the pattern matches is sent to the target, the first rule that matches. See [Rules](#rules). |
 | `status` | int | `307` | One of `301`, `302`, `303`, `307`, `308`. Anything else is a configuration error. |
 
 ## Example
@@ -44,13 +47,68 @@ prefix = "/api"
 
 `GET http://example.com/users` → `Location: https://example.com/api/users`.
 
+The name of the site and a path that moved, in one plugin:
+
+```toml
+[plugins.canonical]
+category = "redirect"
+http_to_https = true
+host = "example.com"
+status = 301
+rules = [
+    '^/blog/(\d+)/(.*)$ /posts/$2',
+    '^/docs/(?<page>[^/]+)$ https://docs.example.com/${page}.html 308',
+    '^/download$ /files/latest 302',
+]
+```
+
+`GET http://www.example.com/blog/2023/hello?ref=x` →
+`301 Location: https://example.com/posts/hello?ref=x`: the scheme, the host
+and the path in one step.
+
+## Rules
+
+A rule is a regular expression, a target and optionally a status, separated by
+spaces. The rules are tried in the order they are written and the first whose
+pattern matches the path decides; a request no rule matches is left to
+`http_to_https`, `host` and `prefix`.
+
+- **The pattern** is matched against the path the way a location is chosen:
+  with `.` and `..` resolved and `//` as one slash, written so that it can go
+  into a URL again. `/public/../old/x` is `/old/x`, and what a rule captures
+  of `/old/a%20b` is `a%20b`. The syntax is that of the
+  [`regex`](https://docs.rs/regex) crate; a pattern matches anywhere in the
+  path unless it is anchored with `^` and `$`.
+- **The target** is a path that starts with `/` (`/new/$1`) or a whole URL
+  (`https://…`, or `$scheme://$host/…`). `$1`, `$2` and `${name}` stand for
+  what the pattern captured; write `${1}` where a letter or digit follows.
+  `$host` and `$scheme` stand for the host and scheme the redirect goes to.
+- **Where to is for the rule to say**, not for the request. A path target
+  begins with a slash of its own, so what the pattern captured stays behind
+  the host: `'^/old(.*)$ $1'` is refused, since `/old@evil.example` would
+  have gone to `http://example.com@evil.example`; write `/$1` or
+  `'^/old(/.*)$ /new$1'`. In a URL the host is a name or `$host`, followed by
+  a `/` before anything captured: `https://new.example.com$1` is refused too.
+- A **path** keeps the scheme, host and port the request would otherwise be
+  redirected to or came on, and takes the query of the request along unless
+  the target has one of its own. A **URL** is the `Location` as it is.
+- **The status** of a rule takes the place of the plugin's `status` for that
+  rule.
+- Write a rule in single quotes, so that TOML leaves its backslashes alone.
+
+A rule that does not parse - no target, a status that is not a redirect, a
+pattern that does not compile, a target that is neither a path nor a URL, a
+capture in the host of a URL - is a configuration error.
+
 ## Behaviour
 
-The plugin skips the request when the scheme is what it should be **and** the
-path already starts with `prefix`. The scheme is only ever wrong for a plain
-HTTP request with `http_to_https = true`. Otherwise it responds with `status`
-and a `Location` built from the target scheme, the request host, `prefix` and
-the original path and query.
+The plugin skips the request when there is nothing to send the client
+anywhere for: the scheme is what it should be, the host is the one of `host`
+(or none is set), the path already starts with `prefix`, and no rule matches.
+The scheme is only ever wrong for a plain HTTP request with
+`http_to_https = true`. Otherwise it responds with one redirect that has all
+of it: the target scheme, the host, and either the target of the rule or
+`prefix` and the original path, with the query.
 
 Without `http_to_https` the plugin only adds the prefix and the redirect keeps
 the scheme the request came with: on an HTTPS listener `https://a.test/users`

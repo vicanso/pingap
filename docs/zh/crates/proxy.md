@@ -55,6 +55,42 @@
 
 `$proxy_add_x_forwarded_for`（`enable_reverse_proxy_headers` 设置的也是它）是请求里所有 `X-Forwarded-For` 行按顺序拼接，再加上对端地址。前置代理把自己的条目单独写成一行，与追加到已有行的效果相同。
 
+`enable_reverse_proxy_headers` 按 nginx 的常见写法设置五个头，用的也是同名变量：`X-Real-IP: $remote_addr`、`X-Forwarded-For: $proxy_add_x_forwarded_for`、`X-Forwarded-Proto: $scheme`、`X-Forwarded-Host: $host`、`X-Forwarded-Port: $server_port`。每一项都取自当前连接。
+
+### 前面有负载均衡器时
+
+前面有一层终结 TLS 的负载均衡器时，Pingap 看到的连接是负载均衡器的：`$remote_addr` 是它的地址，`$scheme` 是 `http`，上游据此会不停地重定向到 `https`。把负载均衡器列进 `basic.trusted_proxies`，再在 location 上设置客户端自己的值，就像在 nginx 里改用 `$http_x_forwarded_proto` 一样：
+
+```toml
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[locations.app]
+upstream = "app"
+enable_reverse_proxy_headers = true
+proxy_set_headers = [
+    "X-Real-IP: $client_ip",
+    "X-Forwarded-Proto: $forwarded_proto",
+    "X-Forwarded-Port: $forwarded_port",
+]
+```
+
+`proxy_set_headers` 在默认值之后应用，会覆盖它们。
+
+| Variable | Value |
+| --- | --- |
+| `$client_ip` | 客户端地址：可信代理转发的地址，否则是对端地址 |
+| `$forwarded_proto` | 代理的 `X-Forwarded-Proto` 给出的 `http` 或 `https`，否则是当前连接的协议 |
+| `$forwarded_port` | 代理的 `X-Forwarded-Port`；没有时是代理给出的协议的默认端口（`443`、`80`）；再否则是当前监听的端口 |
+| `$forwarded_host` | 代理的 `X-Forwarded-Host`（形式上是一个域名时才采用），否则是当前请求的域名 |
+
+没有经过可信代理的请求——或者没有配置 `trusted_proxies` 时的所有请求——得到的都是当前连接的值：这时转发头只是请求自己的说法。
+
+- 头里有多个值（`https, http`）时取第一个，也就是代理链上最靠近客户端的那一端。最靠近客户端的代理必须自己**写入**这个头；如果它只是透传客户端带来的值，或者只在后面追加，就等于替客户端的说法做了担保。
+- `$forwarded_host` 只在前面的代理确实会写 `X-Forwarded-Host` 时使用。会设置这个头的代理不多，不设置的代理会把客户端发来的值原样传下去——而上游可能用它来拼链接，包括重置密码的链接。
+
+这些变量也可以用在请求头、响应头插件里。
+
 上游的中间响应（如 `103 Early Hints`）会原样转发给客户端。响应阶段的插件、访问日志与指标里的状态码、上游耗时都以最终响应为准；`101` 视为最终响应，因为它结束了 HTTP 交互。
 
 ## 路由

@@ -78,6 +78,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `ua_restriction` | 按 `User-Agent` 正则允许/拒绝 | [ua_restriction](./ua_restriction.md) |
 | `geo_restriction` | 按 GeoIP 国家允许/拒绝（feature `geo`） | [geo_restriction](./geo_restriction.md) |
 | `uri_block` | 按路径、查询串的规则或请求方法拦截请求 | [uri_block](./uri_block.md) |
+| `maintenance` | 返回维护通知，白名单地址或带指定请求头的请求放行 | [maintenance](./maintenance.md) |
 
 ### 流量控制
 
@@ -106,6 +107,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | Category | 用途 | 文档 |
 | --- | --- | --- |
 | `ping` | 存活探测，返回 `pong` | [ping](./ping.md) |
+| `health` | 就绪探针：各 upstream 的健康后端数是否足够 | [health](./health.md) |
 | `mock` | 返回固定响应，可选延迟 | [mock](./mock.md) |
 | `request_id` | 生成或透传请求 ID | [request_id](./request_id.md) |
 | `stats` | JSON 进程与请求统计 | [stats](./stats.md) |

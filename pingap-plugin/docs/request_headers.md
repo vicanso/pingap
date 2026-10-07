@@ -51,7 +51,9 @@ A value that is one of these, and nothing else, is replaced:
 | `$hostname` | The proxy's hostname |
 | `$host` | The host the request is for |
 | `$scheme` | `http` or `https`, as the client connected |
-| `$remote_addr` | Client address |
+| `$remote_addr` | Address of the peer the connection came from |
+| `$client_ip` | Address of the client: what a proxy listed in `basic.trusted_proxies` says of it, and the peer's own otherwise |
+| `$forwarded_proto` / `$forwarded_port` / `$forwarded_host` | The scheme, port and host the client used, as a trusted proxy says in `X-Forwarded-Proto` / `-Port` / `-Host`; those of this connection otherwise |
 | `$remote_port` | Client port |
 | `$server_addr` / `$server_port` | The address and port the request arrived on |
 | `$ja4` | The client's JA4 TLS fingerprint, on a server with `ja4 = true` |

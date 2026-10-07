@@ -116,8 +116,8 @@ With `headers = true` the client is told where it stands:
 
 They are set on the upstream's response, on the plugin's own refusal, and on
 the response another plugin of the location answers with (a `401` from an
-authentication plugin after this one). An error page of the proxy itself
-(`502`, `504`) does not carry them. `X-RateLimit-Reset` is an upper bound: the
+authentication plugin after this one) or the proxy's error page for an upstream
+that failed (`502`, `504`). `X-RateLimit-Reset` is an upper bound: the
 estimate fades gradually, so some of the budget is back sooner, and after a
 refusal `Retry-After` is the time to go by. With more than one `limit` on a
 location reporting, the client is told about the one with the least left; a

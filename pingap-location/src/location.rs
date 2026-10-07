@@ -228,6 +228,12 @@ pub enum HostIndexEntry {
 // proxy_set_header X-Forwarded-Proto $scheme;
 // proxy_set_header X-Forwarded-Host $host;
 // proxy_set_header X-Forwarded-Port $server_port;
+//
+// As nginx has them, and by the same variables: each is what this
+// connection has. Behind a proxy that is trusted, the address, scheme and
+// port of the client are in `$client_ip`, `$forwarded_proto` and
+// `$forwarded_port`, for a location to set with `proxy_set_headers` - as
+// they are set by hand in an nginx behind a load balancer.
 static DEFAULT_PROXY_SET_HEADERS: LazyLock<Vec<HttpHeader>> =
     LazyLock::new(|| {
         convert_headers(&[

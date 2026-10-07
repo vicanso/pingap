@@ -19,7 +19,7 @@ use super::{
     update_peer_options,
 };
 use humantime::parse_duration;
-use pingora::http::RequestHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::lb::health_check::{HealthObserveCallback, HttpHealthCheck};
 use std::time::Duration;
 use tracing::error;
@@ -43,6 +43,26 @@ pub(crate) fn new_http_health_check(
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
     check.health_changed_callback = health_changed_callback;
+    // Where the check is answered on another port than the service.
+    check.port_override = conf.check_port;
+    // Which statuses say that the backend is fine. Without this it is
+    // `200` and nothing else, which is pingora's own rule.
+    if !conf.expect_status.is_empty() {
+        let expected = conf.expect_status.clone();
+        check.validator = Some(Box::new(move |resp: &ResponseHeader| {
+            let status = resp.status.as_u16();
+            if expected
+                .iter()
+                .any(|(from, to)| (*from..=*to).contains(&status))
+            {
+                return Ok(());
+            }
+            pingora::Error::e_explain(
+                pingora::ErrorType::CustomCode("unexpected status", status),
+                "during http healthcheck",
+            )
+        }));
+    }
     let upstream_name = name.to_string();
     check.backend_summary_callback = Some(Box::new(move |backend| {
         format!("{upstream_name}: {}", backend.addr)
@@ -86,6 +106,41 @@ pub struct HealthCheckConf {
     pub service: String,
     pub tls: bool,
     pub parallel_check: bool,
+    /// The statuses an HTTP check takes for healthy, as ranges with both
+    /// ends included. Empty stands for `200` alone.
+    pub expect_status: Vec<(u16, u16)>,
+    /// The port an HTTP check goes to, where it is not the backend's own.
+    pub check_port: Option<u16>,
+}
+
+/// `200-399,401` as ranges, both ends included.
+fn parse_expect_status(
+    value: &str,
+) -> std::result::Result<Vec<(u16, u16)>, String> {
+    let status = |text: &str| {
+        text.trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|status| (100..600).contains(status))
+            .ok_or_else(|| format!("{text:?} is not a status"))
+    };
+    let ranges = value
+        .split(',')
+        .map(|part| {
+            let (from, to) = match part.split_once('-') {
+                Some((from, to)) => (status(from)?, status(to)?),
+                None => {
+                    let single = status(part)?;
+                    (single, single)
+                },
+            };
+            if from > to {
+                return Err(format!("{part:?} ends before it begins"));
+            }
+            Ok((from, to))
+        })
+        .collect::<std::result::Result<Vec<_>, String>>()?;
+    Ok(ranges)
 }
 
 impl TryFrom<&str> for HealthCheckConf {
@@ -106,6 +161,8 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut tls = false;
         let mut parallel_check = false;
         let mut service = "".to_string();
+        let mut expect_status = vec![];
+        let mut check_port = None;
         // A value that does not parse is an error, not the default: with a
         // silent fallback `failure=three` or `check_frequency=5` (no unit)
         // ran the check with settings the operator never asked for.
@@ -165,6 +222,25 @@ impl TryFrom<&str> for HealthCheckConf {
                 "parallel" => {
                     parallel_check = true;
                 },
+                "expect_status" => {
+                    expect_status = parse_expect_status(&value)
+                        .map_err(|message| invalid(&key, &value, message))?;
+                },
+                "check_port" => {
+                    check_port = Some(
+                        value
+                            .parse::<u16>()
+                            .ok()
+                            .filter(|port| *port > 0)
+                            .ok_or_else(|| {
+                                invalid(
+                                    &key,
+                                    &value,
+                                    "is not a port".to_string(),
+                                )
+                            })?,
+                    );
+                },
                 _ => {
                     if value.is_empty() {
                         query_list.push(key.to_string());
@@ -183,13 +259,32 @@ impl TryFrom<&str> for HealthCheckConf {
         if !query_list.is_empty() {
             path += &format!("?{}", query_list.join("&"));
         }
-        Ok(HealthCheckConf {
-            schema: HealthCheckSchema::try_from(value.scheme()).map_err(
-                |e| Error::InvalidSchema {
+        let schema =
+            HealthCheckSchema::try_from(value.scheme()).map_err(|e| {
+                Error::InvalidSchema {
                     schema: value.scheme().to_string(),
                     message: e.to_string(),
-                },
-            )?,
+                }
+            })?;
+        // These two are read by the HTTP check alone. On another kind of
+        // check they would be settings that look like they do something.
+        if !matches!(schema, HealthCheckSchema::Http | HealthCheckSchema::Https)
+        {
+            for (key, given) in [
+                ("expect_status", !expect_status.is_empty()),
+                ("check_port", check_port.is_some()),
+            ] {
+                if given {
+                    return Err(invalid(
+                        key,
+                        "",
+                        "is for http and https checks only".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(HealthCheckConf {
+            schema,
             host,
             path,
             read_timeout,
@@ -201,6 +296,8 @@ impl TryFrom<&str> for HealthCheckConf {
             tls,
             service,
             parallel_check,
+            expect_status,
+            check_port,
         })
     }
 }
@@ -215,7 +312,7 @@ mod tests {
     fn test_http_health_check_conf() {
         let http_check: HealthCheckConf = "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse&tls&service=grpc".try_into().unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false }"###,
+            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false, expect_status: [], check_port: None }"###,
             format!("{http_check:?}")
         );
         let http_check = new_http_health_check("", &http_check, None);
@@ -249,6 +346,117 @@ mod tests {
             let err = HealthCheckConf::try_from(url).unwrap_err();
             assert_eq!(true, err.to_string().contains(expect), "{url}: {err}");
         }
+    }
+
+    /// `expect_status` says which statuses are a healthy answer, in place
+    /// of `200` alone, and `check_port` where the check is answered.
+    #[tokio::test]
+    async fn test_expect_status_and_check_port() {
+        use pingora::lb::Backend;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        assert_eq!(
+            Ok(vec![(200, 399), (401, 401)]),
+            parse_expect_status("200-399, 401")
+        );
+        for (value, expect) in [
+            ("ok", "is not a status"),
+            ("99", "is not a status"),
+            ("200-600", "is not a status"),
+            ("399-200", "ends before it begins"),
+            ("200,", "is not a status"),
+        ] {
+            let err = parse_expect_status(value).unwrap_err();
+            assert_eq!(true, err.contains(expect), "{value}: {err}");
+        }
+        for (url, expect) in [
+            ("http://h/p?expect_status=abc", "expect_status=abc"),
+            ("http://h/p?check_port=0", "is not a port"),
+            ("http://h/p?check_port=70000", "is not a port"),
+            // Read by the HTTP check alone.
+            ("tcp://h?check_port=8081", "http and https checks only"),
+            ("grpc://h?expect_status=200", "http and https checks only"),
+        ] {
+            let err = HealthCheckConf::try_from(url).unwrap_err();
+            assert_eq!(true, err.to_string().contains(expect), "{url}: {err}");
+        }
+        // Not given, the check is as it was.
+        let plain = HealthCheckConf::try_from("http://h/p").unwrap();
+        assert_eq!(true, plain.expect_status.is_empty());
+        let check = new_http_health_check("", &plain, None);
+        assert_eq!(true, check.validator.is_none());
+        assert_eq!(None, check.port_override);
+
+        // A server that answers with the status its path names.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let status = head
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|path| {
+                            path.trim_start_matches('/').parse().ok()
+                        })
+                        .unwrap_or(500u16);
+                    let _ = stream
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                });
+            }
+        });
+        let healthy = async |backend: &str, path_and_query: &str| {
+            let (_, check) = crate::new_health_check(
+                "http",
+                &format!(
+                    "http://health.test{path_and_query}connection_timeout=1s&read_timeout=1s"
+                ),
+                None,
+            )
+            .unwrap();
+            check.check(&Backend::new(backend).unwrap()).await.is_ok()
+        };
+        let backend = format!("127.0.0.1:{port}");
+        // `200` alone unless said otherwise.
+        assert_eq!(true, healthy(&backend, "/200?").await);
+        assert_eq!(false, healthy(&backend, "/204?").await);
+        assert_eq!(false, healthy(&backend, "/302?").await);
+        // What is listed, and nothing else.
+        let expect = "expect_status=200-399,401&";
+        for (status, expected) in [
+            (200, true),
+            (204, true),
+            (302, true),
+            (399, true),
+            (401, true),
+            (400, false),
+            (404, false),
+            (503, false),
+        ] {
+            assert_eq!(
+                expected,
+                healthy(&backend, &format!("/{status}?{expect}")).await,
+                "{status}"
+            );
+        }
+        // The check goes to the port it is told, on the backend's address:
+        // the backend itself listens somewhere nothing answers.
+        let elsewhere = "127.0.0.1:1";
+        assert_eq!(false, healthy(elsewhere, "/200?").await);
+        assert_eq!(
+            true,
+            healthy(elsewhere, &format!("/200?check_port={port}&")).await
+        );
     }
 
     /// With `reuse` the second check rides the first one's connection;

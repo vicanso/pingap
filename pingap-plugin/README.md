@@ -107,6 +107,7 @@ Each request-step plugin returns one of three results:
 | `ua_restriction` | Allow/deny by `User-Agent` regex | [docs/ua_restriction.md](docs/ua_restriction.md) |
 | `geo_restriction` | Allow/deny by GeoIP country (feature `geo`) | [docs/geo_restriction.md](docs/geo_restriction.md) |
 | `uri_block` | Block requests by path or query pattern, or by method | [docs/uri_block.md](docs/uri_block.md) |
+| `maintenance` | Answer with a maintenance notice, except for allowed addresses or a header | [docs/maintenance.md](docs/maintenance.md) |
 
 ### Traffic control
 
@@ -135,6 +136,7 @@ Each request-step plugin returns one of three results:
 | Category | Purpose | Doc |
 | --- | --- | --- |
 | `ping` | Liveness endpoint returning `pong` | [docs/ping.md](docs/ping.md) |
+| `health` | Readiness endpoint: whether the upstreams have enough healthy backends | [docs/health.md](docs/health.md) |
 | `mock` | Return a canned response, optionally delayed | [docs/mock.md](docs/mock.md) |
 | `request_id` | Generate or propagate a request id | [docs/request_id.md](docs/request_id.md) |
 | `stats` | JSON process and request statistics | [docs/stats.md](docs/stats.md) |

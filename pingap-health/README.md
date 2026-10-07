@@ -36,8 +36,10 @@ The following query parameters can be used to configure the health check:
 - `tls`: If present, a gRPC check uses TLS, with the URL host as SNI. Certificates are not verified, the same as for `https://` and `wss://`.
 - `service`: The service name for gRPC health checks.
 - `parallel`: If present, health checks will be performed in parallel.
+- `expect_status`: The statuses an HTTP/S check takes for healthy, in place of `200` alone: single ones and ranges with both ends included, separated by commas (`200-399`, `200,204,301-302`).
+- `check_port`: The port an HTTP/S check goes to, where the backend answers its health check on another port than its service. The address is still the backend's own.
 
-An HTTP/S check passes on status `200` and nothing else: a `204`, a redirect or a `401` from a path that wants credentials all count as failures, so point it at a path that answers `200`. The connection of every kind of check is made to the backend's own address and port, from `addrs`; the host of the URL is what is sent as `Host` (and as SNI over TLS), and a port written after it is ignored.
+An HTTP/S check passes on status `200` and nothing else unless `expect_status` says otherwise: a `204`, a redirect or a `401` from a path that wants credentials all count as failures. Only the status is looked at, not the body. The connection of every kind of check is made to the backend's own address and port, from `addrs`; the host of the URL is what is sent as `Host` (and as SNI over TLS), and a port written after it is ignored - `check_port` is how an HTTP/S check is sent to another port. Both parameters are for HTTP/S checks; on a `tcp://`, `grpc://` or `ws://` check they are a configuration error. Any other parameter of the URL is sent to the backend as part of the request, as before.
 
 A value that does not parse is a configuration error rather than a silent fallback to the default: a duration without a unit (`check_frequency=5`), a zero duration, `success=0` or `failure=0` are all rejected when the upstream is created, so `pingap -t` reports them.
 

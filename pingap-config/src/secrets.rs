@@ -173,6 +173,16 @@ fn mask_value(key: &str, value: &Value, is_limit: bool) -> Value {
     match value {
         Value::Table(table) => Value::Table(mask_secrets(table)),
         _ if secret => mask_whole(value),
+        // `Name: value` of a `maintenance` plugin: the value is what
+        // lets a request through, whatever the header is called.
+        Value::String(text) if key == "allow_header" => {
+            Value::String(match text.split_once(':') {
+                Some((name, value)) => {
+                    format!("{name}:{}", masked(value.trim()))
+                },
+                None => masked(text),
+            })
+        },
         Value::String(text) => mask_url(text, url_secret(key))
             .map_or_else(|| value.clone(), Value::String),
         Value::Array(items) => {
@@ -261,6 +271,14 @@ max = 10
         // Two secrets, two checksums: a change still shows.
         assert_ne!(mask("secret = \"a\""), mask("secret = \"b\""));
         assert_eq!(mask("secret = \"a\""), mask("secret = \"a\""));
+
+        // The header that lets a request past a maintenance notice: its
+        // name stays, its value does not.
+        let text = mask(
+            "category = \"maintenance\"\nallow_header = \"X-Maintenance-Pass: s3cret\"",
+        );
+        assert_eq!(false, text.contains("s3cret"), "{text}");
+        assert_eq!(true, text.contains("X-Maintenance-Pass:crc32:"), "{text}");
 
         // The entries of a combined_auth keep what is not a secret.
         let text = mask(

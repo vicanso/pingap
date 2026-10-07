@@ -15,11 +15,12 @@
 use pingap_core::OtelTracer;
 use pingap_core::{Ctx, ensure_client_ip};
 use pingap_otel::HeaderExtractor;
+use pingap_otel::propagation::Injector;
 use pingap_otel::{
     KeyValue, global,
     trace::{Span, SpanKind, Tracer},
 };
-use pingora::http::ResponseHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::time::Duration;
 
@@ -102,6 +103,57 @@ pub(crate) fn inject_telemetry_headers(
                 .insert_header("X-Span-Id", span_context.span_id().to_string());
         }
     }
+}
+
+/// Writes what a propagator hands it onto the request to the upstream.
+struct UpstreamRequestInjector<'a>(&'a mut RequestHeader);
+
+impl Injector for UpstreamRequestInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        // A propagator writes every header it knows, the ones it has
+        // nothing to say in as well: an empty `tracestate` is no header
+        // to send, and none to put over the one the client sent.
+        if value.is_empty() {
+            return;
+        }
+        if let Ok(name) = http::HeaderName::from_bytes(key.as_bytes()) {
+            let _ = self.0.insert_header(name, value);
+        }
+    }
+}
+
+/// Tells the upstream which trace its work belongs to: `traceparent`, and
+/// what else the configured propagators carry, for the span of this
+/// attempt at the upstream - or of the request, where there is none.
+///
+/// The trace of a request used to end at the proxy. It read the context
+/// the client sent and started its span under it, and then passed the
+/// client's `traceparent` on as it was: the spans of the upstream hung
+/// from the client's span, beside the proxy's and not under it.
+#[inline]
+pub(crate) fn inject_trace_context(
+    ctx: &Ctx,
+    upstream_request: &mut RequestHeader,
+) {
+    let Some(features) = ctx.features.as_ref() else {
+        return;
+    };
+    let span_context = match (&features.upstream_span, &features.otel_tracer) {
+        (Some(span), _) => span.span_context(),
+        (None, Some(tracer)) => tracer.http_request_span.span_context(),
+        (None, None) => return,
+    };
+    // What the client said of its trace, before it is written over.
+    let client_traceparent = upstream_request
+        .headers
+        .get("traceparent")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    pingap_otel::inject_span_context(
+        span_context,
+        client_traceparent.as_deref(),
+        &mut UpstreamRequestInjector(upstream_request),
+    );
 }
 
 #[inline]

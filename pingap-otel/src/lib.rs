@@ -15,6 +15,6 @@
 mod provider;
 mod tracer;
 
-pub use opentelemetry::{KeyValue, global, trace};
+pub use opentelemetry::{Context, KeyValue, global, propagation, trace};
 pub use opentelemetry_http::HeaderExtractor;
 pub use tracer::*;

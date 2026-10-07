@@ -45,6 +45,10 @@ const SERVER_PORT_TAG: &[u8] = b"$server_port";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
 const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 const JA4_TAG: &[u8] = b"$ja4";
+const CLIENT_IP_TAG: &[u8] = b"$client_ip";
+const FORWARDED_PROTO_TAG: &[u8] = b"$forwarded_proto";
+const FORWARDED_HOST_TAG: &[u8] = b"$forwarded_host";
+const FORWARDED_PORT_TAG: &[u8] = b"$forwarded_port";
 
 // Define static HeaderValues for HTTP and HTTPS schemes to avoid re-creation.
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
@@ -234,7 +238,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
     if buf == HOST_NAME_TAG {
         return HeaderValue::from_str(get_hostname()).unwrap_or(value);
     }
-    let request_tags: [&[u8]; 9] = [
+    let request_tags: [&[u8]; 13] = [
         HOST_TAG,
         SCHEME_TAG,
         REMOTE_ADDR_TAG,
@@ -244,6 +248,10 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         PROXY_ADD_FORWARDED_TAG,
         UPSTREAM_ADDR_TAG,
         JA4_TAG,
+        CLIENT_IP_TAG,
+        FORWARDED_PROTO_TAG,
+        FORWARDED_HOST_TAG,
+        FORWARDED_PORT_TAG,
     ];
     if request_tags.contains(&buf) || buf.starts_with(b"$http_") {
         return value;
@@ -312,6 +320,57 @@ pub fn convert_header_value(
             .ja4
             .as_deref()
             .and_then(|fingerprint| to_header_value(fingerprint.ja4())),
+        // The address of the client, as far as it can be vouched for:
+        // what a trusted proxy says of it, and the peer's own where there
+        // is none - or no list of them, in which case a forwarded header
+        // is only what the request claims.
+        CLIENT_IP_TAG => {
+            if has_trusted_proxies() {
+                match ctx.conn.client_ip.as_deref() {
+                    Some(client_ip) => to_header_value(client_ip),
+                    None => to_header_value(&get_client_ip(session)),
+                }
+            } else {
+                ctx.conn.remote_addr.as_deref().and_then(to_header_value)
+            }
+        },
+        // The scheme and the host the client used, which behind a proxy
+        // that ends TLS are not the ones this connection has: what a
+        // trusted proxy says of them, and this connection's otherwise.
+        FORWARDED_PROTO_TAG => Some(if client_used_https(session, ctx) {
+            SCHEME_HTTPS.clone()
+        } else {
+            SCHEME_HTTP.clone()
+        }),
+        // Only what reads as the name of a host, with or without a port:
+        // it goes into a header the upstream may build links from.
+        FORWARDED_HOST_TAG => {
+            forwarded_by_trusted_proxy(session, &HTTP_HEADER_X_FORWARDED_HOST)
+                .filter(|host| is_host_name(host))
+                .and_then(to_header_value)
+                .or_else(|| {
+                    get_host(session.req_header()).and_then(to_header_value)
+                })
+        },
+        // The port that goes with the scheme above: the one the proxy
+        // names, or the default of the scheme it names. Without either it
+        // is the port of this listener, as it has always been.
+        FORWARDED_PORT_TAG => {
+            let forwarded = forwarded_by_trusted_proxy(
+                session,
+                &HTTP_HEADER_X_FORWARDED_PORT,
+            )
+            .and_then(|port| port.parse::<u16>().ok())
+            .filter(|port| *port > 0)
+            .or_else(|| {
+                forwarded_scheme(session)
+                    .map(|https| if https { 443 } else { 80 })
+            })
+            .or(ctx.conn.server_port);
+            forwarded.and_then(|port| {
+                HeaderValue::from_str(itoa::Buffer::new().format(port)).ok()
+            })
+        },
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
@@ -439,6 +498,96 @@ impl TrustedProxies {
 static TRUSTED_PROXIES_ENABLED: AtomicBool = AtomicBool::new(false);
 static TRUSTED_PROXIES: ArcSwapOption<TrustedProxies> =
     ArcSwapOption::const_empty();
+
+static HTTP_HEADER_X_FORWARDED_PROTO: HeaderName =
+    HeaderName::from_static("x-forwarded-proto");
+static HTTP_HEADER_X_FORWARDED_HOST: HeaderName =
+    HeaderName::from_static("x-forwarded-host");
+static HTTP_HEADER_X_FORWARDED_PORT: HeaderName =
+    HeaderName::from_static("x-forwarded-port");
+
+/// Whether the connection of the request comes from one of the trusted
+/// proxies. Never without a list of them: there is then nobody whose word
+/// about a client could be taken.
+pub fn peer_is_trusted_proxy(session: &Session) -> bool {
+    if !has_trusted_proxies() {
+        return false;
+    }
+    let Some(peer) = session
+        .client_addr()
+        .and_then(|addr| addr.as_inet())
+        .map(|addr| addr.ip())
+    else {
+        return false;
+    };
+    TRUSTED_PROXIES
+        .load()
+        .as_ref()
+        .is_some_and(|trusted| trusted.contains(peer))
+}
+
+/// The first entry of a forwarded header, over all of its lines: the
+/// one the proxy nearest to the client wrote, in a chain of proxies that
+/// each add theirs. `https, http` is a client on https and a hop inside
+/// the chain on plain http.
+fn first_forwarded_entry<'a>(
+    values: impl Iterator<Item = &'a HeaderValue>,
+) -> Option<&'a str> {
+    values
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .find(|entry| !entry.is_empty())
+}
+
+/// What a trusted proxy says under `name`: the first entry of the header,
+/// when the request came through one and has it. From anyone else the
+/// header is something the client wrote.
+///
+/// The proxy has to write the header itself and not pass on what it was
+/// sent: one that only appends, or leaves the client's in place, hands on
+/// the client's word under its own name.
+fn forwarded_by_trusted_proxy<'a>(
+    session: &'a Session,
+    name: &HeaderName,
+) -> Option<&'a str> {
+    let entry = first_forwarded_entry(
+        session.req_header().headers.get_all(name).iter(),
+    )?;
+    peer_is_trusted_proxy(session).then_some(entry)
+}
+
+/// The scheme a trusted proxy says the client used: `Some(true)` for
+/// https, `Some(false)` for http, `None` when there is no proxy to say or
+/// it says something else.
+fn forwarded_scheme(session: &Session) -> Option<bool> {
+    let scheme =
+        forwarded_by_trusted_proxy(session, &HTTP_HEADER_X_FORWARDED_PROTO)?;
+    if scheme.eq_ignore_ascii_case("https") {
+        Some(true)
+    } else if scheme.eq_ignore_ascii_case("http") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Whether the client reached the site over https, as far as that can be
+/// vouched for: what a trusted proxy says of it, and otherwise whether
+/// this connection is one.
+pub fn client_used_https(session: &Session, ctx: &Ctx) -> bool {
+    forwarded_scheme(session).unwrap_or(ctx.conn.tls_version.is_some())
+}
+
+/// Whether `value` reads as a host, with or without a port, and nothing
+/// more: no user in front of it, no path behind it.
+fn is_host_name(value: &str) -> bool {
+    value
+        .parse::<http::uri::Authority>()
+        .is_ok_and(|authority| {
+            !authority.host().is_empty() && !authority.as_str().contains('@')
+        })
+}
 
 /// Sets the trusted downstream proxy addresses (individual IPs or CIDR ranges).
 ///
@@ -1393,10 +1542,106 @@ mod tests {
         .await;
         assert_eq!(get_client_ip(&session), "192.168.1.2");
 
+        // What is passed on about the client is what can be vouched for.
+        // Without trusted proxies that is this connection: its peer, its
+        // scheme and the host it asked for, whatever the request claims
+        // in the headers a proxy would set.
+        let claims = [
+            "Host: pingap.io",
+            "X-Forwarded-For: 192.168.1.1",
+            "X-Forwarded-Proto: https",
+            "X-Forwarded-Host: other.example",
+        ];
+        let session = new_test_session(&claims, "/").await;
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some("10.1.1.1".to_string());
+        let resolve = |name: &'static str, session: &Session, ctx: &Ctx| {
+            convert_header_value(&HeaderValue::from_static(name), session, ctx)
+                .map(|value| value.to_str().unwrap().to_string())
+        };
+        assert_eq!(false, peer_is_trusted_proxy(&session));
+        ctx.conn.server_port = Some(8080);
+        for (name, expected) in [
+            ("$client_ip", "10.1.1.1"),
+            ("$forwarded_proto", "http"),
+            ("$forwarded_host", "pingap.io"),
+            ("$forwarded_port", "8080"),
+        ] {
+            assert_eq!(
+                Some(expected.to_string()),
+                resolve(name, &session, &ctx),
+                "{name}"
+            );
+        }
+        ctx.conn.tls_version = Some(Cow::Borrowed("TLSv1.3"));
+        assert_eq!(
+            Some("https".to_string()),
+            resolve("$forwarded_proto", &session, &ctx)
+        );
+        // They are of the request, not of the environment: left for the
+        // request path when the configuration is loaded.
+        for name in [
+            "$client_ip",
+            "$forwarded_proto",
+            "$forwarded_host",
+            "$forwarded_port",
+        ] {
+            assert_eq!(
+                name,
+                resolve_static_header_value(HeaderValue::from_static(name))
+            );
+        }
+
+        // Of a header a chain of proxies each added to, the first entry
+        // is the client's end of it, whether they wrote one line or
+        // several.
+        let entry = |lines: &[&'static str]| {
+            let values: Vec<HeaderValue> = lines
+                .iter()
+                .map(|line| HeaderValue::from_static(line))
+                .collect();
+            first_forwarded_entry(values.iter()).map(str::to_string)
+        };
+        assert_eq!(Some("https".to_string()), entry(&["https, http"]));
+        assert_eq!(Some("https".to_string()), entry(&[" , https", "http"]));
+        assert_eq!(Some("https".to_string()), entry(&["https", "http"]));
+        assert_eq!(None, entry(&[]));
+        assert_eq!(None, entry(&[" , "]));
+        // What is passed on as a host has to read as one.
+        for host in ["shop.example.com", "shop.example.com:8443", "[::1]:80"] {
+            assert_eq!(true, is_host_name(host), "{host}");
+        }
+        for host in [
+            "",
+            "user@shop.example.com",
+            "shop.example.com/path",
+            "shop example.com",
+            "evil.example\r\nx: 1",
+        ] {
+            assert_eq!(false, is_host_name(host), "{host}");
+        }
+
         // With trusted proxies configured, a forwarded header from an untrusted
         // direct peer (the mock session has no trusted peer address) must be
         // ignored instead of being taken at face value.
         set_trusted_proxies(&Some(vec!["10.0.0.0/8".to_string()]));
+        let session = new_test_session(&claims, "/").await;
+        assert_eq!(false, peer_is_trusted_proxy(&session));
+        ctx.conn.tls_version = None;
+        assert_eq!(
+            Some("http".to_string()),
+            resolve("$forwarded_proto", &session, &ctx)
+        );
+        assert_eq!(
+            Some("pingap.io".to_string()),
+            resolve("$forwarded_host", &session, &ctx)
+        );
+        // The client ip that was worked out for the request is the one.
+        ctx.conn.client_ip = Some("203.0.113.9".to_string());
+        assert_eq!(
+            Some("203.0.113.9".to_string()),
+            resolve("$client_ip", &session, &ctx)
+        );
         let session = new_test_session(
             &["X-Forwarded-For:192.168.1.1"],
             "/vicanso/pingap?size=1",

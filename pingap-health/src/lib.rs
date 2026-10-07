@@ -200,7 +200,7 @@ mod tests {
                 .try_into()
                 .unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false, parallel_check: false }"###,
+            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false, parallel_check: false, expect_status: [], check_port: None }"###,
             format!("{tcp_check:?}")
         );
         let tcp_check = new_tcp_health_check("", &tcp_check, None);

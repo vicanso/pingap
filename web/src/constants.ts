@@ -41,6 +41,8 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.FORWARD_AUTH] = [0];
   pluginSupportSteps[PluginCategory.REQUEST_HEADERS] = [0, 1];
   pluginSupportSteps[PluginCategory.URI_BLOCK] = [0];
+  pluginSupportSteps[PluginCategory.MAINTENANCE] = [0];
+  pluginSupportSteps[PluginCategory.HEALTH] = [0];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -151,4 +153,6 @@ export enum PluginCategory {
   FORWARD_AUTH = "forward_auth",
   REQUEST_HEADERS = "request_headers",
   URI_BLOCK = "uri_block",
+  MAINTENANCE = "maintenance",
+  HEALTH = "health",
 }

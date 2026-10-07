@@ -77,6 +77,57 @@ is every `X-Forwarded-For` line of the request, in order, followed by the
 address of the peer. A proxy in front that adds its entry as a line of its own
 is carried over like one that appends to the existing line.
 
+`enable_reverse_proxy_headers` sets the five headers the way nginx is usually
+set up, by the same variables: `X-Real-IP: $remote_addr`,
+`X-Forwarded-For: $proxy_add_x_forwarded_for`, `X-Forwarded-Proto: $scheme`,
+`X-Forwarded-Host: $host` and `X-Forwarded-Port: $server_port`. Each is what
+this connection has.
+
+### Behind a load balancer
+
+With a load balancer in front that ends TLS, the connection Pingap sees is the
+balancer's: `$remote_addr` is its address and `$scheme` is `http`, and an
+upstream told so answers with redirects to `https` that never end. List the
+balancer in `basic.trusted_proxies` and set the client's own values on the
+location, as one would in nginx with `$http_x_forwarded_proto`:
+
+```toml
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[locations.app]
+upstream = "app"
+enable_reverse_proxy_headers = true
+proxy_set_headers = [
+    "X-Real-IP: $client_ip",
+    "X-Forwarded-Proto: $forwarded_proto",
+    "X-Forwarded-Port: $forwarded_port",
+]
+```
+
+`proxy_set_headers` comes after the defaults and replaces them.
+
+| Variable | Value |
+| --- | --- |
+| `$client_ip` | The address of the client: what a trusted proxy says of it, and the peer's own otherwise |
+| `$forwarded_proto` | `http` or `https` from the proxy's `X-Forwarded-Proto`; the scheme of this connection otherwise |
+| `$forwarded_port` | The proxy's `X-Forwarded-Port`, or else the default port of the scheme it names (`443`, `80`); the port of this listener otherwise |
+| `$forwarded_host` | The proxy's `X-Forwarded-Host`, when it reads as a host name; the host of this request otherwise |
+
+A request that did not come through a trusted proxy - or any request, without
+`trusted_proxies` - gets the values of the connection: a forwarded header is
+then only what the request claims.
+
+- Of a header that has several entries (`https, http`) the first is taken,
+  the client's end of a chain of proxies. The proxy nearest to the client has
+  to **write** the header itself; one that passes the client's on, or only
+  appends to it, hands on the client's word under its own name.
+- Use `$forwarded_host` only for a proxy that does write `X-Forwarded-Host`.
+  Few do, and one that does not passes on whatever the client sent - to an
+  upstream that may build its links, a password reset among them, from it.
+
+The variables can be used in the header plugins as well.
+
 An interim response from the upstream, such as `103 Early Hints`, is passed on
 to the client as it is. The response plugins, the status in the access log and
 the metrics, and the upstream timings all belong to the final response; `101`

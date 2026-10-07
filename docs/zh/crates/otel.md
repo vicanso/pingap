@@ -29,6 +29,8 @@ otlp_exporter = "http://otel-collector:4317"
 
 每个请求成为一个 span，携带 location、upstream、状态以及 Pingap 已收集的时序分解——上游连接、TLS 握手、上游处理、缓存查找。入站 trace 上下文用 `HeaderExtractor` 读取，因此 Pingap 延续已有 trace，而非新开。
 
+发往上游的请求带上 Pingap 为这次上游访问建立的 span 的上下文（`traceparent`，以及开启 Jaeger 格式时的对应头），所以上游的 span 挂在代理的 span 之下。以前是把客户端的 `traceparent` 原样转给上游，上游的 span 就和代理的 span 并列，而不是它的子节点。是否采样仍然由客户端决定：Pingap 自己的 span 全部采样，但延续客户端的 trace 时会把客户端的采样标记传下去，所以按“父节点采样才采样”的上游不会因此多记录。`tracestate` 和 `baggage` 是客户端的，原样透传。用 location 的 `proxy_set_headers` 设置的 `traceparent` 仍然优先。
+
 ## 收集器
 
 任何兼容 OTLP 的收集器均可——OpenTelemetry Collector、Jaeger、Tempo、Honeycomb、Datadog。最小收集器配置：

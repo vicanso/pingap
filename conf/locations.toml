@@ -75,6 +75,10 @@ upstream = "charts"
 # - X-Forwarded-Proto: $scheme
 # - X-Forwarded-Host: $host
 # - X-Forwarded-Port: $server_port
+# The same as in nginx: each is what this connection has. Behind a load
+# balancer listed in `basic.trusted_proxies`, set the client's own with
+# `proxy_set_headers` instead: "X-Real-IP: $client_ip",
+# "X-Forwarded-Proto: $forwarded_proto", "X-Forwarded-Port: $forwarded_port".
 # Default `false`
 # enable_reverse_proxy_headers = true
 

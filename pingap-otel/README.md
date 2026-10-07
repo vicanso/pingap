@@ -45,6 +45,17 @@ upstream processing, cache lookup. Incoming trace context is read with
 `HeaderExtractor`, so Pingap continues an existing trace rather than starting a
 new one.
 
+The request to the upstream carries the context of Pingap's span for it
+(`traceparent`, and the Jaeger header where that format is enabled), so what
+the upstream traces hangs from the proxy's span. The client's `traceparent`
+used to be passed on as it was, which put the upstream's spans beside the
+proxy's instead of under it. Whether the trace is sampled stays the client's
+decision: Pingap samples every span of its own, but where it continues a
+client's trace it passes on the client's flag, so an upstream that samples
+what its parent sampled is not made to record more than before. `tracestate`
+and `baggage` are the client's and go through as they came. A `traceparent`
+set with the location's `proxy_set_headers` still wins.
+
 ## Collector
 
 Any OTLP-compatible collector works — the OpenTelemetry Collector, Jaeger,

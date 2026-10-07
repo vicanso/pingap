@@ -38,7 +38,9 @@ location 可以用 `proxy_set_headers`、`proxy_add_headers` 为上游设置和�
 | `$hostname` | 代理所在主机名 |
 | `$host` | 请求的目标主机 |
 | `$scheme` | `http` 或 `https`，按客户端的连接方式 |
-| `$remote_addr` | 客户端地址 |
+| `$remote_addr` | 连接对端的地址 |
+| `$client_ip` | 客户端地址：经过 `basic.trusted_proxies` 里的代理时用代理转发的地址，否则是对端地址 |
+| `$forwarded_proto` / `$forwarded_port` / `$forwarded_host` | 客户端使用的协议、端口和域名：可信代理在 `X-Forwarded-Proto` / `-Port` / `-Host` 里给出的值，没有时是当前连接的 |
 | `$remote_port` | 客户端端口 |
 | `$server_addr` / `$server_port` | 请求到达的地址和端口 |
 | `$ja4` | 客户端的 JA4 TLS 指纹，需要 server 开启 `ja4 = true` |

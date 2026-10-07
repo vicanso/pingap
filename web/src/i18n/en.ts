@@ -701,6 +701,47 @@ export default {
     redirectStatusPlaceholder:
       "Input the status for redirect(e.g. 301, 302, 307, 308)",
     redirectHttps: "Https",
+    redirectHost: "Host",
+    redirectHostPlaceholder: "The name the site goes by, e.g. example.com",
+    redirectHostTips:
+      "A request for any other host is redirected to this one. With a port where the site is not on the default one.",
+    redirectRules: "Rules",
+    redirectRulesPlaceholder: "^/old/(.*)$ /new/$1 301",
+    redirectRulesTips:
+      "Each rule is a regex, a target and an optional status, separated by spaces. The first rule whose regex matches the path decides. The target is a path or a whole url; $1 and ${name} stand for what the regex captured.",
+    maintenanceEnabled: "Enabled",
+    maintenanceEnabledTips:
+      "Unset or yes answers every request with the notice. No lets everything through, without taking the plugin out of the location.",
+    maintenanceStatus: "Status",
+    maintenanceStatusPlaceholder: "Status of the notice, default: 503",
+    maintenanceRetryAfter: "Retry After",
+    maintenanceRetryAfterPlaceholder: "Sent as Retry-After, e.g. 30m",
+    maintenanceAllowHeader: "Allow Header",
+    maintenanceAllowHeaderPlaceholder: "X-Maintenance-Pass: secret",
+    maintenanceAllowHeaderTips:
+      "A request that carries this header with this value is let through.",
+    maintenanceAllowIpList: "Allow IP List",
+    maintenanceAllowIpListPlaceholder: "An IP or a CIDR, e.g. 10.0.0.0/8",
+    maintenanceAllowIpListTips:
+      "Client addresses that are let through. Behind a proxy the address is only the client's when the proxy is listed in the trusted proxies.",
+    maintenanceMessage: "Message",
+    maintenanceMessagePlaceholder: "Text of the notice (set this or the html)",
+    maintenanceHtml: "Html",
+    maintenanceHtmlPlaceholder: "Html of the notice (set this or the message)",
+    healthPath: "Path",
+    healthPathPlaceholder: "The path that is answered, e.g. /ready",
+    healthMinHealthy: "Min Healthy",
+    healthMinHealthyPlaceholder: "Healthy backends each upstream needs, default: 1",
+    healthUpstreams: "Upstreams",
+    healthUpstreamsPlaceholder: "Name of an upstream",
+    healthUpstreamsTips:
+      "The upstreams to look at. Leave empty to look at every upstream.",
+    responseHeadersPreset: "Preset",
+    responseHeadersPresetTips:
+      "security sets X-Content-Type-Options, X-Frame-Options, Referrer-Policy and, over TLS, Strict-Transport-Security, where the response has none of the name.",
+    responseHeadersAlways: "Always",
+    responseHeadersAlwaysTips:
+      "Also apply the rules to the responses of other plugins of the location (a 401, a redirect) and to the proxy's own error page. For the response mode only.",
     cacheDirectory: "Directory",
     cacheDirectoryPlaceholder: "Input the directory of cache",
     cacheLock: "Lock",
@@ -871,6 +912,10 @@ export default {
     corsPathPlaceholder: "Input the path for cors",
     corsAllowOrigin: "Allow Origin",
     corsAllowOriginPlaceholder: "Input the allow origin header",
+    corsAllowOrigins: "Allow Origins",
+    corsAllowOriginsPlaceholder: "https://app.example.com",
+    corsAllowOriginsTips:
+      "A list of origins that are let in, in place of Allow Origin (set one of the two). Each entry is an origin such as https://app.example.com, or ~ followed by a regex that the whole origin has to match.",
     corsAllowMethods: "Allow Methods",
     corsAllowMethodsPlaceholder: "Input the allow methods header",
     corsAllowHeaders: "Allow Headers",

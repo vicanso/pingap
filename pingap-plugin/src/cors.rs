@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_bool_conf, get_hash_key, get_str_conf};
+use super::{
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+};
 use async_trait::async_trait;
 use http::{HeaderValue, header};
 use humantime::parse_duration;
@@ -26,7 +28,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use std::borrow::Cow;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -42,12 +44,96 @@ pub struct Cors {
     // Pre-computed CORS headers to avoid rebuilding on every request
     // Includes: Allow-Methods, Allow-Headers, Max-Age, Allow-Credentials, Expose-Headers
     headers: Vec<HttpHeader>,
-    // The origin is taken from the request (`$http_origin`), so the answer
-    // differs per origin and caches have to be told with `Vary: Origin`.
+    // The origins that are let in, when it is a list of them and not the
+    // one value of `allow_origin`: a request from one of these has its own
+    // origin sent back, one from any other gets no CORS headers at all.
+    allow_origins: Vec<OriginRule>,
+    // The origin is taken from the request (`$http_origin`, or a list of
+    // origins), so the answer differs per origin and caches have to be told
+    // with `Vary: Origin`.
     vary_origin: bool,
     // Unique identifier for plugin instance, used for caching and identification
     hash_value: String,
 }
+
+/// One entry of `allow_origins`.
+enum OriginRule {
+    /// An origin as a browser sends it: `https://app.example.com`.
+    Exact(String),
+    /// `~` and a pattern, which the whole of an origin has to match.
+    Pattern(Regex),
+}
+
+impl OriginRule {
+    /// An entry that is neither an origin nor a pattern is an error: it
+    /// would let nobody in, and the page it was meant for would fail with
+    /// nothing on this side saying why.
+    fn parse(entry: &str) -> std::result::Result<Self, String> {
+        let entry = entry.trim();
+        if let Some(pattern) = entry.strip_prefix('~') {
+            // The whole origin, whether or not the pattern says so with
+            // `^` and `$`: one that matched anywhere in it would take
+            // `example\.com` for `https://example.com.evil.net` too.
+            return Regex::new(&format!("^(?:{pattern})$"))
+                .map(Self::Pattern)
+                .map_err(|e| format!("allow_origins: {e}"));
+        }
+        if !is_origin(entry) {
+            return Err(format!(
+                "allow_origins: {entry:?} is not an origin (scheme://host[:port]), nor a pattern starting with ~"
+            ));
+        }
+        Ok(Self::Exact(entry.to_ascii_lowercase()))
+    }
+    fn matches(&self, origin: &str) -> bool {
+        match self {
+            Self::Exact(allowed) => allowed.eq_ignore_ascii_case(origin),
+            Self::Pattern(pattern) => pattern.is_match(origin),
+        }
+    }
+}
+
+/// Whether `entry` is an origin as a client sends it: a scheme, a host
+/// and, where it is not the default of the scheme, a port.
+///
+/// For http and https that is what the url of it serializes back to, so
+/// that `https://a.test/` and `https://a.test:443` - neither of which a
+/// browser ever sends - are told apart from `https://a.test`. Another
+/// scheme (`capacitor://localhost`, the page of an app in a web view) has
+/// no such form to compare with and is taken by its shape.
+fn is_origin(entry: &str) -> bool {
+    let Some((scheme, rest)) = entry.split_once("://") else {
+        return false;
+    };
+    if scheme.eq_ignore_ascii_case("http")
+        || scheme.eq_ignore_ascii_case("https")
+    {
+        return url::Url::parse(entry).is_ok_and(|url| {
+            url.origin()
+                .ascii_serialization()
+                .eq_ignore_ascii_case(entry)
+        });
+    }
+    let is_scheme = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    is_scheme
+        && !rest.is_empty()
+        && rest.chars().all(|c| {
+            c.is_ascii_graphic() && !matches!(c, '/' | '?' | '#' | '@' | '\\')
+        })
+}
+
+/// The headers of a response that let an origin in.
+const ALLOW_HEADERS: [header::HeaderName; 6] = [
+    header::ACCESS_CONTROL_ALLOW_ORIGIN,
+    header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+    header::ACCESS_CONTROL_ALLOW_METHODS,
+    header::ACCESS_CONTROL_ALLOW_HEADERS,
+    header::ACCESS_CONTROL_EXPOSE_HEADERS,
+    header::ACCESS_CONTROL_MAX_AGE,
+];
 
 /// Whether `Vary` already covers `Origin` (or everything).
 fn varies_by_origin(headers: &http::HeaderMap) -> bool {
@@ -112,6 +198,28 @@ impl TryFrom<&PluginConf> for Cors {
         // "example.com" - Allow specific domain
         // "$http_origin" - Mirror the requesting origin (dynamic)
         let mut allow_origin = get_str_conf(value, "allow_origin");
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::Cors.to_string(),
+            message,
+        };
+        let allow_origins = get_str_slice_conf(value, "allow_origins")
+            .iter()
+            .map(|entry| OriginRule::parse(entry).map_err(invalid))
+            .collect::<Result<Vec<_>>>()?;
+        // A list with nothing on it reads as "nobody", and would be taken
+        // for no list at all: everybody.
+        if allow_origins.is_empty() && value.contains_key("allow_origins") {
+            return Err(invalid(
+                "allow_origins is empty: list the origins that are let in, or leave it out"
+                    .to_string(),
+            ));
+        }
+        if !allow_origins.is_empty() && !allow_origin.is_empty() {
+            return Err(invalid(
+                "allow_origin and allow_origins are two ways to say who is let in, set one of them"
+                    .to_string(),
+            ));
+        }
         if allow_origin.is_empty() {
             allow_origin = "*".to_string();
         }
@@ -158,6 +266,26 @@ impl TryFrom<&PluginConf> for Cors {
         // Optional: Allow credentials (cookies, auth headers)
         // Important: Cannot be used with Allow-Origin: *
         let allow_credentials = get_bool_conf(value, "allow_credentials");
+        // A browser refuses the two together, for a request that carries
+        // credentials. Said and not refused here: requests without them
+        // do work with it, and configurations that have it are in use.
+        if allow_credentials && allow_origins.is_empty() && allow_origin == "*"
+        {
+            warn!(
+                "cors: allow_credentials with allow_origin \"*\" is refused by browsers for requests with credentials, list the origins in allow_origins"
+            );
+        }
+        // The pairing that does work, and for everyone: whatever site the
+        // visitor has open is sent back as allowed and may use the
+        // visitor's cookies.
+        if allow_credentials
+            && allow_origins.is_empty()
+            && allow_origin == "$http_origin"
+        {
+            warn!(
+                "cors: allow_credentials with allow_origin \"$http_origin\" lets every site act with the visitor's credentials, list the origins in allow_origins"
+            );
+        }
         if allow_credentials {
             headers.push((
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -178,9 +306,11 @@ impl TryFrom<&PluginConf> for Cors {
             hash_value,
             plugin_step: PluginStep::Request,
             path,
-            vary_origin: allow_origin.starts_with('$')
+            vary_origin: !allow_origins.is_empty()
+                || allow_origin.starts_with('$')
                 || allow_origin.starts_with(':'),
             allow_origin: format_header_value(&allow_origin)?,
+            allow_origins,
             headers,
         };
 
@@ -229,6 +359,16 @@ impl Cors {
         session: &Session,
         ctx: &Ctx,
     ) -> Option<HeaderValue> {
+        // A list of origins: the request's own, when it is one of them.
+        if !self.allow_origins.is_empty() {
+            let origin = session.get_header(header::ORIGIN)?;
+            let text = origin.to_str().ok()?;
+            return self
+                .allow_origins
+                .iter()
+                .any(|rule| rule.matches(text))
+                .then(|| origin.clone());
+        }
         if self.vary_origin {
             convert_header_value(&self.allow_origin, session, ctx)
         } else {
@@ -277,13 +417,26 @@ impl Plugin for Cors {
         // Preflight happens before actual request to check if it's allowed.
         // A mirrored origin needs an Origin to mirror; without one this is
         // a plain OPTIONS for the upstream.
-        if http::Method::OPTIONS == session.req_header().method
-            && let Some(origin) = self.resolve_origin(session, ctx)
-        {
-            // Return 204 No Content with CORS headers for preflight
-            let mut resp = HttpResponse::no_content();
-            resp.headers = Some(self.get_headers(origin));
-            return Ok(RequestPluginResult::Respond(resp));
+        if http::Method::OPTIONS == session.req_header().method {
+            if let Some(origin) = self.resolve_origin(session, ctx) {
+                // Return 204 No Content with CORS headers for preflight
+                let mut resp = HttpResponse::no_content();
+                resp.headers = Some(self.get_headers(origin));
+                return Ok(RequestPluginResult::Respond(resp));
+            }
+            // From an origin that is not on the list: answered here, with
+            // nothing that lets it in. Passed on, it would be the upstream
+            // that decides who is let in, and the list would be for show.
+            if !self.allow_origins.is_empty()
+                && session.get_header(header::ORIGIN).is_some()
+            {
+                let mut resp = HttpResponse::no_content();
+                resp.headers = Some(vec![(
+                    header::VARY,
+                    HeaderValue::from_static("Origin"),
+                )]);
+                return Ok(RequestPluginResult::Respond(resp));
+            }
         }
         Ok(RequestPluginResult::Continue)
     }
@@ -310,26 +463,49 @@ impl Plugin for Cors {
             return Ok(ResponsePluginResult::Unchanged);
         }
 
+        // Where the answer goes by the origin, every response says so,
+        // the one to a request without an `Origin` and the one to an
+        // origin that is not let in as well: kept by a shared cache
+        // without it, such a response was replayed to the cross-origin
+        // request that came next, which then had no CORS headers.
+        // Appended, not inserted: the upstream's own `Vary` must survive.
+        let mut result = ResponsePluginResult::Unchanged;
+        if self.vary_origin && !varies_by_origin(&upstream_response.headers) {
+            let _ = upstream_response.append_header(header::VARY, "Origin");
+            result = ResponsePluginResult::Modified;
+        }
+
         // Only add CORS headers if request has Origin header
         // (indicates it's a CORS request)
         if session.get_header(header::ORIGIN).is_none() {
-            return Ok(ResponsePluginResult::Unchanged);
+            return Ok(result);
         }
 
         // Add all configured CORS headers to the response, straight from
         // the prebuilt list rather than through a per-response copy.
-        let Some(origin) = self.resolve_origin(session, ctx) else {
-            return Ok(ResponsePluginResult::Unchanged);
+        let origin = self.resolve_origin(session, ctx);
+        // With a list of origins, who is let in and with what is this
+        // plugin's to say and nobody else's: what the upstream itself
+        // answered is taken off, for an origin on the list - which gets
+        // the plugin's answer in its place, credentials allowed or not as
+        // it is set here - and for one that is not. Left on, the list
+        // held for the preflight and not for the request that needs
+        // none, which the upstream went on allowing.
+        if !self.allow_origins.is_empty() {
+            for name in ALLOW_HEADERS.iter() {
+                if upstream_response.remove_header(name).is_some() {
+                    result = ResponsePluginResult::Modified;
+                }
+            }
+        }
+        let Some(origin) = origin else {
+            return Ok(result);
         };
         for (name, value) in &self.headers {
             let _ = upstream_response.insert_header(name, value);
         }
         let _ = upstream_response
             .insert_header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-        // Appended, not inserted: the upstream's own `Vary` must survive.
-        if self.vary_origin && !varies_by_origin(&upstream_response.headers) {
-            let _ = upstream_response.append_header(header::VARY, "Origin");
-        }
         Ok(ResponsePluginResult::Modified)
     }
 
@@ -499,5 +675,275 @@ max_age = "60m"
             .await
             .unwrap();
         assert_eq!(true, result == RequestPluginResult::Continue);
+    }
+
+    /// `allow_origins`: the origins on the list are let in by name, any
+    /// other gets nothing that lets it in.
+    #[tokio::test]
+    async fn test_cors_allow_origins() {
+        let cors = Cors::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+allow_origins = ["https://app.example.com", "~https://[a-z0-9-]+\\.example\\.org", "http://localhost:3000"]
+allow_credentials = true
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // The headers the response of the upstream leaves with.
+        let respond = async |origin: Option<&str>| {
+            let origin = origin
+                .map(|origin| format!("Origin: {origin}\r\n"))
+                .unwrap_or_default();
+            let input = format!("GET /api HTTP/1.1\r\n{origin}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut header = ResponseHeader::build(200, None).unwrap();
+            cors.handle_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut header,
+            )
+            .await
+            .unwrap();
+            let value = |name: &str| {
+                header
+                    .headers
+                    .get(name)
+                    .map(|value| value.to_str().unwrap().to_string())
+            };
+            (value("access-control-allow-origin"), value("vary"))
+        };
+        let vary = Some("Origin".to_string());
+        for origin in [
+            "https://app.example.com",
+            // In whatever case the scheme and host were written.
+            "HTTPS://APP.example.com",
+            "https://docs.example.org",
+            "http://localhost:3000",
+        ] {
+            assert_eq!(
+                (Some(origin.to_string()), vary.clone()),
+                respond(Some(origin)).await,
+                "{origin}"
+            );
+        }
+        for origin in [
+            "https://evil.example.net",
+            "http://app.example.com",
+            "https://app.example.com:8443",
+            "http://localhost:3001",
+            // A pattern is for the whole of an origin.
+            "https://docs.example.org.evil.net",
+            "https://evil.net/?https://docs.example.org",
+            "null",
+        ] {
+            assert_eq!(
+                (None, vary.clone()),
+                respond(Some(origin)).await,
+                "{origin}"
+            );
+        }
+        // What the upstream answers to let an origin in does not get
+        // past the list either.
+        let from_upstream = async |origin: &str| {
+            let input =
+                format!("GET /api HTTP/1.1\r\nOrigin: {origin}\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut header = ResponseHeader::build(200, None).unwrap();
+            header
+                .insert_header("Access-Control-Allow-Origin", "*")
+                .unwrap();
+            header
+                .insert_header("Access-Control-Allow-Credentials", "true")
+                .unwrap();
+            header.insert_header("X-Other", "kept").unwrap();
+            cors.handle_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut header,
+            )
+            .await
+            .unwrap();
+            let mut names: Vec<String> =
+                header.headers.keys().map(|name| name.to_string()).collect();
+            names.sort();
+            (
+                names.join(","),
+                header
+                    .headers
+                    .get("access-control-allow-origin")
+                    .map(|value| value.to_str().unwrap().to_string()),
+            )
+        };
+        assert_eq!(
+            ("vary,x-other".to_string(), None),
+            from_upstream("https://evil.example.net").await
+        );
+        let (names, allowed) = from_upstream("https://app.example.com").await;
+        assert_eq!(Some("https://app.example.com".to_string()), allowed);
+        // This plugin allows credentials, so the header is its own.
+        assert_eq!(
+            true,
+            names.contains("access-control-allow-credentials"),
+            "{names}"
+        );
+        // One that does not: the upstream's `true` is not passed on for
+        // an origin of the list either.
+        let no_credentials = Cors::new(
+            &toml::from_str::<PluginConf>(
+                "allow_origins = [\"https://app.example.com\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new()
+            .read(
+                b"GET /api HTTP/1.1\r\nOrigin: https://app.example.com\r\n\r\n",
+            )
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        header
+            .insert_header("Access-Control-Allow-Credentials", "true")
+            .unwrap();
+        no_credentials
+            .handle_response(&mut session, &mut Ctx::default(), &mut header)
+            .await
+            .unwrap();
+        assert_eq!(
+            "https://app.example.com",
+            header.headers.get("access-control-allow-origin").unwrap()
+        );
+        assert_eq!(
+            false,
+            header
+                .headers
+                .contains_key("access-control-allow-credentials")
+        );
+
+        // Regression: a response to a request without an `Origin` did not
+        // say that it goes by the origin, and a shared cache replayed it
+        // to the cross-origin request that came next.
+        assert_eq!((None, vary.clone()), respond(None).await);
+
+        // A preflight from the list is answered with the headers, one from
+        // elsewhere without them - and not passed on for the upstream to
+        // decide - and an OPTIONS that is no cross-origin request at all is
+        // the upstream's.
+        let preflight = async |origin: Option<&str>| {
+            let origin = origin
+                .map(|origin| format!("Origin: {origin}\r\n"))
+                .unwrap_or_default();
+            let input = format!("OPTIONS /api HTTP/1.1\r\n{origin}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = cors
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            match result {
+                RequestPluginResult::Respond(resp) => Some((
+                    resp.status.as_u16(),
+                    format!("{:?}", resp.headers.unwrap_or_default()),
+                )),
+                _ => None,
+            }
+        };
+        let (status, headers) =
+            preflight(Some("https://app.example.com")).await.unwrap();
+        assert_eq!(204, status);
+        assert_eq!(
+            true,
+            headers.contains(
+                r#"("access-control-allow-origin", "https://app.example.com")"#
+            ),
+            "{headers}"
+        );
+        assert_eq!(
+            Some((204, r#"[("vary", "Origin")]"#.to_string())),
+            preflight(Some("https://evil.example.net")).await
+        );
+        assert_eq!(None, preflight(None).await);
+    }
+
+    #[test]
+    fn test_cors_allow_origins_params() {
+        let error = |conf: &str| {
+            Cors::new(&toml::from_str::<PluginConf>(conf).unwrap())
+                .err()
+                .unwrap()
+                .to_string()
+        };
+        let prefix = "Plugin cors invalid, message: ";
+        for entry in [
+            "app.example.com",
+            "https://app.example.com/",
+            "https://app.example.com:443",
+            "capacitor://",
+            "capacitor://localhost/path",
+            "*",
+            "",
+        ] {
+            assert_eq!(
+                format!(
+                    "{prefix}allow_origins: {entry:?} is not an origin (scheme://host[:port]), nor a pattern starting with ~"
+                ),
+                error(&format!("allow_origins = [\"{entry}\"]")),
+            );
+        }
+        assert_eq!(
+            true,
+            error(r#"allow_origins = ["~https://(unclosed"]"#)
+                .starts_with(&format!("{prefix}allow_origins: ")),
+        );
+        assert_eq!(
+            format!(
+                "{prefix}allow_origin and allow_origins are two ways to say who is let in, set one of them"
+            ),
+            error("allow_origin = \"*\"\nallow_origins = [\"https://a.io\"]")
+        );
+        // A list with nothing on it is not "everybody".
+        assert_eq!(
+            format!(
+                "{prefix}allow_origins is empty: list the origins that are let in, or leave it out"
+            ),
+            error("allow_origins = []")
+        );
+        // The page of an app in a web view has an origin of its own.
+        for entry in
+            ["capacitor://localhost", "ionic://localhost", "app://my.app"]
+        {
+            assert_eq!(
+                true,
+                Cors::new(
+                    &toml::from_str::<PluginConf>(&format!(
+                        "allow_origins = [\"{entry}\"]"
+                    ))
+                    .unwrap()
+                )
+                .is_ok(),
+                "{entry}"
+            );
+        }
+        // The pairing a browser refuses is said, not refused.
+        assert_eq!(
+            true,
+            Cors::new(
+                &toml::from_str::<PluginConf>("allow_credentials = true")
+                    .unwrap()
+            )
+            .is_ok()
+        );
     }
 }

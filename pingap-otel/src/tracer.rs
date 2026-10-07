@@ -213,6 +213,54 @@ impl TracerServiceBuilder {
     }
 }
 
+/// Writes the context of a span through `injector`, in the formats the
+/// configured propagators carry: `traceparent` and `tracestate`, and the
+/// Jaeger and baggage headers where those were asked for.
+///
+/// It is what a request to an upstream needs so that the spans the
+/// upstream starts are children of the proxy's.
+///
+/// `client_traceparent` is the `traceparent` the request came with. Where
+/// the span continues that trace, the flags of the client are passed on
+/// and not the span's own: every span of the proxy is sampled, and told
+/// so, an upstream that samples what its parent sampled would record a
+/// trace the client had decided not to.
+pub fn inject_span_context(
+    span_context: &opentelemetry::trace::SpanContext,
+    client_traceparent: Option<&str>,
+    injector: &mut dyn opentelemetry::propagation::Injector,
+) {
+    use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags};
+    if !span_context.is_valid() {
+        return;
+    }
+    let client_flags = client_traceparent.and_then(|traceparent| {
+        let mut parts = traceparent.trim().split('-');
+        let (_version, trace_id, _span_id, flags) =
+            (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+        if !trace_id.eq_ignore_ascii_case(&span_context.trace_id().to_string())
+        {
+            return None;
+        }
+        u8::from_str_radix(flags, 16).ok()
+    });
+    let span_context = match client_flags {
+        Some(flags) => SpanContext::new(
+            span_context.trace_id(),
+            span_context.span_id(),
+            TraceFlags::new(flags),
+            true,
+            span_context.trace_state().clone(),
+        ),
+        None => span_context.clone(),
+    };
+    let cx =
+        opentelemetry::Context::new().with_remote_span_context(span_context);
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(&cx, injector);
+    });
+}
+
 /// Gets the full service name by adding the 'pingap:' prefix
 ///
 /// # Arguments
@@ -338,5 +386,65 @@ impl BackgroundService for TracerService {
                 );
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// What an upstream is told of a span: its trace and its own id, so
+    /// that what the upstream does hangs from it.
+    #[test]
+    fn test_inject_span_context() {
+        use opentelemetry::trace::{Span, SpanContext, Tracer, TracerProvider};
+        use std::collections::HashMap;
+
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+        let provider =
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("test");
+        let span = tracer.start("request");
+        let span_context = span.span_context().clone();
+
+        let traceparent = |client: Option<&str>| {
+            let mut headers: HashMap<String, String> = HashMap::new();
+            super::inject_span_context(&span_context, client, &mut headers);
+            headers.get("traceparent").cloned()
+        };
+        let own = |flags: &str| {
+            Some(format!(
+                "00-{}-{}-{flags}",
+                span_context.trace_id(),
+                span_context.span_id()
+            ))
+        };
+        assert_eq!(own("01"), traceparent(None));
+        // The trace of a client that chose not to sample it goes on
+        // unsampled, under the span of the proxy.
+        let unsampled =
+            format!("00-{}-b7ad6b7169203331-00", span_context.trace_id());
+        assert_eq!(own("00"), traceparent(Some(&unsampled)));
+        let sampled =
+            format!("00-{}-b7ad6b7169203331-01", span_context.trace_id());
+        assert_eq!(own("01"), traceparent(Some(&sampled)));
+        // What the client sent is of another trace, or of none: the
+        // span's own flags.
+        for client in [
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00",
+            "not a traceparent",
+            "",
+        ] {
+            assert_eq!(own("01"), traceparent(Some(client)), "{client}");
+        }
+
+        // No span to speak of: nothing is written.
+        let mut headers: HashMap<String, String> = HashMap::new();
+        super::inject_span_context(
+            &SpanContext::empty_context(),
+            None,
+            &mut headers,
+        );
+        assert!(headers.is_empty());
     }
 }
