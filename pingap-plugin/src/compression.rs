@@ -14,12 +14,12 @@
 
 use super::{
     Error, accepts_encoding, get_bool_conf, get_hash_key, get_int_conf,
-    get_str_conf,
+    get_str_conf, is_partial_content, weaken_etag,
 };
 use async_trait::async_trait;
 use http::header::{
-    ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
-    CONTENT_TYPE, TRANSFER_ENCODING, VARY,
+    ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING,
+    CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING, VARY,
 };
 use http::{HeaderValue, Method, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
@@ -34,6 +34,7 @@ use pingora::protocols::http::compression::{Algorithm, Encode};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -106,6 +107,9 @@ pub struct Compression {
     decompression: Option<bool>,
     // Defines when this plugin runs in the request processing pipeline
     plugin_step: PluginStep,
+    /// The cache key components upstream mode can add: none, or one of
+    /// the codings that are switched on.
+    key_alternatives: Arc<Vec<Vec<String>>>,
     // Compress the upstream response body here (`mode = "upstream"`)
     // instead of through pingora's downstream module
     upstream_mode: bool,
@@ -178,6 +182,20 @@ impl TryFrom<&PluginConf> for Compression {
             decompression,
             support_compression,
             upstream_mode,
+            key_alternatives: Arc::new(
+                std::iter::once(vec![])
+                    .chain(
+                        [
+                            (ZSTD, zstd_level),
+                            (BR, br_level),
+                            (GZIP, gzip_level),
+                        ]
+                        .into_iter()
+                        .filter(|(_, level)| *level > 0)
+                        .map(|(coding, _)| vec![coding.to_string()]),
+                    )
+                    .collect(),
+            ),
             min_length,
             // Plugin runs during early request phase
             plugin_step: PluginStep::EarlyRequest,
@@ -344,7 +362,9 @@ impl Plugin for Compression {
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step == PluginStep::EarlyRequest {
-            if self.upstream_mode {
+            // Nothing of this with no level switched on: the plugin is
+            // there for something else, decompression say.
+            if self.upstream_mode && self.support_compression {
                 let (zstd_level, br_level, gzip_level) =
                     self.get_compress_level(session);
                 let key = if zstd_level > 0 {
@@ -356,8 +376,34 @@ impl Plugin for Compression {
                 } else {
                     ""
                 };
-                if !key.is_empty() {
-                    ctx.push_cache_key(key.to_string());
+                // The coding is a part of the cache key, one of those a
+                // request can ask for: a `PURGE`, which asks for none,
+                // removes the entry of each.
+                let current = if key.is_empty() {
+                    vec![]
+                } else {
+                    vec![key.to_string()]
+                };
+                ctx.push_cache_key_variant(
+                    current,
+                    self.key_alternatives.clone(),
+                );
+                // The upstream is asked for the coding this plugin settled
+                // on and no other. With the client's header passed on, an
+                // upstream that compresses by itself answered in a coding
+                // of its own choosing - brotli, to a client that takes
+                // both - and that response was stored under the key of
+                // the coding chosen here, for clients that take only that
+                // one. With no coding chosen the header is the client's
+                // business and the upstream's, see `handle_upstream_response`.
+                let header = session.req_header_mut();
+                if !key.is_empty()
+                    && header
+                        .headers
+                        .get(ACCEPT_ENCODING)
+                        .is_some_and(|value| value.as_bytes() != key.as_bytes())
+                {
+                    let _ = header.insert_header(ACCEPT_ENCODING, key);
                 }
             }
             if self.decompression.unwrap_or_default()
@@ -437,8 +483,26 @@ impl Plugin for Compression {
         if has_no_body(session, upstream_response.status) {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if upstream_response.headers.contains_key(CONTENT_ENCODING)
-            || must_not_transform(&upstream_response.headers)
+        let (zstd_level, br_level, gzip_level) =
+            self.get_compress_level(session);
+        let chosen = zstd_level > 0 || br_level > 0 || gzip_level > 0;
+        if upstream_response.headers.contains_key(CONTENT_ENCODING) {
+            // Compressed by the upstream, for a client this plugin has no
+            // coding for, so by what that client's header says. The key
+            // has no coding in it then, and the next client under the same
+            // key may take none at all: unless the upstream says so itself
+            // the response is marked as depending on the header, and the
+            // cache keeps the answers to different headers apart.
+            if !chosen && !varies_by_accept_encoding(&upstream_response.headers)
+            {
+                let _ =
+                    upstream_response.append_header(VARY, "Accept-Encoding");
+                return Ok(ResponsePluginResult::Modified);
+            }
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        if must_not_transform(&upstream_response.headers)
+            || is_partial_content(upstream_response)
         {
             return Ok(ResponsePluginResult::Unchanged);
         }
@@ -449,9 +513,7 @@ impl Plugin for Compression {
         if !is_compressible_content_type(content_type) {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        let (zstd_level, br_level, gzip_level) =
-            self.get_compress_level(session);
-        if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
+        if !chosen {
             return Ok(ResponsePluginResult::Unchanged);
         }
         if self.min_length > 0 {
@@ -474,6 +536,11 @@ impl Plugin for Compression {
         );
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&CONTENT_LENGTH);
+        // Ranges of these bytes are not ranges of what the upstream has.
+        // The `ETag` stays as the upstream gave it, for the cache to
+        // revalidate with; it is weakened on the way out, in
+        // `handle_response`.
+        upstream_response.remove_header(&ACCEPT_RANGES);
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(
             TRANSFER_ENCODING,
@@ -534,10 +601,23 @@ impl Plugin for Compression {
             }
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if !upstream_response.headers.contains_key(CONTENT_ENCODING)
-            || varies_by_accept_encoding(&upstream_response.headers)
-        {
+        if !upstream_response.headers.contains_key(CONTENT_ENCODING) {
             return Ok(ResponsePluginResult::Unchanged);
+        }
+        // The upstream's strong `ETag` names the bytes it sent, and these
+        // are their compressed form: the validator is made a weak one, as
+        // nginx and pingora's own compression do it. Here, on the way to
+        // the client and for a response from the cache as well, and not on
+        // the response that is stored: the cache revalidates with the
+        // validator as the upstream gave it, and takes the upstream's
+        // again from every `304`.
+        let weakened = weaken_etag(upstream_response);
+        if varies_by_accept_encoding(&upstream_response.headers) {
+            return Ok(if weakened {
+                ResponsePluginResult::Modified
+            } else {
+                ResponsePluginResult::Unchanged
+            });
         }
         let _ = upstream_response.append_header(VARY, "Accept-Encoding");
         Ok(ResponsePluginResult::Modified)
@@ -713,6 +793,168 @@ zstd_level = 6
             )
             .unwrap();
         assert_eq!(ResponsePluginResult::Unchanged, result);
+    }
+
+    /// Regression: upstream mode compressed the part of a body a range
+    /// request got, under the `Content-Range` of the uncompressed bytes,
+    /// and left the upstream's strong `ETag` and `Accept-Ranges` on a
+    /// body they no longer described.
+    #[tokio::test]
+    async fn test_upstream_mode_and_the_validators() {
+        let compression = Compression::new(
+            &toml::from_str::<PluginConf>(
+                "mode = \"upstream\"\ngzip_level = 6",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let response = |status: u16| {
+            let mut resp = ResponseHeader::build(status, None).unwrap();
+            resp.append_header("Content-Type", "text/html").unwrap();
+            resp.append_header("ETag", "\"v1\"").unwrap();
+            resp.append_header("Accept-Ranges", "bytes").unwrap();
+            resp
+        };
+        let mut session =
+            new_session("GET / HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+                .await;
+
+        // A part of the body is passed on as it is.
+        let mut part = response(206);
+        part.append_header("Content-Range", "bytes 0-99/4000")
+            .unwrap();
+        let result = compression
+            .handle_upstream_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut part,
+            )
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Unchanged, result);
+        assert_eq!(false, part.headers.contains_key(CONTENT_ENCODING));
+        assert_eq!("\"v1\"", part.headers.get("ETag").unwrap());
+
+        // The whole of it is compressed, and says no more of itself than
+        // is still true.
+        let mut whole = response(200);
+        let result = compression
+            .handle_upstream_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut whole,
+            )
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Modified, result);
+        assert_eq!(false, whole.headers.contains_key("Accept-Ranges"));
+        // The validator is the upstream's in what the cache stores, and
+        // a weak one in what the client gets - also from the cache, and
+        // again after the cache took the upstream's from a `304`.
+        assert_eq!("\"v1\"", whole.headers.get("ETag").unwrap());
+        for _ in 0..2 {
+            let mut sent = whole.clone();
+            compression
+                .handle_response(&mut session, &mut Ctx::default(), &mut sent)
+                .await
+                .unwrap();
+            assert_eq!("W/\"v1\"", sent.headers.get("ETag").unwrap());
+        }
+        // One that was not compressed keeps its validator.
+        let mut plain = response(200);
+        compression
+            .handle_response(&mut session, &mut Ctx::default(), &mut plain)
+            .await
+            .unwrap();
+        assert_eq!("\"v1\"", plain.headers.get("ETag").unwrap());
+    }
+
+    /// Regression: upstream mode passed the client's `Accept-Encoding`
+    /// on. An upstream that compresses answered in the coding it liked
+    /// best, and with a cache that answer was stored under the key of
+    /// the coding this plugin had chosen.
+    #[tokio::test]
+    async fn test_upstream_mode_asks_for_the_coding_it_chose() {
+        let compression = Compression::new(
+            &toml::from_str::<PluginConf>(
+                "mode = \"upstream\"\ngzip_level = 6",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let asked = async |accept_encoding: &str| {
+            let mut session = new_session(&format!(
+                "GET / HTTP/1.1\r\n{accept_encoding}\r\n"
+            ))
+            .await;
+            let mut ctx = Ctx::default();
+            compression
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            let value = session
+                .req_header()
+                .headers
+                .get(ACCEPT_ENCODING)
+                .map(|value| value.to_str().unwrap().to_string());
+            let keys = ctx.cache.and_then(|cache| cache.keys);
+            (value, keys)
+        };
+        assert_eq!(
+            (Some("gzip".to_string()), Some(vec!["gzip".to_string()])),
+            asked("Accept-Encoding: br, gzip, zstd\r\n").await
+        );
+        assert_eq!(
+            (Some("gzip".to_string()), Some(vec!["gzip".to_string()])),
+            asked("Accept-Encoding: gzip\r\n").await
+        );
+        // Nothing this plugin compresses with: the header is left as it
+        // came, and nothing is added to the key.
+        assert_eq!(
+            (Some("br".to_string()), Some(vec![])),
+            asked("Accept-Encoding: br\r\n").await
+        );
+        assert_eq!((None, Some(vec![])), asked("").await);
+
+        // An upstream that then compresses for that client has its answer
+        // kept apart from the answers to other headers.
+        let mut session =
+            new_session("GET / HTTP/1.1\r\nAccept-Encoding: br\r\n\r\n").await;
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        resp.append_header("Content-Type", "text/html").unwrap();
+        resp.append_header("Content-Encoding", "br").unwrap();
+        let result = compression
+            .handle_upstream_response(
+                &mut session,
+                &mut Ctx::default(),
+                &mut resp,
+            )
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Modified, result);
+        assert_eq!("Accept-Encoding", resp.headers.get(VARY).unwrap());
+
+        // With no level switched on the plugin keeps out of all of it.
+        let idle = Compression::new(
+            &toml::from_str::<PluginConf>(
+                "mode = \"upstream\"\ndecompression = true",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session =
+            new_session("GET / HTTP/1.1\r\nAccept-Encoding: gzip, br\r\n\r\n")
+                .await;
+        let mut ctx = Ctx::default();
+        idle.handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            "gzip, br",
+            session.req_header().headers.get(ACCEPT_ENCODING).unwrap()
+        );
+        assert_eq!(true, ctx.cache.is_none());
     }
 
     /// Regression: an event stream was compressed like any other text,

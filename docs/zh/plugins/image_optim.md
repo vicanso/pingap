@@ -2,7 +2,7 @@
 
 当客户端声明支持时，将 PNG/JPEG 响应重编码为现代格式（WebP 或 AVIF），否则就地重编码。实现位于 [`pingap-imageoptim`](../crates/imageoptim.md) crate。
 
-- **步骤：** `request`（贡献缓存键）、`upstream_response` 与 `upstream_response_body`（实际转换）
+- **步骤：** `early_request`（贡献缓存键）、`upstream_response` 与 `upstream_response_body`（实际转换）
 - **注册名：** `image_optim`
 - **需要 cargo feature `imageoptim`**（包含在 `full` 中）
 
@@ -16,7 +16,7 @@ cargo build --features=imageoptim
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `image_optim`。 |
 | `output_types` | string | `""` | 逗号分隔的目标格式，按优先顺序排列，如 `avif,webp`。每一项是 `avif`、`webp`、`jpeg`、`png` 之一，其他值是配置错误。 |
-| `png_quality` | int | `90` | 1–100。越界重置为默认。 |
+| `png_quality` | int | `90` | 1–100。不设置或 `0` 表示默认值；其他越界的值是配置错误，下面三项同样如此。（以前会先被截成一个字节，`300` 会被当成 `44`。） |
 | `jpeg_quality` | int | `80` | 1–100。 |
 | `avif_quality` | int | `75` | 1–100。 |
 | `avif_speed` | int | `3` | 1–10。越高越快、文件越大。 |
@@ -47,7 +47,9 @@ plugins = ["imageCache", "imageOptim"]
 
 ## 行为
 
-在 `request` 阶段查看客户端 `Accept`，收集客户端接受的已配置输出 MIME 类型，排序后追加到缓存键——因此支持 AVIF 的浏览器与旧浏览器得到不同缓存条目，而不会互相污染。
+在 `early_request` 阶段查看客户端 `Accept`，收集客户端接受的已配置输出 MIME 类型，排序后追加到缓存键——因此支持 AVIF 的浏览器与旧浏览器得到不同缓存条目，而不会互相污染。[`cache`](cache.md) 插件的 `PURGE` 会把每一种格式组合的条目都清掉。（以前是在 `request` 阶段追加，排在前面的 `cache` 插件处理清除请求时还不知道格式是键的一部分。）
+
+转换后的响应会去掉 `Accept-Ranges`，强 `ETag` 改成弱校验：这两个头描述的是上游发出的图片。`ETag` 是在发往客户端时弱化的，插件读写范围内的各类图片都会处理，来自缓存的也一样；缓存里保留上游原始的校验值，用于重新验证。
 
 在 `upstream_response` 阶段，当 content type 为 `image/png` 或 `image/jpeg` 且请求带有 `Accept` 头时进行转换。目标格式是 `output_types` 中客户端接受的第一个；一个都不接受时保持图片原有的格式，按配置的质量重新编码。`Content-Type` 设置为目标格式，例如 `image/avif`。
 

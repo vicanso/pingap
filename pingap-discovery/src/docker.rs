@@ -24,6 +24,7 @@ use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
@@ -75,6 +76,9 @@ struct DockerState {
     docker: bollard::Docker,
     containers: Vec<Container>,
     sender: Option<Arc<NotificationSender>>,
+    /// Set while the containers cannot be listed, so that the failure is
+    /// reported when it starts and not on every attempt after it.
+    failing: AtomicBool,
 }
 
 /// Checks if the discovery type is Docker
@@ -83,6 +87,55 @@ pub fn is_docker_discovery(value: &str) -> bool {
 }
 
 impl DockerState {
+    /// Says that the containers cannot be listed, when that is news.
+    ///
+    /// The watcher tries again every few seconds for as long as the
+    /// daemon is away, and an upstream that has no containers yet asks on
+    /// every update. Each of those attempts used to be an error in the
+    /// log and a notification, from each upstream discovered this way.
+    async fn report_failure(&self, error: String) {
+        let names = self.labels().join(",");
+        if self.failing.swap(true, Ordering::Relaxed) {
+            debug!(
+                target: LOG_TARGET,
+                error,
+                names,
+                "docker discover still failing"
+            );
+            return;
+        }
+        error!(
+            target: LOG_TARGET,
+            error,
+            names,
+            "docker discover failed"
+        );
+        if let Some(sender) = &self.sender {
+            sender
+                .notify(NotificationData {
+                    category: "service_discover_fail".to_string(),
+                    level: NotificationLevel::Warn,
+                    message: format!(
+                        "docker discovery {:?}, error: {error}",
+                        self.labels(),
+                    ),
+                    ..Default::default()
+                })
+                .await;
+        }
+    }
+
+    /// The other half of [`Self::report_failure`].
+    fn report_working(&self) {
+        if self.failing.swap(false, Ordering::Relaxed) {
+            info!(
+                target: LOG_TARGET,
+                names = self.labels().join(","),
+                "docker discover is working again"
+            );
+        }
+    }
+
     fn get_container_ports(
         container: &bollard::models::ContainerSummary,
         default_port: u16,
@@ -228,6 +281,7 @@ impl Docker {
             containers,
             ipv4_only,
             sender,
+            failing: AtomicBool::new(false),
         });
 
         Ok(Self {
@@ -284,6 +338,7 @@ async fn refresh_cache(
     let names = state.labels();
     match state.resolve_addrs().await {
         Ok(addrs) => {
+            state.report_working();
             let changed = {
                 let mut guard = cached
                     .lock()
@@ -311,28 +366,7 @@ async fn refresh_cache(
                 );
             }
         },
-        Err(e) => {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                names = names.join(","),
-                "docker discover refresh failed"
-            );
-            if let Some(sender) = &state.sender {
-                let msg = format!(
-                    "docker discovery {:?}, error: {e}",
-                    state.labels(),
-                );
-                sender
-                    .notify(NotificationData {
-                        category: "service_discover_fail".to_string(),
-                        level: NotificationLevel::Warn,
-                        message: msg,
-                        ..Default::default()
-                    })
-                    .await;
-            }
-        },
+        Err(e) => state.report_failure(e.to_string()).await,
     }
 }
 
@@ -398,11 +432,21 @@ async fn watch_docker_events(
                     }
                 },
                 Err(e) => {
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        "docker event stream error, will reconnect"
-                    );
+                    // An error the first time; with the daemon away the
+                    // stream fails again at every reconnect.
+                    if state.failing.load(Ordering::Relaxed) {
+                        debug!(
+                            target: LOG_TARGET,
+                            error = %e,
+                            "docker event stream error, will reconnect"
+                        );
+                    } else {
+                        error!(
+                            target: LOG_TARGET,
+                            error = %e,
+                            "docker event stream error, will reconnect"
+                        );
+                    }
                     break;
                 },
             }
@@ -438,6 +482,7 @@ impl ServiceDiscovery for Docker {
         let start = Instant::now();
         match self.state.resolve_addrs().await {
             Ok(addrs) => {
+                self.state.report_working();
                 *self
                     .cached
                     .lock()
@@ -456,26 +501,7 @@ impl ServiceDiscovery for Docker {
                 Ok(result)
             },
             Err(e) => {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    names = names.join(","),
-                    elapsed = format!("{}ms", start.elapsed().as_millis()),
-                    "docker discover fail"
-                );
-                if let Some(sender) = &self.state.sender {
-                    sender
-                        .notify(NotificationData {
-                            category: "service_discover_fail".to_string(),
-                            level: NotificationLevel::Warn,
-                            message: format!(
-                                "docker discovery {:?}, error: {e}",
-                                self.state.labels(),
-                            ),
-                            ..Default::default()
-                        })
-                        .await;
-                }
+                self.state.report_failure(e.to_string()).await;
                 Err(e.into())
             },
         }
@@ -542,6 +568,44 @@ mod tests {
             Some((3000, 33000)),
             DockerState::get_container_ports(&summary, 0)
         );
+    }
+
+    /// Regression: with the Docker daemon away, every attempt to list the
+    /// containers - one every five seconds, for each upstream - was an
+    /// error in the log and a notification.
+    #[tokio::test]
+    async fn test_a_daemon_that_is_away_is_reported_once() {
+        struct Recorder(Arc<Mutex<Vec<String>>>);
+        #[async_trait]
+        impl pingap_core::Notification for Recorder {
+            async fn notify(&self, data: NotificationData) {
+                self.0.lock().unwrap().push(data.category);
+            }
+        }
+        let notified = Arc::new(Mutex::new(vec![]));
+        let sender: NotificationSender = Box::new(Recorder(notified.clone()));
+        let state = DockerState {
+            ipv4_only: false,
+            // Nothing listens there.
+            docker: bollard::Docker::connect_with_http(
+                "http://127.0.0.1:1",
+                2,
+                bollard::API_DEFAULT_VERSION,
+            )
+            .unwrap(),
+            containers: vec![Container::new("app:8080").unwrap()],
+            sender: Some(Arc::new(sender)),
+            failing: AtomicBool::new(false),
+        };
+        let cached = Mutex::new(None);
+        for _ in 0..3 {
+            refresh_cache(&state, &cached).await;
+        }
+        assert_eq!(
+            vec!["service_discover_fail".to_string()],
+            *notified.lock().unwrap()
+        );
+        assert_eq!(true, state.failing.load(Ordering::Relaxed));
     }
 
     #[test]

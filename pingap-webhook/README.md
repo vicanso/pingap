@@ -117,9 +117,12 @@ let sender = WebhookNotificationSender::new(
   from upstreams, discovery and certificate checks that were already running. A
   batch still collecting at that moment goes out with the settings it was
   collected under.
-- Certificate expiry warnings pair with `certificates.<name>.buffer_days`, which
-  controls how far ahead ACME renews; see
-  [pingap-acme](../pingap-acme/README.md).
+- Certificate expiry warnings (`tls_validity`) are for certificates somebody
+  has to replace by hand: `certificates.<name>.buffer_days` is how many days
+  ahead they start (7 when unset). A certificate with `acme` set is renewed by
+  the ACME task, and what goes wrong there is a `lets_encrypt` notification;
+  it only gets this warning when it is still not renewed a week before its
+  end. See [pingap-acme](../pingap-acme/README.md).
 - Delivery is best-effort and failures are logged, not retried. Treat webhooks
   as a convenience on top of metrics and logs, not as the only alerting path.
 

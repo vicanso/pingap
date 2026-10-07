@@ -61,7 +61,18 @@ of stream and emits the result. A rule that matches nothing costs no copy.
 
 It leaves alone responses that have no body to rewrite: HEAD answers, `1xx`,
 `204`, `304`, and anything with a `Content-Encoding` other than `identity`,
-whose bytes are compressed and would never match.
+whose bytes are compressed and would never match. A part of a body, a `206` or
+anything with a `Content-Range`, is left alone too: rewritten, it would be no
+part of the original any more while its header still said which.
+
+So that a client cannot choose to get a part, the plugin removes `Range` and
+`If-Range` from every request it applies to (by `path`), at the `request` step:
+the upstream is asked for the whole body, and so is the cache, which would
+otherwise cut the range out of the stored response itself. The client gets a
+`200` with the rewritten body, which is a valid answer to a range request.
+
+A response that is rewritten loses its `Accept-Ranges`, and a strong `ETag`
+becomes a weak one (`W/"v1"`): both described the body the upstream sent.
 
 ## Usage notes
 

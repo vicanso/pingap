@@ -110,7 +110,7 @@ The following tags are available for access logging:
 | `{when_unix}`          | Request time in Unix timestamp (milliseconds).         |
 | `{size}`               | Response size in bytes.                                |
 | `{size_human}`         | Response size in human-readable format (e.g., 1.2 KB). |
-| `{status}`             | Response status code.                                  |
+| `{status}`             | Response status code, the one the client was sent. When the response comes from the cache that is not the upstream's: a revalidation the upstream answers with `304` is logged as the `200` the client got (`upstream_status` has the other). |
 | `{latency}`            | Request latency in milliseconds.                       |
 | `{latency_human}`      | Request latency in human-readable format (e.g., 1.2s). |
 | `{payload_size}`       | Payload size in bytes.                                 |

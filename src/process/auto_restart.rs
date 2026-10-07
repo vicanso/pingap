@@ -19,7 +19,7 @@ use crate::certificates::{
 use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
-use crate::upstreams::try_update_upstreams;
+use crate::upstreams::{remove_unconfigured_upstreams, try_update_upstreams};
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
 };
@@ -57,6 +57,35 @@ struct LastSeen {
 }
 
 static LAST_SEEN: ArcSwapOption<LastSeen> = ArcSwapOption::const_empty();
+
+/// The document that could last not be applied, and why.
+#[derive(Debug)]
+struct LastFailed {
+    hash: u64,
+    at: Instant,
+    message: String,
+}
+
+static LAST_FAILED: ArcSwapOption<LastFailed> = ArcSwapOption::const_empty();
+
+/// How long a document that could not be applied is left alone before it
+/// is tried again as it is.
+///
+/// It is tried again because what stood in the way may pass by itself, a
+/// name that did not resolve. It is not tried on every pass because most
+/// of what stands in the way does not, and a pass means building every
+/// upstream, location and plugin of the document: every ten seconds, with
+/// the same error in the log each time, for as long as the document
+/// stayed as it was.
+const RETRY_FAILED_AFTER: Duration = Duration::from_secs(60);
+
+/// Whether a pass over the document hashing to `hash` is one that failed
+/// a moment ago and has no reason to go differently yet.
+fn failed_recently(last: Option<&LastFailed>, hash: u64) -> bool {
+    last.is_some_and(|last| {
+        last.hash == hash && last.at.elapsed() < RETRY_FAILED_AFTER
+    })
+}
 
 /// Loads the certificates whose files have changed.
 ///
@@ -141,11 +170,59 @@ async fn diff_and_update_config(
         debug!(target: LOG_TARGET, "config is unchanged");
         return Ok(None);
     }
-    let document = PingapTomlConfig::from_toml(&raw)?;
-    crate::validate::report_unknown_keys(&document);
-    let new_config = document.to_pingap_config(true)?;
-    let restart_requested =
-        apply_config(config_manager, &new_config, hot_reload_only).await?;
+    if failed_recently(LAST_FAILED.load().as_deref(), hash) {
+        debug!(target: LOG_TARGET, "config is the one that just failed");
+        return Ok(None);
+    }
+    let applied = async {
+        let document = PingapTomlConfig::from_toml(&raw)?;
+        crate::validate::report_unknown_keys(&document);
+        let new_config = document.to_pingap_config(true)?;
+        let restart_requested =
+            apply_config(config_manager, &new_config, hot_reload_only).await?;
+        Ok::<_, Box<dyn std::error::Error>>((new_config, restart_requested))
+    }
+    .await
+    // As text: the error itself cannot be held while the notification
+    // below is sent.
+    .map_err(|e| e.to_string());
+    let (new_config, restart_requested) = match applied {
+        Ok(applied) => {
+            LAST_FAILED.store(None);
+            applied
+        },
+        Err(message) => {
+            // Said when it is news: once for a document and what is wrong
+            // with it, in the log and to the webhook. A document that
+            // does not build used to be reported to the webhook when its
+            // parts were replaced one by one; held back whole, it was
+            // only in the log, and there on every pass.
+            let repeated = LAST_FAILED.load().as_deref().is_some_and(|last| {
+                last.hash == hash && last.message == message
+            });
+            LAST_FAILED.store(Some(Arc::new(LastFailed {
+                hash,
+                at: Instant::now(),
+                message: message.clone(),
+            })));
+            if repeated {
+                debug!(
+                    target: LOG_TARGET,
+                    error = message,
+                    "update config still fails"
+                );
+                return Ok(None);
+            }
+            send_notification(NotificationData {
+                category: "reload_config_fail".to_string(),
+                level: NotificationLevel::Error,
+                message: message.clone(),
+                ..Default::default()
+            })
+            .await;
+            return Err(message.into());
+        },
+    };
     // Recorded only after a pass that finished. An error - the document
     // does not parse, an address does not resolve - is retried on the next
     // tick, and a pass that asked for a restart is repeated by the next
@@ -263,7 +340,37 @@ async fn apply_config(
         return Ok(false);
     }
 
+    // What only building an entry finds - a regex that does not compile,
+    // a plugin option of the wrong type, an address that does not resolve
+    // - before anything is replaced. The reload goes category by
+    // category, and one that failed halfway used to leave the others
+    // applied: locations routing to an upstream that was not there, or
+    // naming a plugin that had not been built.
+    let builds = [CATEGORY_UPSTREAM, CATEGORY_LOCATION, CATEGORY_PLUGIN];
+    if updated_category_list
+        .iter()
+        .any(|category| builds.contains(&category.as_str()))
+    {
+        let checked = new_config.clone();
+        tokio::task::spawn_blocking(move || {
+            pingap_cache::dry_run(|| {
+                crate::validate::validate_upstreams(&checked)?;
+                crate::validate::validate_locations(&checked)?;
+                crate::validate::validate_plugins(&checked)
+            })
+            .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+    }
+
     let mut reload_fail_messages = vec![];
+    // The categories whose reload did not go through: they stay what
+    // they are in the running configuration.
+    let mut upstream_reload_failed = false;
+    let mut plugin_reload_failed = false;
+    let mut location_reload_failed = false;
+    let mut server_location_reload_failed = false;
     let mut hot_reload_config = current_config.clone();
     {
         // hot reload first,
@@ -361,6 +468,7 @@ async fn apply_config(
             .await
             {
                 Err(e) => {
+                    upstream_reload_failed = true;
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("upstream reload fail: {error}"));
@@ -397,6 +505,7 @@ async fn apply_config(
                 .await;
             }
             if !error.is_empty() {
+                plugin_reload_failed = true;
                 error!(target: LOG_TARGET, error, "reload plugin fail");
                 send_notification(NotificationData {
                     category: "reload_config_fail".to_string(),
@@ -407,7 +516,6 @@ async fn apply_config(
                 .await;
             }
         }
-        let mut location_reload_failed = false;
         if should_reload_location {
             match try_init_locations(&new_config.locations) {
                 Err(e) => {
@@ -443,14 +551,21 @@ async fn apply_config(
                 &hot_reload_config.certificates,
                 |name| certificates_of_acme.contains(name),
             );
-            info!(target: LOG_TARGET, "reload certificate success");
-            send_notification(NotificationData {
-                category: "reload_config".to_string(),
-                level: NotificationLevel::Info,
-                message: format_message("Certificate", updated_certificates),
-                ..Default::default()
-            })
-            .await;
+            // Said when something was reloaded or taken out, not ahead of
+            // the errors as if all of it had been.
+            if !updated_certificates.is_empty() || errors.is_empty() {
+                info!(target: LOG_TARGET, "reload certificate success");
+                send_notification(NotificationData {
+                    category: "reload_config".to_string(),
+                    level: NotificationLevel::Info,
+                    message: format_message(
+                        "Certificate",
+                        updated_certificates,
+                    ),
+                    ..Default::default()
+                })
+                .await;
+            }
             if !errors.is_empty() {
                 error!(
                     target: LOG_TARGET,
@@ -473,12 +588,19 @@ async fn apply_config(
         // routing by the hosts, paths and weights of before: a location
         // moved to another host answered 404 on the old host and on the
         // new one.
-        if should_reload_server_location || should_reload_location {
+        //
+        // Not when the locations could not be rebuilt: the index would be
+        // made of the new lists and the old locations, with every name
+        // that is not there yet left out of it.
+        if (should_reload_server_location || should_reload_location)
+            && !location_reload_failed
+        {
             match try_init_server_locations(
                 &new_config.servers,
                 &new_config.locations,
             ) {
                 Err(e) => {
+                    server_location_reload_failed = true;
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("server reload fail: {error}"));
@@ -512,6 +634,42 @@ async fn apply_config(
         }
     }
 
+    // The upstreams this configuration no longer has were kept for the
+    // locations that routed to them. Those are replaced now - unless
+    // their reload failed, and then they still need the upstreams.
+    let routes_failed = location_reload_failed || server_location_reload_failed;
+    if !upstream_reload_failed && !routes_failed {
+        remove_unconfigured_upstreams(&new_config.upstreams);
+    }
+
+    // What is running: the new configuration where it was applied, the one
+    // from before where it was not. `hot_reload_config` says what a hot
+    // reload is able to apply, and decides below whether the rest takes a
+    // restart. A category that failed used to be recorded as running all
+    // the same, so the next change no longer showed it as one, and it was
+    // not tried again with whatever that change put right.
+    let mut running_config = hot_reload_config.clone();
+    if upstream_reload_failed {
+        running_config
+            .upstreams
+            .clone_from(&current_config.upstreams);
+    }
+    if plugin_reload_failed {
+        running_config.plugins.clone_from(&current_config.plugins);
+    }
+    if location_reload_failed {
+        running_config
+            .locations
+            .clone_from(&current_config.locations);
+    }
+    if routes_failed {
+        for (name, server) in running_config.servers.iter_mut() {
+            if let Some(current) = current_config.servers.get(name) {
+                server.locations.clone_from(&current.locations);
+            }
+        }
+    }
+
     let reload_fail_message = reload_fail_messages.join(";");
 
     if hot_reload_only {
@@ -527,8 +685,8 @@ async fn apply_config(
         if original_diff_result.is_empty() {
             return Ok(false);
         }
-        // update current config to be hot reload config
-        config_manager.set_current_config(hot_reload_config);
+        // update current config to what is running now
+        config_manager.set_current_config(running_config);
         if !original_diff_result.is_empty() {
             send_notification(NotificationData {
                 category: "diff_config".to_string(),
@@ -548,8 +706,8 @@ async fn apply_config(
         return Ok(false);
     }
     // restart mode
-    // update current config to be hot reload config
-    config_manager.set_current_config(hot_reload_config.clone());
+    // update current config to what is running now
+    config_manager.set_current_config(running_config);
 
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(new_config);
@@ -996,6 +1154,22 @@ mod tests {
         assert_eq!(false, changes.changed);
         assert_eq!(current, changes.merged);
         assert_eq!(vec!["acme".to_string()], changes.left);
+    }
+
+    #[test]
+    fn test_failed_recently() {
+        use std::time::{Duration, Instant};
+        let failed = |ago: u64| super::LastFailed {
+            hash: 1,
+            at: Instant::now() - Duration::from_secs(ago),
+            message: "no".to_string(),
+        };
+        assert_eq!(false, super::failed_recently(None, 1));
+        // The same document, a moment ago: left alone.
+        assert_eq!(true, super::failed_recently(Some(&failed(5)), 1));
+        // Another document, or the same one a minute later: tried.
+        assert_eq!(false, super::failed_recently(Some(&failed(5)), 2));
+        assert_eq!(false, super::failed_recently(Some(&failed(61)), 1));
     }
 
     #[test]

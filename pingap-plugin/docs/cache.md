@@ -109,6 +109,12 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
     with a lifetime of zero.
   - The lifetime is `s-maxage` when the origin sends one and `max-age`
     otherwise, capped by `max_ttl`.
+  - Without either, the lifetime runs until the origin's `Expires`, capped by
+    `max_ttl` like the others. An `Expires` that is over, or not a date (`0`
+    and `-1` are how origins say "do not cache"), means the response is not
+    stored. Both used to slip through: `Expires` a year ahead was kept for a
+    year whatever `max_ttl` said, and an expired one was written to the cache
+    on every request.
   - A response without a lifetime is kept for one second, provided its status
     is one HTTP calls heuristically cacheable: 200, 203, 204, 206, 300, 301,
     308, 404, 405, 410, 414 or 501. Any other status, a 5xx or a 302 for
@@ -134,6 +140,12 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   `Host` of the site whose entry is to go, on any listener the plugin is
   reachable through. If `headers` are configured, send them on the `PURGE`
   request too — they are part of the key.
+- Other plugins add to the key what a response was made for: `compression` in
+  `upstream` mode the coding (`zstd`, `br`, `gzip` or none), `image_optim` the
+  image formats the client accepts. A `PURGE` removes the entry of each of
+  them, whatever its own `Accept-Encoding` and `Accept` say; it used to remove
+  only the one matching its own headers, which for a plain `curl -X PURGE` is
+  the uncompressed entry no browser asks for.
 - The origin's `Vary` response header is honoured: each combination of the
   request headers it names is stored as its own variant under the same key, and
   `Vary: *` makes the response uncacheable. `vary_headers` limits which headers

@@ -533,13 +533,27 @@ impl Plugin for Cache {
             // Cached GET and HEAD responses are separate entries (the method
             // is part of the key); purge both so a HEAD variant cannot keep
             // answering for a url that was just purged.
-            for method in [Method::GET, Method::HEAD] {
-                let key =
-                    get_cache_key(ctx, method.as_ref(), session.req_header());
-                self.http_cache
-                    .cache
-                    .remove(&key.combined(), key.user_tag().as_bytes())
-                    .await?;
+            //
+            // And one entry for each coding or image format another plugin
+            // makes a part of the key. This request names the url and no
+            // coding: with its own key alone it removed the entry no
+            // browser asks for, and the compressed ones went on being
+            // served.
+            for keys in ctx.cache_key_alternatives() {
+                if let Some(cache_info) = ctx.cache.as_mut() {
+                    cache_info.keys = Some(keys);
+                }
+                for method in [Method::GET, Method::HEAD] {
+                    let key = get_cache_key(
+                        ctx,
+                        method.as_ref(),
+                        session.req_header(),
+                    );
+                    self.http_cache
+                        .cache
+                        .remove(&key.combined(), key.user_tag().as_bytes())
+                        .await?;
+                }
             }
             return Ok(
                 RequestPluginResult::Respond(HttpResponse::no_content()),
@@ -818,6 +832,100 @@ max_ttl = "1m"
             panic!("purge must respond, got a pass-through");
         };
         resp
+    }
+
+    /// Regression: a purge removed the entry under its own key. With a
+    /// plugin that makes the coding a part of the key that is the entry of
+    /// a request that accepts none, and the compressed ones stayed.
+    #[tokio::test]
+    async fn test_purge_removes_every_key_variant() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-variants"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let alternatives = Arc::new(vec![
+            vec![],
+            vec!["zstd".to_string()],
+            vec!["gzip".to_string()],
+        ]);
+        // What the compression plugin leaves in the context of a request
+        // that takes `coding`.
+        let request = async |method: &str, coding: Option<&str>| {
+            let input = format!("{method} /x HTTP/1.1\r\nHost: a.test\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            ctx.conn.remote_addr = Some("127.0.0.1".to_string());
+            ctx.push_cache_key_variant(
+                coding
+                    .map(|coding| coding.to_string())
+                    .into_iter()
+                    .collect(),
+                alternatives.clone(),
+            );
+            (session, ctx)
+        };
+        let obj = pingap_cache::CacheObject {
+            meta: (Bytes::from_static(b"m"), Bytes::from_static(b"h")),
+            body: Bytes::from_static(b"body"),
+        };
+        let key_of = async |method: &str, coding: Option<&str>| {
+            let (session, mut ctx) = request("GET", coding).await;
+            ctx.cache.as_mut().unwrap().namespace =
+                Some("purge-variants".to_string());
+            get_cache_key(&ctx, method, session.req_header())
+        };
+        let stored = async |method: &str, coding: Option<&str>| {
+            let key = key_of(method, coding).await;
+            cache
+                .http_cache
+                .cache
+                .get(&key.combined(), key.user_tag().as_bytes())
+                .await
+                .unwrap()
+                .is_some()
+        };
+        let entries = [
+            ("GET", None),
+            ("GET", Some("gzip")),
+            ("HEAD", Some("gzip")),
+            ("GET", Some("zstd")),
+        ];
+        for (method, coding) in entries {
+            let key = key_of(method, coding).await;
+            cache
+                .http_cache
+                .cache
+                .put(&key.combined(), key.user_tag().as_bytes(), obj.clone())
+                .await
+                .unwrap();
+            assert_eq!(true, stored(method, coding).await);
+        }
+
+        // A purge that names no coding, as `curl -X PURGE` sends it.
+        let (mut session, mut ctx) = request("PURGE", None).await;
+        let result = cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("purge must respond");
+        };
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        for (method, coding) in entries {
+            assert_eq!(
+                false,
+                stored(method, coding).await,
+                "{method} {coding:?} is still there"
+            );
+        }
     }
 
     #[tokio::test]

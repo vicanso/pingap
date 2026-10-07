@@ -225,20 +225,36 @@ impl Certificate {
             .unwrap_or_default()
             .to_string()
     }
-    /// Checks if the certificate is valid and not expiring within 48 hours
+    /// How long before its end the certificate is due for renewal, in
+    /// seconds: `buffer_days`, or fourteen days when that is 0.
     ///
-    /// # Returns
-    /// * `bool` - True if the certificate is valid, false otherwise
+    /// The default used to be two days. That is all the time a failing
+    /// order had to be noticed and put right before the certificate ran
+    /// out; two weeks leave room for that, with a failed order now
+    /// reported when it happens.
+    ///
+    /// Never more than a third of what the certificate lasts, though: a
+    /// certificate good for six days is not due from the day it is issued.
+    pub fn renewal_margin(&self, buffer_days: u16) -> i64 {
+        const DAY: i64 = 24 * 3600;
+        const DEFAULT_MARGIN: i64 = 14 * DAY;
+        if buffer_days > 0 {
+            return buffer_days as i64 * DAY;
+        }
+        let lifetime = self.not_after - self.not_before;
+        if lifetime > 0 {
+            DEFAULT_MARGIN.min(lifetime / 3)
+        } else {
+            DEFAULT_MARGIN
+        }
+    }
+    /// Whether the certificate has more than its renewal margin left.
     pub fn valid(&self, buffer_days: u16) -> bool {
         if self.not_after == 0 {
             return false;
         }
         let ts = pingap_core::now_sec() as i64;
-        let mut days = buffer_days as i64;
-        if days == 0 {
-            days = 2;
-        }
-        self.not_after - ts > days * 24 * 3600
+        self.not_after - ts > self.renewal_margin(buffer_days)
     }
     /// Returns the PEM-encoded certificate data
     ///
@@ -345,6 +361,30 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         assert_eq!(false, cert.valid(2));
         cert.not_after = 0;
         assert_eq!(false, cert.valid(2));
+
+        // Regression: with no margin given it was two days. A ninety day
+        // certificate is due fourteen days before its end.
+        cert.not_before = now - 77 * day;
+        cert.not_after = now + 13 * day;
+        assert_eq!(false, cert.valid(0));
+        assert_eq!(true, cert.valid(2));
+        cert.not_before = now - 75 * day;
+        cert.not_after = now + 15 * day;
+        assert_eq!(true, cert.valid(0));
+        // Not more than a third of what it lasts. Six days: due two days
+        // before, not from the day it is issued.
+        cert.not_before = now - 3 * day;
+        cert.not_after = now + 3 * day;
+        assert_eq!(true, cert.valid(0));
+        cert.not_before = now - 5 * day;
+        cert.not_after = now + day;
+        assert_eq!(false, cert.valid(0));
+        // No start to count from: the fourteen days.
+        cert.not_before = 0;
+        cert.not_after = now + 15 * day;
+        assert_eq!(true, cert.valid(0));
+        cert.not_after = now + 13 * day;
+        assert_eq!(false, cert.valid(0));
     }
 
     #[test]

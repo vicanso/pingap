@@ -23,9 +23,10 @@ use pingap_core::now_sec;
 use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -51,8 +52,67 @@ pub struct EtcdStorage {
     /// every request used to open a fresh connection, which the reload loop
     /// did every few seconds.
     client: Mutex<Option<Client>>,
+    /// How many keys a page of a prefix holds: `PAGE_SIZE`, or what it
+    /// was last brought down to by values too large for that many.
+    page_size: AtomicI64,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
+
+/// What a request and a connection attempt get when the url says nothing.
+///
+/// There used to be no limit at all. A connection that had gone quiet -
+/// a firewall dropping it, etcd behind a load balancer that went away -
+/// held the poll that was waiting on it for good, and with it every save,
+/// which waits its turn behind the same client.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// HTTP/2 pings on a connection with a call open, so that one that died
+/// without a word is noticed: the watch has nothing else to tell it by.
+/// No more often than etcd allows a client to ping (5s by default).
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How many keys of a prefix are asked for at a time.
+const PAGE_SIZE: i64 = 64;
+/// How many earlier versions of one key are kept.
+const HISTORY_KEEP: usize = 100;
+/// How many of the versions over that are removed by one save: an old
+/// history is brought down over a number of saves, not by one that takes
+/// a minute.
+const HISTORY_REMOVE_AT_ONCE: usize = 64;
+
+/// `path` as the prefix of the keys below it and of nothing else.
+fn as_prefix(path: &str) -> String {
+    format!("{}/", path.trim_end_matches('/'))
+}
+
+/// The end of the range of keys that start with `prefix`.
+fn prefix_end(prefix: &[u8]) -> Vec<u8> {
+    let mut end = prefix.to_vec();
+    while let Some(last) = end.pop() {
+        if last < 0xff {
+            end.push(last + 1);
+            return end;
+        }
+    }
+    // Nothing but 0xff: everything from the prefix on.
+    vec![0]
+}
+
+/// Whether a request failed for the size of its answer: the keys asked
+/// for hold more than one message carries (4 MiB by default).
+fn is_too_large(error: &Error) -> bool {
+    let Error::Etcd { source } = error else {
+        return false;
+    };
+    let etcd_client::Error::GRpcStatus(status) = source.as_ref() else {
+        return false;
+    };
+    // gRPC's OUT_OF_RANGE, which is what the client says when it will not
+    // decode an answer of that size, and RESOURCE_EXHAUSTED, which is the
+    // server's word for the same. By number: the type is another crate's.
+    matches!(status.code() as i32, 8 | 11)
+}
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
 struct EtcdStorageParams {
@@ -104,12 +164,16 @@ impl EtcdStorage {
         if !params.user.is_empty() && !params.password.is_empty() {
             options = options.with_user(params.user, params.password);
         };
-        if let Some(timeout) = params.timeout {
-            options = options.with_timeout(timeout);
-        };
-        if let Some(connect_timeout) = params.connect_timeout {
-            options = options.with_connect_timeout(connect_timeout);
-        };
+        options = options
+            .with_timeout(params.timeout.unwrap_or(DEFAULT_TIMEOUT))
+            .with_connect_timeout(
+                params.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT),
+            )
+            // Not while idle: etcd closes a connection that pings without
+            // a call open on it. The watch always has one, and that is
+            // the connection nothing else would tell dead from quiet; a
+            // request on a dead one runs into its timeout.
+            .with_keep_alive(KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT);
         let history_path = format!("{}-history", path.trim_end_matches('/'));
 
         Ok(Self {
@@ -119,6 +183,7 @@ impl EtcdStorage {
             history_path,
             enable_history: params.enable_history,
             client: Mutex::new(None),
+            page_size: AtomicI64::new(PAGE_SIZE),
         })
     }
 
@@ -192,7 +257,120 @@ impl EtcdStorage {
             async move { kv.put(history_key, value, None).await }
         })
         .await?;
+        // What is written is written: a history that could not be trimmed
+        // is no reason to refuse the save it belongs to.
+        if let Err(e) = self.trim_history(key).await {
+            warn!(error = %e, key, "trim config history failed");
+        }
         Ok(())
+    }
+
+    /// Removes the versions of `key` beyond the newest `HISTORY_KEEP`.
+    /// Every save added one and nothing ever took one away.
+    async fn trim_history(&self, key: &str) -> Result<()> {
+        let prefix = as_prefix(&self.get_history_path(key));
+        let opts = GetOptions::new()
+            .with_prefix()
+            .with_keys_only()
+            .with_sort(SortTarget::Create, SortOrder::Descend)
+            .with_limit((HISTORY_KEEP + HISTORY_REMOVE_AT_ONCE) as i64);
+        let mut resp = self
+            .with_kv(|mut kv| {
+                let prefix = prefix.clone();
+                let opts = opts.clone();
+                async move { kv.get(prefix, Some(opts)).await }
+            })
+            .await?;
+        for item in resp.take_kvs().into_iter().skip(HISTORY_KEEP) {
+            let old = item.key().to_vec();
+            self.with_kv(|mut kv| {
+                let old = old.clone();
+                async move { kv.delete(old, None).await }
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Every key that starts with `prefix`, with its value.
+    ///
+    /// Asked for a page at a time. One request for all of them is one
+    /// answer with all of them in it, and an answer has a size it cannot
+    /// exceed: a configuration of a few MiB - some hundred certificates -
+    /// could be written key by key and then not be read. A page that is
+    /// too much for one answer is asked for again at half its length.
+    async fn fetch_prefix(&self, prefix: &str) -> Result<Vec<KeyValue>> {
+        let end = prefix_end(prefix.as_bytes());
+        let mut start = prefix.as_bytes().to_vec();
+        // What the last read came down to: a configuration that does not
+        // fit sixty-four keys to a page is not asked for them again on
+        // every poll, to be told the same.
+        let mut limit = self.page_size.load(Ordering::Relaxed).max(1);
+        // Every page as of the first one's revision, or a change between
+        // two pages would give a mix of two configurations.
+        let mut revision = None;
+        let mut kvs = vec![];
+        loop {
+            let mut opts =
+                GetOptions::new().with_range(end.clone()).with_limit(limit);
+            if let Some(revision) = revision {
+                opts = opts.with_revision(revision);
+            }
+            let mut resp = match self.get_page(&start, &opts).await {
+                Ok(resp) => resp,
+                Err(e) if limit > 1 && is_too_large(&e) => {
+                    limit /= 2;
+                    self.page_size.store(limit, Ordering::Relaxed);
+                    continue;
+                },
+                Err(e) => return Err(e),
+            };
+            if revision.is_none() {
+                revision = resp.header().map(|header| header.revision());
+            }
+            let more = resp.more();
+            let page = resp.take_kvs();
+            let Some(last) = page.last() else {
+                break;
+            };
+            // The key right after the last one of this page.
+            start = last.key().to_vec();
+            start.push(0);
+            kvs.extend(page);
+            if !more {
+                break;
+            }
+        }
+        Ok(kvs)
+    }
+
+    /// One page. An answer that is too large is not the connection's
+    /// fault: it is given back as it is, where `with_kv` would open a new
+    /// connection to ask for the same again.
+    async fn get_page(
+        &self,
+        start: &[u8],
+        opts: &GetOptions,
+    ) -> Result<etcd_client::GetResponse> {
+        let client = self.client().await?;
+        let first = client
+            .kv_client()
+            .get(start.to_vec(), Some(opts.clone()))
+            .await
+            .map_err(etcd_error);
+        match first {
+            Err(e) if !is_too_large(&e) => {
+                debug!(error = %e, "etcd request failed, reconnecting");
+                *self.client.lock().await = None;
+                let client = self.client().await?;
+                client
+                    .kv_client()
+                    .get(start.to_vec(), Some(opts.clone()))
+                    .await
+                    .map_err(etcd_error)
+            },
+            other => other,
+        }
     }
 }
 
@@ -200,20 +378,18 @@ impl EtcdStorage {
 impl Storage for EtcdStorage {
     async fn fetch(&self, key: &str) -> Result<String> {
         let key = self.get_path(key);
-        let mut opts = GetOptions::new();
-        if !key.ends_with(".toml") {
-            opts = opts.with_prefix();
-        }
-
-        let mut resp = self
-            .with_kv(|mut kv| {
+        let kvs = if key.ends_with(".toml") {
+            self.with_kv(|mut kv| {
                 let key = key.clone();
-                let opts = opts.clone();
-                async move { kv.get(key, Some(opts)).await }
+                async move { kv.get(key, None).await }
             })
-            .await?;
+            .await?
+            .take_kvs()
+        } else {
+            self.fetch_prefix(&key).await?
+        };
         let mut buffer = vec![];
-        for item in resp.take_kvs() {
+        for item in kvs {
             buffer.extend(item.value());
             buffer.push(0x0a);
         }
@@ -250,7 +426,8 @@ impl Storage for EtcdStorage {
         self.enable_history
     }
     async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
-        let key = self.get_history_path(key);
+        // The versions of this key, not those of a key that starts with it.
+        let key = as_prefix(&self.get_history_path(key));
         let opts = GetOptions::new()
             .with_prefix()
             .with_sort(SortTarget::Create, SortOrder::Descend)
@@ -298,10 +475,14 @@ impl Storage for EtcdStorage {
         let client = Client::connect(&self.addrs, Some(self.options.clone()))
             .await
             .map_err(etcd_error)?;
+        // The keys below the path. The path itself as the prefix took in
+        // its neighbours: `/pingap` also watched `/pingap2`, another
+        // installation's, and `/pingap-history`, where every save of this
+        // one writes first - each of them a reload pass for nothing.
         let stream = client
             .watch_client()
             .watch(
-                self.path.as_bytes(),
+                as_prefix(&self.path),
                 Some(WatchOptions::default().with_prefix()),
             )
             .await
@@ -351,5 +532,144 @@ mod tests {
         let storage = EtcdStorage::new("etcd://127.0.0.1:2379").unwrap();
         assert_eq!("/", storage.path);
         assert_eq!(true, EtcdStorage::new("etcd:///pingap").is_err());
+    }
+
+    #[test]
+    fn test_prefix_end() {
+        assert_eq!(b"/pingap0".to_vec(), prefix_end(b"/pingap/"));
+        assert_eq!(b"b".to_vec(), prefix_end(b"a\xff"));
+        assert_eq!(vec![0], prefix_end(b"\xff\xff"));
+        assert_eq!("/pingap/", as_prefix("/pingap"));
+        assert_eq!("/pingap/", as_prefix("/pingap/"));
+        assert_eq!("/", as_prefix("/"));
+    }
+
+    /// A storage on the local etcd under a prefix of its own.
+    fn local(name: &str, params: &str) -> EtcdStorage {
+        EtcdStorage::new(&format!("etcd://127.0.0.1:2379/{name}?{params}"))
+            .unwrap()
+    }
+
+    async fn remove_all(storage: &EtcdStorage, path: &str) {
+        for item in storage.fetch_prefix(&as_prefix(path)).await.unwrap() {
+            let key = item.key().to_vec();
+            storage
+                .with_kv(|mut kv| {
+                    let key = key.clone();
+                    async move { kv.delete(key, None).await }
+                })
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Regression: the watch was on everything that starts with the path,
+    /// which took in the history of the same installation and the keys of
+    /// any other whose path starts alike. Needs the etcd of the tests on
+    /// 127.0.0.1:2379.
+    #[tokio::test]
+    async fn test_watch_keeps_to_its_own_keys() {
+        let name = format!("watch-{}", nanoid::nanoid!(12));
+        // A request timeout shorter than the test: a watch outlives it.
+        let storage = local(&name, "timeout=1s&enable_history=true");
+        let neighbour = local(&format!("{name}2"), "");
+        storage.save("basic.toml", "a = 1").await.unwrap();
+        let mut observer = storage.observe().await.unwrap();
+        // Whether a change is reported within `wait`. The message that
+        // acknowledges the watch is none.
+        let changed = async |observer: &mut Observer, wait: u64| {
+            let deadline =
+                tokio::time::Instant::now() + Duration::from_millis(wait);
+            loop {
+                let Ok(result) =
+                    tokio::time::timeout_at(deadline, observer.watch()).await
+                else {
+                    return false;
+                };
+                if result.unwrap() {
+                    return true;
+                }
+            }
+        };
+
+        neighbour.save("basic.toml", "a = 1").await.unwrap();
+        assert_eq!(false, changed(&mut observer, 400).await);
+
+        // Its own change is seen once, after a second of nothing: the
+        // version this save put into the history is not another change.
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        storage.save("basic.toml", "a = 2").await.unwrap();
+        assert_eq!(true, changed(&mut observer, 3000).await);
+        assert_eq!(false, changed(&mut observer, 400).await);
+
+        remove_all(&storage, &storage.path).await;
+        remove_all(&storage, &storage.history_path).await;
+        remove_all(&neighbour, &neighbour.path).await;
+    }
+
+    /// Regression: a prefix was read with one request, and a
+    /// configuration larger than one answer may be could not be read at
+    /// all. Needs the etcd of the tests.
+    #[tokio::test]
+    async fn test_fetch_reads_a_prefix_in_pages() {
+        let storage = local(&format!("pages-{}", nanoid::nanoid!(12)), "");
+        // More keys than a page holds.
+        for index in 0..150 {
+            storage
+                .save(&format!("small/{index:03}.toml"), &format!("v{index}"))
+                .await
+                .unwrap();
+        }
+        let all = storage.fetch("small").await.unwrap();
+        let lines: Vec<_> = all.lines().collect();
+        assert_eq!(150, lines.len());
+        assert_eq!("v0", lines[0]);
+        assert_eq!("v149", lines[149]);
+
+        // More bytes than an answer holds: five values of a MiB.
+        let large = "x".repeat(1024 * 1024);
+        for index in 0..5 {
+            storage
+                .save(&format!("large/{index}.toml"), &large)
+                .await
+                .unwrap();
+        }
+        let all = storage.fetch("large").await.unwrap();
+        assert_eq!(5 * (large.len() + 1), all.len());
+        // What it came down to is where the next read starts.
+        let page_size = storage.page_size.load(Ordering::Relaxed);
+        assert_eq!(true, (1..PAGE_SIZE).contains(&page_size), "{page_size}");
+        // A single key is still a single key.
+        assert_eq!("v7\n", storage.fetch("small/007.toml").await.unwrap());
+
+        remove_all(&storage, &storage.path).await;
+    }
+
+    /// Regression: every save added a version to the history and nothing
+    /// took one away. Needs the etcd of the tests.
+    #[tokio::test]
+    async fn test_history_is_trimmed() {
+        let storage = local(
+            &format!("history-{}", nanoid::nanoid!(12)),
+            "enable_history=true",
+        );
+        for index in 0..HISTORY_KEEP + 6 {
+            storage
+                .save("basic.toml", &format!("a = {index}"))
+                .await
+                .unwrap();
+        }
+        let versions = storage
+            .fetch_prefix(&as_prefix(&storage.get_history_path("basic.toml")))
+            .await
+            .unwrap();
+        assert_eq!(HISTORY_KEEP, versions.len());
+        // The newest ones are the ones that are kept.
+        let latest =
+            storage.fetch_history("basic.toml").await.unwrap().unwrap();
+        assert_eq!(format!("a = {}", HISTORY_KEEP + 4), latest[0].data);
+
+        remove_all(&storage, &storage.path).await;
+        remove_all(&storage, &storage.history_path).await;
     }
 }

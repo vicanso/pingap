@@ -15,7 +15,9 @@
 | `set_headers_not_exists` | string[] | — | `Name: value` — 仅在头不存在时设置。 |
 | `remove_headers` | string[] | — | 要删除的头名。 |
 | `rename_headers` | string[] | — | `Old-Name: New-Name` — 移动该头的全部值。 |
-| `mode` | string | *(response)* | `upstream` 改为改写上游响应头。 |
+| `mode` | string | *(response)* | `upstream` 改为改写上游响应头。`response`、`upstream` 以外的值是配置错误。 |
+
+不是 `Name: value`（`rename_headers` 是 `Old-Name: New-Name`）形式的条目是配置错误。以前没有冒号的条目会被静默丢弃，写错的 `mode` 会被当成 `response`。
 
 操作始终按以下顺序执行，与声明顺序无关：
 

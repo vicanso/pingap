@@ -51,8 +51,103 @@ struct CachedResolver {
 
 struct DiscoveryCache {
     backends: BTreeSet<Backend>,
+    /// The backends of each host, in the order of the hosts, and when
+    /// they were last resolved: what a host whose lookup fails goes on
+    /// with, for a while.
+    host_backends: Vec<HostBackends>,
     failed_hosts: Vec<String>,
     valid_until: Instant,
+}
+
+#[derive(Clone, Default)]
+struct HostBackends {
+    backends: BTreeSet<Backend>,
+    /// `None` for a host that has none to keep.
+    resolved_at: Option<Instant>,
+}
+
+/// How long a host whose lookups fail keeps the backends it last had.
+const KEEP_FAILED_FOR: Duration = Duration::from_secs(600);
+
+/// What one host came to in a round.
+enum Resolved {
+    /// Its addresses, and until when they hold.
+    Addrs(Vec<std::net::IpAddr>, Instant),
+    /// The answer was that there is no such name, or no address for it.
+    Gone,
+    /// No answer: a timeout, a server that could not be reached.
+    Failed,
+}
+
+/// The backends after a round of lookups, and for how long they are good.
+///
+/// A host that got no answer keeps the backends it had: one lookup that
+/// fails says nothing about the servers behind the name, and the health
+/// check takes them out if they are gone. It used to lose them, and the
+/// set without them was kept for as long as the other names' records
+/// were good for - five minutes of an upstream at half strength over one
+/// dropped packet. Not for ever: after ten minutes without an answer
+/// they go. A host that was answered "no such name" loses them at once.
+///
+/// With a failure in it a round is only good for the shortest time, so
+/// the name is asked for again soon.
+fn merge_round(
+    hosts: &[Addr],
+    ipv4_only: bool,
+    resolved: &[Resolved],
+    previous: Option<&DiscoveryCache>,
+    now: Instant,
+) -> (Vec<HostBackends>, Instant) {
+    let mut valid_until = now + DISCOVERY_CACHE_MAX;
+    let mut any_failed = false;
+    let mut host_backends = Vec::with_capacity(hosts.len());
+    for (index, ((_, port, weight), lookup)) in
+        hosts.iter().zip(resolved.iter()).enumerate()
+    {
+        let (ips, until) = match lookup {
+            Resolved::Addrs(ips, until) => (ips, until),
+            Resolved::Gone => {
+                any_failed = true;
+                host_backends.push(HostBackends::default());
+                continue;
+            },
+            Resolved::Failed => {
+                any_failed = true;
+                host_backends.push(
+                    previous
+                        .and_then(|cache| cache.host_backends.get(index))
+                        .filter(|host| {
+                            host.resolved_at.is_some_and(|at| {
+                                now.saturating_duration_since(at)
+                                    < KEEP_FAILED_FOR
+                            })
+                        })
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+                continue;
+            },
+        };
+        valid_until = valid_until.min(*until);
+        host_backends.push(HostBackends {
+            backends: ips
+                .iter()
+                .filter(|ip| !ipv4_only || ip.is_ipv4())
+                .map(|ip| Backend {
+                    addr: SocketAddr::Inet(StdSocketAddr::new(*ip, *port)),
+                    weight: *weight,
+                    ext: Extensions::new(),
+                })
+                .collect(),
+            resolved_at: Some(now),
+        });
+    }
+    let valid_until = if any_failed {
+        now + DISCOVERY_CACHE_MIN
+    } else {
+        valid_until.clamp(now + DISCOVERY_CACHE_MIN, now + DISCOVERY_CACHE_MAX)
+    };
+    (host_backends, valid_until)
 }
 
 /// One discovery round.
@@ -65,6 +160,8 @@ struct Discovered {
     from_cache: bool,
     /// The backend set differs from the previous round's.
     changed: bool,
+    /// The hosts that failed are not the ones of the previous round.
+    new_failures: bool,
 }
 
 /// DNS service discovery implementation
@@ -269,12 +366,13 @@ impl Dns {
     /// Performs DNS lookups for configured hosts using tokio runtime
     ///
     /// # Returns
-    /// * `Result<(Vec<Option<LookupIp>>, Vec<String>)>` - Per-host DNS lookup
-    ///   results, index-aligned with `self.hosts` (`None` marks a failed
-    ///   lookup), plus the failed host names
+    /// Per-host DNS lookup results, index-aligned with `self.hosts`, plus
+    /// the failed host names. A failed lookup is `Err`, of `true` when
+    /// the answer was that the name has no address and of `false` when
+    /// there was no answer.
     async fn tokio_lookup_ip(
         &self,
-    ) -> Result<(Vec<Option<LookupIp>>, Vec<String>)> {
+    ) -> Result<(Vec<std::result::Result<LookupIp, bool>>, Vec<String>)> {
         let resolver = self.get_resolver().await?;
 
         // One slot per host, in host order. The caller pairs each result with
@@ -295,7 +393,7 @@ impl Dns {
         for (index, result) in results.into_iter().enumerate() {
             match result {
                 Ok(lookup) => {
-                    lookup_ips.push(Some(lookup));
+                    lookup_ips.push(Ok(lookup));
                 },
                 Err(e) => {
                     let host = self
@@ -310,11 +408,11 @@ impl Dns {
                         "dns lookup failed"
                     );
                     failed_hosts.push(host);
-                    lookup_ips.push(None);
+                    lookup_ips.push(Err(e.is_no_records_found()));
                 },
             }
         }
-        if lookup_ips.iter().all(|lookup| lookup.is_none()) {
+        if lookup_ips.iter().all(|lookup| lookup.is_err()) {
             return Err(Error::Invalid {
                 message: "resolve dns failed".to_string(),
             });
@@ -345,11 +443,10 @@ impl Dns {
                     failed_hosts: cached.failed_hosts.clone(),
                     from_cache: true,
                     changed: false,
+                    new_failures: false,
                 });
             }
         }
-
-        let mut upstreams = BTreeSet::new();
 
         debug!(
             hosts = ?self.hosts,
@@ -357,53 +454,47 @@ impl Dns {
         );
 
         let (lookup_ips, failed_hosts) = self.tokio_lookup_ip().await?;
+        let resolved: Vec<Resolved> = lookup_ips
+            .iter()
+            .map(|lookup| match lookup {
+                Ok(lookup) => Resolved::Addrs(
+                    lookup.iter().collect(),
+                    lookup.valid_until(),
+                ),
+                Err(true) => Resolved::Gone,
+                Err(false) => Resolved::Failed,
+            })
+            .collect();
 
-        let now = Instant::now();
-        let mut valid_until = now + DISCOVERY_CACHE_MAX;
-        for lookup in lookup_ips.iter().flatten() {
-            let until = lookup.valid_until();
-            if until < valid_until {
-                valid_until = until;
-            }
-        }
-        if valid_until < now + DISCOVERY_CACHE_MIN {
-            valid_until = now + DISCOVERY_CACHE_MIN;
-        }
-        if valid_until > now + DISCOVERY_CACHE_MAX {
-            valid_until = now + DISCOVERY_CACHE_MAX;
-        }
-
-        for ((_, port, weight), lookup_ip) in
-            self.hosts.iter().zip(lookup_ips.iter())
-        {
-            // A failed lookup keeps its backends out of this refresh; the
-            // host stays in `failed_hosts` for the notification below.
-            let Some(lookup_ip) = lookup_ip else {
-                continue;
-            };
-            for ip in lookup_ip
-                .iter()
-                .filter(|ip| !self.ipv4_only || ip.is_ipv4())
-            {
-                upstreams.insert(Backend {
-                    addr: SocketAddr::Inet(StdSocketAddr::new(ip, *port)),
-                    weight: *weight,
-                    ext: Extensions::new(),
-                });
-            }
-        }
-
-        let changed = {
+        let (upstreams, changed, new_failures) = {
             let mut cache = self.discovery_cache.lock().await;
+            let (host_backends, valid_until) = merge_round(
+                &self.hosts,
+                self.ipv4_only,
+                &resolved,
+                cache.as_ref(),
+                Instant::now(),
+            );
+            let upstreams: BTreeSet<Backend> = host_backends
+                .iter()
+                .flat_map(|host| host.backends.iter())
+                .cloned()
+                .collect();
             let changed = cache
                 .as_ref()
                 .is_none_or(|cached| cached.backends != upstreams);
+            // A round with a failure in it is asked for again within
+            // seconds: the same hosts failing again is not news.
+            let new_failures = cache
+                .as_ref()
+                .is_none_or(|cached| cached.failed_hosts != failed_hosts);
             *cache = Some(DiscoveryCache {
                 backends: upstreams.clone(),
+                host_backends,
                 failed_hosts: failed_hosts.clone(),
                 valid_until,
             });
-            changed
+            (upstreams, changed, new_failures)
         };
 
         Ok(Discovered {
@@ -411,6 +502,7 @@ impl Dns {
             failed_hosts,
             from_cache: false,
             changed,
+            new_failures,
         })
     }
 }
@@ -430,6 +522,7 @@ impl ServiceDiscovery for Dns {
                     failed_hosts,
                     from_cache,
                     changed,
+                    new_failures,
                 } = discovered;
                 // A cached or unchanged round is routine; only a new
                 // backend set is worth an info line, and only a fresh
@@ -464,6 +557,7 @@ impl ServiceDiscovery for Dns {
                     );
                 }
                 if !from_cache
+                    && new_failures
                     && !failed_hosts.is_empty()
                     && let Some(sender) = &self.sender
                 {
@@ -539,9 +633,7 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Dns, is_dns_discovery, new_dns_discover_backends, parse_name_servers,
-    };
+    use super::*;
     use crate::Discovery;
     use pretty_assertions::assert_eq;
 
@@ -614,6 +706,119 @@ mod tests {
         assert_eq!(true, result.is_ok());
     }
 
+    /// Regression: a host whose lookup failed lost its backends, and the
+    /// set without them was kept for as long as the records of the other
+    /// hosts were good for, up to five minutes.
+    #[test]
+    fn test_a_failed_lookup_keeps_the_backends_it_had() {
+        let hosts: Vec<Addr> = vec![
+            ("a.test".to_string(), 8080, 1),
+            ("b.test".to_string(), 443, 2),
+        ];
+        let now = Instant::now();
+        let ip = |last: u8| std::net::IpAddr::from([10, 0, 0, last]);
+        let addrs = |host: &HostBackends| {
+            host.backends
+                .iter()
+                .map(|backend| backend.addr.to_string())
+                .collect::<Vec<_>>()
+        };
+        let cache_of =
+            |host_backends: Vec<HostBackends>, valid_until| DiscoveryCache {
+                backends: host_backends
+                    .iter()
+                    .flat_map(|host| host.backends.iter())
+                    .cloned()
+                    .collect(),
+                host_backends,
+                failed_hosts: vec![],
+                valid_until,
+            };
+
+        // Both resolve: good for as long as the shorter of the two.
+        let long = now + Duration::from_secs(200);
+        let (first, valid_until) = merge_round(
+            &hosts,
+            false,
+            &[
+                Resolved::Addrs(vec![ip(1), ip(2)], long),
+                Resolved::Addrs(vec![ip(3)], now + Duration::from_secs(60)),
+            ],
+            None,
+            now,
+        );
+        assert_eq!(vec!["10.0.0.1:8080", "10.0.0.2:8080"], addrs(&first[0]));
+        assert_eq!(vec!["10.0.0.3:443"], addrs(&first[1]));
+        assert_eq!(now + Duration::from_secs(60), valid_until);
+        let previous = cache_of(first, valid_until);
+
+        // The second one gets no answer: it keeps what it had, the first
+        // takes its new address, and the round is asked for again soon.
+        let (second, valid_until) = merge_round(
+            &hosts,
+            false,
+            &[Resolved::Addrs(vec![ip(9)], long), Resolved::Failed],
+            Some(&previous),
+            now + Duration::from_secs(30),
+        );
+        assert_eq!(vec!["10.0.0.9:8080"], addrs(&second[0]));
+        assert_eq!(vec!["10.0.0.3:443"], addrs(&second[1]));
+        assert_eq!(
+            now + Duration::from_secs(30) + DISCOVERY_CACHE_MIN,
+            valid_until
+        );
+        // When it resolved stays what it was, so that the keeping ends.
+        assert_eq!(Some(now), second[1].resolved_at);
+        let previous = cache_of(second, valid_until);
+
+        // Still no answer ten minutes on: it has gone on long enough.
+        let (late, _) = merge_round(
+            &hosts,
+            false,
+            &[Resolved::Addrs(vec![ip(9)], long), Resolved::Failed],
+            Some(&previous),
+            now + KEEP_FAILED_FOR,
+        );
+        assert_eq!(true, late[1].backends.is_empty());
+
+        // The answer is that there is no such name: gone at once.
+        let (gone, valid_until) = merge_round(
+            &hosts,
+            false,
+            &[Resolved::Addrs(vec![ip(9)], long), Resolved::Gone],
+            Some(&previous),
+            now,
+        );
+        assert_eq!(true, gone[1].backends.is_empty());
+        assert_eq!(now + DISCOVERY_CACHE_MIN, valid_until);
+
+        // Never resolved: nothing to keep, and nothing of the other host
+        // under its port.
+        let (none, _) = merge_round(
+            &hosts,
+            false,
+            &[Resolved::Failed, Resolved::Addrs(vec![ip(3)], long)],
+            None,
+            now,
+        );
+        assert_eq!(true, none[0].backends.is_empty());
+        assert_eq!(vec!["10.0.0.3:443"], addrs(&none[1]));
+
+        // The time a round is good for stays within its bounds.
+        let hour = now + Duration::from_secs(3600);
+        let (_, valid_until) = merge_round(
+            &hosts,
+            true,
+            &[
+                Resolved::Addrs(vec![ip(1)], hour),
+                Resolved::Addrs(vec![ip(3)], hour),
+            ],
+            None,
+            now,
+        );
+        assert_eq!(now + DISCOVERY_CACHE_MAX, valid_until);
+    }
+
     #[tokio::test]
     async fn test_dns_discover_partial_failure_keeps_alignment() {
         // The first host cannot resolve, the second can, and they declare
@@ -634,8 +839,8 @@ mod tests {
 
         let (ip_list, failed_hosts) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(2, ip_list.len());
-        assert_eq!(true, ip_list[0].is_none());
-        assert_eq!(true, ip_list[1].is_some());
+        assert_eq!(true, ip_list[0].is_err());
+        assert_eq!(true, ip_list[1].is_ok());
         assert_eq!(vec!["no-such-host-pingap-test".to_string()], failed_hosts);
 
         let discovered = dns.run_discover().await.unwrap();

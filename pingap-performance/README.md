@@ -129,9 +129,9 @@ cache bounds that to one collection per second however often it is asked for.
 The socket tables are counted rather than parsed, and the fields that cannot
 change (architecture, CPU counts, kernel version) are read once per process.
 
-The collector also feeds `pingap_cache::update_available_memory()`, so the
-memory cache sizes itself against the real machine or container limit instead of
-a fixed default.
+At startup the binary feeds `pingap_cache::update_available_memory()` with the
+memory that is available, bounded by the container's limit, so the memory cache
+sizes itself against where it runs instead of a fixed default.
 
 ## License
 

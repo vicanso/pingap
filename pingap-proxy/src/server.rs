@@ -1838,11 +1838,9 @@ impl ProxyHttp for Server {
             ));
         }
 
-        Ok(resp_cacheable(
-            cc.as_ref(),
-            resp.clone(),
-            false,
-            &META_DEFAULTS,
+        Ok(crate::cache::limit_freshness(
+            resp_cacheable(cc.as_ref(), resp.clone(), false, &META_DEFAULTS),
+            max_ttl,
         ))
     }
 
@@ -2161,8 +2159,13 @@ impl ProxyHttp for Server {
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
             ctx.upstream.processing_count = Some(upstream_instance.completed());
         }
-        if ctx.state.status.is_none()
-            && let Some(header) = session.response_written()
+        // The status the client was sent, when it was sent one. What was
+        // noted on the way is the upstream's, and that is another status
+        // whenever the response comes from the cache: an upstream that
+        // answers a revalidation with 304 had the log and the metrics say
+        // 304 for a client that got the stored 200.
+        if let Some(header) = session.response_written()
+            && !is_interim_response(header.status)
         {
             ctx.state.status = Some(header.status);
         }
@@ -4225,6 +4228,36 @@ value = 'proxy_set_headers = ["name:value"]'
             response.contains("Content-Type: text/html; charset=utf-8\r\n"),
             "{response}"
         );
+    }
+
+    /// Regression: the log and the metrics took the upstream's status for
+    /// the response's. On a revalidation the upstream says 304 and the
+    /// client gets the stored 200.
+    #[tokio::test]
+    async fn test_logging_records_the_status_the_client_got() {
+        let server = new_server();
+        let (mut session, _client) =
+            new_duplex_session("GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        // As `upstream_response_filter` leaves it on a revalidation.
+        ctx.state.status = Some(StatusCode::NOT_MODIFIED);
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        header.insert_header("Content-Length", "0").unwrap();
+        session
+            .as_mut()
+            .write_response_header(Box::new(header))
+            .await
+            .unwrap();
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(Some(StatusCode::OK), ctx.state.status);
+
+        // Nothing was sent: what was noted stays, a 499 for instance.
+        let (mut session, _client) =
+            new_duplex_session("GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        ctx.state.status = StatusCode::from_u16(499).ok();
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(StatusCode::from_u16(499).ok(), ctx.state.status);
     }
 
     /// Once a final header is out the rest of the response is not ours to

@@ -66,6 +66,14 @@ shortest record TTL runs out; a lookup failure is reported once, when it
 happens, not again on every refresh that serves the cached result, and the
 success line is logged only when the backend set actually changes.
 
+With several names, one whose lookup gets no answer keeps the backends it had
+(the health check takes them out if they are really gone), for up to ten
+minutes, and the names are asked for again after five seconds instead of when
+the records of the others run out. A name used to lose its backends on a
+single failed lookup, for as long as five minutes. A name that is answered
+"no such name" loses its backends at once. Either way the failure is notified
+when it starts, not at every round it lasts.
+
 ### Docker
 
 ```toml
@@ -81,7 +89,9 @@ api=5` is picked up on the next refresh. The Docker daemon is reached through
 `DOCKER_HOST`, falling back to the default socket. A background watcher
 follows container events and refreshes the list as they happen; it re-lists
 the containers after every reconnect to the daemon, and stops when a reload
-replaces the upstream.
+replaces the upstream. A daemon that cannot be reached is reported once, when
+it goes away or at the first attempt, and not on every attempt to reach it
+again.
 
 ### Transparent
 

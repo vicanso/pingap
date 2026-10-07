@@ -321,6 +321,59 @@ pub(crate) fn get_restriction_category_conf(
     }
 }
 
+/// Whether the response is a part of a body and not the body: a `206`, or
+/// anything that says which bytes it is.
+///
+/// A plugin that rewrites the body - compresses it, substitutes in it,
+/// encodes it anew - has nothing to do with a part. What it would make of
+/// one is no part of anything: the hundred bytes asked for come back as
+/// the gzip of those hundred bytes, under a `Content-Range` that still
+/// counts in the bytes of the original.
+pub fn is_partial_content(resp: &pingora::http::ResponseHeader) -> bool {
+    resp.status == http::StatusCode::PARTIAL_CONTENT
+        || resp.headers.contains_key(http::header::CONTENT_RANGE)
+}
+
+/// Takes back what a response can no longer say of itself once its body
+/// is going to be another: that ranges of it can be asked for, and that
+/// its `ETag` names these bytes.
+///
+/// The upstream's `Accept-Ranges` and strong `ETag` are about the body it
+/// sent. Left on the rewritten one, a client resumed a download with a
+/// range of the original, or took two different bodies for the same bytes.
+pub fn body_will_change(resp: &mut pingora::http::ResponseHeader) {
+    resp.remove_header(&http::header::ACCEPT_RANGES);
+    weaken_etag(resp);
+}
+
+/// Makes a strong `ETag` a weak one, `true` when it changed the header.
+///
+/// The validator is weakened rather than removed, as nginx and pingora's
+/// own compression do it: it still tells whether the resource changed.
+/// One that is not a quoted string is no validator, and is removed.
+pub fn weaken_etag(resp: &mut pingora::http::ResponseHeader) -> bool {
+    let Some(etag) = resp.headers.get(http::header::ETAG) else {
+        return false;
+    };
+    let value = etag.as_bytes();
+    if value.starts_with(b"W/") {
+        return false;
+    }
+    let weak = value
+        .starts_with(b"\"")
+        .then(|| [b"W/", value].concat())
+        .and_then(|weak| http::HeaderValue::from_bytes(&weak).ok());
+    match weak {
+        Some(weak) => {
+            let _ = resp.insert_header(http::header::ETAG, weak);
+        },
+        None => {
+            resp.remove_header(&http::header::ETAG);
+        },
+    }
+    true
+}
+
 /// Returns true if `accept_encoding` lists `coding` as an acceptable encoding.
 ///
 /// Matches on comma/`;`-delimited token boundaries (so `x-gzip` does not match
@@ -421,6 +474,36 @@ mod tests {
 
     /// Regression: a value of the wrong type was read as the default, and
     /// the plugin ran with a limit of 0, an empty list or a flag left off.
+    #[test]
+    fn test_body_will_change() {
+        use pingora::http::ResponseHeader;
+        let changed = |etag: Option<&str>| {
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            resp.append_header("Accept-Ranges", "bytes").unwrap();
+            if let Some(etag) = etag {
+                resp.append_header("ETag", etag).unwrap();
+            }
+            super::body_will_change(&mut resp);
+            assert_eq!(false, resp.headers.contains_key("Accept-Ranges"));
+            resp.headers
+                .get("ETag")
+                .map(|value| value.to_str().unwrap().to_string())
+        };
+        assert_eq!(Some("W/\"v1\"".to_string()), changed(Some("\"v1\"")));
+        assert_eq!(Some("W/\"v1\"".to_string()), changed(Some("W/\"v1\"")));
+        // Not a validator to begin with.
+        assert_eq!(None, changed(Some("v1")));
+        assert_eq!(None, changed(None));
+
+        let mut part = ResponseHeader::build(206, None).unwrap();
+        assert_eq!(true, super::is_partial_content(&part));
+        part.set_status(200).unwrap();
+        assert_eq!(false, super::is_partial_content(&part));
+        part.append_header("Content-Range", "bytes 0-9/100")
+            .unwrap();
+        assert_eq!(true, super::is_partial_content(&part));
+    }
+
     #[test]
     fn test_wrong_typed_values_are_rejected() {
         let create = |conf: &str| {

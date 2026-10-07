@@ -17,13 +17,13 @@
 //! These are free functions (they never touched `Server`'s state).
 
 use pingap_core::Ctx;
-use pingora::cache::NoCacheReason;
 use pingora::cache::cache_control::{
     CacheControl, DirectiveKey, DirectiveValue, InterpretCacheControl,
 };
+use pingora::cache::{NoCacheReason, RespCacheable};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[cfg(feature = "tracing")]
 use crate::tracing::update_otel_cache_attrs;
@@ -63,6 +63,36 @@ pub(crate) fn process_cache_control(
     }
 
     Ok(())
+}
+
+/// Holds a response that is about to be stored to the rules its lifetime
+/// went past when it came from `Expires`.
+///
+/// [`process_cache_control`] caps the lifetime `Cache-Control` names and
+/// refuses one of zero. A response with `Expires` and no lifetime in
+/// `Cache-Control` has neither applied to it by then: pingora reads the
+/// header after that, so `Expires` a year ahead was kept for a year
+/// whatever `max_ttl` said, and one in the past - `0` and `-1` are what
+/// origins send to say "do not cache" - was stored on every request, an
+/// entry that had expired before it was written.
+pub(crate) fn limit_freshness(
+    cacheable: RespCacheable,
+    max_ttl: Option<Duration>,
+) -> RespCacheable {
+    let RespCacheable::Cacheable(mut meta) = cacheable else {
+        return cacheable;
+    };
+    let now = SystemTime::now();
+    if meta.fresh_until() <= now {
+        return RespCacheable::Uncacheable(NoCacheReason::OriginNotCache);
+    }
+    if let Some(max_ttl) = max_ttl
+        && let Some(latest) = now.checked_add(max_ttl)
+    {
+        // Only ever moves the expiry earlier.
+        meta.expire_at(latest);
+    }
+    RespCacheable::Cacheable(meta)
 }
 
 /// Adds the `x-cache-status` / `x-cache-lookup` / `x-cache-lock` headers (and,
@@ -123,11 +153,14 @@ pub(crate) fn process_cache_timing(
 
 #[cfg(test)]
 mod tests {
-    use super::process_cache_control;
+    use super::{limit_freshness, process_cache_control};
     use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
+    use pingora::cache::filters::resp_cacheable;
+    use pingora::cache::{CacheMetaDefaults, RespCacheable};
     use pingora::http::ResponseHeader;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
+    use std::time::SystemTime;
 
     fn cache_control(value: &str) -> CacheControl {
         let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
@@ -181,5 +214,58 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    /// What `response_cache_filter` does with a response that has `headers`
+    /// and no `Cache-Control`.
+    fn stored_for(
+        headers: &[(&'static str, &str)],
+        max_ttl: Option<Duration>,
+    ) -> Option<Duration> {
+        const DEFAULTS: CacheMetaDefaults =
+            CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 0, 1);
+        let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+        for (name, value) in headers {
+            resp.append_header(*name, *value).unwrap();
+        }
+        let cacheable = resp_cacheable(None, resp, false, &DEFAULTS);
+        match limit_freshness(cacheable, max_ttl) {
+            RespCacheable::Cacheable(meta) => Some(
+                meta.fresh_until()
+                    .duration_since(SystemTime::now())
+                    .unwrap_or_default(),
+            ),
+            RespCacheable::Uncacheable(_) => None,
+        }
+    }
+
+    /// Regression: `max_ttl` held a lifetime from `Cache-Control` and let
+    /// one from `Expires` through, and an `Expires` that is over was
+    /// stored all the same, on every request.
+    #[test]
+    fn test_expires_is_held_to_the_cache_rules() {
+        let hour = Duration::from_secs(3600);
+        let far = [("Expires", "Wed, 21 Oct 2099 07:28:00 GMT")];
+        // Without a cap it is what the origin says: decades.
+        assert_eq!(true, stored_for(&far, None).unwrap() > 24 * hour);
+        // With one it is the cap.
+        let capped = stored_for(&far, Some(hour)).unwrap();
+        assert_eq!(true, capped <= hour, "{capped:?}");
+        assert_eq!(true, capped > hour - Duration::from_secs(5), "{capped:?}");
+
+        // Over already, or not a date: not stored.
+        for expires in ["Wed, 21 Oct 2015 07:28:00 GMT", "0", "-1", "soon"] {
+            assert_eq!(
+                None,
+                stored_for(&[("Expires", expires)], Some(hour)),
+                "{expires}"
+            );
+            assert_eq!(None, stored_for(&[("Expires", expires)], None));
+        }
+
+        // Nothing said: the default second, with or without a cap.
+        let default = stored_for(&[], Some(hour)).unwrap();
+        assert_eq!(true, default <= Duration::from_secs(1), "{default:?}");
+        assert_eq!(true, stored_for(&[], None).is_some());
     }
 }

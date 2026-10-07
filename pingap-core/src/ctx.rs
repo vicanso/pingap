@@ -297,6 +297,24 @@ pub struct RequestState {
     pub location_accepted_count: u64,
 }
 
+/// Components of the cache key that stand for something this request
+/// said - the coding it accepts, the image formats it takes - and that
+/// another request for the same url has others in the place of.
+///
+/// A `PURGE` is such another request: it names the url and says nothing of
+/// codings or formats. What it has to remove is the entry under every one
+/// of the alternatives, not only under its own.
+#[derive(Clone, Debug)]
+pub struct CacheKeyVariant {
+    /// Where in `keys` its components start.
+    pub at: usize,
+    /// How many of them there are for this request, which may be none.
+    pub len: usize,
+    /// Every list of components that can stand here, the empty one
+    /// included.
+    pub alternatives: Arc<Vec<Vec<String>>>,
+}
+
 /// All cache-related configuration and statistics for a request.
 #[derive(Default)]
 pub struct CacheInfo {
@@ -304,6 +322,9 @@ pub struct CacheInfo {
     pub namespace: Option<String>,
     /// The list of keys used to generate the final cache key.
     pub keys: Option<Vec<String>>,
+    /// Which of `keys` are one alternative among several, see
+    /// [`CacheKeyVariant`].
+    pub key_variants: Option<Vec<CacheKeyVariant>>,
     /// Whether to respect Cache-Control headers.
     pub check_cache_control: bool,
     /// The maximum time-to-live for cache entries.
@@ -1048,6 +1069,84 @@ impl Ctx {
             .get_or_insert_with(|| Vec::with_capacity(keys.len() + 2))
             .extend(keys);
     }
+    /// Adds `current` to the cache key as the one of `alternatives` this
+    /// request stands for. It may be empty: the place is noted all the
+    /// same, for the request that has to know what else could be there.
+    #[inline]
+    pub fn push_cache_key_variant(
+        &mut self,
+        current: Vec<String>,
+        alternatives: Arc<Vec<Vec<String>>>,
+    ) {
+        let cache_info = self.cache.get_or_insert_default();
+        let keys = cache_info
+            .keys
+            .get_or_insert_with(|| Vec::with_capacity(current.len() + 2));
+        cache_info
+            .key_variants
+            .get_or_insert_default()
+            .push(CacheKeyVariant {
+                at: keys.len(),
+                len: current.len(),
+                alternatives,
+            });
+        keys.extend(current);
+    }
+
+    /// Every list of key components a request for this url can have: the
+    /// one of this request, with each [`CacheKeyVariant`] in it replaced by
+    /// each of its alternatives. The list of this request itself when it
+    /// has no variants, or when there would be too many lists to go
+    /// through.
+    pub fn cache_key_alternatives(&self) -> Vec<Vec<String>> {
+        /// More than any sensible set of plugins gives: the codings times
+        /// the selections of four image formats is 64.
+        const MAX_ALTERNATIVES: usize = 1024;
+        let Some(cache_info) = &self.cache else {
+            return vec![vec![]];
+        };
+        let keys = cache_info.keys.as_deref().unwrap_or_default();
+        let variants = cache_info.key_variants.as_deref().unwrap_or_default();
+        let count = variants.iter().try_fold(1usize, |count, variant| {
+            count.checked_mul(variant.alternatives.len().max(1))
+        });
+        if variants.is_empty() {
+            return vec![keys.to_vec()];
+        }
+        if count.is_none_or(|n| n > MAX_ALTERNATIVES) {
+            // Said, since whoever asked goes on with less than all of them.
+            tracing::warn!(
+                target: "pingap::core",
+                variants = variants.len(),
+                "too many cache key alternatives, only the key of this request is used"
+            );
+            return vec![keys.to_vec()];
+        }
+        let mut lists = vec![Vec::with_capacity(keys.len())];
+        let mut cursor = 0;
+        for variant in variants {
+            // What other plugins put in between is the same in all of them.
+            let fixed = keys.get(cursor..variant.at).unwrap_or_default();
+            lists = lists
+                .into_iter()
+                .flat_map(|list: Vec<String>| {
+                    variant.alternatives.iter().map(move |alternative| {
+                        let mut list = list.clone();
+                        list.extend_from_slice(fixed);
+                        list.extend_from_slice(alternative);
+                        list
+                    })
+                })
+                .collect();
+            cursor = variant.at + variant.len;
+        }
+        let rest = keys.get(cursor..).unwrap_or_default();
+        for list in lists.iter_mut() {
+            list.extend_from_slice(rest);
+        }
+        lists
+    }
+
     /// Updates the upstream timing from the digest.
     #[inline]
     pub fn update_upstream_timing_from_digest(
@@ -1201,6 +1300,57 @@ mod tests {
     use pingora::protocols::tls::SslDigestExtension;
     use pretty_assertions::assert_eq;
     use std::{sync::Arc, time::Duration};
+
+    /// A `PURGE` names a url and no coding or image format: it has to
+    /// find the key of every request that named one.
+    #[test]
+    fn test_cache_key_alternatives() {
+        let list = |items: &[&str]| {
+            items
+                .iter()
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+        };
+        let mut ctx = Ctx::default();
+        assert_eq!(vec![list(&[])], ctx.cache_key_alternatives());
+
+        ctx.push_cache_key("fixed".to_string());
+        assert_eq!(vec![list(&["fixed"])], ctx.cache_key_alternatives());
+
+        ctx.push_cache_key_variant(
+            list(&["gzip"]),
+            Arc::new(vec![list(&[]), list(&["gzip"]), list(&["br"])]),
+        );
+        ctx.push_cache_key("lang".to_string());
+        // Nothing of this one in the key of this request.
+        ctx.push_cache_key_variant(
+            list(&[]),
+            Arc::new(vec![list(&[]), list(&["avif", "webp"])]),
+        );
+        assert_eq!(
+            Some(list(&["fixed", "gzip", "lang"])),
+            ctx.cache.as_ref().unwrap().keys
+        );
+        assert_eq!(
+            vec![
+                list(&["fixed", "lang"]),
+                list(&["fixed", "lang", "avif", "webp"]),
+                list(&["fixed", "gzip", "lang"]),
+                list(&["fixed", "gzip", "lang", "avif", "webp"]),
+                list(&["fixed", "br", "lang"]),
+                list(&["fixed", "br", "lang", "avif", "webp"]),
+            ],
+            ctx.cache_key_alternatives()
+        );
+
+        // Too many to go through: the key of the request itself.
+        let many: Vec<_> =
+            (0..40).map(|index| vec![index.to_string()]).collect();
+        let mut ctx = Ctx::default();
+        ctx.push_cache_key_variant(list(&["1"]), Arc::new(many.clone()));
+        ctx.push_cache_key_variant(list(&["2"]), Arc::new(many));
+        assert_eq!(vec![list(&["1", "2"])], ctx.cache_key_alternatives());
+    }
 
     #[test]
     fn test_ctx_new() {

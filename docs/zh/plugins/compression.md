@@ -59,16 +59,18 @@ min_length = 1024
 仅当**全部**满足时压缩：
 
 1. 有响应体：HEAD 应答、`1xx`、`204` 与 `304` 不处理，否则即便什么都不编码也会输出格式的头尾。
-2. 尚无 `Content-Encoding`，且不属于上面两类响应。
+2. 尚无 `Content-Encoding`，且不属于上面两类响应。也不是响应体的一部分：`206` 或带 `Content-Range` 的响应原样透传。以前范围请求要的 100 个字节会被压缩后返回，而 `Content-Range` 仍按原始字节计数。
 3. `Content-Type` 可压缩：`application/json`、`application/xml`、`text/html`，或任意 `text/*`。
 4. 客户端接受已启用算法之一。
 5. `min_length` 为 `0`，或存在 `Content-Length` 且至少为 `min_length`。无 `Content-Length` 的响应总会被压缩。
 
-压缩时移除 `Content-Length`，设置 `Transfer-Encoding: chunked` 与 `Content-Encoding`，并增量编码正文。
+压缩时移除 `Content-Length`，设置 `Transfer-Encoding: chunked` 与 `Content-Encoding`，并增量编码正文。同时移除 `Accept-Ranges`，把强 `ETag` 改成弱校验（`"v1"` 变为 `W/"v1"`），和 nginx 以及 pingora 自带的压缩做法一致：这两个头描述的是上游发出的字节，而现在的响应体已经不是那些字节。`ETag` 是在发往客户端时弱化的，缓存命中的响应同样处理；缓存里存的仍是上游给出的原始校验值，重新验证时用的是上游认识的值。
+
+客户端接受某个已启用的编码时，发往上游的请求只要求这一种编码：`Accept-Encoding` 被改写为该编码（访问日志里看到的也是改写后的值）。如果原样转发客户端的头，自己会压缩的上游会按它喜欢的编码应答（客户端同时接受 `br` 和 `gzip` 时返回 `br`），配了 `cache` 插件时这份响应会存进这里选定的编码对应的键，再返回给只接受那一种编码的客户端。客户端不接受任何已启用的编码时，这个头原样转发；上游此时如果自己压缩了又没有声明，插件会给响应补上 `Vary: Accept-Encoding`，让缓存把不同请求头得到的响应分开。一个压缩级别都没开时，插件不改请求，也不动缓存键。
 
 发往客户端时，任何带 `Content-Encoding` 的响应都会加上 `Vary: Accept-Encoding`（除非 `Vary` 已包含它或 `*`），让 Pingap 前面的缓存区分不同编码。它在 `response` 步骤而非上游响应上添加，因此 Pingap 自身的缓存（已按所选编码作为键）不会被请求头的各种写法进一步拆分；缓存命中的压缩响应每次也会同样加上。
 
-上游模式还会把所选编码追加到缓存键，使缓存条目按编码区分。
+上游模式还会把所选编码追加到缓存键，使缓存条目按编码区分。[`cache`](cache.md) 插件的 `PURGE` 会把每种编码的条目都清掉。
 
 ## 使用说明
 

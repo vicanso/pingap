@@ -19,7 +19,7 @@ cargo build --features=imageoptim
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `image_optim`. |
 | `output_types` | string | `""` | Comma-separated target formats in order of preference, e.g. `avif,webp`. Each is one of `avif`, `webp`, `jpeg`, `png`; anything else is a configuration error. |
-| `png_quality` | int | `90` | 1–100. Out-of-range values reset to the default. |
+| `png_quality` | int | `90` | 1–100. Unset or `0` is the default; any other value outside the range is a configuration error, for this and the three below. (They used to be cast to a byte first, so `300` passed as `44`.) |
 | `jpeg_quality` | int | `80` | 1–100. |
 | `avif_quality` | int | `75` | 1–100. |
 | `avif_speed` | int | `3` | 1–10. Higher is faster and larger. |
@@ -52,10 +52,19 @@ plugins = ["imageCache", "imageOptim"]
 
 ## Behaviour
 
-At `request` the plugin looks at the client's `Accept` header, collects the
-configured output MIME types the client accepts, sorts them and appends them to
-the cache key — so an AVIF-capable browser and an old one get separate cache
-entries instead of poisoning each other.
+At `early_request` the plugin looks at the client's `Accept` header, collects
+the configured output MIME types the client accepts, sorts them and appends them
+to the cache key — so an AVIF-capable browser and an old one get separate cache
+entries instead of poisoning each other. A `PURGE` of the [`cache`](cache.md)
+plugin removes the entry of every selection of formats. (This used to happen
+at `request`, where a `cache` plugin listed first had answered the purge
+before the formats were known to be a part of the key.)
+
+A converted response loses its `Accept-Ranges`, and a strong `ETag` becomes a
+weak one: both described the image the upstream sent. The `ETag` is weakened
+on the way to the client, for every image of a kind the plugin reads or writes
+and also when it comes from the cache; the cache keeps the upstream's own
+validator to revalidate with.
 
 At `upstream_response` the response is converted when the content type is
 `image/png` or `image/jpeg` and the request has an `Accept` header. The target

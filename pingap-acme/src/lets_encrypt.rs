@@ -46,7 +46,10 @@ use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use scopeguard::defer;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
 #[cfg(feature = "openssl")]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -145,189 +148,374 @@ struct UpdateCertificateParams {
     dns_service_url: String,
 }
 
-/// Periodically checks and updates certificates that need renewal.
-/// A certificate needs renewal if:
-/// - It is invalid or expired
-/// - The configured domains have changed
-/// - The certificate cannot be loaded
+/// The orders of one certificate that failed in a row, and when the next
+/// one may be tried.
+#[derive(Clone, Copy, Default)]
+struct Retry {
+    failures: u32,
+    not_before: u64,
+}
+
+const RETRY_FIRST_DELAY: u64 = 10 * 60;
+const RETRY_MAX_DELAY: u64 = 6 * 3600;
+
+/// How long to wait after `failures` failed orders in a row: ten minutes,
+/// doubled each time, six hours at most.
 ///
-/// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
-async fn do_update_certificates(
-    count: u32,
-    config_manager: Arc<ConfigManager>,
-    params: &[UpdateCertificateParams],
-    provider: Arc<dyn CertificateProvider>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<bool, ServiceError> {
-    if params.is_empty() {
-        return Ok(false);
-    }
-    const UPDATE_INTERVAL: u32 = 10;
-    if !count.is_multiple_of(UPDATE_INTERVAL) {
-        return Ok(false);
-    }
-    let config = config_manager.get_current_config();
-    for item in params.iter() {
-        let name = &item.name;
-        let domains = &item.domains;
-        let is_manual = item.dns_provider == DNS_PROVIDER_MANUAL;
-        // manual dns challenge is only run once
-        if item.dns_challenge && is_manual && count > 0 {
-            continue;
-        }
-
-        let should_renew = match get_lets_encrypt_certificate(&config, name) {
-            Ok(Some(certificate)) => {
-                // check if certificate is valid or domains changed
-                let needs_renewal = !certificate.valid(item.buffer_days);
-                let domains_changed = {
-                    let mut sorted_domains = domains.clone();
-                    let mut cert_domains = certificate.domains.clone();
-                    sorted_domains.sort();
-                    cert_domains.sort();
-                    sorted_domains != cert_domains
-                };
-                needs_renewal || domains_changed
-            },
-            Ok(None) => true,
-            Err(e) => {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    name,
-                    "failed to get certificate"
-                );
-                true
-            },
-        };
-
-        if !should_renew {
-            debug!(
-                target: LOG_TARGET,
-                domains = domains.join(","),
-                name,
-                "certificate still valid"
-            );
-            continue;
-        }
-
-        if let Err(e) = renew_certificate(
-            config_manager.clone(),
-            item.clone(),
-            provider.clone(),
-            sender.clone(),
-        )
-        .await
-        {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                domains = domains.join(","),
-                name,
-                "certificate renewal failed, will retry later"
-            );
-        }
-    }
-    Ok(true)
+/// A failed order used to be tried again at the next check, ten minutes
+/// later and for ever, which is more than the five failed validations an
+/// hour a CA allows a name: a domain that could not be validated locked
+/// itself out, and so did every other order for it.
+fn retry_delay(failures: u32) -> u64 {
+    let doublings = failures.saturating_sub(1).min(16);
+    (RETRY_FIRST_DELAY << doublings).min(RETRY_MAX_DELAY)
 }
 
-async fn renew_certificate(
-    config_manager: Arc<ConfigManager>,
-    params: UpdateCertificateParams,
-    provider: Arc<dyn CertificateProvider>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<()> {
-    update_certificate_lets_encrypt(config_manager.clone(), params.clone())
-        .await?;
-    handle_successful_renewal(
-        &params.domains,
-        config_manager,
-        provider,
-        sender,
-    )
-    .await?;
-    Ok(())
-}
-
-/// Installs the certificates from `certificate_configs` in `provider`,
-/// keeping every certificate whose configuration did not change; after a
-/// renewal that is all of them but the renewed one.
-fn try_update_certificates(
-    provider: Arc<dyn CertificateProvider>,
-    certificate_configs: &HashMap<String, CertificateConf>,
-) -> (Vec<String>, String) {
-    let (new_certs, errors, updated_certificates) =
-        update_certificates(certificate_configs, &provider.list());
-
-    let error_messages: Vec<String> = errors
-        .into_iter()
-        .map(|(name, msg)| format!("{}({})", msg, name))
-        .collect();
-
-    provider.store(new_certs);
-    (updated_certificates, error_messages.join(";"))
-}
-
-async fn handle_successful_renewal(
-    domains: &[String],
-    config_manager: Arc<ConfigManager>,
-    provider: Arc<dyn CertificateProvider>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<()> {
-    info!(
-        target: LOG_TARGET,
-        domains = domains.join(","),
-        "renew certificate success"
-    );
-    let toml_config =
-        config_manager.load_all().await.map_err(|e| Error::Fail {
-            category: "load_config".to_string(),
-            message: e.to_string(),
-        })?;
-    let config =
-        toml_config
-            .to_pingap_config(true)
-            .map_err(|e| Error::Fail {
-                category: "convert_config".to_string(),
-                message: e.to_string(),
-            })?;
-    if let Some(sender) = &sender {
-        sender
-            .notify(NotificationData {
-                category: "lets_encrypt".to_string(),
-                title: "Generate new cert from let's encrypt".to_string(),
-                message: format!("Domains: {domains:?}"),
-                ..Default::default()
-            })
-            .await;
+/// Whether `conf` holds a certificate that `params` can go on with: one
+/// that parses, is for the same domains, and is not due for renewal.
+fn is_usable(conf: &CertificateConf, params: &UpdateCertificateParams) -> bool {
+    let pem = conf.tls_cert.as_deref().unwrap_or_default();
+    let key = conf.tls_key.as_deref().unwrap_or_default();
+    if pem.is_empty() || key.is_empty() {
+        return false;
     }
-
-    let (_, error) = try_update_certificates(provider, &config.certificates);
-    if !error.is_empty() {
-        error!(target: LOG_TARGET, error = error, "parse certificate fail");
-        if let Some(sender) = &sender {
-            sender
-                .notify(NotificationData {
-                    category: "parse_certificate_fail".to_string(),
-                    level: NotificationLevel::Error,
-                    message: error,
-                    ..Default::default()
-                })
-                .await;
-        }
-    } else {
-        // update certificate success
-        // so set the current config
-        config_manager.set_current_config(config);
-    }
-    Ok(())
+    let Ok((certificate, _)) = parse_leaf_chain_certificates(pem, key) else {
+        return false;
+    };
+    let mut wanted = params.domains.clone();
+    let mut held = certificate.domains.clone();
+    wanted.sort();
+    held.sort();
+    wanted == held && certificate.valid(params.buffer_days)
 }
+
+/// Asks the CA for a certificate and stores it. A field of the task, so
+/// that a test can stand in for the CA.
+type Order = Box<
+    dyn Fn(
+            Arc<ConfigManager>,
+            UpdateCertificateParams,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
 
 struct LetsEncryptTask {
     config_manager: Arc<ConfigManager>,
     certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
     running: AtomicBool,
+    order: Order,
+    retries: Mutex<HashMap<String, Retry>>,
+}
+
+impl LetsEncryptTask {
+    async fn notify(&self, data: NotificationData) {
+        if let Some(sender) = &self.sender {
+            sender.notify(data).await;
+        }
+    }
+
+    fn retry_of(&self, name: &str) -> Option<Retry> {
+        let retries = self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        retries.get(name).copied()
+    }
+
+    fn clear_retry(&self, name: &str) {
+        let mut retries =
+            self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        retries.remove(name);
+    }
+
+    /// Periodically checks and updates certificates that need renewal.
+    /// A certificate needs renewal if:
+    /// - It is invalid or expired
+    /// - The configured domains have changed
+    /// - The certificate cannot be loaded
+    ///
+    /// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
+    async fn update_certificates(
+        &self,
+        count: u32,
+        params: &[UpdateCertificateParams],
+    ) -> Result<bool, ServiceError> {
+        if params.is_empty() {
+            return Ok(false);
+        }
+        const UPDATE_INTERVAL: u32 = 10;
+        if !count.is_multiple_of(UPDATE_INTERVAL) {
+            return Ok(false);
+        }
+        let config = self.config_manager.get_current_config();
+        for item in params.iter() {
+            let name = &item.name;
+            let domains = &item.domains;
+            let is_manual = item.dns_provider == DNS_PROVIDER_MANUAL;
+            // manual dns challenge is only run once
+            if item.dns_challenge && is_manual && count > 0 {
+                continue;
+            }
+
+            let should_renew = match get_lets_encrypt_certificate(&config, name)
+            {
+                Ok(Some(certificate)) => {
+                    // check if certificate is valid or domains changed
+                    let needs_renewal = !certificate.valid(item.buffer_days);
+                    let domains_changed = {
+                        let mut sorted_domains = domains.clone();
+                        let mut cert_domains = certificate.domains.clone();
+                        sorted_domains.sort();
+                        cert_domains.sort();
+                        sorted_domains != cert_domains
+                    };
+                    needs_renewal || domains_changed
+                },
+                Ok(None) => true,
+                Err(e) => {
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        name,
+                        "failed to get certificate"
+                    );
+                    true
+                },
+            };
+
+            if !should_renew {
+                debug!(
+                    target: LOG_TARGET,
+                    domains = domains.join(","),
+                    name,
+                    "certificate still valid"
+                );
+                continue;
+            }
+
+            // The storage first: an instance that shares it may have this
+            // certificate already. The check above goes by the running
+            // configuration, which only learns of a certificate here, so
+            // every instance used to order its own and half a dozen of
+            // them ran into the CA's limit on duplicates.
+            match self.adopt_stored_certificate(item).await {
+                Ok(true) => {
+                    self.clear_retry(name);
+                    continue;
+                },
+                Ok(false) => {},
+                Err(e) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        name,
+                        "the certificate in the storage could not be used"
+                    );
+                },
+            }
+
+            let now = pingap_core::now_sec();
+            if let Some(retry) = self.retry_of(name)
+                && now < retry.not_before
+            {
+                debug!(
+                    target: LOG_TARGET,
+                    name,
+                    failures = retry.failures,
+                    "waiting before the next order"
+                );
+                continue;
+            }
+
+            let ordered =
+                (self.order)(self.config_manager.clone(), item.clone()).await;
+            let installed = match ordered {
+                Ok(()) => self.install_renewed_certificate(item).await,
+                Err(e) => Err(e),
+            };
+            match installed {
+                Ok(()) => self.clear_retry(name),
+                Err(e) => self.order_failed(item, &e, now).await,
+            }
+        }
+        Ok(true)
+    }
+
+    /// Records a failed order, says so, and puts the next one off.
+    async fn order_failed(
+        &self,
+        params: &UpdateCertificateParams,
+        error: &Error,
+        now: u64,
+    ) {
+        let failures = self
+            .retry_of(&params.name)
+            .map_or(1, |retry| retry.failures.saturating_add(1));
+        let delay = retry_delay(failures);
+        {
+            let mut retries =
+                self.retries.lock().unwrap_or_else(|e| e.into_inner());
+            retries.insert(
+                params.name.clone(),
+                Retry {
+                    failures,
+                    not_before: now + delay,
+                },
+            );
+        }
+        // The challenge answered by hand is asked for once, when the
+        // process starts.
+        let manual =
+            params.dns_challenge && params.dns_provider == DNS_PROVIDER_MANUAL;
+        let retry_in = if manual {
+            "the next start".to_string()
+        } else {
+            format!("{}m", delay / 60)
+        };
+        error!(
+            target: LOG_TARGET,
+            error = %error,
+            domains = params.domains.join(","),
+            name = params.name,
+            failures,
+            retry_in,
+            "certificate renewal failed"
+        );
+        self.notify(NotificationData {
+            category: "lets_encrypt".to_string(),
+            level: NotificationLevel::Error,
+            title: "Generate cert from let's encrypt failed".to_string(),
+            message: format!(
+                "Certificate: {}, domains: {:?}, error: {error}, failures: {failures}, next attempt: {retry_in}",
+                params.name, params.domains
+            ),
+        })
+        .await;
+    }
+
+    /// Takes the certificate the storage holds for this entry when it is
+    /// one to go on with. `Ok(false)` when it is not.
+    async fn adopt_stored_certificate(
+        &self,
+        params: &UpdateCertificateParams,
+    ) -> Result<bool> {
+        let stored: Option<CertificateConf> = self
+            .config_manager
+            .get(Category::Certificate, &params.name)
+            .await
+            .map_err(|e| Error::Fail {
+                category: "load_config".to_string(),
+                message: e.to_string(),
+            })?;
+        let Some(conf) = stored.filter(|conf| is_usable(conf, params)) else {
+            return Ok(false);
+        };
+        self.install(&params.name, conf).await?;
+        info!(
+            target: LOG_TARGET,
+            domains = params.domains.join(","),
+            name = params.name,
+            "certificate taken from the storage, no order needed"
+        );
+        Ok(true)
+    }
+
+    /// Installs the certificate an order just stored.
+    async fn install_renewed_certificate(
+        &self,
+        params: &UpdateCertificateParams,
+    ) -> Result<()> {
+        info!(
+            target: LOG_TARGET,
+            domains = params.domains.join(","),
+            "renew certificate success"
+        );
+        self.notify(NotificationData {
+            category: "lets_encrypt".to_string(),
+            title: "Generate new cert from let's encrypt".to_string(),
+            message: format!("Domains: {:?}", params.domains),
+            ..Default::default()
+        })
+        .await;
+        let stored: Option<CertificateConf> = self
+            .config_manager
+            .get(Category::Certificate, &params.name)
+            .await
+            .map_err(|e| Error::Fail {
+                category: "load_config".to_string(),
+                message: e.to_string(),
+            })?;
+        let Some(conf) = stored else {
+            return Err(Error::Fail {
+                category: "load_config".to_string(),
+                message: format!(
+                    "certificate({}) is not in the storage",
+                    params.name
+                ),
+            });
+        };
+        let usable = is_usable(&conf, params);
+        self.install(&params.name, conf).await?;
+        // The certificate is in use, and the next check would order
+        // another all the same: `buffer_days` is not less than what a
+        // certificate is good for, or `domains` is not what the CA put
+        // into it (a name twice, or in upper case). That is a failure of
+        // this entry, to be told about and to wait after, not an order to
+        // repeat every ten minutes.
+        if !usable {
+            return Err(Error::Fail {
+                category: "new_certificate".to_string(),
+                message: "the new certificate is already due for renewal by this entry's buffer_days, or is not for its domains".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Puts `conf` to work as the entry `name`: its certificate into the
+    /// certificate store, the entry into the running configuration.
+    ///
+    /// Only this entry. The whole stored configuration used to be read and
+    /// made the running one, which marked as applied whatever else had
+    /// changed in the storage and was not. And it was made so only when
+    /// every certificate of it loaded: with one broken entry anywhere the
+    /// new certificate was installed and served but never recorded, the
+    /// next check found the old one still due, and ordered again - every
+    /// ten minutes, until the CA refused.
+    async fn install(&self, name: &str, conf: CertificateConf) -> Result<()> {
+        let mut config =
+            self.config_manager.get_current_config().as_ref().clone();
+        config.certificates.insert(name.to_string(), conf);
+        let (certificates, errors, _) = update_certificates(
+            &config.certificates,
+            &self.certificate_provider.list(),
+        );
+        self.certificate_provider.store(certificates);
+
+        let (own, others): (Vec<_>, Vec<_>) =
+            errors.into_iter().partition(|(failed, _)| failed == name);
+        if !others.is_empty() {
+            let message = others
+                .into_iter()
+                .map(|(failed, message)| format!("{message}({failed})"))
+                .collect::<Vec<_>>()
+                .join(";");
+            error!(target: LOG_TARGET, error = message, "parse certificate fail");
+            self.notify(NotificationData {
+                category: "parse_certificate_fail".to_string(),
+                level: NotificationLevel::Error,
+                message,
+                ..Default::default()
+            })
+            .await;
+        }
+        if let Some((_, message)) = own.into_iter().next() {
+            return Err(Error::Fail {
+                category: "install_certificate".to_string(),
+                message,
+            });
+        }
+        self.config_manager.set_current_config(config);
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -370,14 +558,7 @@ impl BackgroundTask for LetsEncryptTask {
                 dns_service_url,
             });
         }
-        do_update_certificates(
-            count,
-            self.config_manager.clone(),
-            &params,
-            self.certificate_provider.clone(),
-            self.sender.clone(),
-        )
-        .await?;
+        self.update_certificates(count, &params).await?;
 
         // Hourly (the service ticks once a minute), and never on the first
         // cycle: during a rolling upgrade an old instance may still be mid
@@ -494,6 +675,10 @@ pub fn new_lets_encrypt_service(
         certificate_provider,
         sender,
         running: AtomicBool::new(false),
+        order: Box::new(|config_manager, params| {
+            Box::pin(update_certificate_lets_encrypt(config_manager, params))
+        }),
+        retries: Mutex::new(HashMap::new()),
     })
 }
 
@@ -1147,9 +1332,383 @@ async fn new_lets_encrypt(
 #[cfg(test)]
 mod tests {
     use super::is_valid_challenge_token;
-    use super::{UpdateCertificateParams, update_certificate_lets_encrypt};
-    use pingap_config::new_file_config_manager;
-    use std::sync::Arc;
+    use super::{
+        LetsEncryptTask, Order, UpdateCertificateParams, retry_delay,
+        update_certificate_lets_encrypt,
+    };
+    use pingap_certificate::{
+        CertificateProvider, DynamicCertificates, TlsCertificate, rcgen,
+    };
+    use pingap_config::{
+        Category, CertificateConf, ConfigManager, new_file_config_manager,
+    };
+    use pingap_core::{
+        Notification, NotificationData, NotificationLevel, NotificationSender,
+    };
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Store(Mutex<Arc<DynamicCertificates>>);
+    impl CertificateProvider for Store {
+        fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>> {
+            self.list().get(sni).cloned()
+        }
+        fn list(&self) -> Arc<DynamicCertificates> {
+            self.0.lock().unwrap().clone()
+        }
+        fn store(&self, data: DynamicCertificates) {
+            *self.0.lock().unwrap() = Arc::new(data);
+        }
+    }
+
+    struct Recorder(Arc<Mutex<Vec<NotificationData>>>);
+    #[async_trait::async_trait]
+    impl Notification for Recorder {
+        async fn notify(&self, data: NotificationData) {
+            self.0.lock().unwrap().push(data);
+        }
+    }
+
+    /// A certificate for `example.com` as the CA would give it, good for
+    /// years or over since 2020.
+    fn certificate(expired: bool) -> (String, String) {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params =
+            rcgen::CertificateParams::new(vec!["example.com".to_string()])
+                .unwrap();
+        if expired {
+            params.not_before = rcgen::date_time_ymd(2019, 10, 1);
+            params.not_after = rcgen::date_time_ymd(2020, 1, 1);
+        }
+        (params.self_signed(&key).unwrap().pem(), key.serialize_pem())
+    }
+
+    fn params() -> UpdateCertificateParams {
+        UpdateCertificateParams {
+            name: "site".to_string(),
+            domains: vec!["example.com".to_string()],
+            buffer_days: 30,
+            dns_challenge: false,
+            dns_provider: "".to_string(),
+            dns_service_url: "".to_string(),
+        }
+    }
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        manager: Arc<ConfigManager>,
+        store: Arc<Store>,
+        orders: Arc<AtomicU32>,
+        notifications: Arc<Mutex<Vec<NotificationData>>>,
+        task: LetsEncryptTask,
+    }
+
+    /// A task on a config directory of its own holding `certificates`, the
+    /// running configuration being what is stored. An order is `order`,
+    /// counted.
+    async fn fixture(certificates: &str, order: Order) -> Fixture {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("certificates.toml"), certificates)
+            .unwrap();
+        let manager = Arc::new(
+            new_file_config_manager(dir.path().to_string_lossy().as_ref())
+                .unwrap(),
+        );
+        let config = manager.load_all().await.unwrap();
+        manager.set_current_config(config.to_pingap_config(true).unwrap());
+        let store = Arc::new(Store::default());
+        let orders = Arc::new(AtomicU32::new(0));
+        let notifications = Arc::new(Mutex::new(vec![]));
+        let sender: NotificationSender =
+            Box::new(Recorder(notifications.clone()));
+        let counter = orders.clone();
+        let task = LetsEncryptTask {
+            config_manager: manager.clone(),
+            certificate_provider: store.clone(),
+            sender: Some(Arc::new(sender)),
+            running: AtomicBool::new(false),
+            order: Box::new(move |manager, params| {
+                counter.fetch_add(1, Ordering::Relaxed);
+                order(manager, params)
+            }),
+            retries: Mutex::new(HashMap::new()),
+        };
+        Fixture {
+            _dir: dir,
+            manager,
+            store,
+            orders,
+            notifications,
+            task,
+        }
+    }
+
+    /// An order that works: a new certificate, stored where the real one
+    /// stores it.
+    fn issuing() -> Order {
+        Box::new(|manager, params| {
+            Box::pin(async move {
+                let mut conf: CertificateConf = manager
+                    .get(Category::Certificate, &params.name)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let (pem, key) = certificate(false);
+                conf.tls_cert = Some(pem);
+                conf.tls_key = Some(key);
+                manager
+                    .update(Category::Certificate, &params.name, &conf)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+    }
+
+    const SITE: &str = "[certificates.site]\ndomains = \"example.com\"\nacme = \"lets_encrypt\"\n";
+
+    /// Regression: a new certificate was recorded as the running one only
+    /// when every certificate of the configuration loaded. With a broken
+    /// entry anywhere it was installed and served but the next check still
+    /// found the old one, and ordered again: every ten minutes.
+    #[tokio::test]
+    async fn test_renewal_does_not_depend_on_the_other_certificates() {
+        // spellchecker:off
+        let broken = "[certificates.broken]\ndomains = \"broken.test\"\ntls_cert = \"bm90IGEgY2VydGlmaWNhdGU=\"\ntls_key = \"bm90IGEga2V5\"\n";
+        // spellchecker:on
+        let fixture = fixture(&format!("{SITE}\n{broken}"), issuing()).await;
+
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("example.com").is_some());
+        let running = fixture.manager.get_current_config();
+        assert_eq!(
+            true,
+            running.certificates["site"].tls_cert.is_some(),
+            "the new certificate is not in the running configuration"
+        );
+        // The broken one is reported, and is nobody's reason to order.
+        assert_eq!(
+            true,
+            fixture
+                .notifications
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|data| data.category == "parse_certificate_fail"
+                    && data.message.contains("broken"))
+        );
+
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+    }
+
+    /// Regression: whether to order went by the running configuration
+    /// alone, which only learns of a certificate from an order of its own.
+    /// Of two instances on one storage each ordered its certificate.
+    #[tokio::test]
+    async fn test_certificate_in_the_storage_is_taken_instead_of_ordered() {
+        let (pem, key) = certificate(true);
+        let stored = |pem: &str, key: &str| {
+            format!(
+                "{SITE}tls_cert = \"\"\"\n{pem}\"\"\"\ntls_key = \"\"\"\n{key}\"\"\"\n"
+            )
+        };
+        let fixture = fixture(&stored(&pem, &key), issuing()).await;
+        // What is stored is as old as what is running: nothing to take.
+        assert_eq!(
+            false,
+            fixture
+                .task
+                .adopt_stored_certificate(&params())
+                .await
+                .unwrap()
+        );
+
+        // Another instance renews it.
+        let (pem, key) = certificate(false);
+        let mut conf: CertificateConf = fixture
+            .manager
+            .get(Category::Certificate, "site")
+            .await
+            .unwrap()
+            .unwrap();
+        conf.tls_cert = Some(pem.clone());
+        conf.tls_key = Some(key);
+        fixture
+            .manager
+            .update(Category::Certificate, "site", &conf)
+            .await
+            .unwrap();
+
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(0, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("example.com").is_some());
+        assert_eq!(
+            Some(pem),
+            fixture.manager.get_current_config().certificates["site"]
+                .tls_cert
+                .clone()
+        );
+
+        // One for other domains is not this entry's certificate.
+        let other = UpdateCertificateParams {
+            domains: vec![
+                "example.com".to_string(),
+                "www.example.com".to_string(),
+            ],
+            ..params()
+        };
+        assert_eq!(
+            false,
+            fixture.task.adopt_stored_certificate(&other).await.unwrap()
+        );
+    }
+
+    /// Regression: a failed order was logged and tried again at the next
+    /// check, ten minutes later, without end and without a word to
+    /// whoever could do something about it.
+    #[tokio::test]
+    async fn test_failed_order_is_reported_and_put_off() {
+        let failing: Order = Box::new(|_, _| {
+            Box::pin(async {
+                Err(super::Error::Fail {
+                    category: "order".to_string(),
+                    message: "the CA says no".to_string(),
+                })
+            })
+        });
+        let fixture = fixture(SITE, failing).await;
+
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        {
+            let notifications = fixture.notifications.lock().unwrap();
+            assert_eq!(1, notifications.len());
+            assert_eq!("lets_encrypt", notifications[0].category);
+            assert_eq!(NotificationLevel::Error, notifications[0].level);
+            assert_eq!(
+                true,
+                notifications[0].message.contains("the CA says no"),
+                "{}",
+                notifications[0].message
+            );
+        }
+        // The next check comes too soon for another order.
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+
+        // Once the wait is over it is tried again, and waits longer.
+        let wait_over = |fixture: &Fixture| {
+            let mut retries = fixture.task.retries.lock().unwrap();
+            let retry = retries.get_mut("site").unwrap();
+            let waited = retry.not_before - pingap_core::now_sec();
+            retry.not_before = 0;
+            (retry.failures, waited)
+        };
+        let (failures, waited) = wait_over(&fixture);
+        assert_eq!(1, failures);
+        assert_eq!(true, (590..=600).contains(&waited), "{waited}");
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        let (failures, waited) = wait_over(&fixture);
+        assert_eq!(2, failures);
+        assert_eq!(true, (1190..=1200).contains(&waited), "{waited}");
+    }
+
+    /// An order that works and gives a certificate the entry takes for due
+    /// at once - `buffer_days` longer than the certificate lasts - was
+    /// made again at every check.
+    #[tokio::test]
+    async fn test_certificate_that_is_due_at_once_is_not_ordered_again() {
+        // Good for ninety days, with a margin of a hundred.
+        let short: Order = Box::new(|manager, params| {
+            Box::pin(async move {
+                let key = rcgen::KeyPair::generate().unwrap();
+                let mut cert =
+                    rcgen::CertificateParams::new(params.domains.clone())
+                        .unwrap();
+                let now = std::time::SystemTime::now();
+                let day = std::time::Duration::from_secs(24 * 3600);
+                cert.not_before = (now - day).into();
+                cert.not_after = (now + 90 * day).into();
+                let mut conf: CertificateConf = manager
+                    .get(Category::Certificate, &params.name)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                conf.tls_cert = Some(cert.self_signed(&key).unwrap().pem());
+                conf.tls_key = Some(key.serialize_pem());
+                manager
+                    .update(Category::Certificate, &params.name, &conf)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        });
+        let fixture = fixture(SITE, short).await;
+        let params = UpdateCertificateParams {
+            buffer_days: 100,
+            ..params()
+        };
+        for _ in 0..3 {
+            fixture
+                .task
+                .update_certificates(0, std::slice::from_ref(&params))
+                .await
+                .unwrap();
+        }
+        // Ordered once, installed, and reported as something to look at.
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("example.com").is_some());
+        let notifications = fixture.notifications.lock().unwrap();
+        assert_eq!(
+            true,
+            notifications
+                .iter()
+                .any(|data| data.level == NotificationLevel::Error
+                    && data.message.contains("already due")),
+            "{notifications:?}"
+        );
+    }
+
+    #[test]
+    fn test_retry_delay() {
+        assert_eq!(600, retry_delay(1));
+        assert_eq!(1200, retry_delay(2));
+        assert_eq!(4800, retry_delay(4));
+        assert_eq!(6 * 3600, retry_delay(7));
+        assert_eq!(6 * 3600, retry_delay(u32::MAX));
+        // Never asked with none, and no shorter than the first if it is.
+        assert_eq!(600, retry_delay(0));
+    }
 
     /// Issue #213: a certificate defined in a combined file loads and serves,
     /// but cannot be addressed by the canonical key the save path uses. That

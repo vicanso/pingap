@@ -77,6 +77,10 @@ The response is compressed only when **all** of these hold:
 1. It has a body: HEAD answers, `1xx`, `204` and `304` are left alone, since
    encoding nothing would still emit the format's header and footer.
 2. It has no `Content-Encoding` yet, and is not one of the responses above.
+   Nor is it a part of a body: a `206`, or anything with a `Content-Range`,
+   is passed on as it is. Compressed, the hundred bytes a range request asked
+   for came back as the gzip of those bytes, under a `Content-Range` that
+   still counted in the bytes of the original.
 3. It has a `Content-Type` that is compressible: `application/json`,
    `application/xml`, `text/html`, or any `text/*`.
 4. The client accepts one of the enabled algorithms.
@@ -85,6 +89,24 @@ The response is compressed only when **all** of these hold:
 
 When it does compress, `Content-Length` is removed, `Transfer-Encoding: chunked`
 and `Content-Encoding` are set, and the body is encoded incrementally.
+`Accept-Ranges` is removed and a strong `ETag` is made a weak one (`"v1"`
+becomes `W/"v1"`), as nginx and pingora's own compression do it: both are
+statements about the bytes the upstream sent, which these no longer are. The
+`ETag` is weakened on the way to the client, also for a response from the
+cache; what the cache stores keeps the validator as the upstream gave it, so a
+revalidation asks the upstream with the value it knows.
+
+When the client accepts one of the enabled codings, the upstream is asked for
+that coding and no other: `Accept-Encoding` is rewritten to it (this is also
+what the access log shows). Passed on as the client sent it, an upstream that
+compresses by itself answered in a coding of its own choice, `br` to a client
+that takes `br` and `gzip`, and with a `cache` plugin that answer was stored
+under the key of the coding chosen here and served to clients that take only
+that one. When the client accepts none of them the header is passed on
+untouched; an upstream that then compresses for that client gets
+`Vary: Accept-Encoding` added to its response unless it says so itself, so
+that the cache keeps the answers to different headers apart. With no level
+enabled at all the plugin leaves requests and cache keys alone.
 
 On the way out to the client, any response carrying `Content-Encoding` gets
 `Vary: Accept-Encoding` unless its `Vary` already names it (or `*`), so caches
@@ -94,7 +116,8 @@ on the chosen encoding, is not split further by every spelling of the request
 header; a cached compressed entry gets it on every hit the same way.
 
 Upstream mode also appends the chosen encoding to the cache key, so a cached
-entry is per-encoding.
+entry is per-encoding. A `PURGE` of the [`cache`](cache.md) plugin removes the
+entry of every encoding.
 
 ## Usage notes
 

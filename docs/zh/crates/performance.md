@@ -93,7 +93,7 @@ println!("{} MB, {} threads, {} fds", info.memory_mb, info.threads, info.fd_coun
 
 快照会缓存一秒。采集一次要读若干 `/proc` 文件，而有三个消费者各自独立索取——Prometheus 抓取、`stats` 插件对其路径的每个请求，以及指标日志任务——缓存把开销限制在每秒最多一次采集，无论被索取多频繁。套接字表只数行数而不解析，架构、CPU 数、内核版本这些不会变的字段每个进程只读一次。
 
-收集器还向 `pingap_cache::update_available_memory()` 供数，使内存缓存按真实机器或容器限制自定大小，而非固定默认。
+启动时会把可用内存（不超过容器限制）传给 `pingap_cache::update_available_memory()`，使内存缓存按实际运行环境自定大小，而非固定默认。
 
 ## 许可证
 

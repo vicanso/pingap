@@ -123,6 +123,9 @@ impl MockResponse {
             u16::try_from(status)
                 .ok()
                 .and_then(|status| StatusCode::from_u16(status).ok())
+                // An interim status is not a response: nothing would
+                // follow it, and the client would go on waiting.
+                .filter(|status| !status.is_informational())
                 .ok_or_else(|| invalid(format!("Invalid status({status})")))?
         };
         let headers = if headers.is_empty() {
@@ -213,6 +216,32 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    /// Regression: an interim status was taken for the response to give.
+    /// Nothing follows it, and the client waited for a response for good.
+    #[test]
+    fn test_mock_rejects_an_interim_status() {
+        for status in [100, 101, 103, 199, 99, 1000] {
+            let result = MockResponse::new(
+                &toml::from_str::<PluginConf>(&format!("status = {status}"))
+                    .unwrap(),
+            );
+            assert_eq!(
+                true,
+                result
+                    .err()
+                    .is_some_and(|e| e.to_string().contains("Invalid status")),
+                "{status}"
+            );
+        }
+        for status in [200, 204, 304, 404, 503] {
+            let result = MockResponse::new(
+                &toml::from_str::<PluginConf>(&format!("status = {status}"))
+                    .unwrap(),
+            );
+            assert_eq!(true, result.is_ok(), "{status}");
+        }
+    }
 
     #[test]
     fn test_mock_params() {

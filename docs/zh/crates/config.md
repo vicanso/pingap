@@ -60,7 +60,12 @@ pingap -c "etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --autore
 pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 ```
 
-etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`、`connect_timeout`、`user`、`password`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
+etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`（默认 `10s`）、`connect_timeout`（默认 `5s`）、`user`、`password`、`enable_history`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
+
+- URL 里不写超时也有请求和建连的时限，watch 用的连接每 30 秒发一次 HTTP/2 ping 探活。以前两者都没有，连接被静默丢弃后，等在上面的轮询会一直挂着，排在它后面的保存也跟着挂住。
+- 前缀下的键分页读取（每页 64 个键，值很大时自动减半，减到多少会记住供下次读取使用），各页按同一个 revision 读取，所以配置大小不再受单条 gRPC 消息（4 MiB）的限制。
+- `enable_history=true` 时，每个键在 `<prefix>-history` 下保留最新的 100 个版本，写入新版本时清理更早的。删除键不会留下版本。
+- 不支持通过 TLS 连接 etcd。
 
 目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`）。每个文件单独解析，再把各自的表合并成一份文档，因此语法错误会指出所在文件，文件里也可以使用任意 TOML 写法（顶层的 `upstreams.extra.addrs = [..]` 与 `[upstreams.extra]` 等价）。同一分类可以分散在多个文件里，但一个条目（以及 `[basic]`）只能定义在其中一个文件：同名条目出现在两个文件里会报错，并指出这两个文件。
 
@@ -213,10 +218,10 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 
 `ConfigManager::support_observer()` 决定变更如何到达：
 
-- **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。监听使用独立的连接；连接中断或被服务端结束后会重新建立，etcd 持续不可达时重试间隔从 500ms 逐步增加到一分钟，恢复后立即再比较一次配置。不论监听是否正常，存储里的配置每隔 `basic.auto_restart_check_interval` 也会重新读取一次。
+- **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。监听使用独立的连接；连接中断或被服务端结束后会重新建立，etcd 持续不可达时重试间隔从 500ms 逐步增加到一分钟，恢复后立即再比较一次配置。不论监听是否正常，存储里的配置每隔 `basic.auto_restart_check_interval` 也会重新读取一次。监听的只是前缀之下的键：`/pingap` 不会再因为 `/pingap2` 或者自己的 `/pingap-history` 有写入而被唤醒。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。以文件路径给出的证书按同样的周期检查：配置文档没有变化时，会对这类证书的文件计算 hash，文件被替换（例如 certbot 续期）的证书会重新加载。这和其他重载一样需要 `--autoreload` 或 `--autorestart`。配置里同时有 ACME 证书时同样有效：只会改动来自文件的证书。重载改了什么，会以两份配置的差异写入日志并发送到 webhook。差异里的凭据会替换成校验值（`secret = "crc32:8D9A1B2C"`），这样值变了仍然能看出来：包括 `secret`、`password`、`token`、`key`、`keys`、`authorizations` 这类键的值，任何 URL 里的用户名和密码，带密钥的 URL（`webhook`、`sentry`、`*_url`）的查询串或路径，`Authorization` 这类请求头的值，以及 storage 里保存的内容。插件在 debug 级别打印的配置同样处理。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。热更新对“需要构建的部分”要么全部生效要么都不生效：upstream、location 或插件有变化时，先像 `pingap -t` 那样把它们全部构建一遍（不在工作线程上，也不影响正在运行的对象），失败时（正则编译不过、插件选项类型不对、地址解析不了）运行中的配置保持不变。失败只报告一次（日志和 `reload_config_fail` 通知），同一份文档每分钟重试一次，以便挡路的因素自己消失时（比如当时解析不了的域名）能恢复。以前各分类是依次替换的，其中一个失败时其他的已经生效，例如 location 指向了一个并不存在的 upstream。如果某个分类在替换过程中仍然失败，它在运行中的配置（以及 admin 展示的配置）里保持原样，server 的路由也不会用构建失败的 location 重建，文档下一次变化时会重试。被删除的 upstream 会保留到指向它的 location 换掉之后。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。以文件路径给出的证书按同样的周期检查：配置文档没有变化时，会对这类证书的文件计算 hash，文件被替换（例如 certbot 续期）的证书会重新加载。这和其他重载一样需要 `--autoreload` 或 `--autorestart`。配置里同时有 ACME 证书时同样有效：只会改动来自文件的证书。重载改了什么，会以两份配置的差异写入日志并发送到 webhook。差异里的凭据会替换成校验值（`secret = "crc32:8D9A1B2C"`），这样值变了仍然能看出来：包括 `secret`、`password`、`token`、`key`、`keys`、`authorizations` 这类键的值，任何 URL 里的用户名和密码，带密钥的 URL（`webhook`、`sentry`、`*_url`）的查询串或路径，`Authorization` 这类请求头的值，以及 storage 里保存的内容。插件在 debug 级别打印的配置同样处理。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
 
 ## Includes
 

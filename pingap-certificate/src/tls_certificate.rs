@@ -57,7 +57,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
     type Error = Error;
     fn try_from(value: &CertificateConf) -> Result<Self, Self::Error> {
         // parse certificate
-        let (info, x509_certificates) = parse_leaf_chain_certificates(
+        let (mut info, x509_certificates) = parse_leaf_chain_certificates(
             value.tls_cert.as_deref().unwrap_or_default(),
             value.tls_key.as_deref().unwrap_or_default(),
         )
@@ -65,6 +65,11 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
             message: e.to_string(),
             category: ERROR_CERTIFICATE.to_string(),
         })?;
+        // Whose certificate this is to renew. Never set, the expiry check
+        // took every ACME certificate for one somebody has to replace by
+        // hand, and warned about each of them daily from a week before
+        // the end, while its renewal was not due for days.
+        info.acme = value.acme.clone().filter(|acme| !acme.is_empty());
         let category = if value.acme.is_some() {
             LETS_ENCRYPT
         } else {

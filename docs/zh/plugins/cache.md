@@ -88,12 +88,14 @@ curl -X PURGE http://127.0.0.1:6188/*
 - 存什么、存多久，取决于源站的 `Cache-Control`：
   - 带 `no-store`、`no-cache` 或 `private` 的响应不存储，有效期为零的响应也不存储。
   - 有效期优先取源站的 `s-maxage`，没有时取 `max-age`，并受 `max_ttl` 限制。
+  - 两者都没有时，有效期到源站的 `Expires` 为止，同样受 `max_ttl` 限制。`Expires` 已经过期或者不是日期（源站常用 `0`、`-1` 表示“不要缓存”）时不存储。以前这两种情况都没有处理：`Expires` 在一年之后的响应不管 `max_ttl` 是多少都会保留一年，已过期的响应则每次请求都被写入缓存。
   - 没有给出有效期的响应保留一秒，前提是其状态码属于 HTTP 定义的“可启发式缓存”的一类：200、203、204、206、300、301、308、404、405、410、414、501。其他状态码（如 5xx 或 302）只有在源站给出有效期时才存储。`check_cache_control` 更严格：没有 `Cache-Control` 头的响应一律不存储。
 - 属于某一个客户端的响应不会被存储：
   - 带 `Set-Cookie` 头的响应：否则所有从缓存取到它的客户端都会收到同一个 cookie。确实要缓存这类响应时，用 `upstream` 模式的 [`response_headers`](response_headers.md) 插件在存储前去掉这个头。
   - 请求带 `Authorization` 头时的响应，除非源站用 `public`、`s-maxage` 或 `must-revalidate` 标明可以共享。开启了 `hide_credentials` 的 [`basic_auth`](basic_auth.md) 插件会在这项检查之前移除该请求头，因此它保护的站点照常缓存。
 - 缓存键由 `namespace`、所列 `headers` 的值、请求方法、域名、路径和查询串组成。域名取小写且不含端口，协议不在键里，所以 `http://Example.com:8080/x` 与 `https://example.com/x` 是同一个条目，HTTP/1.1 与 HTTP/2 一致；`other.com/x` 则是另一个条目。
 - `PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。它清理的是请求所发往的域名：在插件可达的任意监听上发送，并带上要清理的站点的 `Host`。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
+- 其他插件会把“响应是为谁生成的”加进键里：`upstream` 模式的 `compression` 加的是编码（`zstd`、`br`、`gzip` 或者没有），`image_optim` 加的是客户端接受的图片格式。`PURGE` 会把每一种的条目都清掉，不论它自己的 `Accept-Encoding` 和 `Accept` 是什么；以前只清和自己请求头对应的那一个，对普通的 `curl -X PURGE` 来说就是没有浏览器会请求的未压缩条目。
 - 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
 - 遵循源站的 `Cache-Control: stale-while-revalidate=<seconds>`；未包含该 directive 的条目不会在重新验证时返回过期内容。新鲜期过后，在该时间窗内 pingap 立即返回旧内容，并由持有锁的一个请求在后台向源站刷新；超出时间窗则等待或执行普通重新验证。SWR 需要非零 `lock`，`lock = "0s"` 会禁用它。`max_ttl` 只限制新鲜期，不限制 SWR 时间窗。后台重新验证会走完整请求管线，产生访问日志、更新指标，并再次执行 request 步骤插件。

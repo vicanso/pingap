@@ -63,16 +63,23 @@ async fn do_validity_check(
         let Some(info) = &cert.info else {
             continue;
         };
-        if info.acme.is_some() {
-            continue;
-        }
         let name = cert.name.clone().unwrap_or_default();
         let domains = cert.domains.join(",");
         let mut buffer_days = cert.buffer_days;
         if buffer_days == 0 {
             buffer_days = DEFAULT_EXPIRATION_WARNING_DAYS;
         }
-        let time_offset = (buffer_days as i64) * SECONDS_PER_DAY;
+        let mut time_offset = (buffer_days as i64) * SECONDS_PER_DAY;
+        // A certificate of ACME is renewed for whoever runs it, and
+        // `buffer_days` is when: until then there is nothing to warn of.
+        // It is warned of once half of that margin is gone as well, a week
+        // before the end at the latest - by then the renewal has failed
+        // for a while, or was never going to happen: the ACME task is
+        // switched off, or the challenge is one that is answered by hand.
+        if info.acme.is_some() {
+            time_offset = (info.renewal_margin(cert.buffer_days) / 2)
+                .min(DEFAULT_EXPIRATION_WARNING_DAYS as i64 * SECONDS_PER_DAY);
+        }
 
         if now > info.not_after - time_offset {
             error!(
@@ -144,4 +151,88 @@ pub fn new_certificate_validity_service(
     sender: Option<Arc<NotificationSender>>,
 ) -> Box<dyn BackgroundTask> {
     Box::new(CertificateValidityTask { provider, sender })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DynamicCertificates, TlsCertificate, update_certificates};
+    use pingap_config::CertificateConf;
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct Store(DynamicCertificates);
+    impl CertificateProvider for Store {
+        fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>> {
+            self.0.get(sni).cloned()
+        }
+        fn list(&self) -> Arc<DynamicCertificates> {
+            Arc::new(self.0.clone())
+        }
+        fn store(&self, _data: DynamicCertificates) {}
+    }
+
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+    #[async_trait]
+    impl pingap_core::Notification for Recorder {
+        async fn notify(&self, data: NotificationData) {
+            self.0.lock().unwrap().push(data.message);
+        }
+    }
+
+    /// A certificate for `domain`, issued sixty days ago, that is over in
+    /// `days`.
+    fn expiring(domain: &str, acme: bool, days: u64) -> CertificateConf {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let mut params =
+            rcgen::CertificateParams::new(vec![domain.to_string()]).unwrap();
+        let now = std::time::SystemTime::now();
+        let day = std::time::Duration::from_secs(24 * 3600);
+        params.not_before = (now - 60 * day).into();
+        params.not_after = (now + days as u32 * day).into();
+        let cert = params.self_signed(&key).unwrap();
+        CertificateConf {
+            domains: Some(domain.to_string()),
+            tls_cert: Some(cert.pem()),
+            tls_key: Some(key.serialize_pem()),
+            acme: acme.then(|| "lets_encrypt".to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Regression: nothing marked a certificate as one of ACME, so the
+    /// check that is for certificates somebody has to replace by hand
+    /// warned about those as well, every day from a week before the end,
+    /// while their renewal was not even due. One that is still not
+    /// renewed a week before its end is another matter.
+    #[tokio::test]
+    async fn test_validity_check_leaves_acme_certificates_to_acme() {
+        let configs = HashMap::from([
+            // Due for renewal (20 of 80 days left), which is its task's.
+            ("renewing".to_string(), expiring("renewing.test", true, 20)),
+            // Should have been renewed long ago.
+            ("stuck".to_string(), expiring("stuck.test", true, 3)),
+            ("manual".to_string(), expiring("manual.test", false, 3)),
+            ("fine".to_string(), expiring("fine.test", false, 20)),
+        ]);
+        let (certificates, errors, _) =
+            update_certificates(&configs, &DynamicCertificates::default());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        let messages = Arc::new(Mutex::new(vec![]));
+        let sender: NotificationSender = Box::new(Recorder(messages.clone()));
+
+        let checked = do_validity_check(
+            0,
+            Arc::new(Store(certificates)),
+            Some(Arc::new(sender)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(true, checked);
+        assert_eq!(
+            vec!["certificate manual,stuck will be expired".to_string()],
+            *messages.lock().unwrap()
+        );
+    }
 }

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{
+    Error, body_will_change, get_hash_key, get_str_conf, get_str_slice_conf,
+    is_partial_content,
+};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::{Bytes, BytesMut};
@@ -20,8 +23,8 @@ use http::header::CONTENT_ENCODING;
 use http::{Method, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HTTP_HEADER_TRANSFER_CHUNKED, ModifyResponseBody, Plugin,
-    ResponseBodyPluginResult, ResponsePluginResult,
+    Ctx, HTTP_HEADER_TRANSFER_CHUNKED, ModifyResponseBody, Plugin, PluginStep,
+    RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -181,7 +184,8 @@ impl ModifyResponseBody for SubFilterReplacer {
 }
 
 /// Responses whose body is not there to rewrite: HEAD answers, 1xx, 204,
-/// 304, and anything compressed, which is opaque bytes to the rules.
+/// 304, a part of a body (206), and anything compressed, which is opaque
+/// bytes to the rules.
 fn has_no_rewritable_body(
     session: &Session,
     upstream_response: &ResponseHeader,
@@ -191,6 +195,7 @@ fn has_no_rewritable_body(
         || status.is_informational()
         || status == StatusCode::NO_CONTENT
         || status == StatusCode::NOT_MODIFIED
+        || is_partial_content(upstream_response)
         || upstream_response.headers.get(CONTENT_ENCODING).is_some_and(
             |value| !value.as_bytes().eq_ignore_ascii_case(b"identity"),
         )
@@ -273,6 +278,37 @@ impl Plugin for SubFilter {
         Cow::Borrowed(&self.hash_value)
     }
 
+    /// Takes the range off a request whose response is to be rewritten.
+    ///
+    /// The rules are applied to a whole body. A part of one is passed on
+    /// as it is (see `has_no_rewritable_body`), and which of the two a
+    /// response is was the client's to choose: `Range: bytes=0-` got the
+    /// body unrewritten from an upstream that answers `206`, and from the
+    /// cache every time, where pingora cuts the range out of the stored
+    /// response itself. Without the header there is only the whole body;
+    /// a server is free to answer a range request with all of it.
+    async fn handle_request(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        _ctx: &mut Ctx,
+    ) -> pingora::Result<RequestPluginResult> {
+        if step != PluginStep::Request {
+            return Ok(RequestPluginResult::Skipped);
+        }
+        if let Some(regex) = &self.path
+            && !regex.is_match(session.req_header().uri.path())
+        {
+            return Ok(RequestPluginResult::Skipped);
+        }
+        let header = session.req_header_mut();
+        if header.headers.contains_key(http::header::RANGE) {
+            header.remove_header(&http::header::RANGE);
+            header.remove_header(&http::header::IF_RANGE);
+        }
+        Ok(RequestPluginResult::Continue)
+    }
+
     /// Handles the response phase of the HTTP request/response lifecycle
     ///
     /// # Arguments
@@ -305,6 +341,7 @@ impl Plugin for SubFilter {
 
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        body_will_change(upstream_response);
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(
             http::header::TRANSFER_ENCODING,
@@ -558,5 +595,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ResponsePluginResult::Unchanged, result);
+    }
+
+    /// A part of a body is not rewritten, so a request must not be able to
+    /// ask for one: with `Range: bytes=0-` the whole body came back as a
+    /// `206`, past the rules.
+    #[tokio::test]
+    async fn test_sub_filter_takes_the_range_off_the_request() {
+        let ranged = async |plugin: &SubFilter, path: &str| {
+            let mut session = new_session(&format!(
+                "GET {path} HTTP/1.1\r\nRange: bytes=0-\r\nIf-Range: \"v1\"\r\n\r\n"
+            ))
+            .await;
+            let result = plugin
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            let headers = &session.req_header().headers;
+            (
+                result,
+                headers.contains_key("Range")
+                    || headers.contains_key("If-Range"),
+            )
+        };
+        let plugin = new_plugin("");
+        assert_eq!(
+            (RequestPluginResult::Continue, false),
+            ranged(&plugin, "/").await
+        );
+        // Only where the plugin rewrites.
+        let scoped = new_plugin("path = \"^/docs\"");
+        assert_eq!(
+            (RequestPluginResult::Continue, false),
+            ranged(&scoped, "/docs/a").await
+        );
+        assert_eq!(
+            (RequestPluginResult::Skipped, true),
+            ranged(&scoped, "/files/a").await
+        );
+    }
+
+    /// Regression: the part of a body a range request got was rewritten
+    /// like a whole one, under the `Content-Range` of the original; and a
+    /// rewritten body kept the upstream's strong `ETag` and
+    /// `Accept-Ranges`.
+    #[tokio::test]
+    async fn test_sub_filter_and_the_validators() {
+        let plugin = new_plugin("");
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let response = |status: u16| {
+            let mut resp = ResponseHeader::build(status, None).unwrap();
+            resp.append_header("Content-Length", "100").unwrap();
+            resp.append_header("ETag", "\"v1\"").unwrap();
+            resp.append_header("Accept-Ranges", "bytes").unwrap();
+            resp
+        };
+
+        let mut part = response(206);
+        part.append_header("Content-Range", "bytes 0-99/4000")
+            .unwrap();
+        let result = plugin
+            .handle_response(&mut session, &mut Ctx::default(), &mut part)
+            .await
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Unchanged, result);
+        assert_eq!(true, part.headers.contains_key("Content-Length"));
+        assert_eq!("\"v1\"", part.headers.get("ETag").unwrap());
+
+        let mut whole = response(200);
+        let result = plugin
+            .handle_response(&mut session, &mut Ctx::default(), &mut whole)
+            .await
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Modified, result);
+        assert_eq!("W/\"v1\"", whole.headers.get("ETag").unwrap());
+        assert_eq!(false, whole.headers.contains_key("Accept-Ranges"));
     }
 }

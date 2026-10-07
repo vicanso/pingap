@@ -89,7 +89,7 @@ let sender = WebhookNotificationSender::new(
 
 - `webhook_notifications` 是允许列表。留空会静默一切，即使设了 `webhook`——这是“为什么收不到告警”的常见原因。
 - `webhook`、`webhook_type`、`webhook_notifications`、`webhook_batch_window` 与 `webhook_batch_max_events` 均支持热更新（`--autoreload` / `--autorestart`）：修改后无需重启即生效，已在运行的上游、服务发现与证书检查发出的通知也按新配置投递。此时尚在收集的一批仍按收集时的配置发出。
-- 证书过期警告与 `certificates.<name>.buffer_days` 配合，后者控制 ACME 提前多久续期；见 [pingap-acme](acme.md)。
+- 证书过期警告（`tls_validity`）针对需要人工更换的证书：`certificates.<name>.buffer_days` 是提前多少天开始告警（不设置时为 7 天）。设置了 `acme` 的证书由 ACME 任务续期，出问题时发的是 `lets_encrypt` 通知；只有到期前一周仍未续上时才会收到这项告警。见 [pingap-acme](acme.md)。
 - 投递是尽力而为，失败记日志不重试。把 webhook 当作指标与日志之上的便利，而非唯一告警路径。
 
 ## 许可证

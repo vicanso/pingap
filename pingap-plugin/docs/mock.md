@@ -13,7 +13,7 @@ serving `/robots.txt` without an upstream, or testing client timeout handling.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `mock`. |
 | `path` | string | `""` | Exact path to mock. Empty matches **every** path in the location. |
-| `status` | int | `200` | Response status. A code outside `100`–`999` is a configuration error. |
+| `status` | int | `200` | Response status. A code outside `200`–`999` is a configuration error: an interim status (`1xx`) is not a response, and the client would wait for one that never comes. |
 | `headers` | string[] | — | Response headers as `Name: value`. An invalid name or value is a configuration error. |
 | `data` | string | `""` | Response body. |
 | `delay` | duration | none | Sleep before responding. |

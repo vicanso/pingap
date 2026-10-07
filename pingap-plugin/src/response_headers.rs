@@ -99,69 +99,65 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
 
-        // Parse add_headers from config
-        // Format: "Header-Name:header value"
-        let mut add_headers = vec![];
-        for item in get_str_slice_conf(value, "add_headers").iter() {
-            let header = convert_header(item).map_err(|e| Error::Invalid {
-                category: PluginCategory::ResponseHeaders.to_string(),
-                message: e.to_string(),
-            })?;
-            if let Some((name, value)) = header {
-                add_headers.push((name, resolve_static_header_value(value)));
-            }
-        }
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::ResponseHeaders.to_string(),
+            message,
+        };
+        // `name:value`, the name a header name. An entry without the
+        // colon used to be dropped without a word, and the plugin went on
+        // to do less than its configuration says.
+        let headers_of = |key: &str| -> Result<Vec<HttpHeader>> {
+            get_str_slice_conf(value, key)
+                .iter()
+                .map(|item| {
+                    let header = convert_header(item)
+                        .map_err(|e| invalid(e.to_string()))?;
+                    let (name, value) = header.ok_or_else(|| {
+                        invalid(format!("{key}: {item:?} should be name:value"))
+                    })?;
+                    Ok((name, resolve_static_header_value(value)))
+                })
+                .collect()
+        };
+        let add_headers = headers_of("add_headers")?;
+        let set_headers = headers_of("set_headers")?;
+        let set_headers_not_exists = headers_of("set_headers_not_exists")?;
 
-        let mut set_headers = vec![];
-        for item in get_str_slice_conf(value, "set_headers").iter() {
-            let header = convert_header(item).map_err(|e| Error::Invalid {
-                category: PluginCategory::ResponseHeaders.to_string(),
-                message: e.to_string(),
-            })?;
-            if let Some((name, value)) = header {
-                set_headers.push((name, resolve_static_header_value(value)));
-            }
-        }
         let mut remove_headers = vec![];
         for item in get_str_slice_conf(value, "remove_headers").iter() {
-            let item =
-                HeaderName::from_str(item).map_err(|e| Error::Invalid {
-                    category: PluginCategory::ResponseHeaders.to_string(),
-                    message: e.to_string(),
-                })?;
+            let item = HeaderName::from_str(item)
+                .map_err(|e| invalid(e.to_string()))?;
             remove_headers.push(item);
         }
         let mut rename_headers = vec![];
         for item in get_str_slice_conf(value, "rename_headers").iter() {
-            if let Some((k, v)) =
-                item.split_once(':').map(|(k, v)| (k.trim(), v.trim()))
-            {
-                let original_name =
-                    HeaderName::from_str(k).map_err(|e| Error::Invalid {
-                        category: PluginCategory::ResponseHeaders.to_string(),
-                        message: e.to_string(),
-                    })?;
-                let new_name =
-                    HeaderName::from_str(v).map_err(|e| Error::Invalid {
-                        category: PluginCategory::ResponseHeaders.to_string(),
-                        message: e.to_string(),
-                    })?;
-                rename_headers.push((original_name, new_name));
-            }
-        }
-        let mut set_headers_not_exists = vec![];
-        for item in get_str_slice_conf(value, "set_headers_not_exists").iter() {
-            let header = convert_header(item).map_err(|e| Error::Invalid {
-                category: PluginCategory::ResponseHeaders.to_string(),
-                message: e.to_string(),
-            })?;
-            if let Some((name, value)) = header {
-                set_headers_not_exists
-                    .push((name, resolve_static_header_value(value)));
-            }
+            let (k, v) = item
+                .split_once(':')
+                .map(|(k, v)| (k.trim(), v.trim()))
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "rename_headers: {item:?} should be old-name:new-name"
+                    ))
+                })?;
+            let original_name =
+                HeaderName::from_str(k).map_err(|e| invalid(e.to_string()))?;
+            let new_name =
+                HeaderName::from_str(v).map_err(|e| invalid(e.to_string()))?;
+            rename_headers.push((original_name, new_name));
         }
 
-        let mode = get_str_conf(value, "mode");
+        // A mode that is not one of the two was the default one: a typo in
+        // `upstream` moved the headers to the other hook, where a cached
+        // response does not get them stored.
+        let mode = match get_str_conf(value, "mode").as_str() {
+            "" | "response" => ModifiedMode::Response,
+            "upstream" => ModifiedMode::Upstream,
+            other => {
+                return Err(invalid(format!(
+                    "mode should be response or upstream, got {other:?}"
+                )));
+            },
+        };
 
         let params = Self {
             hash_value,
@@ -170,7 +166,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers,
             rename_headers,
             set_headers_not_exists,
-            mode: ModifiedMode::from(mode.as_str()),
+            mode,
         };
 
         Ok(params)
@@ -333,6 +329,47 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    /// Regression: an entry without its colon was dropped, and a mode that
+    /// is neither of the two was the default one. Either way the plugin
+    /// did something else than its configuration says, without a word.
+    #[test]
+    fn test_response_headers_rejects_what_it_would_ignore() {
+        let error = |conf: &str| {
+            ResponseHeaders::try_from(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+            )
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+        };
+        // spellchecker:off
+        assert_eq!(
+            true,
+            error("mode = \"upstrem\"").contains("response or upstream")
+        );
+        // spellchecker:on
+        for key in ["add_headers", "set_headers", "set_headers_not_exists"] {
+            let message = error(&format!("{key} = [\"X-Frame-Options DENY\"]"));
+            assert_eq!(
+                true,
+                message.contains("name:value"),
+                "{key}: {message}"
+            );
+        }
+        assert_eq!(
+            true,
+            error("rename_headers = [\"X-Old\"]").contains("old-name:new-name")
+        );
+        for conf in [
+            "",
+            "mode = \"upstream\"",
+            "mode = \"response\"",
+            "add_headers = [\"X-A:1\"]\nrename_headers = [\"X-Old:X-New\"]",
+        ] {
+            assert_eq!("", error(conf), "{conf}");
+        }
+    }
 
     /// Tests parsing of plugin configuration parameters.
     ///

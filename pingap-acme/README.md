@@ -86,11 +86,24 @@ a day later.
 | `dns_challenge` | bool | Use DNS-01 instead of HTTP-01 |
 | `dns_provider` | string | `ali`, `cf`, `huawei`, `tencent`, `manual` |
 | `dns_service_url` | string | Provider endpoint and credentials |
-| `buffer_days` | int | Renew this many days before expiry |
+| `buffer_days` | int | Renew this many days before expiry. Default: `14`, or a third of the certificate's lifetime when that is less |
 | `is_default` | bool | Serve this certificate when SNI matches nothing |
 
 `buffer_days` is the renewal margin: with `30`, a 90-day Let's Encrypt
-certificate is renewed at day 60.
+certificate is renewed at day 60. Left out, the margin is fourteen days (it
+used to be two, which left no time to notice an order that kept failing), and
+never more than a third of what the certificate lasts: one good for six days
+is renewed two days before its end.
+
+A certificate with `acme` set is renewed by this task, so the daily expiry
+warning (`tls_validity`), which is for certificates somebody has to replace by
+hand, leaves it alone while its renewal is not overdue. It is warned about once
+half of its renewal margin is gone as well, a week before its end at the
+latest: by then the renewal has been failing for a while, or was never going to
+happen (`PINGAP_DISABLE_ACME`, or a DNS challenge answered by hand, which is
+only asked for when the process starts). What goes wrong with a renewal is
+reported as it happens, see
+[When an order does not go through](#when-an-order-does-not-go-through).
 
 ## Where certificates are stored
 
@@ -100,6 +113,13 @@ means:
 - With **etcd**, every instance sharing the backend picks up the new certificate
   automatically. Only one of them needs to do the ordering.
 - With **file** storage, the certificate lands in the configuration directory.
+- Instances that share a storage share the certificate: before ordering, an
+  instance reads the stored entry, and when that already holds a certificate
+  for the same domains with its margin left - another instance renewed it - it
+  installs that one and orders nothing. Each instance used to go by its own
+  running configuration and order its own, and half a dozen of them ran into
+  the CA's limit on duplicate certificates. Two instances that reach the check
+  at the same moment can still both order; nothing coordinates them.
 - With the **quick start**, the certificate is persisted to
   `~/.pingap/acme/<domains>.toml` (owner-readable only) and restored on the next
   start.
@@ -128,9 +148,26 @@ behave identically without contacting Let's Encrypt.
 
 ## When an order does not go through
 
-An attempt is made every ten minutes for as long as a certificate is missing,
-about to expire or no longer covers its domains. A failed one is logged with
-the step it failed at and tried again on the next round.
+A certificate is checked every ten minutes, and ordered when it is missing,
+within its renewal margin or no longer covers its domains. A failed order is
+logged with the step it failed at, sent as a `lets_encrypt` notification of
+level `error`, and tried again after a wait that doubles with every failure in
+a row: ten minutes, twenty, forty, up to six hours. It used to be tried again
+at every check, which is more often than the five failed validations an hour a
+CA allows a name. A success, or a usable certificate turning up in the storage,
+ends the wait; so does a restart.
+
+An order that goes through and gives a certificate the entry cannot go on with
+counts as a failure too, with the same wait: `buffer_days` not less than what
+the CA's certificates last, or `domains` that is not what the certificate
+names (a name twice, or in upper case). The certificate is installed, and
+ordered again only after the wait instead of every ten minutes.
+
+A certificate elsewhere in the configuration that does not load no longer gets
+in the way: the new certificate is installed and recorded whatever the others
+do, and what is wrong with them is reported as `parse_certificate_fail`.
+(Before, the new certificate was served but not recorded, and ordered again
+every ten minutes.)
 
 - Every exchange with the CA and with the DNS provider is bounded: a request
   that gets no answer within a minute fails the attempt, and so does an order

@@ -160,10 +160,30 @@ pub struct ImageOptim {
     output_types: Vec<String>,
     /// The media type of each of `output_types`, in the same order.
     output_mimes: Vec<String>,
+    /// The cache key components a request can have: each selection of
+    /// `output_mimes`, sorted, as `Accept` may name any of them.
+    key_alternatives: Arc<Vec<Vec<String>>>,
     png_quality: u8,
     jpeg_quality: u8,
     avif_quality: u8,
     avif_speed: u8,
+}
+
+/// Every selection of `mimes`, the empty one first, each in sorted order.
+fn selections(mimes: &[String]) -> Vec<Vec<String>> {
+    let mut sorted = mimes.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    (0..1usize << sorted.len())
+        .map(|picked| {
+            sorted
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| picked & (1 << index) != 0)
+                .map(|(_, mime)| mime.clone())
+                .collect()
+        })
+        .collect()
 }
 
 impl TryFrom<&PluginConf> for ImageOptim {
@@ -194,27 +214,29 @@ impl TryFrom<&PluginConf> for ImageOptim {
                 ),
             });
         }
-        let output_mimes = output_types
+        let output_mimes: Vec<String> = output_types
             .iter()
             .map(|format| format!("image/{}", format))
             .collect();
 
-        let mut png_quality = get_int_conf(value, "png_quality") as u8;
-        if png_quality == 0 || png_quality > 100 {
-            png_quality = 90;
-        }
-        let mut jpeg_quality = get_int_conf(value, "jpeg_quality") as u8;
-        if jpeg_quality == 0 || jpeg_quality > 100 {
-            jpeg_quality = 80;
-        }
-        let mut avif_quality = get_int_conf(value, "avif_quality") as u8;
-        if avif_quality == 0 || avif_quality > 100 {
-            avif_quality = 75;
-        }
-        let mut avif_speed = get_int_conf(value, "avif_speed") as u8;
-        if avif_speed == 0 || avif_speed > 10 {
-            avif_speed = 3;
-        }
+        // Unset, or 0, is the default. Anything else outside the range is
+        // an error: cast to a byte as it came, 300 was a quality of 44.
+        let level = |key: &str, max: i64, default: u8| -> Result<u8, Error> {
+            match get_int_conf(value, key) {
+                0 => Ok(default),
+                level if (1..=max).contains(&level) => Ok(level as u8),
+                level => Err(Error::Invalid {
+                    category: "image_optim".to_string(),
+                    message: format!(
+                        "{key} should be between 1 and {max}, got {level}"
+                    ),
+                }),
+            }
+        };
+        let png_quality = level("png_quality", 100, 90)?;
+        let jpeg_quality = level("jpeg_quality", 100, 80)?;
+        let avif_quality = level("avif_quality", 100, 75)?;
+        let avif_speed = level("avif_speed", 10, 3)?;
         Ok(Self {
             hash_value,
             handler_id: pingap_plugin::new_body_handler_id(PLUGIN_ID),
@@ -223,6 +245,7 @@ impl TryFrom<&PluginConf> for ImageOptim {
                 "png".to_string(),
             ]),
             output_types,
+            key_alternatives: Arc::new(selections(&output_mimes)),
             output_mimes,
             png_quality,
             jpeg_quality,
@@ -250,25 +273,32 @@ impl Plugin for ImageOptim {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
-        if step != PluginStep::Request {
+        // Ahead of the plugins that answer in the request step. The cache
+        // plugin answers a `PURGE` there, and has to know by then that the
+        // formats are a part of the key and which ones there are: listed
+        // after it, this plugin had not run, and the purge removed the
+        // entry of a request that accepts no image format and no other.
+        if step != PluginStep::EarlyRequest {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        if let Some(accept) = session.get_header(http::header::ACCEPT)
-            && let Ok(accept_str) = accept.to_str()
-        {
-            let mut accept_images: Vec<_> = self
-                .output_mimes
-                .iter()
-                .filter(|mime| accept_str.contains(*mime))
-                .cloned()
-                .collect();
-
-            if !accept_images.is_empty() {
-                accept_images.sort();
-                ctx.extend_cache_keys(accept_images);
-            }
-        }
+        let accept = session
+            .get_header(http::header::ACCEPT)
+            .and_then(|accept| accept.to_str().ok())
+            .unwrap_or_default();
+        let mut accept_images: Vec<_> = self
+            .output_mimes
+            .iter()
+            .filter(|mime| accept.contains(*mime))
+            .cloned()
+            .collect();
+        accept_images.sort();
+        // As in `selections`: a format listed twice is one format.
+        accept_images.dedup();
+        ctx.push_cache_key_variant(
+            accept_images,
+            self.key_alternatives.clone(),
+        );
         Ok(RequestPluginResult::Continue)
     }
     fn handle_upstream_response(
@@ -339,6 +369,10 @@ impl Plugin for ImageOptim {
             .unwrap_or_else(|| image_type.clone());
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        // Ranges of the new image are not ranges of the upstream's. The
+        // `ETag` stays the upstream's for the cache to revalidate with,
+        // and is weakened on the way out, in `handle_response`.
+        upstream_response.remove_header(&http::header::ACCEPT_RANGES);
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(
             http::header::TRANSFER_ENCODING,
@@ -366,6 +400,36 @@ impl Plugin for ImageOptim {
             }),
         );
         Ok(ResponsePluginResult::Modified)
+    }
+    /// The upstream's strong `ETag` names the image it sent, and what
+    /// goes out is that image encoded anew: the validator is made a weak
+    /// one. On the way to the client, for a response from the cache as
+    /// well, and not on the response that is stored: the cache
+    /// revalidates with the validator as the upstream gave it.
+    ///
+    /// Every image of a kind this plugin reads or writes gets it, also
+    /// one that was left as it came (too large, say): which it was is not
+    /// known here, and a weak validator is never wrong.
+    async fn handle_response(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        let ours = upstream_response
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .and_then(|value| value.trim().strip_prefix("image/"))
+            .is_some_and(|kind| {
+                self.support_types.contains(kind)
+                    || self.output_types.iter().any(|output| output == kind)
+            });
+        if ours && pingap_plugin::weaken_etag(upstream_response) {
+            return Ok(ResponsePluginResult::Modified);
+        }
+        Ok(ResponsePluginResult::Unchanged)
     }
     fn handle_upstream_response_body(
         &self,
@@ -435,6 +499,73 @@ png_quality = 90
         assert_eq!(3, optim.avif_speed);
     }
 
+    /// The validator of an image this plugin may have encoded anew is a
+    /// weak one for the client, whatever the cache holds.
+    #[tokio::test]
+    async fn test_image_validator_is_weak_on_the_way_out() {
+        let optim = new_optim("avif,webp");
+        let sent = async |content_type: &str| {
+            let mut session = new_session("").await;
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            resp.insert_header("Content-Type", content_type).unwrap();
+            resp.insert_header("ETag", "\"v1\"").unwrap();
+            optim
+                .handle_response(&mut session, &mut Ctx::default(), &mut resp)
+                .await
+                .unwrap();
+            resp.headers
+                .get("ETag")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!("W/\"v1\"", sent("image/webp").await);
+        assert_eq!("W/\"v1\"", sent("image/jpeg; q=1").await);
+        // Not an image of this plugin's.
+        assert_eq!("\"v1\"", sent("image/svg+xml").await);
+        assert_eq!("\"v1\"", sent("text/html").await);
+    }
+
+    /// Regression: the levels were cast to a byte before they were
+    /// checked, so 300 passed as 44 instead of being out of range.
+    #[test]
+    fn test_levels_out_of_range_are_rejected() {
+        let build = |conf: &str| {
+            ImageOptim::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        for conf in [
+            "png_quality = 300",
+            "png_quality = 101",
+            "jpeg_quality = 256",
+            "avif_quality = -1",
+            "avif_speed = 11",
+            "avif_speed = 266",
+        ] {
+            let message =
+                build(conf).err().map(|e| e.to_string()).unwrap_or_default();
+            assert_eq!(true, message.contains("should be between"), "{conf}");
+        }
+        // Unset or 0 is the default, the ends of the range are in it.
+        let optim = build("jpeg_quality = 0").unwrap();
+        assert_eq!(
+            (90, 80, 75, 3),
+            (
+                optim.png_quality,
+                optim.jpeg_quality,
+                optim.avif_quality,
+                optim.avif_speed
+            )
+        );
+        let optim =
+            build("png_quality = 1\njpeg_quality = 100\navif_speed = 10")
+                .unwrap();
+        assert_eq!(
+            (1, 100, 10),
+            (optim.png_quality, optim.jpeg_quality, optim.avif_speed)
+        );
+    }
+
     #[tokio::test]
     async fn test_image_optimize_handle_request() {
         let optim = ImageOptim::try_from(
@@ -466,12 +597,30 @@ png_quality = 90
             let mut ctx = Ctx::default();
 
             let result = optim
-                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
                 .await
                 .unwrap();
 
             assert_eq!(true, RequestPluginResult::Continue == result);
-            assert_eq!(true, ctx.cache.is_none());
+            // No format accepted: nothing in the key, and the place of
+            // the formats noted with all that could stand there.
+            let cache = ctx.cache.unwrap();
+            assert_eq!(Some(vec![]), cache.keys);
+            let variants = cache.key_variants.unwrap();
+            assert_eq!((0, 0), (variants[0].at, variants[0].len));
+            assert_eq!(
+                vec![
+                    vec![],
+                    vec!["image/avif".to_string()],
+                    vec!["image/webp".to_string()],
+                    vec!["image/avif".to_string(), "image/webp".to_string()],
+                ],
+                *variants[0].alternatives
+            );
         }
 
         // accept avif
@@ -489,7 +638,11 @@ png_quality = 90
             let mut ctx = Ctx::default();
 
             let result = optim
-                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
                 .await
                 .unwrap();
 
@@ -515,7 +668,11 @@ png_quality = 90
             let mut ctx = Ctx::default();
 
             let result = optim
-                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
                 .await
                 .unwrap();
 

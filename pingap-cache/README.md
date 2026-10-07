@@ -58,9 +58,18 @@ which makes it a better fit than an LRU for proxy workloads.
 | `max_size=20` | 20 % of the memory budget — a bare number is a percentage, clamped to 100 |
 | `max_size=100mb` | An absolute size — anything with a unit is taken literally, however small |
 
-`update_available_memory()` is called by the process metrics collector so the
-default budget tracks the machine (or the container limit) rather than a
-hard-coded number.
+`update_available_memory()` is called once at startup with the memory that is
+available: what the machine reports, and no more than the container is allowed
+(the memory limit of the cgroup, on Linux), so the default budget tracks where
+the process runs rather than a hard-coded number. The machine's figure alone
+used to be taken, which in a container limited to less than a quarter of it
+sized the cache past the limit. A limit that is not the container's own, the
+`MemoryMax=` of a systemd unit for example, is not seen: set `max_size` there.
+
+An entry weighs its size in 4 KB pages, rounded up (rounded down, a cache of
+small objects held up to twice its budget). One that weighs more than the
+whole cache holds is not stored in memory: TinyUFO would make room for it by
+evicting everything else. An object of 40 MB or more weighs the maximum, 256 MB.
 
 Entries are weighed in 4 KB pages, so the budget in pages is also the most
 entries the cache can hold, and that is the size estimate TinyUFO gets for its
@@ -91,6 +100,14 @@ key do not leave it off for good.
 
 `new_storage_clear_service()` returns a background service that periodically
 sweeps inactive files.
+
+"Untouched" and "least recently accessed" go by the access time of the file,
+which the cache sets itself when an object is read, about once a minute per
+object and also when the read was answered from the hot layer. It does not
+depend on how the file system is mounted. Left to the file system, an object
+served from the hot layer was never read from disk: the more it was asked for
+the older its file looked, and on a `noatime` mount `inactive` counted from the
+write.
 
 The directory can hold other data. The cache counts, evicts, sweeps and purges
 only the files it wrote: the objects, whose names are their keys (32

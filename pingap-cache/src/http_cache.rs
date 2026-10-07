@@ -50,6 +50,9 @@ pub struct CacheObject {
 static MAX_OBJECT_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
 
 impl CacheObject {
+    /// The weight of the object in the memory cache: its size in 4 KB
+    /// pages, rounded up. Rounded down, 8191 bytes weighed one page, and
+    /// a cache of small objects held up to twice its budget.
     pub fn get_weight(&self) -> u16 {
         let size = self.body.len() + self.meta.0.len() + self.meta.1.len();
         if size <= PAGE_SIZE {
@@ -58,7 +61,7 @@ impl CacheObject {
         if size >= MAX_OBJECT_CACHE_SIZE {
             return u16::MAX;
         }
-        (size / PAGE_SIZE) as u16
+        size.div_ceil(PAGE_SIZE) as u16
     }
 }
 
@@ -645,11 +648,17 @@ mod tests {
         };
         assert_eq!(1, obj.get_weight());
 
-        let obj = CacheObject {
-            meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
-            body: vec![0; PAGE_SIZE * 2].into(),
+        // Regression: the size in pages was rounded down, so an object
+        // weighed up to a page less than it takes.
+        let sized = |size: usize| CacheObject {
+            body: vec![0; size].into(),
+            ..Default::default()
         };
-        assert_eq!(2, obj.get_weight());
+        assert_eq!(1, sized(PAGE_SIZE).get_weight());
+        assert_eq!(2, sized(PAGE_SIZE + 1).get_weight());
+        assert_eq!(2, sized(PAGE_SIZE * 2 - 1).get_weight());
+        assert_eq!(2, sized(PAGE_SIZE * 2).get_weight());
+        assert_eq!(3, sized(PAGE_SIZE * 2 + 1).get_weight());
 
         // data larger than max size
         let obj = CacheObject {

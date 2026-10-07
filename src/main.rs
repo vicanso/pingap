@@ -511,6 +511,24 @@ fn new_access_logger(
     r
 }
 
+/// The memory the caches may plan with: what the machine has available,
+/// and no more than the container is allowed.
+///
+/// The machine's figure alone is the host's. In a container limited to
+/// less than a quarter of that the memory cache was sized by the host,
+/// up to its cap of 1 GB, and the kernel ended the process once it had
+/// filled a part of it.
+///
+/// The limit, not what is left of it: that counts the page cache and,
+/// during an upgrade, the process this one replaces, and is nothing at all
+/// in a container that is full - where it was needed most.
+fn available_memory(machine: u64, cgroup_limit: Option<u64>) -> u64 {
+    match cgroup_limit {
+        Some(limit) if limit > 0 => machine.min(limit),
+        _ => machine,
+    }
+}
+
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
@@ -670,7 +688,10 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut sys = System::new();
     sys.refresh_memory();
-    pingap_cache::update_available_memory(sys.available_memory());
+    pingap_cache::update_available_memory(available_memory(
+        sys.available_memory(),
+        sys.cgroup_limits().map(|limits| limits.total_memory),
+    ));
 
     // Initialize configuration. With `--upstream` the whole config is built
     // from the command line and kept in memory, so no config file is needed.
@@ -1234,6 +1255,16 @@ fn main() {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_available_memory_keeps_to_the_container() {
+        let gb = 1024 * 1024 * 1024;
+        assert_eq!(64 * gb, available_memory(64 * gb, None));
+        assert_eq!(64 * gb, available_memory(64 * gb, Some(0)));
+        assert_eq!(gb / 4, available_memory(64 * gb, Some(gb / 4)));
+        // A limit above what there is changes nothing.
+        assert_eq!(2 * gb, available_memory(2 * gb, Some(8 * gb)));
+    }
 
     /// Regression: a restart handed the admin credentials and the config
     /// address to the new process as arguments, also when this process had

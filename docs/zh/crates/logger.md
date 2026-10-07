@@ -98,7 +98,7 @@ let parser = Parser::from(format);
 | `{when_unix}`          | 请求时间，Unix 时间戳（毫秒）。         |
 | `{size}`               | 响应大小（字节）。                                |
 | `{size_human}`         | 响应大小可读格式（如 1.2 KB）。 |
-| `{status}`             | 响应状态码。                                  |
+| `{status}`             | 响应状态码，即客户端实际收到的那个。响应来自缓存时它和上游的状态码不同：上游以 `304` 应答的重新验证，日志记的是客户端收到的 `200`（上游的状态码见 `upstream_status`）。 |
 | `{latency}`            | 请求延迟（毫秒）。                       |
 | `{latency_human}`      | 请求延迟可读格式（如 1.2s）。 |
 | `{payload_size}`       | 载荷大小（字节）。                                 |

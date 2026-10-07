@@ -88,9 +88,22 @@ pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 
 An etcd URL is `etcd://host:2379[,host2:2379]/prefix[?params]`; the prefix
 defaults to `/` when omitted, and a URL without a host is rejected. Parameters
-are `timeout`, `connect_timeout`, `user` and `password`. The storage opens one
-client and reuses it for every request; a request that fails is retried once
-on a fresh connection.
+are `timeout` (default `10s`), `connect_timeout` (default `5s`), `user`,
+`password` and `enable_history`. The storage opens one client and reuses it
+for every request; a request that fails is retried once on a fresh connection.
+
+- A request and a connection attempt are bounded also when the URL gives no
+  timeouts, and the connection of the watch is checked with an HTTP/2 ping
+  every 30 seconds. Without either, a connection that had gone quiet held the
+  poll waiting on it for good, and every save behind it.
+- The keys of a prefix are read a page at a time (64 keys, fewer when their
+  values are large; what it came down to is kept for the next read), all pages
+  as of the same revision, so a configuration is not limited to what fits
+  into one gRPC message (4 MiB).
+- With `enable_history=true` the hundred newest versions of each key are kept
+  under `<prefix>-history`; older ones are removed as new ones are written.
+  A deleted key leaves no version behind.
+- TLS to etcd is not supported.
 
 A directory is loaded by reading every `*.toml` file in it (or, when there is
 none, every `*.hcl`, then every `*.kdl`). Each file is parsed on its own and
@@ -322,7 +335,9 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
   it, it is started again, with a delay that grows from 500ms to a minute while
   etcd stays unreachable, and the configuration is compared once more as soon
   as it is back. The stored configuration is also re-read every
-  `basic.auto_restart_check_interval`, watch or no watch.
+  `basic.auto_restart_check_interval`, watch or no watch. The watch is on the
+  keys below the prefix and nothing else: `/pingap` no longer wakes for
+  `/pingap2` or for its own `/pingap-history`.
 - **File** returns `false` and is polled every `basic.auto_restart_check_interval`.
 
 Both feed the same reload handle; the difference is only the delivery mechanism.
@@ -332,6 +347,22 @@ only run when the document changed since the last pass, or when the last pass
 was hot-reload-only and this one may restart.
 A replacement process that cannot load its configuration, or whose plugins do
 not build, exits and leaves the running one in place, `--admin` or not.
+
+A hot reload is all or nothing for what has to be built. When upstreams,
+locations or plugins changed, every one of them is built first as `pingap -t`
+would (off the worker threads, without touching what is running), and a
+failure there - a regex that does not compile, a plugin option of the wrong
+type, an address that does not resolve - leaves the running configuration as
+it is. It is reported once, in the log and as a `reload_config_fail`
+notification, and the same document is tried again once a minute, in case what
+stood in the way has passed (a name that did not resolve). Categories
+used to be replaced one after the other, and a failure in one left the others
+applied: locations routing to an upstream that was not there. Should a category
+still fail while it is being replaced, it stays what it was in the running
+configuration (and in what the admin reports), the routes of the servers are
+not rebuilt from locations that could not be, and the next change to the
+document tries it again. An upstream that a change removes is kept until the
+locations that routed to it have been replaced.
 A change that only touches `storages` never restarts the process: an entry
 there has no effect of its own, and what another entry includes from it shows
 up as a change of that entry.

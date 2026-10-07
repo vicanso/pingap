@@ -35,6 +35,8 @@ use tracing::debug;
 pub(crate) struct MemoryCache {
     ufo: TinyUfo<u64, CacheObject>,
     hasher: RandomState,
+    /// The total weight the cache holds.
+    limit: usize,
 }
 
 /// TinyUFO variant. `normal` (also `default`) is the lock-free index,
@@ -60,6 +62,7 @@ impl MemoryCache {
         Self {
             ufo,
             hasher: RandomState::new(),
+            limit,
         }
     }
 
@@ -72,7 +75,24 @@ impl MemoryCache {
         self.ufo.get(&self.hash(key))
     }
 
+    /// Stores `data`, unless it weighs more than the whole cache holds.
+    ///
+    /// TinyUFO makes room for what it is given by evicting, and for an
+    /// object over the limit that is everything: one large response - 40 MB
+    /// and more weigh the maximum, 256 MB - emptied a cache of that size or
+    /// less, and was then alone in it over budget. Such an object is not
+    /// cached in memory.
     pub(crate) fn put(&self, key: &str, data: CacheObject, weight: u16) {
+        if weight as usize > self.limit {
+            debug!(
+                target: LOG_TARGET,
+                key,
+                weight,
+                limit = self.limit,
+                "object is larger than the memory cache, not stored"
+            );
+            return;
+        }
         self.ufo.put(self.hash(key), data, weight);
     }
 
@@ -187,6 +207,38 @@ mod tests {
     }
 
     /// A zero weight limit must not blow up TinyUFO's sketch sizing.
+    /// Regression: an object that weighs more than the cache holds was
+    /// handed to TinyUFO, which made room for it by evicting everything
+    /// else.
+    #[test]
+    fn test_object_over_the_limit_is_not_stored() {
+        let cache = MemoryCache::new(CacheMode::Normal, 100);
+        let small = CacheObject {
+            body: bytes::Bytes::from_static(b"small"),
+            ..Default::default()
+        };
+        for index in 0..10 {
+            cache.put(&format!("small-{index}"), small.clone(), 1);
+        }
+        let large = CacheObject {
+            body: vec![0; 4096 * 101].into(),
+            ..Default::default()
+        };
+        assert_eq!(101, large.get_weight());
+        cache.put("large", large.clone(), large.get_weight());
+        assert_eq!(true, cache.get("large").is_none());
+        for index in 0..10 {
+            assert_eq!(
+                true,
+                cache.get(&format!("small-{index}")).is_some(),
+                "small-{index} was evicted"
+            );
+        }
+        // One that fits is stored.
+        cache.put("fits", large, 100);
+        assert_eq!(true, cache.get("fits").is_some());
+    }
+
     #[test]
     fn test_zero_limit() {
         let _ = TinyUfoCache::new(CacheMode::Normal, 0);

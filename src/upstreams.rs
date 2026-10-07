@@ -86,11 +86,13 @@ pub fn try_init_upstreams(
     Ok(())
 }
 
+/// Brings the upstreams up to date with `upstream_configs`. The ones it no
+/// longer has are kept for now, see [`remove_unconfigured_upstreams`].
 pub async fn try_update_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<Vec<String>> {
-    let (upstreams, updated_upstreams) = new_ahash_upstreams(
+    let (mut upstreams, updated_upstreams) = new_ahash_upstreams(
         upstream_configs,
         UPSTREAM_PROVIDER.clone(),
         sender,
@@ -113,6 +115,34 @@ pub async fn try_update_upstreams(
             );
         }
     }
+    for (name, upstream) in UPSTREAM_PROVIDER.list() {
+        upstreams.entry(name).or_insert(upstream);
+    }
     UPSTREAM_PROVIDER.store(upstreams);
     Ok(updated_upstreams)
+}
+
+/// Drops the upstreams that `upstream_configs` no longer has, the second
+/// half of an upstream reload.
+///
+/// A change that takes an upstream away takes it away from the locations
+/// too, and those are replaced after the upstreams. Removed at once, the
+/// upstream was gone while the locations still in place went on routing
+/// to it, and their requests failed until the reload had got to them.
+pub fn remove_unconfigured_upstreams(
+    upstream_configs: &HashMap<String, UpstreamConf>,
+) {
+    let current = UPSTREAM_PROVIDER.upstreams.load();
+    if current
+        .keys()
+        .all(|name| upstream_configs.contains_key(name))
+    {
+        return;
+    }
+    let upstreams: Upstreams = current
+        .iter()
+        .filter(|(name, _)| upstream_configs.contains_key(*name))
+        .map(|(name, upstream)| (name.clone(), upstream.clone()))
+        .collect();
+    UPSTREAM_PROVIDER.store(upstreams);
 }

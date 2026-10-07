@@ -17,7 +17,11 @@ context can be surfaced to the client.
 | `set_headers_not_exists` | string[] | — | `Name: value` — only set when the header is absent. |
 | `remove_headers` | string[] | — | Header names to delete. |
 | `rename_headers` | string[] | — | `Old-Name: New-Name` — moves every value of the header. |
-| `mode` | string | *(response)* | `upstream` to rewrite the upstream response header instead. |
+| `mode` | string | *(response)* | `upstream` to rewrite the upstream response header instead. Anything but `response` or `upstream` is a configuration error. |
+
+An entry that is not `Name: value` (`Old-Name: New-Name` for
+`rename_headers`) is a configuration error. One without its colon used to be
+dropped without a word, and a misspelt `mode` was taken for `response`.
 
 Operations always run in this order, regardless of declaration order:
 

@@ -82,7 +82,19 @@ pub struct FileCache {
     /// walk and write, so a burst of writes over budget costs one directory
     /// walk, not one per write.
     evicting: AtomicBool,
+    /// When the file of an object was last marked as read, in seconds; by
+    /// a hash of its key, see [`FileCache::touch`].
+    touched: Box<[AtomicU64]>,
 }
+
+/// How often, at most, the file of an object is marked as read.
+const TOUCH_INTERVAL: u32 = 60;
+/// How soon an object may take a slot of the table below from another.
+const TOUCH_TAKEOVER: u32 = 1;
+/// The size of the table that keeps, for the objects last marked, which
+/// one it was and when: half a megabyte, so that objects seldom share a
+/// slot. Those that do take turns, see [`FileCache::touch`].
+const TOUCH_SLOTS: usize = 65536;
 
 /// `levels=1:2`: up to two levels, each 1 to 3 characters of the key. A
 /// value outside that is an error rather than silently no levels, which
@@ -344,6 +356,7 @@ impl FileCache {
             max_size,
             current_size: AtomicU64::new(current_size),
             evicting: AtomicBool::new(false),
+            touched: (0..TOUCH_SLOTS).map(|_| AtomicU64::new(0)).collect(),
         })
     }
 
@@ -478,6 +491,66 @@ impl FileCache {
         true
     }
 
+    /// Marks the file of `key` as read now, when that has not been done
+    /// within the last minute.
+    ///
+    /// The sweep of inactive files and the eviction for `max_size` go by
+    /// the time a file was last read, and used to leave the keeping of it
+    /// to the file system. That knows nothing of an object served from the
+    /// hot layer: the more an object was asked for, the older its file
+    /// looked, and it was the first to be evicted and gone after
+    /// `inactive` however often it was served. On a file system mounted
+    /// `noatime` no read was ever recorded, and `inactive` counted from
+    /// the write.
+    fn touch(&self, key: &str, namespace: &str) {
+        let hash = key.bytes().fold(0u64, |hash, byte| {
+            hash.wrapping_mul(31).wrapping_add(byte as u64)
+        });
+        let slot = &self.touched[hash as usize % self.touched.len()];
+        // A slot says who was marked last and when, in one word: the time
+        // in the high half, the rest of the hash in the low one.
+        let owner = (hash >> 16) as u32;
+        let now = pingap_core::now_sec() as u32;
+        let last = slot.load(Ordering::Relaxed);
+        let (marked_at, marked) = ((last >> 32) as u32, last as u32);
+        // Once a minute for the object that holds the slot. Another one
+        // takes it over after a second: a slot shared by an object that
+        // is asked for all the time and one that is asked for now and
+        // then goes to the second whenever it comes, where one mark a
+        // minute for the slot went to the first every time.
+        let wait = if marked == owner {
+            TOUCH_INTERVAL
+        } else {
+            TOUCH_TAKEOVER
+        };
+        let next = (now as u64) << 32 | owner as u64;
+        if now.saturating_sub(marked_at) < wait
+            || slot
+                .compare_exchange(
+                    last,
+                    next,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+        {
+            return;
+        }
+        let file = self.get_file_path(key, namespace);
+        // Not waited for: the request has its object already.
+        tokio::task::spawn_blocking(move || {
+            let times =
+                std::fs::FileTimes::new().set_accessed(SystemTime::now());
+            // Opened for writing, which Windows asks for before it lets
+            // the times of a file be set. An object that is in memory
+            // only has no file.
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&file)
+                .and_then(|file| file.set_times(times));
+        });
+    }
+
     #[inline]
     fn get_file_path(&self, key: &str, namespace: &str) -> PathBuf {
         let mut path = Path::new(&self.directory).to_path_buf();
@@ -568,6 +641,7 @@ impl HttpCacheStorage for FileCache {
                 target: LOG_TARGET,
                 key, namespace, "get cache from tinyufo"
             );
+            self.touch(key, namespace_str(namespace));
             return Ok(Some(obj));
         }
 
@@ -616,6 +690,7 @@ impl HttpCacheStorage for FileCache {
         // cache get from file, but not in tinyufo, put it to tinyufo
         if let Some(obj) = &obj {
             self.put_hot(key, obj);
+            self.touch(key, namespace_str(namespace));
         }
         debug!(
             target: LOG_TARGET,
@@ -1474,6 +1549,105 @@ mod tests {
         for file in [&notes, &short, &other_tmp, &nested] {
             assert_eq!(true, file.exists(), "{} is gone", file.display());
         }
+    }
+
+    /// Regression: an object served from the hot layer was never read
+    /// from its file, whose access time stayed where the write had left
+    /// it. The objects asked for most were the first the eviction took
+    /// and were swept after `inactive` like ones nobody wanted.
+    #[tokio::test]
+    async fn test_a_hit_in_the_hot_layer_keeps_the_file() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=100",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from_static(b"body"),
+        };
+        let name = key("hot");
+        cache.put(&name, b"", obj.clone()).await.unwrap();
+        let file = cache.get_file_path(&name, "");
+        let three_days_ago =
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+        let age = || {
+            filetime::set_file_atime(
+                &file,
+                filetime::FileTime::from_system_time(three_days_ago),
+            )
+            .unwrap();
+        };
+        let accessed = || std::fs::metadata(&file).unwrap().accessed().unwrap();
+        age();
+
+        // From memory, and the file is marked all the same.
+        assert_eq!(true, cache.get_hot(&name).is_some());
+        assert_eq!(Some(obj.clone()), cache.get(&name, b"").await.unwrap());
+        for _ in 0..200 {
+            if accessed() > three_days_ago + Duration::from_secs(3600) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            true,
+            accessed() > three_days_ago + Duration::from_secs(3600),
+            "the file was not marked as read"
+        );
+        let stats = cache
+            .clear(SystemTime::now() - Duration::from_secs(48 * 3600))
+            .await
+            .unwrap();
+        assert_eq!(0, stats.success);
+        assert_eq!(true, file.exists());
+
+        // Not on every hit: once a minute.
+        age();
+        cache.get(&name, b"").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            true,
+            accessed() < three_days_ago + Duration::from_secs(3600)
+        );
+
+        // An object that shares the slot with one that is asked for all
+        // the time is not kept out of it for good.
+        let slot_of = |key: &str| {
+            key.bytes().fold(0u64, |hash, byte| {
+                hash.wrapping_mul(31).wrapping_add(byte as u64)
+            }) as usize
+                % TOUCH_SLOTS
+        };
+        let neighbour = (0..)
+            .map(|index| format!("{index:032x}"))
+            .find(|key| key != &name && slot_of(key) == slot_of(&name))
+            .unwrap();
+        cache.put(&neighbour, b"", obj.clone()).await.unwrap();
+        let neighbour_file = cache.get_file_path(&neighbour, "");
+        filetime::set_file_atime(
+            &neighbour_file,
+            filetime::FileTime::from_system_time(three_days_ago),
+        )
+        .unwrap();
+        // The slot is the first object's, marked a moment ago.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        cache.get(&neighbour, b"").await.unwrap();
+        let marked = || {
+            std::fs::metadata(&neighbour_file)
+                .unwrap()
+                .accessed()
+                .unwrap()
+                > three_days_ago + Duration::from_secs(3600)
+        };
+        for _ in 0..200 {
+            if marked() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(true, marked(), "the neighbour was not marked as read");
     }
 
     #[test]
