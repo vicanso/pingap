@@ -12,6 +12,8 @@
 cargo build --features=tracing
 ```
 
+以前只有 `full` 构建才会读取 `basic.sentry`：带 `tracing` 而不带 `imageoptim` 的构建把客户端编译进去了，却从不启用。
+
 ## 配置
 
 ```toml

@@ -114,3 +114,8 @@ login page's `200` into an approval.
 - Trailing state such as `Set-Cookie` from a *successful* auth response is not
   propagated to the client — only `add_headers` are, and only onto the upstream
   request.
+- Every entry of `request_headers` and `add_headers` has to be a header name,
+  in any case. One that is not (`X Bad`, `X-User:`, an empty string) is a
+  configuration error and reported by `pingap -t`; it used to load and then
+  match nothing, so what the auth service said under that name never reached
+  the upstream.

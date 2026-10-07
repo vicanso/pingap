@@ -69,7 +69,7 @@ webhook_notifications = [
 | --- | --- |
 | `wecom` | 企业微信 markdown 消息，按级别着色 |
 | `dingtalk` | 钉钉 markdown 消息 |
-| 其他 | 通用 JSON POST |
+| 其他 | 通用 JSON POST：一个对象，包含 `name`（`pingap`）、`title`、`level`（`info`、`warn`、`error`）、`category`、`message`、`hostname` 和 `ip`（本机地址，以 `;` 分隔）。以前其中没有 `title`。 |
 
 `Warn` 与 `Error` 用警告色；`Info` 以评论样式渲染。
 

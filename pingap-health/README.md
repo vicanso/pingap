@@ -37,6 +37,8 @@ The following query parameters can be used to configure the health check:
 - `service`: The service name for gRPC health checks.
 - `parallel`: If present, health checks will be performed in parallel.
 
+An HTTP/S check passes on status `200` and nothing else: a `204`, a redirect or a `401` from a path that wants credentials all count as failures, so point it at a path that answers `200`. The connection of every kind of check is made to the backend's own address and port, from `addrs`; the host of the URL is what is sent as `Host` (and as SNI over TLS), and a port written after it is ignored.
+
 A value that does not parse is a configuration error rather than a silent fallback to the default: a duration without a unit (`check_frequency=5`), a zero duration, `success=0` or `failure=0` are all rejected when the upstream is created, so `pingap -t` reports them.
 
 An upstream without a `health_check` gets `tcp://` with the defaults above: a backend is unhealthy after two failed connects and healthy again after one success.

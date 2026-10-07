@@ -37,6 +37,8 @@ let (conf, hc): (HealthCheckConf, Box<dyn HealthCheck + Send + Sync + 'static>) 
 - `service`：gRPC 健康检查的服务名。
 - `parallel`：存在则并行执行健康检查。
 
+HTTP/S 检查只认状态码 `200`：`204`、重定向、需要凭据的路径返回的 `401` 都算失败，所以要把它指向一个返回 `200` 的路径。各类检查的连接都发往后端自己的地址和端口（取自 `addrs`）；URL 里的主机名只用作 `Host`（TLS 下也用作 SNI），写在它后面的端口会被忽略。
+
 无法解析的值是配置错误，不会静默回退到默认值：没有单位的时长（`check_frequency=5`）、为零的时长、`success=0` 或 `failure=0` 都会在创建 upstream 时被拒绝，`pingap -t` 会报告出来。
 
 没有配置 `health_check` 的 upstream 等同于不带参数的 `tcp://`，使用上述默认值：连续两次连接失败标记不健康，一次成功即恢复。

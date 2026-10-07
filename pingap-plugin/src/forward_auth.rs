@@ -104,10 +104,30 @@ pub struct ForwardAuth {
     client: reqwest::Client,
     auth_url: String,
     /// Original request header names to forward; empty means forward all.
-    request_headers: Vec<String>,
+    request_headers: Vec<HeaderName>,
     /// Auth-response header names to copy onto the upstream request on success.
-    add_headers: Vec<String>,
+    add_headers: Vec<HeaderName>,
     hash_value: String,
+}
+
+/// The header names listed under `key`.
+///
+/// An entry that is not a header name - `X Bad`, `X-User:` - used to load
+/// and then match nothing: in `add_headers` what the auth service said
+/// under that name never reached the upstream, in `request_headers` the
+/// header was never sent to the auth service, and neither was reported.
+fn get_header_names(value: &PluginConf, key: &str) -> Result<Vec<HeaderName>> {
+    get_str_slice_conf(value, key)
+        .iter()
+        .map(|name| {
+            HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| {
+                Error::Invalid {
+                    category: CATEGORY.to_string(),
+                    message: format!("{key}: {name:?} is not a header name"),
+                }
+            })
+        })
+        .collect()
 }
 
 impl TryFrom<&PluginConf> for ForwardAuth {
@@ -148,8 +168,8 @@ impl TryFrom<&PluginConf> for ForwardAuth {
             plugin_step: PluginStep::Request,
             client,
             auth_url,
-            request_headers: get_str_slice_conf(value, "request_headers"),
-            add_headers: get_str_slice_conf(value, "add_headers"),
+            request_headers: get_header_names(value, "request_headers")?,
+            add_headers: get_header_names(value, "add_headers")?,
         })
     }
 }
@@ -194,10 +214,7 @@ impl Plugin for ForwardAuth {
                     continue;
                 }
                 if self.request_headers.is_empty()
-                    || self
-                        .request_headers
-                        .iter()
-                        .any(|h| h.eq_ignore_ascii_case(name.as_str()))
+                    || self.request_headers.contains(name)
                 {
                     builder = builder.header(name.as_str(), value.as_bytes());
                 }
@@ -255,12 +272,9 @@ impl Plugin for ForwardAuth {
             let mut to_add = vec![];
             for name in &self.add_headers {
                 if let Some(value) = resp.headers().get(name.as_str())
-                    && let (Ok(n), Ok(v)) = (
-                        HeaderName::from_bytes(name.as_bytes()),
-                        HeaderValue::from_bytes(value.as_bytes()),
-                    )
+                    && let Ok(value) = HeaderValue::from_bytes(value.as_bytes())
                 {
-                    to_add.push((n, v));
+                    to_add.push((name.clone(), value));
                 }
             }
             let req_header = session.req_header_mut();
@@ -269,7 +283,7 @@ impl Plugin for ForwardAuth {
             // place, a client's own `X-User-Id: admin` reached the upstream
             // as if the auth service had vouched for it.
             for name in &self.add_headers {
-                req_header.remove_header(name.as_str());
+                req_header.remove_header(name);
             }
             for (name, value) in to_add {
                 let _ = req_header.insert_header(name, value);
@@ -579,8 +593,41 @@ timeout = "5s"
         )
         .unwrap();
         assert_eq!("http://127.0.0.1:9000/verify", plugin.auth_url);
-        assert_eq!("authorization,cookie", plugin.request_headers.join(","));
-        assert_eq!("x-auth-user", plugin.add_headers.join(","));
+        assert_eq!(vec!["authorization", "cookie"], plugin.request_headers);
+        assert_eq!(vec!["x-auth-user"], plugin.add_headers);
+
+        // Regression: an entry that is not a header name loaded, and was
+        // then passed over on every request without a word.
+        for (key, name) in [
+            ("add_headers", "X Bad"),
+            ("add_headers", "X-User:"),
+            ("request_headers", "Cook ie"),
+            ("request_headers", ""),
+        ] {
+            let err = ForwardAuth::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "auth_url = \"http://127.0.0.1:9000/verify\"\n{key} = [\"X-Fine\", \"{name}\"]\n"
+                ))
+                .unwrap(),
+            )
+            .err()
+            .unwrap();
+            assert_eq!(
+                format!(
+                    "Plugin forward_auth invalid, message: {key}: {name:?} is not a header name"
+                ),
+                err.to_string()
+            );
+        }
+        // Whatever case it is written in, and with space around it.
+        let plugin = ForwardAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                "auth_url = \"http://127.0.0.1:9000/verify\"\nadd_headers = [\" X-User-Id \"]\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(vec!["x-user-id"], plugin.add_headers);
 
         // Missing auth_url is rejected.
         let err = ForwardAuth::try_from(

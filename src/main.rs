@@ -53,7 +53,7 @@ use pingap_logger::{
     AsyncLoggerTask, LogCompressParams, new_async_logger,
     new_log_compress_service,
 };
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 #[cfg(feature = "tracing")]
@@ -923,7 +923,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         listener_tasks_per_fd = server_conf.listener_tasks_per_fd,
         "server configuration"
     );
-    #[cfg(feature = "full")]
+    // With `tracing`, as the READMEs of both say, and not only with `full`:
+    // a build with tracing and without image optimization had the two
+    // compiled in and neither started.
+    #[cfg(feature = "tracing")]
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();
         if !sentry_dsn.is_empty() {
@@ -1020,7 +1023,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         if serve_conf.addr.ends_with(":80") {
             exits_80_server = true;
         }
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
             my_server.add_service(background_service(

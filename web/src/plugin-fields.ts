@@ -640,6 +640,15 @@ export const PLUGIN_FIELDS: Partial<
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
+    {
+      name: "leeway",
+      label: t("jwtLeeway"),
+      placeholder: t("jwtLeewayPlaceholder"),
+      tips: t("jwtLeewayTips"),
+      defaultValue: conf.leeway as string,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
   ],
   [PluginCategory.FORWARD_AUTH]: (conf, t) => [
     {

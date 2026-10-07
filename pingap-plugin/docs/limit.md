@@ -109,6 +109,18 @@ step = "proxy_upstream"
 - The empty-key pass-through matters: with `tag = "header"` and `key =
   "X-API-Key"`, anonymous requests are entirely unlimited. Chain an
   authentication plugin in front, or add a second `limit` on `ip`.
+- Counters are a fixed-size sketch, not a table with a row for every key: a
+  key is counted in four counters, one in each of four rows of 1024 for `rate`
+  (rows of 8192 for `inflight`), and its count is the smallest of the four.
+  Keys that share a counter can only push each other's count up, never down,
+  and a key is over-counted only when every one of its four counters is shared
+  with some other key. With three hundred distinct keys in an interval that is
+  under one key in a hundred; with a thousand it is about one in seven, with
+  three thousand four in five, and beyond that nearly all of them. Such a key
+  is limited earlier than `max`, by the least that its neighbours add in any
+  of the four. A `rate` limit by client address with a long `interval` on a
+  busy site is where this shows; shorten the interval, or key on something
+  with fewer values.
 - Counters are per process. With multiple Pingap instances behind a load
   balancer the effective limit multiplies by the instance count.
 - `step = "proxy_upstream"` runs after the cache plugin, so cache hits do not

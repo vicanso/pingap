@@ -90,7 +90,7 @@ curl -X PURGE http://127.0.0.1:6188/*
   - 有效期优先取源站的 `s-maxage`，没有时取 `max-age`，并受 `max_ttl` 限制。
   - 两者都没有时，有效期到源站的 `Expires` 为止，同样受 `max_ttl` 限制。`Expires` 已经过期或者不是日期（源站常用 `0`、`-1` 表示“不要缓存”）时不存储。以前这两种情况都没有处理：`Expires` 在一年之后的响应不管 `max_ttl` 是多少都会保留一年，已过期的响应则每次请求都被写入缓存。
   - 没有给出有效期的响应保留一秒，前提是其状态码属于 HTTP 定义的“可启发式缓存”的一类：200、203、204、206、300、301、308、404、405、410、414、501。其他状态码（如 5xx 或 302）只有在源站给出有效期时才存储。`check_cache_control` 更严格：没有 `Cache-Control` 头的响应一律不存储。
-- 属于某一个客户端的响应不会被存储：
+- 有两类响应被认为属于某一个客户端，不会被存储。插件只按这两类判断，不看请求里的 `Cookie`：一个按 cookie 返回不同内容、又没有 `Cache-Control` 的页面，会和其他响应一样被存下来（就是上面说的一秒），再返回给下一个请求的人。这类页面请让源站返回 `Cache-Control: private`，或者打开 `check_cache_control`，或者用 `skip` 把这些路径排除在缓存之外。源站返回 `Vary: Cookie` 则是每个 cookie 各存一份，但只在 `vary_headers` 没有设置、或者其中列了 `Cookie` 时才有效：不在这个列表里的头不参与区分，所有人又回到共用一份。
   - 带 `Set-Cookie` 头的响应：否则所有从缓存取到它的客户端都会收到同一个 cookie。确实要缓存这类响应时，用 `upstream` 模式的 [`response_headers`](response_headers.md) 插件在存储前去掉这个头。
   - 请求带 `Authorization` 头时的响应，除非源站用 `public`、`s-maxage` 或 `must-revalidate` 标明可以共享。开启了 `hide_credentials` 的 [`basic_auth`](basic_auth.md) 插件会在这项检查之前移除该请求头，因此它保护的站点照常缓存。
 - 缓存键由 `namespace`、所列 `headers` 的值、请求方法、域名、路径和查询串组成。域名取小写且不含端口，协议不在键里，所以 `http://Example.com:8080/x` 与 `https://example.com/x` 是同一个条目，HTTP/1.1 与 HTTP/2 一致；`other.com/x` 则是另一个条目。

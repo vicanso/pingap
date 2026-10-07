@@ -640,7 +640,7 @@ export default {
     adminPath: "Admin Path",
     adminPathPlaceholder: "Input the path for admin plugin",
     adminMaxAge: "Max Age",
-    adminMaxAgePlaceholder: "Input the max session age for login",
+    adminMaxAgePlaceholder: "How long a login is good for, default: 2d",
     adminIpFailLimit: "Ip Fail Limit",
     adminIpFailLimitPlaceholder: "Input the fail ip limit count",
     adminAuthorization: "Authorization",
@@ -785,6 +785,10 @@ export default {
     jwtRequireExp: "Require Expiry",
     jwtRequireExpTips:
       "On unless set to No: a token without exp is rejected, and the response at the sign path is only signed when it carries exp. Turn it off only for tokens that are meant to never expire.",
+    jwtLeeway: "Clock Leeway",
+    jwtLeewayPlaceholder: "Allowed clock difference, default: 60s",
+    jwtLeewayTips:
+      "How far the issuer's clock may be from the proxy's: exp and nbf are given this much, with a secret, a public key or JWKS alike. 0s holds them to the second.",
     forwardAuthUrl: "Auth Url",
     forwardAuthUrlPlaceholder: "Input the url of the auth service",
     forwardAuthTimeout: "Timeout",

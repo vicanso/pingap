@@ -142,6 +142,10 @@ fn signature_matches(
 /// that names no expiry is refused: it would be valid for as long as the
 /// secret is, which is what the public key paths never allowed.
 ///
+/// `leeway` is how many seconds the two clocks may differ by, see
+/// `JwtAuth::leeway`: a token is expired once `exp` is more than that
+/// behind `now`, and not yet valid while `nbf` is more than that ahead.
+///
 /// The signed part is a prefix of the token itself and the signature is
 /// compared as encoded bytes, so nothing here copies the token; the payload
 /// is read into the two claims rather than a full JSON tree.
@@ -151,6 +155,7 @@ fn verify_hmac_token(
     pinned_alg: &str,
     now: u64,
     require_exp: bool,
+    leeway: u64,
 ) -> std::result::Result<(), HmacRejection> {
     let Some((header, rest)) = token.split_once('.') else {
         return Err(HmacRejection::Format);
@@ -199,17 +204,29 @@ fn verify_hmac_token(
         .ok()
         .and_then(|raw| parse_claims(&raw))
         .ok_or(HmacRejection::Format)?;
-    let now = now as f64;
+    // The comparisons jsonwebtoken makes on the public key paths.
+    let (now, leeway) = (now as f64, leeway as f64);
     match claims.exp {
-        Some(exp) if exp < now => return Err(HmacRejection::Expired),
+        Some(exp) if exp < now - leeway => {
+            return Err(HmacRejection::Expired);
+        },
         None if require_exp => return Err(HmacRejection::NoExpiry),
         _ => {},
     }
-    if claims.nbf.is_some_and(|nbf| nbf > now) {
+    if claims.nbf.is_some_and(|nbf| nbf > now + leeway) {
         return Err(HmacRejection::NotYetValid);
     }
     Ok(())
 }
+
+/// What `exp` and `nbf` are given when `leeway` is not set.
+const DEFAULT_LEEWAY: Duration = Duration::from_secs(60);
+
+/// The most `leeway` may be set to. It is there for two clocks that are
+/// not quite the same, and a day is far more than that; without a bound a
+/// value of decades made the paths disagree, the library taking it off the
+/// time in whole seconds and running out of them.
+const MAX_LEEWAY: Duration = Duration::from_secs(24 * 3600);
 
 /// JwtAuth struct holds configuration for JWT authentication and validation.
 ///
@@ -275,6 +292,13 @@ pub struct JwtAuth {
     /// On unless `require_exp = false`.
     require_exp: bool,
 
+    /// How far the clock of whoever issued a token may be from this one's:
+    /// `exp` and `nbf` are given this much, on every verification path.
+    /// The public key paths always had the library's 60 seconds while the
+    /// secret path had none, so an issuer a second ahead had its tokens
+    /// refused as not yet valid by one configuration and not by another.
+    leeway: Duration,
+
     /// Pre-parsed decoding key and the validation pinned to its algorithm,
     /// for asymmetric verification (RS*/ES*/PS*). `Some` when an asymmetric
     /// `algorithm` and `public_key` are configured; HMAC algorithms leave
@@ -306,6 +330,7 @@ fn build_asymmetric_key(
     algorithm: &str,
     public_key: &str,
     require_exp: bool,
+    leeway: Duration,
 ) -> Result<Option<(DecodingKey, Validation)>> {
     let Ok(alg) = Algorithm::from_str(algorithm) else {
         // Unknown or empty algorithm -> treated as HMAC (secret) below.
@@ -342,7 +367,7 @@ fn build_asymmetric_key(
         category: PluginCategory::Jwt.to_string(),
         message: format!("invalid public_key: {e}"),
     })?;
-    Ok(Some((key, jwks_validation(alg, require_exp))))
+    Ok(Some((key, jwks_validation(alg, require_exp, leeway))))
 }
 
 /// One key of a JWKS. `kid` is optional in RFC 7517, and a single-key set
@@ -395,6 +420,8 @@ struct JwksSource {
     client: reqwest::Client,
     /// See `JwtAuth::require_exp`.
     require_exp: bool,
+    /// See `JwtAuth::leeway`.
+    leeway: Duration,
     cache: ArcSwapOption<JwksCache>,
     /// Serializes refetches, and holds when the last one was started.
     refresh_lock: tokio::sync::Mutex<Option<Instant>>,
@@ -462,7 +489,8 @@ impl JwksSource {
         if !is_asymmetric_alg(header.alg) {
             return false;
         }
-        let validation = jwks_validation(header.alg, self.require_exp);
+        let validation =
+            jwks_validation(header.alg, self.require_exp, self.leeway);
         let kid = header.kid.as_deref();
         // Fresh cache hit: verify without touching the network.
         if let Some(cache) = self.cache.load_full()
@@ -482,10 +510,16 @@ impl JwksSource {
 
 /// Validation pinned to the JWK's declared algorithm, enforcing signature,
 /// `exp` and `nbf` while ignoring `aud`. Without `require_exp` a token may
-/// leave `exp` out; one that has it is still held to it.
-fn jwks_validation(alg: Algorithm, require_exp: bool) -> Validation {
+/// leave `exp` out; one that has it is still held to it. `leeway` is what
+/// the two claims are given, see `JwtAuth::leeway`.
+fn jwks_validation(
+    alg: Algorithm,
+    require_exp: bool,
+    leeway: Duration,
+) -> Validation {
     let mut validation = Validation::new(alg);
     validation.validate_aud = false;
+    validation.leeway = leeway.as_secs();
     if !require_exp {
         validation.required_spec_claims.clear();
     }
@@ -516,6 +550,7 @@ fn is_asymmetric_alg(alg: Algorithm) -> bool {
 fn build_jwks_source(
     value: &PluginConf,
     require_exp: bool,
+    leeway: Duration,
 ) -> Result<Option<Arc<JwksSource>>> {
     let url = get_str_conf(value, "jwks_url");
     if url.is_empty() {
@@ -541,6 +576,7 @@ fn build_jwks_source(
         cooldown,
         client,
         require_exp,
+        leeway,
         cache: ArcSwapOption::empty(),
         refresh_lock: tokio::sync::Mutex::new(None),
     })))
@@ -600,12 +636,30 @@ impl TryFrom<&PluginConf> for JwtAuth {
         // refused it.
         let require_exp = !value.contains_key("require_exp")
             || get_bool_conf(value, "require_exp");
+        // Sixty seconds unless said otherwise, which is what the public
+        // key paths have always had.
+        let leeway = get_str_conf(value, "leeway");
+        let leeway = if leeway.is_empty() {
+            DEFAULT_LEEWAY
+        } else {
+            parse_duration(&leeway).map_err(|e| Error::Invalid {
+                category: PluginCategory::Jwt.to_string(),
+                message: format!("invalid leeway: {e}"),
+            })?
+        };
+        if leeway > MAX_LEEWAY {
+            return Err(Error::Invalid {
+                category: PluginCategory::Jwt.to_string(),
+                message: "invalid leeway: it is at most 1d".to_string(),
+            });
+        }
         let decoding_key = build_asymmetric_key(
             &algorithm,
             &get_str_conf(value, "public_key"),
             require_exp,
+            leeway,
         )?;
-        let jwks = build_jwks_source(value, require_exp)?;
+        let jwks = build_jwks_source(value, require_exp, leeway)?;
 
         let params = Self {
             hash_value,
@@ -615,6 +669,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
             auth_path: get_str_conf(value, "auth_path"),
             algorithm,
             require_exp,
+            leeway,
             decoding_key,
             jwks,
             delay,
@@ -765,6 +820,7 @@ impl Plugin for JwtAuth {
             &self.algorithm,
             pingap_core::now_sec(),
             self.require_exp,
+            self.leeway.as_secs(),
         ) {
             Ok(()) => Ok(RequestPluginResult::Continue),
             Err(rejection) => {
@@ -1093,6 +1149,106 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         // An expired token is rejected.
         let expired = run(sign(pingap_core::now_sec() - 3600)).await;
         assert_eq!(true, matches!(expired, RequestPluginResult::Respond(_)));
+
+        // One that expired half a minute ago is within the leeway, here as
+        // on the secret path, and outside it once the leeway is taken away.
+        let just_expired = sign(pingap_core::now_sec() - 30);
+        let ok = run(just_expired.clone()).await;
+        assert_eq!(true, ok == RequestPluginResult::Continue);
+        let strict = JwtAuth::new(
+            &toml::from_str::<PluginConf>(&format!("{cfg}leeway = \"0s\"\n"))
+                .unwrap(),
+        )
+        .unwrap();
+        let input = format!(
+            "GET / HTTP/1.1\r\nAuthorization: Bearer {just_expired}\r\n\r\n"
+        );
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let refused = strict
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, matches!(refused, RequestPluginResult::Respond(_)));
+    }
+
+    /// Regression: `exp` and `nbf` were given sixty seconds on the public
+    /// key paths and none on the secret path, so an issuer whose clock was
+    /// a second ahead had its tokens refused as not yet valid by one
+    /// configuration and taken by another.
+    #[test]
+    fn test_leeway_is_the_same_on_every_path() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use serde_json::json;
+        let secret = b"123123";
+        let key = EncodingKey::from_secret(secret);
+        let now = pingap_core::now_sec();
+        let check = |claims: serde_json::Value, leeway: u64| {
+            let token =
+                encode(&Header::new(Algorithm::HS256), &claims, &key).unwrap();
+            verify_hmac_token(&token, secret, "", now, true, leeway)
+        };
+        // An issuer two seconds ahead.
+        let ahead = json!({"exp": now + 3600, "nbf": now + 2});
+        assert_eq!(Err(HmacRejection::NotYetValid), check(ahead.clone(), 0));
+        assert_eq!(Ok(()), check(ahead, 60));
+        // What the leeway covers, to the second, and what it does not.
+        assert_eq!(
+            Ok(()),
+            check(json!({"exp": now + 3600, "nbf": now + 60}), 60)
+        );
+        assert_eq!(
+            Err(HmacRejection::NotYetValid),
+            check(json!({"exp": now + 3600, "nbf": now + 61}), 60)
+        );
+        assert_eq!(Ok(()), check(json!({"exp": now - 60}), 60));
+        assert_eq!(
+            Err(HmacRejection::Expired),
+            check(json!({"exp": now - 61}), 60)
+        );
+        assert_eq!(
+            Err(HmacRejection::Expired),
+            check(json!({"exp": now - 1}), 0)
+        );
+
+        // Sixty seconds unless said otherwise, for the public key paths
+        // as for the secret one.
+        let new = |extra: &str| {
+            JwtAuth::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "secret = \"123123\"\ncookie = \"jwt\"\n{extra}"
+                ))
+                .unwrap(),
+            )
+        };
+        assert_eq!(Duration::from_secs(60), new("").unwrap().leeway);
+        assert_eq!(Duration::ZERO, new("leeway = \"0s\"").unwrap().leeway);
+        assert_eq!(
+            Duration::from_secs(5),
+            new("leeway = \"5s\"").unwrap().leeway
+        );
+        let invalid = new("leeway = \"soon\"").err().unwrap().to_string();
+        assert_eq!(true, invalid.contains("invalid leeway"), "{invalid}");
+        // A day at most: decades of it took the public key paths, which
+        // count in whole seconds, past the beginning of time.
+        assert_eq!(
+            Duration::from_secs(24 * 3600),
+            new("leeway = \"1d\"").unwrap().leeway
+        );
+        assert_eq!(
+            "Plugin jwt invalid, message: invalid leeway: it is at most 1d",
+            new("leeway = \"60y\"").err().unwrap().to_string()
+        );
+        assert_eq!(
+            5,
+            jwks_validation(Algorithm::RS256, true, Duration::from_secs(5))
+                .leeway
+        );
     }
 
     /// Tests remote-JWKS verification with a pre-populated (in-memory) cache,
@@ -1121,6 +1277,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             cooldown: Duration::from_secs(10),
             client: reqwest::Client::new(),
             require_exp: true,
+            leeway: Duration::ZERO,
             cache: ArcSwapOption::new(Some(Arc::new(JwksCache {
                 keys,
                 fetched_at: Instant::now(),
@@ -1190,6 +1347,22 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         let token = sign(Some("kid-1"), pingap_core::now_sec() - 3600);
         assert_eq!(false, lenient.verify(&token).await);
 
+        // `leeway` here as on the other two paths: a token that expired
+        // half a minute ago is taken with a minute of it, not with none.
+        let just_expired = sign(Some("kid-1"), pingap_core::now_sec() - 30);
+        assert_eq!(false, source.verify(&just_expired).await);
+        let with_leeway = JwksSource {
+            leeway: Duration::from_secs(60),
+            ..new_source(vec![entry(Some("kid-1"))])
+        };
+        assert_eq!(true, with_leeway.verify(&just_expired).await);
+        let not_yet = sign_claims(
+            Some("kid-1"),
+            serde_json::json!({ "exp": now + 7200, "nbf": now + 30 }),
+        );
+        assert_eq!(false, source.verify(&not_yet).await);
+        assert_eq!(true, with_leeway.verify(&not_yet).await);
+
         // A key without a kid, the common single-key JWKS, is kept and
         // used; a token naming a kid still has to find it.
         let source = new_source(vec![entry(None)]);
@@ -1226,6 +1399,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             cooldown: Duration::from_millis(300),
             client: reqwest::Client::new(),
             require_exp: true,
+            leeway: Duration::ZERO,
             cache: ArcSwapOption::empty(),
             refresh_lock: tokio::sync::Mutex::new(None),
         };
@@ -1258,7 +1432,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "",
                 now,
-                true
+                true,
+                0
             )
         );
         // A token without `typ` in its header is a valid token.
@@ -1270,7 +1445,10 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 .encode(hmac_sha256::HMAC::mac(content.as_bytes(), secret));
             format!("{content}.{sig}")
         };
-        assert_eq!(Ok(()), verify_hmac_token(&no_typ, secret, "", now, true));
+        assert_eq!(
+            Ok(()),
+            verify_hmac_token(&no_typ, secret, "", now, true, 0)
+        );
         // Float times, as some issuers write them.
         assert_eq!(
             Ok(()),
@@ -1282,7 +1460,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "HS512",
                 now,
-                true
+                true,
+                0
             )
         );
         assert_eq!(
@@ -1292,7 +1471,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "",
                 now,
-                true
+                true,
+                0
             )
         );
         assert_eq!(
@@ -1305,7 +1485,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "",
                 now,
-                true
+                true,
+                0
             )
         );
         assert_eq!(
@@ -1315,7 +1496,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 b"other",
                 "",
                 now,
-                true
+                true,
+                0
             )
         );
         // Pinned algorithm, and `none`.
@@ -1326,7 +1508,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "HS512",
                 now,
-                true
+                true,
+                0
             )
         );
         let none = format!(
@@ -1336,14 +1519,14 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         );
         assert_eq!(
             Err(HmacRejection::Signature),
-            verify_hmac_token(&none, secret, "", now, true)
+            verify_hmac_token(&none, secret, "", now, true, 0)
         );
         // Regression: a token that names no expiry was taken, and stayed
         // valid for as long as the secret did.
         let no_exp = sign(Algorithm::HS256, serde_json::json!({"sub": "u1"}));
         assert_eq!(
             Err(HmacRejection::NoExpiry),
-            verify_hmac_token(&no_exp, secret, "", now, true)
+            verify_hmac_token(&no_exp, secret, "", now, true, 0)
         );
         assert_eq!(
             Err(HmacRejection::NoExpiry),
@@ -1352,12 +1535,16 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "",
                 now,
-                true
+                true,
+                0
             )
         );
         // `require_exp = false` is the old behaviour, and a token that has
         // an expiry is still held to it.
-        assert_eq!(Ok(()), verify_hmac_token(&no_exp, secret, "", now, false));
+        assert_eq!(
+            Ok(()),
+            verify_hmac_token(&no_exp, secret, "", now, false, 0)
+        );
         assert_eq!(
             Err(HmacRejection::Expired),
             verify_hmac_token(
@@ -1365,13 +1552,14 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 secret,
                 "",
                 now,
-                false
+                false,
+                0
             )
         );
         for token in ["a.b", "a.b.c.d", ""] {
             assert_eq!(
                 Err(HmacRejection::Format),
-                verify_hmac_token(token, secret, "", now, true),
+                verify_hmac_token(token, secret, "", now, true, 0),
                 "{token}"
             );
         }
@@ -1692,7 +1880,8 @@ auth_path = "/login"
                 b"123123",
                 "HS256",
                 pingap_core::now_sec(),
-                true
+                true,
+                0
             )
         );
 

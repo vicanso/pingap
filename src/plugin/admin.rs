@@ -461,6 +461,109 @@ fn refuse_without_credentials(
     None
 }
 
+/// What `/certificates` says of a loaded certificate.
+///
+/// The certificate itself was written out, its chain and its private key
+/// among the fields: a key that the configuration only names the file of
+/// was read from that file and handed to whoever asked.
+#[derive(Serialize)]
+struct CertificateInfo<'a> {
+    domains: &'a [String],
+    acme: Option<&'a str>,
+    not_after: i64,
+    not_before: i64,
+    issuer: &'a str,
+}
+
+impl<'a> From<&'a pingap_certificate::Certificate> for CertificateInfo<'a> {
+    fn from(certificate: &'a pingap_certificate::Certificate) -> Self {
+        Self {
+            domains: &certificate.domains,
+            acme: certificate.acme.as_deref(),
+            not_after: certificate.not_after,
+            not_before: certificate.not_before,
+            issuer: &certificate.issuer,
+        }
+    }
+}
+
+/// What `/certificates` answers with: the loaded certificates by name.
+fn certificate_infos(
+    certificates: &pingap_certificate::DynamicCertificates,
+) -> HashMap<&String, CertificateInfo<'_>> {
+    certificates
+        .iter()
+        .filter_map(|(name, certificate)| {
+            let info = certificate.info.as_ref()?;
+            let name = certificate.name.as_ref().unwrap_or(name);
+            Some((name, CertificateInfo::from(info)))
+        })
+        .collect()
+}
+
+/// How far ahead of this clock the time in a token may be: what the clock
+/// of a browser may be off by. A time further ahead is not one a login
+/// made now would carry, and a token made with it would outlive `max_age`
+/// by as much.
+const TOKEN_CLOCK_SKEW: Duration = Duration::from_secs(5 * 60);
+
+/// Whether a token that says it was made at `issued_at` is one to look at
+/// further, at `now`: no older than `max_age`, and from no further in the
+/// future than [`TOKEN_CLOCK_SKEW`] - or `max_age`, where that is less.
+fn token_time_is_current(now: u64, issued_at: &str, max_age: Duration) -> bool {
+    // Nothing but digits: `parse` takes a sign as well, and `+5` and `5`
+    // would be two tokens for one moment.
+    if issued_at.is_empty() || !issued_at.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let Ok(issued_at) = issued_at.parse::<u64>() else {
+        return false;
+    };
+    let max_age = max_age.as_secs();
+    if issued_at > now {
+        issued_at - now <= max_age.min(TOKEN_CLOCK_SKEW.as_secs())
+    } else {
+        now - issued_at <= max_age
+    }
+}
+
+/// Why a request to the API was turned away.
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum TokenRejection {
+    /// No `Authorization` at all: a page asking before the login.
+    Missing,
+    /// Not `token:time`.
+    Malformed,
+    /// A time that is too old, or ahead of this clock: see
+    /// [`token_time_is_current`]. The token itself was not looked at.
+    Time,
+    /// The token is not the one of any of the accounts for that time.
+    Mismatch,
+}
+
+impl TokenRejection {
+    /// Whether this was a try at the credentials, to be counted against
+    /// the address it came from. A request without credentials is not one
+    /// (see where this is used), and neither is one refused for its time:
+    /// nothing was compared, so nothing was guessed - and it is what a
+    /// correct password gets while the two clocks disagree, which ten
+    /// tries later would have locked its owner out.
+    fn counts_as_a_failed_login(self) -> bool {
+        matches!(self, Self::Malformed | Self::Mismatch)
+    }
+    /// What the client is told. Only the time gets an explanation: it is
+    /// the one refusal that the right credentials do not fix, and it says
+    /// nothing the client did not send itself.
+    fn message(self) -> &'static [u8] {
+        match self {
+            Self::Time => {
+                b"The time of this login is too old or ahead of the server's clock: check the clock of this device and the server's, then log in again"
+            },
+            _ => b"",
+        }
+    }
+}
+
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(target: LOG_TARGET, params = pingap_config::masked_toml(params), "new admin server plugin");
@@ -471,9 +574,12 @@ impl AdminServe {
     /// Checks the signed token of an API request. Only API routes come
     /// here: what is served without a token is decided by [`api_route`], in
     /// one place, so the exemption and the router cannot drift apart.
-    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
+    fn auth_validate(
+        &self,
+        req_header: &RequestHeader,
+    ) -> std::result::Result<(), TokenRejection> {
         if self.authorizations.is_empty() {
-            return true;
+            return Ok(());
         }
         let path = req_header.uri.path();
         let value =
@@ -481,28 +587,24 @@ impl AdminServe {
                 .unwrap_or_default();
         if value.is_empty() {
             error!(target: LOG_TARGET, path, "auth validate fail: missing authorization header");
-            return false;
+            return Err(TokenRejection::Missing);
         }
         let Some((token, ts)) = value.split_once(':') else {
             error!(target: LOG_TARGET, path, "auth validate fail: malformed authorization, expect token:ts");
-            return false;
+            return Err(TokenRejection::Malformed);
         };
-        let now = pingap_core::now_sec() as i64;
-        let parsed_ts = ts.parse::<i64>().unwrap_or_default();
-        let offset = now - parsed_ts;
-        let max_age = self.max_age.as_secs() as i64;
-        if offset.abs() > max_age {
+        let now = pingap_core::now_sec();
+        if !token_time_is_current(now, ts, self.max_age) {
             error!(
                 target: LOG_TARGET,
                 path,
                 ts,
-                parsed_ts,
                 now,
-                offset,
-                max_age,
-                "auth validate fail: timestamp out of max_age window"
+                max_age = self.max_age.as_secs(),
+                max_ahead = TOKEN_CLOCK_SKEW.as_secs(),
+                "auth validate fail: timestamp is older than max_age, or ahead of this clock"
             );
-            return false;
+            return Err(TokenRejection::Time);
         }
 
         for (user, pass) in self.authorizations.iter() {
@@ -513,7 +615,7 @@ impl AdminServe {
                 hash256.encode_hex::<String>().as_bytes(),
                 token.as_bytes(),
             ) {
-                return true;
+                return Ok(());
             }
         }
         error!(
@@ -523,7 +625,7 @@ impl AdminServe {
             authorizations = self.authorizations.len(),
             "auth validate fail: token hash mismatch"
         );
-        false
+        Err(TokenRejection::Mismatch)
     }
     async fn load_config(
         &self,
@@ -928,22 +1030,18 @@ async fn handle_request_admin(
             ..Default::default()
         }));
     }
-    if !plugin.auth_validate(session.req_header()) {
+    if let Err(rejection) = plugin.auth_validate(session.req_header()) {
         // A failed login is one that was tried. A request without
         // credentials - the page polling before the login, or after its
         // token ran out - is turned away and not counted: ten of those
         // locked the administrator out, and anyone who could make their
         // browser send ten requests could do it for them.
-        if session
-            .req_header()
-            .headers
-            .get(header::AUTHORIZATION)
-            .is_some_and(|value| !value.is_empty())
-        {
+        if rejection.counts_as_a_failed_login() {
             plugin.ip_fail_limit.inc(ip);
         }
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
+            body: Bytes::from_static(rejection.message()),
             ..Default::default()
         }));
     }
@@ -1127,18 +1225,8 @@ async fn handle_request_admin(
         HttpResponse::try_from_json(&AesResp { value })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/certificates" {
-        let mut infos = HashMap::new();
-        for (name, cert) in new_certificate_provider().list().iter() {
-            if let Some(info) = &cert.info {
-                let key = if let Some(value) = &cert.name {
-                    value.clone()
-                } else {
-                    name.clone()
-                };
-                infos.insert(key, info.clone());
-            }
-        }
-        HttpResponse::try_from_json(&infos)
+        let certificates = new_certificate_provider().list();
+        HttpResponse::try_from_json(&certificate_infos(&certificates))
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else {
         HttpResponse::not_found("Not Found")
@@ -1182,7 +1270,7 @@ fn init() {
 mod tests {
     use super::{
         AdminAsset, AdminServe, EmbeddedStaticFile, api_route,
-        handle_request_admin,
+        certificate_infos, handle_request_admin, token_time_is_current,
     };
     use crate::config_manager::try_init_config_manager;
     use hex::ToHex;
@@ -1418,6 +1506,156 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    /// Regression: the time in a token could be as far ahead of the clock
+    /// as `max_age` allows it to be behind, so a token made with a time two
+    /// days from now was good for four.
+    #[test]
+    fn test_token_time_is_current() {
+        let now = 1_800_000_000_u64;
+        let day = Duration::from_secs(24 * 3600);
+        let at = |offset: i64, max_age: Duration| {
+            let issued_at = now as i64 + offset;
+            token_time_is_current(now, &issued_at.to_string(), max_age)
+        };
+        assert_eq!(true, at(0, day));
+        // No older than `max_age`.
+        assert_eq!(true, at(-24 * 3600, day));
+        assert_eq!(false, at(-24 * 3600 - 1, day));
+        // Ahead by what a clock may be off by, and no more.
+        assert_eq!(true, at(5 * 60, day));
+        assert_eq!(false, at(5 * 60 + 1, day));
+        assert_eq!(false, at(24 * 3600, day));
+        // A `max_age` below that bounds both sides.
+        let minute = Duration::from_secs(60);
+        assert_eq!(true, at(60, minute));
+        assert_eq!(false, at(61, minute));
+        assert_eq!(false, at(-61, minute));
+
+        // Not a time, or a second way to write one.
+        for issued_at in [
+            "",
+            "soon",
+            "+1800000000",
+            "-1",
+            "1800000000.5",
+            " 1800000000",
+            "99999999999999999999999999",
+            "-9223372036854775808",
+        ] {
+            assert_eq!(
+                false,
+                token_time_is_current(now, issued_at, day),
+                "{issued_at}"
+            );
+        }
+    }
+
+    /// The same through the API: a token for a time an hour from now is
+    /// refused, one for now is taken. The refusal says why, and is not
+    /// counted as a failed login: it is what the right password gets while
+    /// the two clocks disagree, and nothing was guessed.
+    #[tokio::test]
+    async fn test_admin_refuses_a_token_from_the_future() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    ip_fail_limit = 2
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
+        let request = async |password: &str, issued_at: u64| {
+            let mut hasher = Sha256::new();
+            hasher.update(format!("admin:{password}:{issued_at}").as_bytes());
+            let token = hasher.finalize().encode_hex::<String>();
+            let mut session = new_admin_session(&format!(
+                "GET /api/certificates HTTP/1.1\r\nAuthorization: {token}:{issued_at}\r\n\r\n"
+            ))
+            .await;
+            let resp =
+                handle_request_admin(&admin, &mut session, &mut Ctx::default())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            (
+                resp.status.as_u16(),
+                String::from_utf8_lossy(&resp.body).to_string(),
+            )
+        };
+        let now = pingap_core::now_sec();
+        assert_eq!(200, request("123123", now).await.0);
+        assert_eq!(200, request("123123", now - 3600).await.0);
+        // More of them than `ip_fail_limit` allows of failed logins.
+        for _ in 0..5 {
+            let (status, body) = request("123123", now + 3600).await;
+            assert_eq!(401, status);
+            assert_eq!(true, body.contains("ahead of the server's clock"));
+        }
+        // Too old is the other side of it, and told the same.
+        let (status, body) = request("123123", now - 3 * 24 * 3600).await;
+        assert_eq!(401, status);
+        assert_eq!(true, body.contains("too old"), "{body}");
+        assert_eq!(200, request("123123", now).await.0);
+
+        // A wrong password is a failed login: no explanation, and counted.
+        assert_eq!((401, String::new()), request("guess", now).await);
+        assert_eq!((401, String::new()), request("guess", now).await);
+        assert_eq!(403, request("guess", now).await.0);
+        assert_eq!(403, request("123123", now).await.0);
+    }
+
+    /// Regression: `/certificates` wrote out each loaded certificate as it
+    /// is held, the chain and the private key included.
+    #[test]
+    fn test_certificates_are_listed_without_their_keys() {
+        let certificate = pingap_certificate::Certificate {
+            domains: vec!["example.com".to_string()],
+            pem: b"-----BEGIN CERTIFICATE-----".to_vec(),
+            key: b"-----BEGIN PRIVATE KEY-----".to_vec(),
+            acme: Some("lets_encrypt".to_string()),
+            not_after: 1_900_000_000,
+            not_before: 1_800_000_000,
+            issuer: "C=US, O=Let's Encrypt, CN=E5".to_string(),
+        };
+        let mut certificates = pingap_certificate::DynamicCertificates::new();
+        certificates.insert(
+            "example.com".to_string(),
+            Arc::new(pingap_certificate::TlsCertificate {
+                name: Some("site".to_string()),
+                info: Some(certificate),
+                ..Default::default()
+            }),
+        );
+        // One that was not parsed has nothing to list.
+        certificates.insert(
+            "broken.example.com".to_string(),
+            Arc::new(pingap_certificate::TlsCertificate::default()),
+        );
+        // What the handler writes out.
+        let listed =
+            serde_json::to_value(certificate_infos(&certificates)).unwrap();
+        assert_eq!(
+            serde_json::json!({
+                "site": {
+                    "domains": ["example.com"],
+                    "acme": "lets_encrypt",
+                    "not_after": 1_900_000_000_i64,
+                    "not_before": 1_800_000_000_i64,
+                    "issuer": "C=US, O=Let's Encrypt, CN=E5",
+                }
+            }),
+            listed
+        );
     }
 
     /// Mounted under a prefix: the prefix is removed on a segment boundary.

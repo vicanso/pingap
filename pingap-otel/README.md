@@ -21,12 +21,21 @@ Then configure an exporter per server:
 [servers.main]
 addr = "0.0.0.0:6188"
 locations = ["app"]
-otlp_exporter = "http://otel-collector:4317/pingap"
+otlp_exporter = "http://otel-collector:4317"
 ```
 
-The path component of the URL becomes the service name, so several servers in
-one process can report under distinct names. Query parameters on the URL
-configure the exporter (timeout, compression, protocol).
+The service name is `pingap:` followed by the name of the server
+(`pingap:main` here), so several servers in one process report under distinct
+names. The URL is the collector's endpoint as it is; its path is not the
+service name, as this README used to say. Query parameters on the URL
+configure the exporter: `timeout`, `compression` (`gzip` or `zstd`),
+`max_queue_size`, `scheduled_delay`, `max_export_batch_size`,
+`max_attributes`, `max_events`, and `jaeger` / `baggage` to accept those
+propagation formats.
+
+The exporter is started in any build with the `tracing` feature. It used to be
+started only in a `full` build: one with `tracing` and without `imageoptim`
+had it compiled in and never ran it.
 
 ## What is traced
 

@@ -583,7 +583,7 @@ export default {
     adminPath: "路径",
     adminPathPlaceholder: "输入管理配置对应路径",
     adminMaxAge: "有效期",
-    adminMaxAgePlaceholder: "输入登录态的有效期",
+    adminMaxAgePlaceholder: "登录的有效期，默认: 2d",
     adminIpFailLimit: "失败ip限制",
     adminIpFailLimitPlaceholder: "输入失败时的ip限制次数",
     adminAuthorization: "认证信息",
@@ -719,6 +719,10 @@ export default {
     jwtRequireExp: "要求过期时间",
     jwtRequireExpTips:
       "不设置时为开启：拒绝没有 exp 的令牌，签发路径的响应里没有 exp 时也不签发。只有确实需要永不过期的令牌时才关闭。",
+    jwtLeeway: "时钟宽限",
+    jwtLeewayPlaceholder: "允许的时钟偏差，默认: 60s",
+    jwtLeewayTips:
+      "签发方的时钟和代理的时钟允许相差多少：exp 和 nbf 都按这个宽限判断，用密钥、公钥还是 JWKS 都一样。设为 0s 则精确到秒。",
     forwardAuthUrl: "认证地址",
     forwardAuthUrlPlaceholder: "输入认证服务的地址",
     forwardAuthTimeout: "超时",

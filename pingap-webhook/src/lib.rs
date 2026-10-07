@@ -346,6 +346,12 @@ impl Inner {
             },
             _ => {
                 data.insert("name".to_string(), Value::String(name));
+                // The two chat formats have it in their text; this one
+                // left it out, though every notification has one.
+                data.insert(
+                    "title".to_string(),
+                    Value::String(title.to_string()),
+                );
                 data.insert(
                     "level".to_string(),
                     Value::String(level.to_string()),
@@ -574,6 +580,8 @@ mod tests {
         let body = next_body(&mut bodies).await;
         assert_eq!("a,b", field(&body, "category"));
         assert_eq!("warn", field(&body, "level"));
+        // Regression: the generic payload had no title.
+        assert_eq!("T", field(&body, "title"));
         assert_eq!("1. [info] a: m1\n2. [warn] b: m3", field(&body, "message"));
         // And only once.
         tokio::time::sleep(Duration::from_millis(500)).await;

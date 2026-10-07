@@ -14,7 +14,7 @@
 | `category` | string | — | 必须为 `admin`。 |
 | `path` | string | `""` | 管理 UI 挂载的 URL 前缀。尾部 `/` 会去掉。 |
 | `authorizations` | string[] | `[]` | `user:password` 的 Base64，用户名和密码都不能为空，其他内容会被拒绝。**为空则完全禁用认证。** |
-| `max_age` | duration | `2d` | 签名令牌允许的时钟偏差。 |
+| `max_age` | duration | `2d` | 签名令牌的有效期，从令牌里带的时间算起。 |
 | `ip_fail_limit` | int | `10` | 每 IP 失败次数上限，之后封锁 5 分钟。 |
 
 ## 通过命令行
@@ -59,11 +59,11 @@ Authorization: <token>:<unix-seconds>
 token = hex(sha256("<user>:<password>:<unix-seconds>"))
 ```
 
-`<unix-seconds>` 须在代理时钟的 `max_age` 内，令牌按常量时间比较。Web UI 在登录后为你计算。
+按代理的时钟，`<unix-seconds>` 不能早于 `max_age` 之前，也不能比现在超前 5 分钟以上（`max_age` 更小时以它为准）。这 5 分钟是留给两边时钟误差的。浏览器的时钟比代理快出这么多（或者代理的时钟慢了这么多）时，密码正确也登录不了：这时的 `401` 会在响应体里说明原因，登录页会显示出来，而且不计入登录失败次数，因为根本没有比对凭据。以前这个时间往前往后都允许 `max_age`，所以用两天后的时间做出来的令牌能用四天。令牌按常量时间比较，Web UI 在登录后为你计算。
 
 admin 前缀下的路径分两类。`/api` 及其下的路径是接口，一律需要令牌。其余路径都是内嵌界面的文件，无需认证即可访问（登录页要靠它们加载），没有对应文件时返回 `404`。接口只能通过 `/api` 访问：不带该前缀的 `/configs/...` 不会被当成接口处理。
 
-登录失败达到 `ip_fail_limit` 次后，该 IP 会收到 `403 Forbidden, too many failures` 并封锁 5 分钟。只有带了 `Authorization` 但校验不通过的 API 请求才算一次登录失败；不带凭据的请求返回 `401`，不计数，所以页面在令牌过期后继续轮询不会把用户锁在外面。封锁只作用于 API：UI 的静态文件照常加载，admin 与业务共用一个 server 时，admin 前缀之外的路径不受影响。
+登录失败达到 `ip_fail_limit` 次后，该 IP 会收到 `403 Forbidden, too many failures` 并封锁 5 分钟。只有带了 `Authorization` 但校验不通过的 API 请求才算一次登录失败；不带凭据的请求返回 `401`，不计数，所以页面在令牌过期后继续轮询不会把用户锁在外面。因为所带的时间太旧或超前而被拒绝的请求同样不计。封锁只作用于 API：UI 的静态文件照常加载，admin 与业务共用一个 server 时，admin 前缀之外的路径不受影响。
 
 ## 不设凭据时
 
@@ -90,7 +90,7 @@ admin 前缀下的路径分两类。`/api` 及其下的路径是接口，一律�
 | `DELETE` | `/configs/{category}/{name}` | 删除一条 |
 | `GET` | `/config-history/{category}/{name}` | 历史版本（存储后端支持时） |
 | `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康 |
-| `GET` | `/certificates` | 已加载证书的解析信息 |
+| `GET` | `/certificates` | 已加载证书的域名、颁发者、有效期和 ACME 来源。不包含证书本身和私钥：以前这两项都在响应里，配置里只写了文件路径的私钥也会从文件里读出来返回。 |
 | `POST` | `/aes` | UI 用于密钥的 AES 加解密辅助 |
 | `POST` | `/restart` | 触发优雅重启 |
 

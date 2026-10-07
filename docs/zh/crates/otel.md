@@ -18,10 +18,12 @@ cargo build --features=tracing
 [servers.main]
 addr = "0.0.0.0:6188"
 locations = ["app"]
-otlp_exporter = "http://otel-collector:4317/pingap"
+otlp_exporter = "http://otel-collector:4317"
 ```
 
-URL 的路径组件成为服务名，因此同一进程中的多个 server 可用不同名称上报。URL 上的查询参数配置导出器（超时、压缩、协议）。
+服务名是 `pingap:` 加 server 的名字（这里是 `pingap:main`），因此同一进程中的多个 server 以不同名称上报。URL 原样作为采集端的地址，它的路径并不是服务名（本文档以前是这么写的）。URL 上的查询参数配置导出器：`timeout`、`compression`（`gzip` 或 `zstd`）、`max_queue_size`、`scheduled_delay`、`max_export_batch_size`、`max_attributes`、`max_events`，以及 `jaeger` / `baggage`（接受对应的传播格式）。
+
+只要构建时带 `tracing` 特性，导出器就会启动。以前只有 `full` 构建才会启动：带 `tracing` 而不带 `imageoptim` 的构建把它编译进去了，却从不运行。
 
 ## 追踪内容
 

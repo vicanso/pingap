@@ -18,7 +18,7 @@ the admin UI should live on an existing server behind a path prefix.
 | `category` | string | — | Must be `admin`. |
 | `path` | string | `""` | URL prefix the admin UI is mounted at. A trailing `/` is stripped. |
 | `authorizations` | string[] | `[]` | Base64 of `user:password`, both non-empty; anything else is rejected. **Empty disables authentication entirely.** |
-| `max_age` | duration | `2d` | Allowed clock skew for the signed token. |
+| `max_age` | duration | `2d` | How long a signed token is good for, counted from the time it carries. |
 | `ip_fail_limit` | int | `10` | Failed attempts per IP before that IP is blocked for 5 minutes. |
 
 ## Via the command line
@@ -72,8 +72,16 @@ Authorization: <token>:<unix-seconds>
 token = hex(sha256("<user>:<password>:<unix-seconds>"))
 ```
 
-`<unix-seconds>` must be within `max_age` of the proxy's clock, and the token is
-compared in constant time. The web UI computes this for you after login.
+`<unix-seconds>` must be no older than `max_age` by the proxy's clock, and no
+more than five minutes ahead of it (or `max_age`, where that is less). The
+five minutes are for two clocks that are not quite the same. With the
+browser's more than that ahead of the proxy's - or the proxy's that far
+behind - a login is refused whatever the password: the `401` then says so in
+its body, which the login page shows, and it is not counted as a failed login,
+since no credentials were compared. The time used to be allowed `max_age`
+ahead as well as behind, so a token made for a time two days from now was
+good for four. The token is compared in constant time, and the web UI
+computes it for you after login.
 
 There are two kinds of path under the admin prefix. `/api` and everything
 below it is the API and always requires the token. Every other path is a file
@@ -85,7 +93,8 @@ After `ip_fail_limit` failed logins an IP is refused with `403 Forbidden, too
 many failures` for 5 minutes. A failed login is a request to the API whose
 `Authorization` does not check out; a request without one is answered `401`
 and not counted, so a page that keeps polling after its token ran out does not
-lock its user out. The lock stands in front of the API only: the files of the
+lock its user out. One refused for the time it carries, too old or ahead of
+the clock, is not counted either. The lock stands in front of the API only: the files of the
 UI still load, and on a server shared with an application the paths outside
 the admin prefix are not affected.
 
@@ -139,7 +148,7 @@ A request body is read up to 8 MiB; a larger one is answered `413`.
 | `DELETE` | `/configs/{category}/{name}` | Delete one entry |
 | `GET` | `/config-history/{category}/{name}` | Previous versions, when the storage backend supports history |
 | `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health |
-| `GET` | `/certificates` | Parsed information about the loaded certificates |
+| `GET` | `/certificates` | The domains, issuer, validity and ACME source of the loaded certificates. Not the certificates themselves, nor their keys: both used to be in the response, the key read from its file where the configuration only names one. |
 | `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
 | `POST` | `/restart` | Trigger a graceful restart |
 

@@ -220,6 +220,7 @@ export default function Plugins() {
     step: z.string().optional(),
     timeout: newZodDuration().optional(),
     jwks_ttl: newZodDuration().optional(),
+    leeway: newZodDuration().optional(),
   });
   let key = `${currentPlugin}-${version}`;
   if (currentPlugin == newPlugin) {

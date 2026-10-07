@@ -42,6 +42,7 @@ order:
 | `jwks_ttl` | duration | `1h` | How long fetched JWKS keys stay fresh. |
 | `auth_path` | string | — | Path that mints tokens instead of consuming them. |
 | `require_exp` | bool | `true` | Whether a token has to carry `exp`, in every verification mode, and whether the response at `auth_path` has to before it is signed. See [Expiry](#expiry). |
+| `leeway` | duration | `60s` | How far the issuer's clock may be from the proxy's: `exp` and `nbf` are given this much in every verification mode. At most `1d`. See [Expiry](#expiry). |
 | `delay` | duration | none | Sleep before answering an invalid token. |
 
 Exactly one of `header` / `cookie` / `query` is used, checked in that order; at
@@ -140,6 +141,17 @@ tokens meant to never expire: a missing `exp` is accepted in every mode, and
 `auth_path` signs whatever a `2xx` response holds. A token that does carry
 `exp` is still rejected once it has passed.
 
+The issuer's clock and the proxy's are never quite the same, so both time
+claims are given `leeway` (`60s` unless set): a token is expired once `exp` is
+more than that behind the proxy's clock, and not yet valid while `nbf` is more
+than that ahead. It is the same in all three modes. The two public key modes
+always had sixty seconds, from the library that verifies them, while the HMAC
+mode had none: an issuer a second ahead had its tokens answered `Jwt
+authorization is not yet valid`, now and then, by one configuration and never
+by another. `leeway = "0s"` holds every mode to the second, which for the HMAC
+mode is what it did before; with the default a token of that mode is taken for
+up to a minute after its `exp`.
+
 ## Responses
 
 | Situation | Status | Body |
@@ -147,17 +159,17 @@ tokens meant to never expire: a missing `exp` is accepted in every mode, and
 | No token found | 401 | `Jwt authorization is missing` |
 | Not three dot-separated parts, or the payload is not a JSON object (HMAC mode) | 401 | `Jwt authorization format is invalid` |
 | Bad signature, or unsupported `alg` | 401 (after `delay`) | `Jwt authorization is invalid` |
-| `exp` in the past (HMAC mode) | 401 | `Jwt authorization is expired` |
+| `exp` more than `leeway` in the past (HMAC mode) | 401 | `Jwt authorization is expired` |
 | No `exp` and `require_exp` is on (HMAC mode) | 401 | `Jwt authorization has no exp` |
-| `nbf` in the future (HMAC mode) | 401 | `Jwt authorization is not yet valid` |
+| `nbf` more than `leeway` in the future (HMAC mode) | 401 | `Jwt authorization is not yet valid` |
 | Claims at `auth_path` without `exp` and `require_exp` is on | 502, or the connection is closed | error page |
 
 ## Usage notes
 
 - The asymmetric and JWKS paths verify the signature, `exp` and `nbf` together
   via `jsonwebtoken`; `aud` is not validated. The HMAC path checks the same two
-  claims, accepts them as integers or floats, and does not require `typ` in the
-  header. `delay` applies only to a bad signature, the one outcome a guess can
+  claims with the same `leeway`, accepts them as integers or floats, and does
+  not require `typ` in the header. `delay` applies only to a bad signature, the one outcome a guess can
   produce.
 - In HMAC mode an explicitly configured `algorithm` is enforced, so an `HS512`
   configuration rejects an `HS256` token and vice versa. Leaving `algorithm`

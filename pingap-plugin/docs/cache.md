@@ -121,7 +121,15 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
     example, is only stored when the origin gives it a lifetime.
     `check_cache_control` goes further and stores nothing that comes without a
     `Cache-Control` header.
-- A response that belongs to one client is never stored:
+- Two kinds of response are taken to belong to one client and are not stored.
+  That is all the plugin goes by: it does not look at the request's `Cookie`,
+  so a page that differs by cookie and comes without `Cache-Control` is stored
+  like any other, for the one second above, and served to whoever asks next.
+  For such pages have the origin send `Cache-Control: private`, or turn on
+  `check_cache_control`, or leave their paths out with `skip`. `Vary: Cookie`
+  from the origin keeps one copy per cookie instead, but only while
+  `vary_headers` is unset or lists `Cookie`: a header left out of that list is
+  not varied on, and everyone is back to one shared copy.
   - One with a `Set-Cookie` header: everyone served from the cache would get
     the same cookie. To cache such a response anyway, remove the header before
     it is stored, with a [`response_headers`](response_headers.md) plugin in

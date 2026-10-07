@@ -18,6 +18,9 @@ Requires the `tracing` cargo feature (included in `full`):
 cargo build --features=tracing
 ```
 
+`basic.sentry` used to be read only in a `full` build: one with `tracing` and
+without `imageoptim` had the client compiled in and never set it up.
+
 ## Configuration
 
 ```toml

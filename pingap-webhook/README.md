@@ -91,7 +91,7 @@ every notification immediately. Embedders set the same policy with
 | --- | --- |
 | `wecom` | WeCom (企业微信) markdown message, colour-coded by level |
 | `dingtalk` | DingTalk (钉钉) markdown message |
-| anything else | Generic JSON POST |
+| anything else | Generic JSON POST: an object with `name` (`pingap`), `title`, `level` (`info`, `warn`, `error`), `category`, `message`, `hostname` and `ip` (the local addresses, `;` separated). `title` used to be missing from it. |
 
 `Warn` and `Error` render in warning colour; `Info` renders as a comment.
 
