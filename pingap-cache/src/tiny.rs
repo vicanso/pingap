@@ -17,6 +17,7 @@ use super::{LOG_TARGET, Result};
 use ahash::RandomState;
 use async_trait::async_trait;
 use pingap_core::TinyUfo;
+use std::sync::atomic::{AtomicU64, Ordering};
 use strum::EnumString;
 use tracing::debug;
 
@@ -48,6 +49,21 @@ pub enum CacheMode {
     #[strum(serialize = "normal", serialize = "default")]
     Normal,
     Compact,
+}
+
+/// Objects the memory caches of this process gave up to make room.
+static EVICTIONS: AtomicU64 = AtomicU64::new(0);
+
+/// How many objects the memory cache has evicted since the process
+/// started: what TinyUFO took out to stay within the cache's size. A
+/// number that keeps growing says the cache is smaller than what is asked
+/// of it.
+///
+/// How many objects it holds, and how large they are, is not known:
+/// TinyUFO does not say, and a count kept next to it would drift with
+/// every object that replaces one of the same key.
+pub fn memory_cache_evictions() -> u64 {
+    EVICTIONS.load(Ordering::Relaxed)
 }
 
 impl MemoryCache {
@@ -93,7 +109,10 @@ impl MemoryCache {
             );
             return;
         }
-        self.ufo.put(self.hash(key), data, weight);
+        let evicted = self.ufo.put(self.hash(key), data, weight);
+        if !evicted.is_empty() {
+            EVICTIONS.fetch_add(evicted.len() as u64, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn remove(&self, key: &str) -> Option<CacheObject> {
@@ -237,6 +256,29 @@ mod tests {
         // One that fits is stored.
         cache.put("fits", large, 100);
         assert_eq!(true, cache.get("fits").is_some());
+    }
+
+    /// What TinyUFO takes out to stay within the limit is counted.
+    #[test]
+    fn test_evictions_are_counted() {
+        let cache = MemoryCache::new(CacheMode::Normal, 10);
+        let object = CacheObject {
+            body: bytes::Bytes::from_static(b"object"),
+            ..Default::default()
+        };
+        let before = memory_cache_evictions();
+        for index in 0..10 {
+            cache.put(&format!("fits-{index}"), object.clone(), 1);
+        }
+        // The counter is the process's: other tests may add to it, none
+        // takes anything off.
+        let filled = memory_cache_evictions();
+        assert_eq!(true, filled >= before);
+        for index in 0..30 {
+            cache.put(&format!("more-{index}"), object.clone(), 1);
+        }
+        // Ten fit, so each of the thirty put one out.
+        assert_eq!(true, memory_cache_evictions() >= filled + 30);
     }
 
     #[test]

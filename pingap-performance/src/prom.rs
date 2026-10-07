@@ -21,6 +21,7 @@ use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::{Ctx, get_hostname};
 use pingap_upstream::UpstreamProvider;
+use pingora::cache::{CachePhase, NoCacheReason};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{
@@ -31,6 +32,7 @@ use prometheus::{
     Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::{error, warn};
@@ -74,6 +76,11 @@ pub struct Prometheus {
     /// `http_responses_codes` children of the empty `location` label, one
     /// per status class, indexed by [`code_class`].
     all_codes: [IntCounter; CODE_LABELS.len()],
+
+    /// The exact status codes and the cache results of every request, the
+    /// children of the empty `location` label.
+    all_status: StatusSeries,
+    all_cache: [OnceLock<IntCounter>; CACHE_LABELS.len()],
 
     /// The children of each location a request was counted against, found
     /// in the vectors once and kept. A request used to look every one of
@@ -189,6 +196,123 @@ pub struct Prometheus {
     /// keep-alive pool evicted them to make room, in seconds; the count is
     /// the number of evictions
     upstream_pool_eviction_idle_time: Histogram,
+
+    /// Count of responses by their exact status code, labeled by location
+    /// and status
+    http_responses_status: IntCounterVec,
+    /// Count of the requests a cache was asked about, by what it had for
+    /// them, labeled by location and status
+    cache_responses: IntCounterVec,
+    /// Count of requests whose upstream failed: it could not be connected
+    /// to, or the connection broke or timed out
+    upstream_errors: IntCounterVec,
+    /// Count of the times a request was sent to an upstream again after a
+    /// failed connection
+    upstream_retries: IntCounterVec,
+    /// Count of access log lines dropped because the logger was behind
+    access_log_dropped: IntCounter,
+    /// Objects the memory cache evicted to stay within its size
+    cache_memory_evictions: Mirrored,
+    /// Reloads of the configuration, by result
+    config_reload_success: Mirrored,
+    config_reload_failure: Mirrored,
+    /// Whether the last reload of the configuration was applied
+    config_last_reload_successful: IntGauge,
+    /// Unix time of the last reload that was applied
+    config_last_reload_success_time: IntGauge,
+}
+
+/// A counter of this registry that follows a count kept for the whole
+/// process, by adding what the count has grown by since it was last
+/// looked at.
+struct Mirrored {
+    counter: IntCounter,
+    seen: AtomicU64,
+}
+
+impl Mirrored {
+    fn new(counter: IntCounter) -> Self {
+        Self {
+            counter,
+            seen: AtomicU64::new(0),
+        }
+    }
+    fn follow(&self, value: u64) {
+        // The largest that was seen, not the last: two scrapes at once
+        // read the count one after the other and may get here the other
+        // way round, and with the smaller value put back the difference
+        // was added a second time by the next.
+        let seen = self.seen.fetch_max(value, Ordering::Relaxed);
+        if value > seen {
+            self.counter.inc_by(value - seen);
+        }
+    }
+}
+
+/// What a cache had for a request, as the `status` label of
+/// `cache_responses`, in the order [`cache_class`] indexes them.
+const CACHE_LABELS: [&str; 7] = [
+    "hit",
+    "miss",
+    "expired",
+    "stale",
+    "revalidated",
+    "bypass",
+    "uncacheable",
+];
+
+/// Index of a cache phase in [`CACHE_LABELS`]; `None` for a request no
+/// cache was asked about, or one that never got as far as an answer.
+#[inline]
+fn cache_class(phase: CachePhase) -> Option<usize> {
+    Some(match phase {
+        CachePhase::Hit => 0,
+        CachePhase::Miss => 1,
+        CachePhase::Expired => 2,
+        CachePhase::Stale | CachePhase::StaleUpdating => 3,
+        CachePhase::Revalidated | CachePhase::RevalidatedNoCache(_) => 4,
+        CachePhase::Bypass => 5,
+        // Never asked, or not as far as an answer.
+        CachePhase::Disabled(NoCacheReason::NeverEnabled)
+        | CachePhase::Uninit
+        | CachePhase::CacheKey => return None,
+        // Asked, had nothing, and what the upstream answered with is not
+        // kept: no `Cache-Control` that allows it, a status that is not
+        // cached, a body over the limit. pingora switches the cache off
+        // for the request then, and left out these were missing from the
+        // total a hit ratio is taken of.
+        CachePhase::Disabled(_) => 6,
+    })
+}
+
+/// The counters of the exact status codes of one location, each found in
+/// the vector when its code is first answered and kept. A location answers
+/// with a handful of codes, so they are a short list that is gone through:
+/// no hash of the labels and no lock per request.
+#[derive(Default)]
+struct StatusSeries(ArcSwap<Vec<(u16, IntCounter)>>);
+
+impl StatusSeries {
+    #[inline]
+    fn inc(&self, code: u16, new: impl FnOnce() -> IntCounter) {
+        let current = self.0.load();
+        if let Some((_, counter)) =
+            current.iter().find(|(known, _)| *known == code)
+        {
+            counter.inc();
+            return;
+        }
+        drop(current);
+        let created = new();
+        self.0.rcu(|current| {
+            let mut next = current.as_ref().clone();
+            if !next.iter().any(|(known, _)| *known == code) {
+                next.push((code, created.clone()));
+            }
+            next
+        });
+        created.inc();
+    }
 }
 
 /// The per-request metrics of one `location` label value.
@@ -245,6 +369,8 @@ struct LocationSeries {
     sent: Histogram,
     sent_bytes: OnceLock<IntCounter>,
     codes: [OnceLock<IntCounter>; CODE_LABELS.len()],
+    status: StatusSeries,
+    cache: [OnceLock<IntCounter>; CACHE_LABELS.len()],
 }
 
 /// The series of one upstream, each found when it first has a value.
@@ -257,6 +383,8 @@ struct UpstreamSeries {
     reuses: OnceLock<IntCounter>,
     processing_time: OnceLock<Histogram>,
     response_time: OnceLock<Histogram>,
+    errors: OnceLock<IntCounter>,
+    retries: OnceLock<IntCounter>,
 }
 
 /// Runs `f` on the entry of `name` in a map of series; the entry is made
@@ -360,6 +488,8 @@ impl Prometheus {
                     sent: self.http_sent.with_label_values(&labels),
                     sent_bytes: OnceLock::new(),
                     codes: Default::default(),
+                    status: Default::default(),
+                    cache: Default::default(),
                 }
             },
             f,
@@ -412,6 +542,28 @@ impl Prometheus {
             self.all.sent_bytes.inc_by(sent_bytes);
         }
         self.all_codes[class].inc();
+        // The status itself: `4xx` does not tell a `404` from a `429`. A
+        // request that ended without one has none to count, and a code
+        // outside what HTTP defines is left to its class: the list of a
+        // location stays as short as the codes there are. The label is
+        // only written out the first time a code is seen.
+        let has_status = (100..=599).contains(&code);
+        if has_status {
+            self.all_status.inc(code, || {
+                self.http_responses_status
+                    .with_label_values(&["", code.to_string().as_str()])
+            });
+        }
+        // What the cache had for the request, where one was asked.
+        let cache = cache_class(session.cache.phase());
+        if let Some(cache) = cache {
+            self.all_cache[cache]
+                .get_or_init(|| {
+                    self.cache_responses
+                        .with_label_values(&["", CACHE_LABELS[cache]])
+                })
+                .inc();
+        }
 
         if !location.is_empty() {
             self.with_location(location, |series| {
@@ -434,6 +586,24 @@ impl Prometheus {
                             .with_label_values(&[location, CODE_LABELS[class]])
                     })
                     .inc();
+                if has_status {
+                    series.status.inc(code, || {
+                        self.http_responses_status.with_label_values(&[
+                            location,
+                            code.to_string().as_str(),
+                        ])
+                    });
+                }
+                if let Some(cache) = cache {
+                    series.cache[cache]
+                        .get_or_init(|| {
+                            self.cache_responses.with_label_values(&[
+                                location,
+                                CACHE_LABELS[cache],
+                            ])
+                        })
+                        .inc();
+                }
             });
         }
 
@@ -539,6 +709,14 @@ impl Prometheus {
                 })
                 .inc();
         }
+        if ctx.upstream.retries > 0 {
+            series
+                .retries
+                .get_or_init(|| {
+                    self.upstream_retries.with_label_values(upstream_labels)
+                })
+                .inc_by(u64::from(ctx.upstream.retries));
+        }
         // Through the getters, which leave out a phase that never
         // finished. Its field still holds the start marker, a negative
         // number: a HEAD or a 204 has no body to end the response phase,
@@ -567,6 +745,36 @@ impl Prometheus {
         }
     }
 
+    /// Counts a request that failed because of its upstream: no connection
+    /// could be made, or the one it had broke or timed out. Called where
+    /// the proxy learns of it, with the error at hand: by the end of the
+    /// request all that is left of it is a `502` or `504`, which a plugin
+    /// or the upstream itself answers with as well.
+    pub fn on_upstream_error(&self, upstream: &str) {
+        if upstream.is_empty() {
+            return;
+        }
+        with_series(
+            &self.upstream_series,
+            upstream,
+            UpstreamSeries::default,
+            |series| {
+                series
+                    .errors
+                    .get_or_init(|| {
+                        self.upstream_errors.with_label_values(&[upstream])
+                    })
+                    .inc();
+            },
+        );
+    }
+
+    /// Counts an access log line that was dropped because the logger was
+    /// behind and its channel full.
+    pub fn on_access_log_dropped(&self) {
+        self.access_log_dropped.inc();
+    }
+
     /// Collects all registered metrics and updates system resource gauges.
     ///
     /// Updates the following system metrics before collection:
@@ -580,6 +788,18 @@ impl Prometheus {
         self.tcp_count.set(info.tcp_count as i64);
         self.tcp6_count.set(info.tcp6_count as i64);
         self.refresh_upstream_backend_metrics();
+        // What is counted for the process as a whole.
+        self.cache_memory_evictions
+            .follow(pingap_cache::memory_cache_evictions());
+        let reloads = super::config_reloads();
+        self.config_reload_success.follow(reloads.success);
+        self.config_reload_failure.follow(reloads.failure);
+        self.config_last_reload_successful
+            .set(i64::from(reloads.last_successful));
+        if reloads.last_success_at > 0 {
+            self.config_last_reload_success_time
+                .set(reloads.last_success_at as i64);
+        }
         self.r.gather()
     }
 
@@ -653,6 +873,8 @@ impl Prometheus {
             let _ = self.upstream_reuses.remove_label_values(&labels);
             let _ = self.upstream_processing_time.remove_label_values(&labels);
             let _ = self.upstream_response_time.remove_label_values(&labels);
+            let _ = self.upstream_errors.remove_label_values(&labels);
+            let _ = self.upstream_retries.remove_label_values(&labels);
             // After the series, not before: what is kept here points at
             // them, and an upstream of this name that comes back has to
             // find its series anew.
@@ -1260,6 +1482,108 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0]
     )?;
 
+    let http_responses_status = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_http_responses_status",
+        "pingap http responses by exact status code",
+        &["location", "status"]
+    )?;
+    let cache_responses = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_cache_responses",
+        "pingap requests a cache was asked about, by what it had for them",
+        &["location", "status"]
+    )?;
+    let upstream_errors = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_upstream_errors",
+        "pingap requests that failed because of their upstream",
+        &["upstream"]
+    )?;
+    let upstream_retries = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_upstream_retries",
+        "pingap retries of requests after a failed upstream connection",
+        &["upstream"]
+    )?;
+    let access_log_dropped = register_metric!(
+        r,
+        new_int_counter,
+        server,
+        "pingap_access_log_dropped",
+        "pingap access log lines dropped because the logger was behind"
+    )?;
+    let cache_memory_evictions = register_metric!(
+        r,
+        new_int_counter,
+        server,
+        "pingap_cache_memory_evictions",
+        "pingap objects evicted from the memory cache to stay within its size"
+    )?;
+    let config_reloads = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_config_reloads",
+        "pingap reloads of the configuration by result",
+        &["result"]
+    )?;
+    let config_last_reload_successful = register_metric!(
+        r,
+        new_int_gauge,
+        server,
+        "pingap_config_last_reload_successful",
+        "pingap whether the last reload of the configuration was applied"
+    )?;
+    let config_last_reload_success_time = register_metric!(
+        r,
+        new_int_gauge,
+        server,
+        "pingap_config_last_reload_success_timestamp_seconds",
+        "pingap unix time the configuration was last loaded or reloaded"
+    )?;
+    // The configuration this process runs was loaded when it started.
+    config_last_reload_successful.set(1);
+    config_last_reload_success_time.set(pingap_core::now_sec() as i64);
+    let build_info = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_build_info",
+        "pingap build information, the value is always 1",
+        &["version", "rustc_version"]
+    )?;
+    build_info
+        .with_label_values(&[
+            pingap_util::get_pkg_version(),
+            pingap_util::get_rustc_version(),
+        ])
+        .set(1);
+    let start_time = register_metric!(
+        r,
+        new_int_gauge,
+        server,
+        "pingap_start_time_seconds",
+        "pingap unix time this server was started"
+    )?;
+    start_time.set(pingap_core::now_sec() as i64);
+    // What was counted before this registry was there is not its to
+    // report: a server made by a restart starts from the count as it is.
+    let mirrored = |counter: IntCounter, value: u64| {
+        let mirrored = Mirrored::new(counter);
+        mirrored.seen.store(value, Ordering::Relaxed);
+        mirrored
+    };
+    let reloads = super::config_reloads();
+
     let all = LocationMetrics::new(
         &PrometheusVecs {
             requests_total: &http_requests_total,
@@ -1279,6 +1603,27 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         r,
         all,
         all_codes,
+        all_status: Default::default(),
+        all_cache: Default::default(),
+        cache_memory_evictions: mirrored(
+            cache_memory_evictions,
+            pingap_cache::memory_cache_evictions(),
+        ),
+        config_reload_success: mirrored(
+            config_reloads.with_label_values(&["success"]),
+            reloads.success,
+        ),
+        config_reload_failure: mirrored(
+            config_reloads.with_label_values(&["failure"]),
+            reloads.failure,
+        ),
+        config_last_reload_successful,
+        config_last_reload_success_time,
+        http_responses_status,
+        cache_responses,
+        upstream_errors,
+        upstream_retries,
+        access_log_dropped,
         location_series: ArcSwap::from_pointee(HashMap::new()),
         upstream_series: ArcSwap::from_pointee(HashMap::new()),
         known_upstreams: ArcSwap::from_pointee(Vec::new()),
@@ -1592,6 +1937,192 @@ mod tests {
 
     /// The per-upstream series of an upstream that left the configuration
     /// stop being exported instead of lingering with their last value.
+    #[test]
+    fn test_cache_class() {
+        let label = |phase| cache_class(phase).map(|index| CACHE_LABELS[index]);
+        assert_eq!(Some("hit"), label(CachePhase::Hit));
+        assert_eq!(Some("miss"), label(CachePhase::Miss));
+        assert_eq!(Some("expired"), label(CachePhase::Expired));
+        assert_eq!(Some("stale"), label(CachePhase::Stale));
+        assert_eq!(Some("stale"), label(CachePhase::StaleUpdating));
+        assert_eq!(Some("revalidated"), label(CachePhase::Revalidated));
+        assert_eq!(
+            Some("revalidated"),
+            label(CachePhase::RevalidatedNoCache(NoCacheReason::Custom("x")))
+        );
+        assert_eq!(Some("bypass"), label(CachePhase::Bypass));
+        // Asked, and the response was not one to keep.
+        assert_eq!(
+            Some("uncacheable"),
+            label(CachePhase::Disabled(NoCacheReason::OriginNotCache))
+        );
+        assert_eq!(
+            Some("uncacheable"),
+            label(CachePhase::Disabled(NoCacheReason::ResponseTooLarge))
+        );
+        // No cache was asked, or it never got to an answer.
+        assert_eq!(None, label(CachePhase::Uninit));
+        assert_eq!(None, label(CachePhase::CacheKey));
+        assert_eq!(
+            None,
+            label(CachePhase::Disabled(NoCacheReason::NeverEnabled))
+        );
+    }
+
+    /// A counter that follows a count of the process adds what the count
+    /// grew by, and nothing of what was there before it.
+    #[test]
+    fn test_mirrored_counter() {
+        let mirrored =
+            Mirrored::new(IntCounter::new("mirrored", "help").unwrap());
+        mirrored.seen.store(40, Ordering::Relaxed);
+        mirrored.follow(40);
+        assert_eq!(0, mirrored.counter.get());
+        mirrored.follow(43);
+        assert_eq!(3, mirrored.counter.get());
+        mirrored.follow(43);
+        assert_eq!(3, mirrored.counter.get());
+        mirrored.follow(50);
+        assert_eq!(10, mirrored.counter.get());
+        // A count never goes back; if it did, nothing is taken off.
+        mirrored.follow(10);
+        assert_eq!(10, mirrored.counter.get());
+        mirrored.follow(12);
+        assert_eq!(10, mirrored.counter.get());
+        mirrored.follow(52);
+        assert_eq!(12, mirrored.counter.get());
+    }
+
+    /// The exact status, the retries and the errors of an upstream, the
+    /// dropped access log lines, and what says which build this is.
+    #[tokio::test]
+    async fn test_status_upstream_and_process_metrics() {
+        let mock_io = Builder::new()
+            .read(b"GET / HTTP/1.1\r\nHost: github.com\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let p = new_prometheus("pingap").unwrap();
+        let request = |status: u16, location: &str, retries: u8| {
+            p.on_request_start();
+            p.on_location_matched(location);
+            p.after(
+                &session,
+                &Ctx {
+                    state: RequestState {
+                        status: StatusCode::from_u16(status).ok(),
+                        ..Default::default()
+                    },
+                    upstream: pingap_core::UpstreamInfo {
+                        name: if location.is_empty() { "" } else { "up" }
+                            .into(),
+                        location: location.into(),
+                        retries,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        };
+        request(200, "lo", 0);
+        request(200, "lo", 2);
+        request(404, "lo", 0);
+        request(429, "other", 1);
+        // Matched no location: counted for the total alone.
+        request(404, "", 0);
+        // Ended without a status: none to count.
+        request(0, "lo", 0);
+        p.on_upstream_error("up");
+        p.on_upstream_error("up");
+        p.on_upstream_error("");
+        p.on_access_log_dropped();
+
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        let value = |name: &str, labels: &[&str]| {
+            metric_value(&buf, name, labels).unwrap_or_else(|| "-".to_string())
+        };
+        for (location, status, expected) in [
+            ("lo", "200", "2"),
+            ("lo", "404", "1"),
+            ("other", "429", "1"),
+            ("", "200", "2"),
+            ("", "404", "2"),
+            ("", "429", "1"),
+            // Not answered there: no series, not one that reads 0.
+            ("lo", "429", "-"),
+            ("other", "200", "-"),
+        ] {
+            assert_eq!(
+                expected,
+                value(
+                    "pingap_http_responses_status{",
+                    &[
+                        &format!("location=\"{location}\""),
+                        &format!("status=\"{status}\"")
+                    ]
+                ),
+                "{location} {status}: {buf}"
+            );
+        }
+        // The classes go on as before, the request without a status in
+        // `unknown`.
+        assert_eq!(
+            "2",
+            value(
+                "pingap_http_responses_codes{",
+                &["location=\"lo\"", "code=\"2xx\""]
+            )
+        );
+        assert_eq!(
+            "1",
+            value(
+                "pingap_http_responses_codes{",
+                &["location=\"lo\"", "code=\"unknown\""]
+            )
+        );
+        assert_eq!(
+            "3",
+            value("pingap_upstream_retries{", &["upstream=\"up\""])
+        );
+        assert_eq!("2", value("pingap_upstream_errors{", &["upstream=\"up\""]));
+        assert_eq!("1", value("pingap_access_log_dropped{", &[]));
+        // No cache was asked about any of these.
+        assert_eq!("-", value("pingap_cache_responses{", &[]));
+        assert_eq!(
+            "1",
+            value(
+                "pingap_build_info{",
+                &[&format!("version=\"{}\"", pingap_util::get_pkg_version())]
+            )
+        );
+        let started: u64 =
+            value("pingap_start_time_seconds{", &[]).parse().unwrap();
+        assert_eq!(true, started + 60 > pingap_core::now_sec());
+        // There from the first scrape on, whatever the reloads were.
+        for name in [
+            "pingap_config_last_reload_successful{",
+            "pingap_config_last_reload_success_timestamp_seconds{",
+            "pingap_cache_memory_evictions{",
+        ] {
+            assert_eq!(false, "-" == value(name, &[]), "{name}: {buf}");
+        }
+
+        // An upstream that is gone takes its errors and retries with it.
+        let stats = |names: &[&str]| -> HashMap<String, pingap_upstream::UpstreamStats> {
+            names
+                .iter()
+                .map(|name| (name.to_string(), Default::default()))
+                .collect()
+        };
+        p.forget_removed_upstreams(&stats(&["up"]));
+        p.forget_removed_upstreams(&stats(&[]));
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        for name in ["pingap_upstream_retries{", "pingap_upstream_errors{"] {
+            assert_eq!(None, metric_value(&buf, name, &[]), "{name}: {buf}");
+        }
+    }
+
     #[test]
     fn test_forget_removed_upstreams() {
         let p = new_prometheus("pingap").unwrap();

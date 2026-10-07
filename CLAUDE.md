@@ -121,7 +121,7 @@ When adding a feature-gated module, mirror the wiring in both the workspace `Car
 
 ## Configuration loading and env vars
 
-`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `PINGAP_DISABLE_ACME`, and `$ENV:...` interpolations inside HCL configs (e.g. `$ENV:PINGAP_DNS_SERVICE_URL`).
+`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `PINGAP_DISABLE_ACME`, and whatever the configuration names: a text value written as a whole `$ENV:NAME` or `$FILE:/path` is replaced in the configuration a process runs with (`PingapTomlConfig::to_running_config`, `pingap-config/src/reference.rs`), in every format, and left as written in what the admin shows and stores (`to_pingap_config`).
 
 CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot upgrade from a running instance), `-t/--test` (validate config and exit), `-a/--autorestart` (graceful restart on config change), `--autoreload` (hot reload only — preferred for containers), `--cp` (control-panel mode, admin only).
 

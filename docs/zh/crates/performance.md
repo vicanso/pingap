@@ -46,6 +46,7 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 | `pingap_http_requests_total` | counter | location | 已接受请求 |
 | `pingap_http_requests_current` | gauge | location | 在途请求 |
 | `pingap_http_responses_codes` | counter | location, code | 按状态类别（`2xx`、`5xx`…）的响应 |
+| `pingap_http_responses_status` | counter | location, status | 按精确状态码（`200`、`404`、`429`…）的响应；某个状态码第一次出现时才有对应的序列。`100`–`599` 之外的状态码只计入类别 |
 | `pingap_http_response_time` | histogram | location | 端到端响应时间（秒） |
 | `pingap_http_received` / `pingap_http_received_bytes` | histogram / counter | location | 请求载荷大小 |
 | `pingap_http_sent` / `pingap_http_sent_bytes` | histogram / counter | location | 响应载荷大小 |
@@ -54,6 +55,8 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 | `pingap_upstream_connections` | gauge | upstream | 已建立的上游连接；只有开启 `enable_tracer = true` 的上游才会导出，计数由它产生 |
 | `pingap_upstream_connections_current` | gauge | upstream | 使用中的上游连接 |
 | `pingap_upstream_reuses` | counter | upstream | 复用的上游连接 |
+| `pingap_upstream_errors` | counter | upstream | 因上游而失败的请求：连不上，或连接中断、超时。上游自己返回的 `5xx` 是响应，不算错误 |
+| `pingap_upstream_retries` | counter | upstream | 连接失败后把请求重新发给上游的次数（location 的 `max_retries`） |
 | `pingap_upstream_tcp_connect_time` | histogram | upstream | 上游 TCP 连接（秒） |
 | `pingap_upstream_tls_handshake_time` | histogram | upstream | 上游 TLS 握手（秒） |
 | `pingap_upstream_processing_time` | histogram | upstream | 上游处理（秒） |
@@ -67,6 +70,14 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 | `pingap_cache_lookup_time` | histogram | — | 缓存查找（秒） |
 | `pingap_cache_lock_time` | histogram | — | 等待缓存锁的时间（秒） |
 | `pingap_cache_reading` / `pingap_cache_writing` | gauge | — | 并发缓存读 / 写 |
+| `pingap_cache_responses` | counter | location, status | 经过 `cache` 插件的请求，按结果计数：`hit`、`miss`、`expired`、`stale`、`revalidated`、`bypass`，以及 `uncacheable`——未命中且响应不能缓存（没有允许缓存的 `Cache-Control`、状态码不缓存、响应体超过上限）。没有经过缓存的请求不计入 |
+| `pingap_cache_memory_evictions` | counter | — | 内存缓存为了不超出容量而淘汰的对象数。持续增长说明缓存比实际需要的小 |
+| `pingap_access_log_dropped` | counter | — | 因为日志任务跟不上、通道已满而丢弃的访问日志行数 |
+| `pingap_config_reloads` | counter | result | 配置重载次数：`success` 是变更已生效的，`failure` 是被拒绝、运行中的配置保持不变的，或者只生效了一部分的 |
+| `pingap_config_last_reload_successful` | gauge | — | 最近一次重载已生效（或还没有重载过）时为 `1`，被拒绝或只生效了一部分时为 `0` |
+| `pingap_config_last_reload_success_timestamp_seconds` | gauge | — | 配置最近一次加载或重载成功的 Unix 时间 |
+| `pingap_build_info` | gauge | version, rustc_version | 恒为 `1`；标签说明运行的是哪个构建 |
+| `pingap_start_time_seconds` | gauge | — | 该 server 启动的 Unix 时间 |
 | `pingap_compression_ratio` | histogram | — | 达到的压缩比 |
 | `pingap_memory` | gauge | — | 进程内存（MB） |
 | `pingap_fd_count` | gauge | — | 打开的文件描述符 |
@@ -75,6 +86,26 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=1m"
 `pingap_upstream_processing_time` 和 `pingap_upstream_response_time` 只统计已经结束的阶段。没有响应体的响应（`HEAD`、`204`、`304`）没有可计时的响应阶段，始终不应答的上游也没有处理耗时，这类请求不会进入这两个直方图，所以它们的 count 可能小于该上游的请求数。
 
 多数延迟指标按 location 或 upstream 打标签，仪表盘可在无额外埋点的情况下把回归归因到具体路由或后端。
+
+新增序列的几个用法：
+
+```promql
+# 某个 location 的缓存命中率
+sum(rate(pingap_cache_responses{location="static",status="hit"}[5m]))
+  / sum(rate(pingap_cache_responses{location="static"}[5m]))
+
+# 正在被限流的请求
+sum(rate(pingap_http_responses_status{location="",status="429"}[5m]))
+
+# 最近一次配置变更被拒绝
+pingap_config_last_reload_successful == 0
+```
+
+“重载”指发现了变化并尝试应用的那一次。被拒绝的配置只要内容不变，每分钟会重试一次，每次都记一次 `failure`。不计入的有：没发现变化的检查、存储读取失败，以及只有重启才能应用的部分——带 `--autorestart` 时接替进程会体现在 `pingap_start_time_seconds` 上，带 `--autoreload` 时这类变更会一直等到重启，没有序列反映它。
+
+内存缓存的淘汰次数和重载次数是按进程统计的，每个开了指标的 server 报的是同一个数：跨 server 聚合时用 `max`，不要用 `sum`。
+
+内存缓存不报告它存了多少对象、占多大：背后的结构（TinyUFO）不提供这个数字，在旁边另记一份会逐渐偏离。它的淘汰次数是有的，缓存够不够大看这个就行。
 
 空 `location` 标签即总量，而且确实是全部请求：未匹配任何 location 的请求（404）、admin 端点、ACME challenge，以及对该指标端点自身的抓取都计入其中。只有被路由到某处的请求才另外带上具体的 `location`。
 

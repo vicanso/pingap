@@ -4289,6 +4289,7 @@ dependencies = [
  "pingap-core",
  "pingap-location",
  "pingap-upstream",
+ "pingap-util",
  "pingora",
  "pretty_assertions",
  "procfs",

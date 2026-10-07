@@ -53,7 +53,7 @@ buffer_days = 30
 
 规范名称是 `ali` 与 `cf`；早期文档用过 `aliyun`、`cloudflare`，作为别名仍可接受。其他任何值会被 `pingap -t` 拒绝，而不是静默回退到 manual 任务、等待没人会添加的 TXT。
 
-`dns_service_url` 中任意查询参数的值，或者整个值，可写成 `$ENV:NAME` 并从环境读取，密钥不必进配置文件。变量未设置时保持原文。（以前只有整个值会这样读取：上面示例里的 `?token=$ENV:CF_TOKEN` 写法，传给服务商的就是这段原文。）
+`dns_service_url` 中任意查询参数的值，或者整个值，可写成 `$ENV:NAME` 并从环境读取，密钥不必进配置文件。写在查询参数里时，变量未设置则保持原文。整个值写成引用时，遵循配置里其他所有值的规则（见 [pingap-config](config.md)，那里还有 `$FILE:/path`）：变量未设置是配置错误，而以前是把这段原文传给服务商。
 
 提供商添加 `_acme-challenge` TXT、等待校验后删除。zone 取记录名的可注册域名，按公共后缀列表解析（`example.co.uk`，而不是 `co.uk`）。`manual`（或空提供商）时 challenge 每个进程启动只尝试一次，因为没有可轮询的对象；TXT 值记入日志，同时写入 storage 类别，一天后由每小时的清扫删除。
 

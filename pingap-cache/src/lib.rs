@@ -297,6 +297,7 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
 }
 
 pub use http_cache::{CacheObject, HttpCache, new_storage_clear_service};
+pub use tiny::memory_cache_evictions;
 
 #[cfg(feature = "tracing")]
 mod prom;

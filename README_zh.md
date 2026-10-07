@@ -152,6 +152,10 @@ Pingap 的设计旨在无需停机即可适应配置变更。
 
 严格模式 (--strict)：Pingap 不认识的键或分段，默认只打一条告警然后忽略。加上 `--strict` 后它是错误：`pingap -t --strict` 会因此失败（建议在 CI 里使用），运行中的 Pingap 也不会接受带有这种键的重载。
 
+检查与预览 (-t、--diff)：`pingap -c conf -t` 会走到启动流程里开始服务之前的那一步，构建每个 upstream、location、插件、证书和 server（包括 TLS 设置），不绑定端口。`pingap -c conf --diff new-conf` 输出用 `new-conf` 替换 `conf` 后会发生的变化，密钥显示为校验值。
+
+从环境变量和文件读取密钥：配置里任何文本值都可以整体写成 `$ENV:NAME` 或 `$FILE:/path`，在加载运行用的配置时被替换；admin、`--to-hcl`、`--sync` 保留原样。详见[配置文档](https://pingap.io/zh/#/crates/config)。
+
 交接以“就绪”而不是计时为准：新进程以 `-d -u` 拉起，一旦准备好接管监听就通过升级 socket 旁边的一个 unix socket 回报，旧进程此时才向自己发送 SIGQUIT。若新进程退出、其守护进程死亡，或先到了 `basic.restart_ready_timeout`（默认 1m），本次重启作废，旧进程继续服务。新进程在最初那个进程的启动目录下拉起，并带上同样的 `--autoreload` / `--autorestart`，所以相对路径（`--log=logs/pingap.log`、配置里的路径）的含义不变。
 
 

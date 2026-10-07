@@ -61,6 +61,7 @@ interval actually used, so `?interval=15s` does not silently become a minute.
 | `pingap_http_requests_total` | counter | location | Requests accepted |
 | `pingap_http_requests_current` | gauge | location | Requests in flight |
 | `pingap_http_responses_codes` | counter | location, code | Responses by status class (`2xx`, `5xx`, …) |
+| `pingap_http_responses_status` | counter | location, status | Responses by exact status code (`200`, `404`, `429`, …); a series appears with the first response of that status. A code outside `100`–`599` is only counted in its class |
 | `pingap_http_response_time` | histogram | location | End-to-end response time (s) |
 | `pingap_http_received` / `pingap_http_received_bytes` | histogram / counter | location | Request payload size |
 | `pingap_http_sent` / `pingap_http_sent_bytes` | histogram / counter | location | Response payload size |
@@ -69,6 +70,8 @@ interval actually used, so `?interval=15s` does not silently become a minute.
 | `pingap_upstream_connections` | gauge | upstream | Established upstream connections; only exported for an upstream with `enable_tracer = true`, which is what counts them |
 | `pingap_upstream_connections_current` | gauge | upstream | Upstream connections in use |
 | `pingap_upstream_reuses` | counter | upstream | Reused upstream connections |
+| `pingap_upstream_errors` | counter | upstream | Requests that failed because of their upstream: it could not be connected to, or the connection broke or timed out. A `5xx` the upstream itself answered is a response, not an error |
+| `pingap_upstream_retries` | counter | upstream | Times a request was sent to an upstream again after a failed connection (`max_retries` of the location) |
 | `pingap_upstream_tcp_connect_time` | histogram | upstream | Upstream TCP connect (s) |
 | `pingap_upstream_tls_handshake_time` | histogram | upstream | Upstream TLS handshake (s) |
 | `pingap_upstream_processing_time` | histogram | upstream | Upstream processing (s) |
@@ -82,6 +85,14 @@ interval actually used, so `?interval=15s` does not silently become a minute.
 | `pingap_cache_lookup_time` | histogram | — | Cache lookup (s) |
 | `pingap_cache_lock_time` | histogram | — | Time waiting on a cache lock (s) |
 | `pingap_cache_reading` / `pingap_cache_writing` | gauge | — | Concurrent cache reads / writes |
+| `pingap_cache_responses` | counter | location, status | Requests a `cache` plugin was asked about, by what came of it: `hit`, `miss`, `expired`, `stale`, `revalidated`, `bypass`, and `uncacheable` for a miss whose response was not one to keep (no `Cache-Control` that allows it, a status that is not cached, a body over the limit). Requests no cache looked at are not counted |
+| `pingap_cache_memory_evictions` | counter | — | Objects the memory cache evicted to stay within its size. One that keeps growing says the cache is smaller than what is asked of it |
+| `pingap_access_log_dropped` | counter | — | Access log lines dropped because the logger was behind and its channel full |
+| `pingap_config_reloads` | counter | result | Reloads of the configuration: `success` for a change that was applied, `failure` for one that was refused and left the running configuration in place, or of which a part did not go through |
+| `pingap_config_last_reload_successful` | gauge | — | `1` when the last reload was applied (or there was none yet), `0` when it was refused or went through in part |
+| `pingap_config_last_reload_success_timestamp_seconds` | gauge | — | Unix time the configuration was last loaded or reloaded |
+| `pingap_build_info` | gauge | version, rustc_version | Always `1`; the labels say which build is running |
+| `pingap_start_time_seconds` | gauge | — | Unix time this server was started |
 | `pingap_compression_ratio` | histogram | — | Compression ratio achieved |
 | `pingap_memory` | gauge | — | Process memory (MB) |
 | `pingap_fd_count` | gauge | — | Open file descriptors |
@@ -96,6 +107,36 @@ count can be lower than the request count of the upstream.
 Because most latency metrics are labelled per location or per upstream, a
 dashboard can attribute a regression to a specific route or backend without
 extra instrumentation.
+
+Some things to ask of the newer series:
+
+```promql
+# cache hit ratio of a location
+sum(rate(pingap_cache_responses{location="static",status="hit"}[5m]))
+  / sum(rate(pingap_cache_responses{location="static"}[5m]))
+
+# requests that are being throttled
+sum(rate(pingap_http_responses_status{location="",status="429"}[5m]))
+
+# the last change of the configuration was refused
+pingap_config_last_reload_successful == 0
+```
+
+A reload is a change that was found and tried. A refused configuration is
+tried again every minute for as long as it stays the same, and each try is a
+`failure`. Not counted: a check that finds nothing changed, a storage that
+could not be read, and what only a restart applies - with `--autorestart` the
+replacement process shows in `pingap_start_time_seconds`, with `--autoreload`
+such a change waits for a restart and no series says so.
+
+The evictions of the memory cache and the reloads are counted for the process,
+and every server with metrics reports the same number: take `max`, not `sum`,
+over servers.
+
+The memory cache does not report how many objects it holds or how large they
+are: the structure behind it (TinyUFO) does not say, and a count kept next to
+it would drift. Its evictions are counted, which is what says whether it is
+large enough.
 
 The empty `location` label is the total, and it really is every request: one
 that matched no location (a `404`), an admin endpoint, an ACME challenge and a

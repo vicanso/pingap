@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod events;
 mod metrics;
 mod process;
 
+pub use events::{ConfigReloads, config_reloads, record_config_reload};
 pub use metrics::*;
 pub use process::*;
 #[cfg(feature = "tracing")]

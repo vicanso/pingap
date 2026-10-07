@@ -26,6 +26,7 @@ tracing = [
     "dep:humantime",
     "dep:http",
     "dep:snafu",
+    "dep:pingap-util",
     "pingap-cache/tracing",
 ]
 
@@ -43,6 +44,8 @@ pingap-cache = { workspace = true }
 pingap-core = { workspace = true }
 pingap-location = { workspace = true }
 pingap-upstream = { workspace = true }
+# The version of the build, for the `pingap_build_info` metric.
+pingap-util = { workspace = true, optional = true }
 pingora = { workspace = true }
 prometheus = { workspace = true, features = ["protobuf"], optional = true }
 reqwest = { workspace = true, optional = true }

@@ -715,10 +715,20 @@ impl AdminServe {
             );
             pingap_core::new_internal_error(400, e)
         })?;
-        conf.validate().map_err(|e| {
-            error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
-            pingap_core::new_internal_error(400, e)
-        })?;
+        // An entry with a `$ENV:` or `$FILE:` reference is not what runs:
+        // an address written as one is only an address once it is
+        // replaced. It is checked below, in the configuration it leads
+        // to, where the references are replaced as a start replaces them.
+        // A storage is not looked at for references, only what includes
+        // it is.
+        if category == Category::Storage
+            || !pingap_config::entry_has_reference(&conf)
+        {
+            conf.validate().map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
+                pingap_core::new_internal_error(400, e)
+            })?;
+        }
 
         // Not only the entry: the configuration the storage would hold
         // with it, checked the way `--test` checks one. A location with a

@@ -184,6 +184,8 @@ zstd_level = 3
 - **热更新（`--autoreload`）**：多数变更（upstream、location、插件等）约 10 秒内就地生效，无需重启。容器环境推荐。
 - **平滑重启（`-a` / `--autorestart`）**：监听端口等基础变更时做零停机优雅重启。
 - **严格模式（`--strict`）**：不认识的键或分段默认只告警并忽略；加上 `--strict` 后是错误，`pingap -t --strict` 会因此失败（建议在 CI 里使用），运行中的进程也不接受带有这种键的重载。
+- **检查与预览（`-t`、`--diff`）**：`pingap -c conf -t` 会构建每个 upstream、location、插件、证书和 server（包括 TLS 设置），不绑定端口。`pingap -c conf --diff new-conf` 输出用 `new-conf` 替换 `conf` 后会发生的变化，密钥显示为校验值。
+- **从环境变量和文件读取密钥**：配置里任何文本值都可以整体写成 `$ENV:NAME` 或 `$FILE:/path`，在加载运行用的配置时被替换；admin、`--to-hcl`、`--sync` 保留原样。详见[配置](crates/config.md)。
 
 ## 许可证
 

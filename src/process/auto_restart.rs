@@ -28,7 +28,8 @@ use async_trait::async_trait;
 use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM, CertificateConf,
-    ConfigManager, Observer, PingapConfig, PingapTomlConfig,
+    ConfigManager, FILE_REFERENCE_PREFIX, MissingReference, Observer,
+    PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -160,12 +161,29 @@ fn should_skip(
 /// applies it through `apply_config`. Returns `None` when there was nothing
 /// new: the poll then costs one storage read and a hash instead of a parse,
 /// a validation (which resolves every static upstream address) and a diff.
+/// A document with `$FILE:` references is parsed on every pass all the
+/// same, and those files are read: what they hold is a part of what may
+/// have changed.
 async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
     let raw = config_manager.load_all_raw().await?;
-    let hash = raw_hash(&raw);
+    let mut hash = raw_hash(&raw);
+    // A value that is read from a file changes without the document
+    // changing: a secret rotated in place. What those files hold is a
+    // part of what is compared, and read off this thread. A document that
+    // does not parse has none of it, and says so itself below.
+    if raw.contains(FILE_REFERENCE_PREFIX) {
+        let text = raw.clone();
+        hash ^= tokio::task::spawn_blocking(move || {
+            PingapTomlConfig::from_toml(&text)
+                .map(|document| document.referenced_files_hash())
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+    }
     if should_skip(LAST_SEEN.load().as_deref(), hash, hot_reload_only) {
         debug!(target: LOG_TARGET, "config is unchanged");
         return Ok(None);
@@ -177,7 +195,14 @@ async fn diff_and_update_config(
     let applied = async {
         let document = PingapTomlConfig::from_toml(&raw)?;
         crate::validate::check_unknown_keys(&document)?;
-        let new_config = document.to_pingap_config(true)?;
+        // Off this thread: a `$FILE:` reference is read from disk.
+        let new_config = tokio::task::spawn_blocking(move || {
+            document
+                .to_running_config(MissingReference::Refuse)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         let restart_requested =
             apply_config(config_manager, &new_config, hot_reload_only).await?;
         Ok::<_, Box<dyn std::error::Error>>((new_config, restart_requested))
@@ -192,6 +217,9 @@ async fn diff_and_update_config(
             applied
         },
         Err(message) => {
+            // Each pass that tried and was refused, also the repeated
+            // ones that are not reported again below.
+            pingap_performance::record_config_reload(false);
             // Said when it is news: once for a document and what is wrong
             // with it, in the log and to the webhook. A document that
             // does not build used to be reported to the webhook when its
@@ -379,7 +407,16 @@ async fn apply_config(
     let mut plugin_reload_failed = false;
     let mut location_reload_failed = false;
     let mut server_location_reload_failed = false;
+    let mut certificate_reload_failed = false;
     let mut hot_reload_config = current_config.clone();
+    // What the references of the new configuration stood for goes with
+    // its entries. Left behind, a value that was read from a file or the
+    // environment was only kept out of the difference until the first
+    // reload: the running configuration then held the new value and the
+    // set of the old one.
+    hot_reload_config
+        .referenced
+        .extend(new_config.referenced.iter().cloned());
     {
         // hot reload first,
         // only validate server.locations, locations, upstreams and plugins
@@ -575,6 +612,7 @@ async fn apply_config(
                 .await;
             }
             if !errors.is_empty() {
+                certificate_reload_failed = true;
                 error!(
                     target: LOG_TARGET,
                     error = errors,
@@ -670,6 +708,7 @@ async fn apply_config(
             .locations
             .clone_from(&current_config.locations);
     }
+    running_config.prune_referenced();
     if routes_failed {
         for (name, server) in running_config.servers.iter_mut() {
             if let Some(current) = current_config.servers.get(name) {
@@ -679,6 +718,15 @@ async fn apply_config(
     }
 
     let reload_fail_message = reload_fail_messages.join(";");
+    // Every category that was to be reloaded was, certificates included.
+    // The plugins and the certificates report what went wrong with them
+    // on their own, and are not in the message above.
+    let applied_whole = reload_fail_message.is_empty()
+        && !upstream_reload_failed
+        && !plugin_reload_failed
+        && !location_reload_failed
+        && !server_location_reload_failed
+        && !certificate_reload_failed;
 
     if hot_reload_only {
         let (updated_category_list, original_diff_result) =
@@ -695,6 +743,10 @@ async fn apply_config(
         }
         // update current config to what is running now
         config_manager.set_current_config(running_config);
+        // A reload that changed something, counted as it went: applied,
+        // or with a part of it that did not go through. A pass that found
+        // nothing to do is not one.
+        pingap_performance::record_config_reload(applied_whole);
         if !original_diff_result.is_empty() {
             send_notification(NotificationData {
                 category: "diff_config".to_string(),
@@ -732,6 +784,13 @@ async fn apply_config(
     }
 
     if !original_diff_result.is_empty() {
+        // What is left for a restart is not counted as applied: the
+        // restart is what applies it, and a pass that comes by again
+        // while it has not happened would count the same change once
+        // more. A part that did not go through is a failure either way.
+        if !should_restart || !applied_whole {
+            pingap_performance::record_config_reload(applied_whole);
+        }
         send_notification(NotificationData {
             category: "diff_config".to_string(),
             message: original_diff_result.join("\n").trim().to_string(),

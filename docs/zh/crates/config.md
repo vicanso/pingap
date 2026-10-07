@@ -97,7 +97,7 @@ etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 
 - 开启 `enable_history=true` 时，被清理的文件先复制进历史目录再删除；
 - 否则重命名为 `<name>.toml.bak` —— 加载时只 glob `*.toml`，所以改名即可让它不再被读取。
 
-只读取配置的命令（`--test`、`--to-hcl`、`--to-kdl`、`--sync`）不做迁移，按现有的布局加载。配置加载失败时这些命令直接报错退出，设置了 admin 地址（`--admin` 或 `PINGAP_ADMIN_ADDR`）也一样：“用空配置启动以便通过 admin 修复”只适用于要运行的服务，不适用于检查和复制。
+只读取配置的命令（`--test`、`--to-hcl`、`--to-kdl`、`--sync`、`--diff`）不做迁移，按现有的布局加载。配置加载失败时这些命令直接报错退出，设置了 admin 地址（`--admin` 或 `PINGAP_ADMIN_ADDR`）也一样：“用空配置启动以便通过 admin 修复”只适用于要运行的服务，不适用于检查和复制。
 
 两种方式都会在启动时打印被清理的路径。已经同时存在两种布局的目录无法自动迁移（哪一份表应该胜出是无从判断的），此时启动会报出冲突的文件名并保持原样，交由人工合并。
 
@@ -197,7 +197,47 @@ plugin "blockList" {
 
 插件里取字符串列表的配置项也接受单个字符串，所以 `ip_list "1.2.3.4"` 同样可用。
 
-`$ENV:NAME` 不是通用的插值：只有证书的 `dns_service_url` 会读取它，和配置用哪种格式书写无关（见 [pingap-acme](acme.md)）。其他位置按字面处理，所以把地址写成 `"$ENV:PINGAP_API_ADDR"` 得到的是一个解析不了的地址。请求头的值可以用 `$NAME` 引用环境变量（见 `proxy_set_headers`）。
+## 从环境变量和文件取值
+
+容器里的密钥通常通过环境变量或挂载的文件提供。配置里的值可以指向它们，而不是把密钥本身写进去：
+
+```toml
+[plugins.jwtAuth]
+category = "jwt"
+header = "Authorization"
+secret = "$ENV:JWT_SECRET"
+
+[plugins.apiKeys]
+category = "key_auth"
+header = "X-Api-Key"
+keys = ["$FILE:/run/secrets/key_a", "$FILE:/run/secrets/key_b"]
+
+[upstreams.api]
+addrs = ["$ENV:API_ADDR"]
+
+[basic]
+webhook = "$ENV:PINGAP_WEBHOOK"
+```
+
+- `$ENV:NAME` 是环境变量 `NAME` 的值（名称由字母、数字和 `_` 组成）。
+- `$FILE:/path` 是该文件的内容，去掉末尾的换行。路径必须是绝对路径（`~/` 表示用户主目录），文件必须是普通文件，UTF-8 文本，最大 1 MB。
+
+设置成空值的变量按未设置处理，内容为空的文件按不存在处理：宿主机上没有这个变量时，`NAME: ${NAME}` 得到的就是空值，而空的密钥在有些校验里是能通过的。
+
+TOML、HCL、KDL 三种格式以及存放在 etcd 里的配置，规则相同：
+
+- 引用必须是字符串值的**全部**，不论这个字符串在哪里：条目的字段、列表里的一项、插件的配置项、条目通过 `includes` 从 storage 里取到的值。`"Bearer $ENV:TOKEN"` 不是引用，按字面处理。（有两处自己会多读一些：证书的 `dns_service_url` 的任意查询参数，见 [pingap-acme](acme.md)；以及请求头的值用 `$NAME` 引用环境变量，见 `proxy_set_headers`。）
+- 引用代表的是文本。`basic`、server、location、upstream、certificate 里类型是时长、大小、数字或布尔值的字段不能写引用，写了是配置错误。插件的配置项只要是以文本书写的就可以，包括时长。条目和键的名称不做解析。
+- 引用指向的东西不存在（变量没设置、文件读不了）是配置错误，并指出是哪个条目的哪个键：`plugin(jwtAuth): secret: environment variable JWT_SECRET is not set`。启动会失败，`pingap -t` 会报告，重载则保留正在运行的配置。它不会被按字面采用，否则密钥就成了 `$ENV:JWT_SECRET` 这串字。
+- 引用得到的内容就是值，不会再对它做一次引用解析。
+
+只有进程运行用的那份配置里引用才会被替换，其他地方都不会：
+
+- admin 展示和保存的是引用的原样，`--to-hcl`、`--to-kdl`、`--sync` 也一样。通过 admin 保存修改时，会用替换后的配置做校验，所以那台机器上缺少变量会在保存前报出来。控制面节点（`--cp`）存的是别的机器运行的配置：它查不到的引用会原样保留，所在的条目也不再检查取值的格式（写成引用的地址本来就不是地址）。只做输出、比较、复制的命令也是这样。
+- 引用得到的值不会出现在重载时写进日志、发给 webhook 的配置差异里，不论它的键叫什么：和已知是密钥的键一样显示成校验值，所以值变了仍然看得出变化。
+- 带 `--autoreload` 或 `--autorestart` 运行时，进程每次检查配置有没有变化（每 10 秒一次，`basic.auto_restart_check_interval` 更短时按它）都会读取被引用的文件：原地轮换的密钥会像配置变化一样被采用，这类条目支持热更新时不需要重启。替换这类文件请用“写新文件再改名覆盖”的方式（挂载的 secret 就是这样更新的）：直接在原文件上写，可能被读到写了一半的内容。文件不见了会像其他重载失败一样上报，运行中的配置保持不变。进程的环境变量在运行期间不会变，Pingap 自己发起的重启（`--autorestart`、admin）会把自己的环境交给接替的进程：变量的新值要等进程重新启动后才生效。
+
+能修改配置的人可以借此让进程读取某个文件或变量。这并不是新增的能力（`directory` 插件给什么路径就提供什么路径），但这是把 admin 和配置存储与密钥同等对待的理由。
 
 命令行转换与迁移：
 
@@ -207,7 +247,30 @@ pingap -c /opt/pingap/conf --to-kdl > conf.kdl        # dump as KDL
 pingap -c /opt/pingap/conf --sync etcd://127.0.0.1:2379/pingap   # file -> etcd
 pingap --template > pingap.toml                       # starter config
 pingap -c /opt/pingap/conf -t                         # validate and exit
+pingap -c /opt/pingap/conf --diff /tmp/new-conf       # what would change
 ```
+
+### 检查配置：`-t`
+
+`-t` 会走到启动流程里“开始服务”之前的那一步：读取配置，替换 includes 和 `$ENV:` / `$FILE:` 引用，校验每个条目，然后按启动时的方式构建每个 upstream、location、插件、证书和 server。server 构建到监听器即将打开 socket 的位置为止，TLS 设置正是在这一步生成的：不是合法版本的 `tls_min_version`、TLS 库不接受的 cipher list，以前能通过 `-t`，到启动时才失败。整个过程不绑定端口，所以可以在同一批地址上有进程正在服务时运行，也不会打开访问日志。admin 在保存修改之前，会对“修改后存储里的配置”做同样的检查。
+
+### 预览变更：`--diff`
+
+`pingap -c <运行中的配置> --diff <候选配置>` 输出用 `<候选配置>`（文件、目录或 etcd 地址）替换 `-c` 的配置后会发生的变化，然后退出：
+
+```text
+++ [ADDED] upstream:u2
+
+[MODIFIED] plugin:auth
+- keys = ["crc32:983E2A19"]
++ keys = ["crc32:CD38375F"]
+
+[MODIFIED] upstream:api
+- addrs = ["127.0.0.1:5001"]
++ addrs = ["127.0.0.1:5002"]
+```
+
+这就是重载时写进日志、发给 webhook 的那份差异，只是在生效之前就能看到：`-` 是 `-c` 里的内容，`+` 是候选配置里的内容，两边都已替换 includes 和引用。密钥显示为校验值，包括已知存放密钥的键，以及 `$ENV:` / `$FILE:` 引用得到的所有内容，所以密钥变了能看出变了，但看不到别的。没有差异时输出 `no difference`。两边都不会被写入，也都不做校验：要校验候选配置请对它运行 `-t`。运行命令的机器上查不到的引用，按书写的原文比较。不论有没有差异退出码都是 `0`；任何一边加载失败、候选配置不存在或里面没有任何配置（etcd 前缀写错）时退出码非 `0`。
 
 ## 热更新
 
@@ -235,7 +298,7 @@ addrs = ["10.0.0.1:8080"]
 includes = ["commonTimeouts"]
 ```
 
-`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。`--to-hcl`、`--to-kdl`、`--sync` 输出的也是未展开的形式：条目保留自己的 `includes`，片段里的键仍然只在片段这一处定义。片段的键覆盖条目自身的键，靠后的 include 覆盖靠前的。引用了不存在的 `storages` 条目、或条目内容不是合法 TOML 的 include，会在加载配置时报错（`upstream(api): include(commonTimeouts) is not found`），而不再被静默忽略。
+`to_pingap_config(replace_include)` 控制是否展开 includes；管理 UI 读未展开形式以便编辑可读。`to_running_config(missing)` 给出进程运行用的配置：展开 includes，并替换所有 `$ENV:` / `$FILE:` 引用（见[从环境变量和文件取值](#从环境变量和文件取值)）。`--to-hcl`、`--to-kdl`、`--sync` 输出的也是未展开的形式：条目保留自己的 `includes`，片段里的键仍然只在片段这一处定义。片段的键覆盖条目自身的键，靠后的 include 覆盖靠前的。引用了不存在的 `storages` 条目、或条目内容不是合法 TOML 的 include，会在加载配置时报错（`upstream(api): include(commonTimeouts) is not found`），而不再被静默忽略。
 
 ## 用法
 

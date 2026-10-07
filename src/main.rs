@@ -204,6 +204,10 @@ struct Args {
     /// Convert configuration to KDL format and output
     #[arg(long)]
     to_kdl: bool,
+    /// Print what would change if the configuration at this address
+    /// replaced the one of --conf, and exit
+    #[arg(long, conflicts_with = "upstream")]
+    diff: Option<String>,
     /// Default threads for each server
     #[arg(long)]
     threads: Option<usize>,
@@ -324,14 +328,16 @@ async fn migrate_config_layout(config_manager: &ConfigManager) {
 /// config (`--test`, `--to-hcl`, `--to-kdl`, `--sync`) must leave the
 /// storage as it found it.
 ///
-/// Gives the config with every `includes` replaced by what it names, which
-/// is the one to run with, and the document it was read from, which is
-/// the one to print (`--to-hcl`, `--to-kdl`). Only the first has to read
+/// Gives the config with every `includes` replaced by what it names and
+/// every `$ENV:` or `$FILE:` reference by what it stands for, which is the
+/// one to run with, and the document it was read from, which is the one
+/// to print (`--to-hcl`, `--to-kdl`). Only the first has to read
 /// as a config: an entry may take a required field, the `addrs` of an
 /// upstream, from its include.
 fn get_config(
     config_manager: Arc<ConfigManager>,
     migrate_layout: bool,
+    missing: pingap_config::MissingReference,
 ) -> Receiver<
     Result<
         (PingapConfig, pingap_config::PingapTomlConfig),
@@ -354,7 +360,7 @@ fn get_config(
                     match config_manager.load_all().await {
                         Ok(config) => {
                             let result = config
-                                .to_pingap_config(true)
+                                .to_running_config(missing)
                                 .map(|resolved| (resolved, config));
                             if let Err(e) = s.send(result) {
                                 println!("sender fail, {e}");
@@ -451,6 +457,70 @@ fn as_written_toml(
         Ok(config) => Ok(toml::to_string_pretty(&config)?),
         Err(_) => Ok(stored.to_toml()?),
     }
+}
+
+/// The difference between `config` and the configuration at `other`, as
+/// [`PingapConfig::diff`] writes it: what `other` adds, removes and
+/// changes. Only reads `other`: its layout is left as it is.
+fn diff_config(
+    config: PingapConfig,
+    other: String,
+) -> Receiver<Result<Vec<String>, pingap_config::Error>> {
+    let (s, r) = crossbeam_channel::bounded(0);
+    std::thread::spawn(move || {
+        let result = tokio::runtime::Runtime::new()
+            .map_err(|e| pingap_config::Error::Invalid {
+                message: e.to_string(),
+            })
+            .and_then(|rt| {
+                rt.block_on(async {
+                    // A path that is not there reads as a configuration
+                    // with nothing in it, and the difference to that is
+                    // every entry removed.
+                    let path = other.split_once('?').map_or(&*other, |v| v.0);
+                    if !other.starts_with(ETCD_PROTOCOL)
+                        && !std::path::Path::new(&pingap_util::resolve_path(
+                            path,
+                        ))
+                        .exists()
+                    {
+                        return Err(pingap_config::Error::Invalid {
+                            message: format!("{path} does not exist"),
+                        });
+                    }
+                    // A directory is opened without the parameters of
+                    // its address: they say how it is written to, and
+                    // `enable_history` makes the directory of the
+                    // history. Reading takes any layout as it is.
+                    let address = if other.starts_with(ETCD_PROTOCOL) {
+                        other.as_str()
+                    } else {
+                        path
+                    };
+                    let manager = pingap_config::new_config_manager(address)?;
+                    let raw = manager.load_all_raw().await?;
+                    // An etcd prefix with a slip in it is there, and has
+                    // nothing under it.
+                    if raw.trim().is_empty() {
+                        return Err(pingap_config::Error::Invalid {
+                            message: format!(
+                                "{path} has no configuration in it"
+                            ),
+                        });
+                    }
+                    let other_config =
+                        pingap_config::PingapTomlConfig::from_toml(&raw)?
+                            .to_running_config(
+                                pingap_config::MissingReference::Keep,
+                            )?;
+                    Ok(config.diff(&other_config).1)
+                })
+            });
+        if let Err(e) = s.send(result) {
+            println!("sender fail, {e}");
+        }
+    });
+    r
 }
 
 fn sync_config(
@@ -745,9 +815,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Checking or converting a config is not the moment to rewrite it:
     // `pingap -t` on a directory used to split its combined file into one
     // file per category and rename the original.
-    let read_only =
-        args.test || args.to_hcl || args.to_kdl || args.sync.is_some();
-    let r = get_config(get_config_manager()?, !read_only);
+    let read_only = args.test
+        || args.to_hcl
+        || args.to_kdl
+        || args.sync.is_some()
+        || args.diff.is_some();
+    // A configuration that is to run needs every `$ENV:` and `$FILE:` it
+    // names, and `--test` says whether it has them. One that is only
+    // printed, compared or copied may be looked at on a machine that has
+    // none of them, as it could before there were references.
+    let missing_reference = if read_only && !args.test {
+        pingap_config::MissingReference::Keep
+    } else {
+        pingap_config::MissingReference::Refuse
+    };
+    let r = get_config(get_config_manager()?, !read_only, missing_reference);
     // A broken config is fatal on its own, but not with `--admin`: the admin
     // server has to come up so the configuration can be repaired through it.
     // Starting on an empty config is indistinguishable from a healthy server
@@ -799,6 +881,19 @@ fn run() -> Result<(), Box<dyn Error>> {
         let toml_str = as_written_toml(&config_as_stored)?;
         let kdl_str = pingap_config::kdl::convert_toml_to_kdl(&toml_str)?;
         println!("{kdl_str}");
+        return Ok(());
+    }
+
+    // What would change if the other configuration replaced this one, the
+    // way a reload reports it: credentials as checksums, and both sides
+    // with their includes and references replaced.
+    if let Some(other) = args.diff {
+        let lines = diff_config(config.clone(), other).recv()??;
+        if lines.is_empty() {
+            println!("no difference");
+        } else {
+            println!("{}", lines.join("\n").trim_end());
+        }
         return Ok(());
     }
 
@@ -1354,7 +1449,10 @@ value = 'addrs = ["127.0.0.1:9001"]'
                 .unwrap(),
         );
         let (config, stored) =
-            get_config(manager, false).recv().unwrap().unwrap();
+            get_config(manager, false, pingap_config::MissingReference::Refuse)
+                .recv()
+                .unwrap()
+                .unwrap();
         assert_eq!(
             vec!["127.0.0.1:9001".to_string()],
             config.upstreams["api"].addrs

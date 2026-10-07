@@ -25,9 +25,10 @@
 
 use crate::plugin;
 use pingap_certificate::{TlsCertificate, validate_servers_tls_for_backend};
-use pingap_config::{PingapConfig, PingapTomlConfig};
+use pingap_config::{MissingReference, PingapConfig, PingapTomlConfig};
 use std::error::Error;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::warn;
 
@@ -145,12 +146,50 @@ pub fn validate_certificates(
     Ok(())
 }
 
+/// Builds each server the way startup does, up to where its listeners
+/// would open their sockets. That is where the TLS settings of a server
+/// are made: a `tls_min_version` that is no version, a cipher list the TLS
+/// library does not take. `ServerConf::validate` reads neither, and a
+/// configuration with one of them passed `--test` and failed the start.
+///
+/// Nothing is bound, logged to or started: the access log of a server is
+/// opened by startup itself, not by the server.
+pub fn validate_servers(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    if config.servers.is_empty() {
+        return Ok(());
+    }
+    // What a server is handed and only uses once it serves.
+    let pingora_conf =
+        Arc::new(pingora::server::configuration::ServerConf::default());
+    let config_manager =
+        Arc::new(pingap_config::new_memory_config_manager("", None));
+    for server_conf in pingap_proxy::parse_from_conf(config.clone()) {
+        let name = server_conf.name.clone();
+        let ctx = pingap_proxy::AppContext {
+            logger: None,
+            config_manager: config_manager.clone(),
+            server_locations_provider:
+                crate::server_locations::new_server_locations_provider(),
+            location_provider: crate::locations::new_location_provider(),
+            upstream_provider: crate::upstreams::new_upstream_provider(),
+            plugin_provider: plugin::new_plugin_provider(),
+            certificate_provider: crate::certificates::new_certificate_provider(
+            ),
+        };
+        pingap_proxy::Server::new(&server_conf, ctx)
+            .and_then(|server| server.check(pingora_conf.clone()))
+            .map_err(|e| format!("server \"{name}\" is invalid: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Everything that is found by building the entries of a configuration.
 pub fn validate_built(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     validate_upstreams(config)?;
     validate_locations(config)?;
     validate_plugins(config)?;
-    validate_certificates(config)
+    validate_certificates(config)?;
+    validate_servers(config)
 }
 
 /// The checks of `--test` on a configuration as it is, or would be, stored.
@@ -173,9 +212,18 @@ fn validate_stored_as(
 ) -> Result<(), Box<dyn Error>> {
     // What a reload would refuse is not stored through the admin either.
     refuse_unknown_keys(&config.unknown_keys(), strict)?;
-    let config = config.to_pingap_config(true)?;
+    // With its references replaced, as a start reads it: an address that
+    // comes from the environment is checked as the address it is. What a
+    // control panel node can not look up says nothing about the machines
+    // the configuration is for, and stays as it is written there.
+    let control_panel = CONTROL_PANEL.load(Ordering::Relaxed);
+    let config = config.to_running_config(if control_panel {
+        MissingReference::Keep
+    } else {
+        MissingReference::Refuse
+    })?;
     config.validate()?;
-    if CONTROL_PANEL.load(Ordering::Relaxed) {
+    if control_panel {
         // Which plugins this build has says nothing about the builds the
         // configuration is for.
         plugin::validate_plugin_names(&config)?;
@@ -295,6 +343,99 @@ weigth = 10
             validate_stored_as(&document, true).unwrap_err().to_string();
         assert_eq!(true, refused.contains("--strict"), "{refused}");
         assert_eq!(true, validate_stored_as(&toml_config(VALID), true).is_ok());
+    }
+
+    /// What only building a server finds, and that building one for a
+    /// check opens no socket.
+    #[test]
+    fn test_validate_servers() {
+        // Taken while the check runs: a check that bound the address of
+        // the server would fail on it.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = |extra: &str| {
+            toml_config(&format!(
+                "{VALID}\n[servers.web]\naddr = \"{addr}\"\nlocations = [\"l1\"]\n{extra}\n"
+            ))
+            .to_pingap_config(true)
+            .unwrap()
+        };
+        validate_servers(&config("")).unwrap();
+        validate_servers(&config("global_certificates = true")).unwrap();
+        validate_servers(&config(
+            "prometheus_metrics = \"/metrics\"\naccess_log = \"combined\"",
+        ))
+        .unwrap();
+        // No server, nothing to build.
+        validate_servers(&toml_config(VALID).to_pingap_config(true).unwrap())
+            .unwrap();
+
+        // The TLS settings are made by the server, and only the OpenSSL
+        // backend takes these: with rustls they are refused before, by
+        // `validate_servers_tls_for_backend`.
+        #[cfg(feature = "openssl")]
+        for (extra, part) in [
+            (
+                "tls_min_version = \"tlsv9\"",
+                "tls version \"tlsv9\" is invalid",
+            ),
+            (
+                "tls_max_version = \"1.3\"",
+                "tls version \"1.3\" is invalid",
+            ),
+            ("tls_cipher_list = \"NOT-A-CIPHER\"", "set cipher list fail"),
+            (
+                "tls_ciphersuites = \"NOT_A_SUITE\"",
+                "set cipher suites fail",
+            ),
+        ] {
+            let message = validate_servers(&config(&format!(
+                "global_certificates = true\n{extra}"
+            )))
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                true,
+                message.starts_with("server \"web\" is invalid: "),
+                "{message}"
+            );
+            assert_eq!(true, message.contains(part), "{message}");
+            // And through what `--test` and the admin run.
+            let message = validate_built(&config(&format!(
+                "global_certificates = true\n{extra}"
+            )))
+            .unwrap_err()
+            .to_string();
+            assert_eq!(true, message.contains(part), "{message}");
+        }
+        // The listener was there all along.
+        assert_eq!(addr, listener.local_addr().unwrap());
+    }
+
+    /// A value read from the environment or a file is checked as what it
+    /// stands for, and one that names nothing is refused where the
+    /// configuration is to run.
+    #[test]
+    fn test_validate_stored_reads_references() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"127.0.0.1:5001\n").unwrap();
+        let reference = format!("$FILE:{}", file.path().to_string_lossy());
+        let document = |addr: &str| {
+            toml_config(&format!(
+                "[upstreams.u1]\naddrs = [\"{addr}\"]\n\n[locations.l1]\nupstream = \"u1\"\n"
+            ))
+        };
+        validate_stored(&document(&reference)).unwrap();
+
+        let message =
+            validate_stored(&document("$ENV:PINGAP_NOT_SET_FOR_SURE"))
+                .unwrap_err()
+                .to_string();
+        assert_eq!(
+            "Invalid error upstream(u1): addrs[0]: environment variable PINGAP_NOT_SET_FOR_SURE is not set",
+            message
+        );
     }
 
     /// What `PingapConfig::validate` passes and startup refuses.

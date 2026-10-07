@@ -23,6 +23,7 @@
 //! A value that is a credential is replaced by a checksum of itself, so
 //! that a change of it still shows as a change.
 
+use std::collections::HashSet;
 use toml::{Table, Value};
 
 fn masked(value: &str) -> String {
@@ -214,10 +215,48 @@ pub fn mask_secrets(table: &Table) -> Table {
         .collect()
 }
 
-/// The entry `data` as toml, with its credentials taken out.
-pub(crate) fn masked_entry<T: serde::Serialize>(data: &T) -> String {
+/// `value` with every string that is one of `referenced` replaced by its
+/// checksum.
+fn mask_referenced(value: &mut Value, referenced: &HashSet<String>) {
+    match value {
+        Value::String(text) => {
+            if referenced.contains(text.as_str()) {
+                *text = masked(text);
+            }
+        },
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                mask_referenced(item, referenced);
+            }
+        },
+        Value::Table(table) => {
+            for (_, item) in table.iter_mut() {
+                mask_referenced(item, referenced);
+            }
+        },
+        _ => {},
+    }
+}
+
+/// The entry `data` as toml, with its credentials taken out: what is one
+/// by the name of its key, and what was read from the environment or from
+/// a file (`referenced`, see [`crate::PingapConfig::referenced`]) whatever
+/// its key is.
+pub(crate) fn masked_entry<T: serde::Serialize>(
+    data: &T,
+    referenced: &HashSet<String>,
+) -> String {
     match Value::try_from(data) {
-        Ok(Value::Table(table)) => {
+        Ok(mut value @ Value::Table(_)) => {
+            // First, on the values as they are: a url that came from a
+            // reference is hidden whole, not only the part of it that a
+            // url is known to keep a credential in.
+            if !referenced.is_empty() {
+                mask_referenced(&mut value, referenced);
+            }
+            let Value::Table(table) = value else {
+                return String::new();
+            };
             toml::to_string_pretty(&mask_secrets(&table)).unwrap_or_default()
         },
         _ => String::new(),

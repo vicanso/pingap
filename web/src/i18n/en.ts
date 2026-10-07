@@ -784,6 +784,16 @@ export default {
     compressionMinLength: "Min Length",
     compressionMinLengthPlaceholder:
       "Input the min length of response body to be compressed",
+    compressionTypes: "Content Types",
+    compressionTypesPlaceholder:
+      "Input a content type prefix, e.g. text/ or application/json",
+    compressionTypesTips:
+      "Only responses whose content type starts with one of these are compressed; * for any. Unset, the response mode compresses text and every application/* and font/* type, the upstream mode json, xml and text.",
+    compressionSkip: "Skip",
+    compressionSkipPlaceholder:
+      "Input a regexp of the path and query not to compress, e.g. ^/download/",
+    compressionSkipTips:
+      "Requests whose path and query match are not compressed. Matched against what the client sent, before the rewrite of the location.",
     compressionDecompression: "Support Decompression",
     compressionMode: "Mode",
     acceptEncodingList: "Accept Encoding",
@@ -829,7 +839,7 @@ export default {
     jwtAuthFailDelayPlaceholder: "Input the delay duration of fail auth",
     jwtSignAlgorithm: "Algorithm",
     jwtSignAlgorithmTips:
-      "HS256 or HS512 with a secret; an RS, PS, ES or EdDSA algorithm with a public key. Not used with a JWKS url, where each key names its own.",
+      "HS256, HS384 or HS512 with a secret; an RS, PS, ES or EdDSA algorithm with a public key. Not used with a JWKS url, where each key names its own.",
     jwtAuthSecret: "Secret",
     jwtAuthSecretPlaceholder: "Input the secret for jwt",
     jwtPublicKey: "Public Key",
@@ -849,6 +859,22 @@ export default {
     jwtLeewayPlaceholder: "Allowed clock difference, default: 60s",
     jwtLeewayTips:
       "How far the issuer's clock may be from the proxy's: exp and nbf are given this much, with a secret, a public key or JWKS alike. 0s holds them to the second.",
+    jwtIssuers: "Issuers",
+    jwtIssuersPlaceholder: "Input an allowed issuer",
+    jwtIssuersTips:
+      "When set, the iss of a token has to be one of these, compared as it is. A token without iss is rejected.",
+    jwtAudiences: "Audiences",
+    jwtAudiencesPlaceholder: "Input an allowed audience",
+    jwtAudiencesTips:
+      "When set, the aud of a token - one value or a list - has to hold one of these. A token without aud is rejected.",
+    jwtRequiredClaims: "Required Claims",
+    jwtRequiredClaimsPlaceholder: "Input the name of a claim, e.g. sub",
+    jwtRequiredClaimsTips:
+      "Claims a token has to carry, whatever their value. A claim that is null counts as missing.",
+    jwtClaimsToHeaders: "Claims To Headers",
+    jwtClaimsToHeadersPlaceholder: "Input claim:Header-Name, e.g. sub:X-User-Id",
+    jwtClaimsToHeadersTips:
+      "After a token is verified, the claim is sent to the upstream under this header. A header of that name sent by the client is always removed, also when the token has no such claim. The header name comes after the last colon, so a claim may be named by a url.",
     forwardAuthUrl: "Auth Url",
     forwardAuthUrlPlaceholder: "Input the url of the auth service",
     forwardAuthTimeout: "Timeout",

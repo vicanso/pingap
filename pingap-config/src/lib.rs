@@ -30,6 +30,7 @@ pub mod hcl;
 pub mod kdl;
 mod manager;
 mod memory_storage;
+mod reference;
 mod secrets;
 mod storage;
 mod unknown;
@@ -407,6 +408,10 @@ pub use common::*;
 pub use etcd_storage::ETCD_PROTOCOL;
 pub use manager::*;
 pub use memory_storage::MemoryStorage;
+pub use reference::{
+    FILE_PREFIX as FILE_REFERENCE_PREFIX, MissingReference,
+    entry_has_reference, is_reference,
+};
 pub use secrets::{is_secret_key, mask_secrets, masked_toml};
 pub use storage::*;
 

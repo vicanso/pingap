@@ -481,9 +481,28 @@ impl LetsEncryptTask {
     /// new certificate was installed and served but never recorded, the
     /// next check found the old one still due, and ordered again - every
     /// ten minutes, until the CA refused.
+    ///
+    /// Of `conf`, which is the entry as the storage holds it, only the
+    /// certificate and its key. The settings stay those of the running
+    /// entry: the storage has them as they are written, a
+    /// `dns_service_url` or `domains` that is read from the environment
+    /// or a file as the reference to it, and the running configuration
+    /// has what the reference stands for. With the stored entry put in
+    /// whole, the next renewal asked the provider at the address
+    /// `$FILE:/run/secrets/dns`, and the next reload found an entry that
+    /// had changed and restarted for it. A setting that was changed in
+    /// the storage is the reload's to apply, as for any other entry.
     async fn install(&self, name: &str, conf: CertificateConf) -> Result<()> {
         let mut config =
             self.config_manager.get_current_config().as_ref().clone();
+        let conf = match config.certificates.get(name) {
+            Some(running) => CertificateConf {
+                tls_cert: conf.tls_cert,
+                tls_key: conf.tls_key,
+                ..running.clone()
+            },
+            None => conf,
+        };
         config.certificates.insert(name.to_string(), conf);
         let (certificates, errors, _) = update_certificates(
             &config.certificates,
@@ -1611,6 +1630,65 @@ mod tests {
     }
 
     const SITE: &str = "[certificates.site]\ndomains = \"example.com\"\nacme = \"lets_encrypt\"\n";
+
+    /// Regression: the entry a new certificate was installed with was the
+    /// stored one, whole. A setting written as a reference is the
+    /// reference there, and became the setting of the running entry: the
+    /// next renewal went to the provider at `$FILE:...`, and the next
+    /// reload saw a changed entry.
+    #[tokio::test]
+    async fn test_install_keeps_the_settings_that_are_running() {
+        use std::io::Write;
+        let mut secret = tempfile::NamedTempFile::new().unwrap();
+        secret
+            .write_all(b"https://api.cloudflare.com?token=abc")
+            .unwrap();
+        let reference = format!("$FILE:{}", secret.path().to_string_lossy());
+        let fixture = fixture(
+            &format!("{SITE}dns_challenge = true\ndns_provider = \"cf\"\ndns_service_url = \"{reference}\"\n"),
+            issuing(),
+        )
+        .await;
+        // What a process runs with.
+        let document = fixture.manager.load_all().await.unwrap();
+        let running = document
+            .to_running_config(pingap_config::MissingReference::Refuse)
+            .unwrap();
+        let before = running.certificates["site"].clone();
+        assert_eq!(
+            Some("https://api.cloudflare.com?token=abc".to_string()),
+            before.dns_service_url
+        );
+        fixture.manager.set_current_config(running);
+
+        fixture
+            .task
+            .update_certificates(0, &[params()])
+            .await
+            .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        let after =
+            fixture.manager.get_current_config().certificates["site"].clone();
+        // The certificate is the new one, the settings are what they were.
+        assert_eq!(true, after.tls_cert.is_some());
+        assert_eq!(
+            before,
+            CertificateConf {
+                tls_cert: None,
+                tls_key: None,
+                ..after
+            }
+        );
+        // The storage still has the reference.
+        let stored: CertificateConf = fixture
+            .manager
+            .get(Category::Certificate, "site")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Some(reference), stored.dns_service_url);
+        assert_eq!(true, stored.tls_cert.is_some());
+    }
 
     /// Regression: a new certificate was recorded as the running one only
     /// when every certificate of the configuration loaded. With a broken

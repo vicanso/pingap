@@ -14,6 +14,9 @@
 
 use super::{Error, Result};
 use crate::PingapTomlConfig;
+use crate::reference::{
+    MissingReference, entry_has_reference, has_reference, resolve_entry,
+};
 use crate::secrets::{masked_entry, masked_fragment};
 use bytesize::ByteSize;
 use pingap_core::ACCESS_LOG_PRESETS;
@@ -1657,6 +1660,13 @@ pub struct PingapConfig {
     pub plugins: HashMap<String, PluginConf>,
     pub certificates: HashMap<String, CertificateConf>,
     pub storages: HashMap<String, StorageConf>,
+    /// What the `$ENV:` and `$FILE:` references of this configuration
+    /// stood for, when it is one to run with
+    /// ([`PingapTomlConfig::to_running_config`]). Kept so that these
+    /// values stay out of what is printed about the configuration, see
+    /// [`PingapConfig::diff`]; not a part of the configuration itself.
+    #[serde(skip)]
+    pub referenced: HashSet<String>,
 }
 
 impl PingapConfig {
@@ -1833,11 +1843,76 @@ pub(crate) fn convert_toml_config(
     data: &PingapTomlConfig,
     replace_include: bool,
 ) -> Result<PingapConfig> {
+    convert_document(data, replace_include, None)
+}
+
+/// The configuration to run with: every include replaced by what it names,
+/// and then every `$ENV:` and `$FILE:` reference (see [`crate::reference`]).
+pub(crate) fn convert_running_config(
+    data: &PingapTomlConfig,
+    missing: MissingReference,
+) -> Result<PingapConfig> {
+    convert_document(data, true, Some(missing))
+}
+
+/// Deserializes an entry, with its references replaced first when
+/// `references` says what to do with those that name nothing.
+///
+/// An entry with a reference has to read as an entry as it is written as
+/// well. That is what the admin shows and edits, and it keeps a reference
+/// to where the value is text: for a duration or a size the admin could
+/// neither show the entry nor save it. It is also checked first, so that a
+/// value of the wrong type is reported as the reference it is written as,
+/// and not as what the reference stood for.
+fn parse_entry_with_references<T: DeserializeOwned>(
+    kind: &str,
+    name: &str,
+    mut value: Value,
+    references: Option<(MissingReference, &mut HashSet<String>)>,
+) -> Result<T> {
+    let Some((missing, referenced)) = references else {
+        return parse_entry(kind, name, value);
+    };
+    if !has_reference(&value) {
+        return parse_entry(kind, name, value);
+    }
+    let label = if name.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{kind}({name})")
+    };
+    parse_entry::<T>(kind, name, value.clone()).map_err(|e| match e {
+        Error::Invalid { message } if message.contains("$ENV:") || message.contains("$FILE:") => {
+            Error::Invalid {
+                // toml ends its message with the key, on a line of its
+                // own.
+                message: format!(
+                    "{} (a $ENV: or $FILE: reference is only read where the value is text)",
+                    message.trim_end().replace('\n', " ")
+                ),
+            }
+        },
+        other => other,
+    })?;
+    resolve_entry(&mut value, missing, referenced).map_err(|message| {
+        Error::Invalid {
+            message: format!("{label}: {message}"),
+        }
+    })?;
+    parse_entry(kind, name, value)
+}
+
+fn convert_document(
+    data: &PingapTomlConfig,
+    replace_include: bool,
+    references: Option<MissingReference>,
+) -> Result<PingapConfig> {
     fn entries<T: DeserializeOwned>(
         section: &Option<Map<String, Value>>,
         kind: &str,
         storages: &HashMap<String, StorageConf>,
         replace_include: bool,
+        mut references: Option<(MissingReference, &mut HashSet<String>)>,
     ) -> Result<HashMap<String, T>> {
         let mut out = HashMap::new();
         for (name, value) in section.iter().flatten() {
@@ -1845,16 +1920,31 @@ pub(crate) fn convert_toml_config(
             if replace_include {
                 expand_includes(storages, kind, name, &mut value)?;
             }
-            out.insert(name.clone(), parse_entry(kind, name, value)?);
+            let references = references
+                .as_mut()
+                .map(|(missing, referenced)| (*missing, &mut **referenced));
+            out.insert(
+                name.clone(),
+                parse_entry_with_references(kind, name, value, references)?,
+            );
         }
         Ok(out)
     }
 
+    let mut referenced = HashSet::new();
     let basic = match &data.basic {
-        Some(value) => parse_entry("basic", "", value.clone())?,
+        Some(value) => parse_entry_with_references(
+            "basic",
+            "",
+            value.clone(),
+            references.map(|missing| (missing, &mut referenced)),
+        )?,
         None => BasicConf::default(),
     };
-    let storages = entries(&data.storages, "storage", &HashMap::new(), false)?;
+    // As they are written: a storage is a fragment that other entries
+    // include, and what it holds is looked at where it ends up.
+    let storages =
+        entries(&data.storages, "storage", &HashMap::new(), false, None)?;
     Ok(PingapConfig {
         basic,
         upstreams: entries(
@@ -1862,22 +1952,38 @@ pub(crate) fn convert_toml_config(
             "upstream",
             &storages,
             replace_include,
+            references.map(|missing| (missing, &mut referenced)),
         )?,
         locations: entries(
             &data.locations,
             "location",
             &storages,
             replace_include,
+            references.map(|missing| (missing, &mut referenced)),
         )?,
-        servers: entries(&data.servers, "server", &storages, replace_include)?,
-        plugins: entries(&data.plugins, "plugin", &storages, false)?,
+        servers: entries(
+            &data.servers,
+            "server",
+            &storages,
+            replace_include,
+            references.map(|missing| (missing, &mut referenced)),
+        )?,
+        plugins: entries(
+            &data.plugins,
+            "plugin",
+            &storages,
+            false,
+            references.map(|missing| (missing, &mut referenced)),
+        )?,
         certificates: entries(
             &data.certificates,
             "certificate",
             &storages,
             false,
+            references.map(|missing| (missing, &mut referenced)),
         )?,
         storages,
+        referenced,
     })
 }
 
@@ -1897,8 +2003,21 @@ impl PingapConfig {
         // `basic` carries the restart hand-over timeout; a bad one used to
         // slip through because nothing ever called this.
         self.basic.validate()?;
+        // An entry that still has a `$ENV:` or `$FILE:` reference in it
+        // is one this machine could not look up: a control panel node, a
+        // command that only prints or copies the configuration. What its
+        // values are is known where it runs, and their form is not
+        // judged here: the address of a server written as a reference is
+        // no address, and refusing it would refuse every entry of that
+        // kind on the node that stores them. The configuration a process
+        // runs with has no such entry, a reference that names nothing is
+        // an error there before this is reached.
         let mut upstream_names = vec![];
         for (name, upstream) in self.upstreams.iter() {
+            if entry_has_reference(upstream) {
+                upstream_names.push(name.to_string());
+                continue;
+            }
             // With the name of the upstream: `upstream addrs is empty`
             // does not say which of them.
             upstream.validate().map_err(|e| Error::Invalid {
@@ -1913,11 +2032,17 @@ impl PingapConfig {
         }
         let mut location_names = vec![];
         for (name, location) in self.locations.iter() {
-            location.validate_with_upstream(Some(&upstream_names))?;
             location_names.push(name.to_string());
+            if entry_has_reference(location) {
+                continue;
+            }
+            location.validate_with_upstream(Some(&upstream_names))?;
         }
         let mut listen_addr_list = vec![];
         for server in self.servers.values() {
+            if entry_has_reference(server) {
+                continue;
+            }
             for addr in server.addr.split(',') {
                 if listen_addr_list.contains(&addr.to_string()) {
                     return Err(Error::Invalid {
@@ -1945,6 +2070,9 @@ impl PingapConfig {
             }
         }
         for certificate in self.certificates.values() {
+            if entry_has_reference(certificate) {
+                continue;
+            }
             certificate.validate()?;
         }
         // Round trip through the loose form with includes expanded: proves
@@ -1967,6 +2095,46 @@ impl PingapConfig {
             let upstream = text("upstream").filter(|item| !item.is_empty())?;
             Some((name.as_str(), upstream))
         })
+    }
+    /// Drops from [`PingapConfig::referenced`] what no entry holds any
+    /// more.
+    ///
+    /// A reload puts the running configuration together from the entries
+    /// of the new one and those of the old one it could not replace, and
+    /// carries what the references of both stood for. Without this every
+    /// secret that was ever rotated stayed in the set for as long as the
+    /// process ran.
+    pub fn prune_referenced(&mut self) {
+        if self.referenced.is_empty() {
+            return;
+        }
+        fn collect<'a>(value: &'a Value, found: &mut HashSet<&'a str>) {
+            match value {
+                Value::String(text) => {
+                    found.insert(text);
+                },
+                Value::Array(items) => {
+                    for item in items {
+                        collect(item, found);
+                    }
+                },
+                Value::Table(table) => {
+                    for item in table.values() {
+                        collect(item, found);
+                    }
+                },
+                _ => {},
+            }
+        }
+        // Kept as it is when the configuration can not be written out:
+        // masking too much costs nothing.
+        let Ok(value) = Value::try_from(&*self) else {
+            return;
+        };
+        let mut present = HashSet::new();
+        collect(&value, &mut present);
+        self.referenced
+            .retain(|item| present.contains(item.as_str()));
     }
     /// Generate the content hash of config.
     pub fn hash(&self) -> Result<String> {
@@ -2089,6 +2257,9 @@ impl PingapConfig {
             basic: &'a BasicConf,
         }
         let value = self;
+        // What was read from the environment or a file is a credential
+        // whatever its key is called.
+        let referenced = &self.referenced;
         let mut descriptions = vec![];
         // Every entry is printed with its credentials replaced by their
         // checksums (see `secrets`): what is made here ends up in the log
@@ -2100,35 +2271,35 @@ impl PingapConfig {
             descriptions.push(Description {
                 category: CATEGORY_SERVER.to_string(),
                 name: format!("server:{name}"),
-                data: masked_entry(data),
+                data: masked_entry(data, referenced),
             });
         }
         for (name, data) in value.locations.iter() {
             descriptions.push(Description {
                 category: CATEGORY_LOCATION.to_string(),
                 name: format!("location:{name}"),
-                data: masked_entry(data),
+                data: masked_entry(data, referenced),
             });
         }
         for (name, data) in value.upstreams.iter() {
             descriptions.push(Description {
                 category: CATEGORY_UPSTREAM.to_string(),
                 name: format!("upstream:{name}"),
-                data: masked_entry(data),
+                data: masked_entry(data, referenced),
             });
         }
         for (name, data) in value.plugins.iter() {
             descriptions.push(Description {
                 category: CATEGORY_PLUGIN.to_string(),
                 name: format!("plugin:{name}"),
-                data: masked_entry(data),
+                data: masked_entry(data, referenced),
             });
         }
         for (name, data) in value.certificates.iter() {
             descriptions.push(Description {
                 category: CATEGORY_CERTIFICATE.to_string(),
                 name: format!("certificate:{name}"),
-                data: masked_entry(data),
+                data: masked_entry(data, referenced),
             });
         }
         for (name, data) in value.storages.iter() {
@@ -2139,15 +2310,18 @@ impl PingapConfig {
             descriptions.push(Description {
                 category: CATEGORY_STORAGE.to_string(),
                 name: format!("storage:{name}"),
-                data: masked_entry(&clone_data),
+                data: masked_entry(&clone_data, referenced),
             });
         }
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
-            data: masked_entry(&BasicOnly {
-                basic: &value.basic,
-            }),
+            data: masked_entry(
+                &BasicOnly {
+                    basic: &value.basic,
+                },
+                referenced,
+            ),
         });
         descriptions.sort_by_key(|d| d.name.clone());
         descriptions

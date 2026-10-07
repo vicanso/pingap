@@ -13,10 +13,12 @@
 // limitations under the License.
 
 use crate::PingapConfig;
+use crate::common::convert_running_config;
 use crate::convert_toml_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::{FileStorage, is_config_dir};
 use crate::memory_storage::MemoryStorage;
+use crate::reference::MissingReference;
 use crate::storage::{History, Storage};
 use crate::{Category, Error, Observer};
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -105,11 +107,59 @@ impl PingapTomlConfig {
     pub fn to_toml(&self) -> Result<String> {
         to_string_pretty(self)
     }
+    /// The configuration as it is written, its includes replaced by what
+    /// they name or left in place. A `$ENV:` or `$FILE:` reference stays
+    /// the text it is: this is what the admin shows and stores, and what
+    /// is printed or copied elsewhere.
     pub fn to_pingap_config(
         &self,
         replace_include: bool,
     ) -> Result<PingapConfig> {
         convert_toml_config(self, replace_include)
+    }
+    /// The configuration to run with: includes replaced, and then every
+    /// value written `$ENV:NAME` or `$FILE:/path` replaced by what it
+    /// names. `missing` says what a reference that names nothing here is:
+    /// an error where the configuration is to run, left as it is on a
+    /// node that only stores it.
+    ///
+    /// Reads files; not for a thread that serves requests.
+    pub fn to_running_config(
+        &self,
+        missing: MissingReference,
+    ) -> Result<PingapConfig> {
+        convert_running_config(self, missing)
+    }
+    /// A hash of what the files named by the `$FILE:` references of this
+    /// document hold now, `0` when it names none. The document itself
+    /// stays the same when such a file changes, so whoever goes by the
+    /// document to tell whether there is something to reload looks at this
+    /// too.
+    ///
+    /// Reads those files; not for a thread that serves requests.
+    pub fn referenced_files_hash(&self) -> u64 {
+        // What a storage holds is a fragment that ends up in the entries
+        // including it, its references with it.
+        let fragments: Vec<Value> = self
+            .storages
+            .iter()
+            .flatten()
+            .filter_map(|(_, storage)| storage.get("value")?.as_str())
+            .filter_map(|value| toml::from_str::<Value>(value).ok())
+            .collect();
+        let sections = [
+            &self.servers,
+            &self.upstreams,
+            &self.locations,
+            &self.plugins,
+            &self.certificates,
+        ];
+        crate::reference::files_hash(
+            self.basic
+                .iter()
+                .chain(sections.into_iter().flatten().flat_map(Map::values))
+                .chain(fragments.iter()),
+        )
     }
 
     fn get_toml(&self, category: &Category, name: &str) -> Result<String> {

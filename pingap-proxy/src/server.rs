@@ -578,6 +578,21 @@ impl Server {
         self,
         conf: Arc<configuration::ServerConf>,
     ) -> Result<ServerServices> {
+        self.build(conf, true)
+    }
+    /// Builds what [`Server::run`] builds and drops it, for a check of the
+    /// configuration: the TLS settings of each listener are made, which is
+    /// where a cipher list or a protocol version that the TLS library does
+    /// not take is found. Nothing is bound: a listener opens its socket
+    /// when its service is started, and this one never is.
+    pub fn check(self, conf: Arc<configuration::ServerConf>) -> Result<()> {
+        self.build(conf, false).map(|_| ())
+    }
+    fn build(
+        self,
+        conf: Arc<configuration::ServerConf>,
+        announce: bool,
+    ) -> Result<ServerServices> {
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
 
@@ -604,16 +619,18 @@ impl Server {
             None
         };
 
-        info!(
-            target: LOG_TARGET,
-            name,
-            addr,
-            threads,
-            is_tls,
-            h2 = enabled_h2,
-            tcp_socket_options = format!("{:?}", tcp_socket_options),
-            "server is listening"
-        );
+        if announce {
+            info!(
+                target: LOG_TARGET,
+                name,
+                addr,
+                threads,
+                is_tls,
+                h2 = enabled_h2,
+                tcp_socket_options = format!("{:?}", tcp_socket_options),
+                "server is listening"
+            );
+        }
         let cipher_list = self.tls_cipher_list.clone();
         let cipher_suites = self.tls_ciphersuites.clone();
         let tls_min_version = self.tls_min_version.clone();
@@ -2021,6 +2038,15 @@ impl ProxyHttp for Server {
 
         let (code, client_gone) = classify_proxy_error(e);
         let error_type = e.etype().as_str();
+        // Counted here, where the error says whose it is: by the end of
+        // the request a failed upstream is one more `502`.
+        #[cfg(feature = "tracing")]
+        if let Some(prom) = &self.prometheus
+            && e.esource() == &pingora::ErrorSource::Upstream
+            && !matches!(e.etype(), pingora::ErrorType::HTTPStatus(_))
+        {
+            prom.on_upstream_error(&ctx.upstream.name);
+        }
         // A final response header is already out (pingora counts a 101 as
         // final too): the status the client saw stays on record, and no
         // page goes after it, the rule of pingora's own
@@ -2286,6 +2312,10 @@ impl ProxyHttp for Server {
                     // path, but surface the loss so operators can size the buffer.
                     let dropped =
                         ACCESS_LOG_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                    #[cfg(feature = "tracing")]
+                    if let Some(prom) = &self.prometheus {
+                        prom.on_access_log_dropped();
+                    }
                     // Rate-limit the warning: log every power-of-two drop so a
                     // saturated channel does not flood the error log.
                     if dropped.is_power_of_two() {

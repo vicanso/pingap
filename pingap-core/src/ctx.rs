@@ -385,6 +385,10 @@ pub struct Features {
     /// A map of plugin names and their response body handlers.
     pub modify_body_handlers:
         Option<AHashMap<String, Box<dyn ModifyResponseBody>>>,
+    /// What a plugin settled at one step of a request and goes by again
+    /// at a later one, under a name of its own: see
+    /// [`Ctx::set_plugin_note`].
+    pub plugin_notes: Option<Vec<(String, &'static str)>>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).
     #[cfg(feature = "tracing")]
     pub otel_tracer: Option<OtelTracer>,
@@ -682,6 +686,39 @@ impl Ctx {
             .as_ref()?
             .get(key)
             .map(|v| v.as_str())
+    }
+
+    /// Keeps `note` for the plugin that calls itself `name`, until the
+    /// request ends.
+    ///
+    /// For a decision that is made once and has to hold: the request a
+    /// later step sees is not the one the first step saw - a location
+    /// rewrites the path, another plugin takes a parameter out of the
+    /// query or changes a header - and a plugin that decided again from
+    /// what is there then could come to the other answer.
+    #[inline]
+    pub fn set_plugin_note(&mut self, name: &str, note: &'static str) {
+        let notes = self
+            .features
+            .get_or_insert_default()
+            .plugin_notes
+            .get_or_insert_default();
+        match notes.iter_mut().find(|(key, _)| key == name) {
+            Some(found) => found.1 = note,
+            None => notes.push((name.to_string(), note)),
+        }
+    }
+
+    /// What [`Ctx::set_plugin_note`] kept under `name`.
+    #[inline]
+    pub fn get_plugin_note(&self, name: &str) -> Option<&'static str> {
+        self.features
+            .as_ref()?
+            .plugin_notes
+            .as_ref()?
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, note)| *note)
     }
 
     /// Adds a modify body handler to the context.
@@ -1396,6 +1433,30 @@ mod tests {
     }
 
     /// Tests both adding and getting variables.
+    #[test]
+    fn test_plugin_notes() {
+        let mut ctx = Ctx::new();
+        assert_eq!(None, ctx.get_plugin_note("a"));
+        ctx.set_plugin_note("a", "gzip");
+        ctx.set_plugin_note("b", "");
+        assert_eq!(Some("gzip"), ctx.get_plugin_note("a"));
+        assert_eq!(Some(""), ctx.get_plugin_note("b"));
+        assert_eq!(None, ctx.get_plugin_note("c"));
+        // The last one said is the one kept.
+        ctx.set_plugin_note("a", "br");
+        assert_eq!(Some("br"), ctx.get_plugin_note("a"));
+        assert_eq!(
+            2,
+            ctx.features
+                .as_ref()
+                .unwrap()
+                .plugin_notes
+                .as_ref()
+                .unwrap()
+                .len()
+        );
+    }
+
     #[test]
     fn test_add_and_get_variable() {
         let mut ctx = Ctx::new();

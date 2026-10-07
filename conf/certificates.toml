@@ -35,7 +35,8 @@
 
 # The endpoint and credentials of the DNS provider. The value of a query
 # parameter, or the whole of it, written `$ENV:NAME` is read from the
-# environment.
+# environment. (Any text value of the configuration can be written
+# `$ENV:NAME` or `$FILE:/path` as a whole.)
 # dns_service_url = "https://api.cloudflare.com?token=$ENV:CF_TOKEN"
 
 # With `acme`: renew the certificate this many days before it expires

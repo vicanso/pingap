@@ -719,6 +719,16 @@ export default {
     compressionZstdLevelPlaceholder: "输入zstd压缩级别(1-22)",
     compressionMinLength: "最小长度",
     compressionMinLengthPlaceholder: "输入响应体最小长度(如100)",
+    compressionTypes: "内容类型",
+    compressionTypesPlaceholder:
+      "输入内容类型的前缀，例如 text/ 或 application/json",
+    compressionTypesTips:
+      "只压缩内容类型以其中一项开头的响应；* 表示任意类型。不设置时，response 模式压缩文本以及所有 application/* 和 font/* 类型，upstream 模式压缩 json、xml 和文本。",
+    compressionSkip: "跳过",
+    compressionSkipPlaceholder:
+      "输入不压缩的路径和查询串的正则，例如 ^/download/",
+    compressionSkipTips:
+      "路径和查询串匹配的请求不压缩。匹配的是客户端发来的原样，在 location 的 rewrite 之前。",
     compressionDecompression: "是否支持解压缩",
     compressionMode: "模式",
     acceptEncodingList: "支持的压缩编码",
@@ -762,7 +772,7 @@ export default {
     jwtAuthFailDelayPlaceholder: "输入失败时的延迟响应时长",
     jwtSignAlgorithm: "算法",
     jwtSignAlgorithmTips:
-      "使用密钥时选 HS256 或 HS512；使用公钥时选 RS、PS、ES 或 EdDSA 算法。配置了 JWKS 地址时不使用此项，每个密钥自带算法。",
+      "使用密钥时选 HS256、HS384 或 HS512；使用公钥时选 RS、PS、ES 或 EdDSA 算法。配置了 JWKS 地址时不使用此项，每个密钥自带算法。",
     jwtAuthSecret: "密钥",
     jwtAuthSecretPlaceholder: "输入jwt的密钥",
     jwtPublicKey: "公钥",
@@ -781,6 +791,22 @@ export default {
     jwtLeewayPlaceholder: "允许的时钟偏差，默认: 60s",
     jwtLeewayTips:
       "签发方的时钟和代理的时钟允许相差多少：exp 和 nbf 都按这个宽限判断，用密钥、公钥还是 JWKS 都一样。设为 0s 则精确到秒。",
+    jwtIssuers: "签发方",
+    jwtIssuersPlaceholder: "输入允许的签发方",
+    jwtIssuersTips:
+      "配置后，令牌的 iss 必须是其中之一，按原样比较。没有 iss 的令牌会被拒绝。",
+    jwtAudiences: "受众",
+    jwtAudiencesPlaceholder: "输入允许的受众",
+    jwtAudiencesTips:
+      "配置后，令牌的 aud（单个值或列表）必须包含其中之一。没有 aud 的令牌会被拒绝。",
+    jwtRequiredClaims: "必需的声明",
+    jwtRequiredClaimsPlaceholder: "输入声明的名称，例如 sub",
+    jwtRequiredClaimsTips:
+      "令牌必须带有的声明，不论取值。值为 null 的声明视为没有。",
+    jwtClaimsToHeaders: "声明转请求头",
+    jwtClaimsToHeadersPlaceholder: "输入 声明:请求头，例如 sub:X-User-Id",
+    jwtClaimsToHeadersTips:
+      "令牌校验通过后，把声明放进这个请求头发给上游。客户端自己带的同名请求头总是会被删除，令牌里没有这个声明时也一样。请求头名称取最后一个冒号之后的部分，所以声明可以用 url 命名。",
     forwardAuthUrl: "认证地址",
     forwardAuthUrlPlaceholder: "输入认证服务的地址",
     forwardAuthTimeout: "超时",

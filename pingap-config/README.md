@@ -183,8 +183,8 @@ arbitrarily named files:
 - otherwise it is renamed to `<name>.toml.bak`, which the loader ignores since
   it only globs `*.toml`.
 
-Commands that only read the configuration — `--test`, `--to-hcl`, `--to-kdl`
-and `--sync` — skip the migration and load whatever layout is there. They fail
+Commands that only read the configuration — `--test`, `--to-hcl`, `--to-kdl`,
+`--sync` and `--diff` — skip the migration and load whatever layout is there. They fail
 when the configuration does not load, also with an admin address set
 (`--admin` or `PINGAP_ADMIN_ADDR`): starting on an empty configuration so that
 it can be repaired through the admin is for a server that is going to run, not
@@ -314,12 +314,96 @@ plugin "blockList" {
 A plugin setting that takes a list of strings also accepts a single string in
 its place, so `ip_list "1.2.3.4"` works as well.
 
-`$ENV:NAME` is not a general interpolation: it is read in one place, the
-`dns_service_url` of a certificate, in whatever format the configuration is
-written (see [pingap-acme](../pingap-acme/README.md)). Anywhere else it is
-taken as the text it is, so an address written `"$ENV:PINGAP_API_ADDR"` is an
-address that does not parse. A header value may name an environment variable
-as `$NAME` (see `proxy_set_headers`).
+## Values from the environment and from files
+
+A container gets its credentials through the environment or as mounted files.
+A value of the configuration can name one of those instead of holding the
+credential itself:
+
+```toml
+[plugins.jwtAuth]
+category = "jwt"
+header = "Authorization"
+secret = "$ENV:JWT_SECRET"
+
+[plugins.apiKeys]
+category = "key_auth"
+header = "X-Api-Key"
+keys = ["$FILE:/run/secrets/key_a", "$FILE:/run/secrets/key_b"]
+
+[upstreams.api]
+addrs = ["$ENV:API_ADDR"]
+
+[basic]
+webhook = "$ENV:PINGAP_WEBHOOK"
+```
+
+- `$ENV:NAME` is the value of the environment variable `NAME` (letters,
+  digits and `_`).
+- `$FILE:/path` is the content of that file, without the line ends at its
+  end. The path is absolute (`~/` is the home directory), the file a regular
+  one of at most 1 MB of UTF-8 text.
+
+A variable that is set to nothing counts as one that is not set, and a file
+with nothing in it as one that is not there: that is what an environment gets
+from `NAME: ${NAME}` when the host has no such variable, and an empty
+credential is one that some checks accept.
+
+The rules are the same in TOML, HCL and KDL, and for a configuration in etcd:
+
+- A reference is the **whole** of a string value, wherever that string is: a
+  field of an entry, an item of a list, a setting of a plugin, a value that
+  an entry takes from a storage it `includes`. `"Bearer $ENV:TOKEN"` is not
+  one and stays the text it is. (Two places read more on their own: any query
+  parameter of a certificate's `dns_service_url`, see
+  [pingap-acme](../pingap-acme/README.md), and a header value that names a
+  variable as `$NAME`, see `proxy_set_headers`.)
+- It stands for text. A field of `basic`, a server, a location, an upstream
+  or a certificate that is a duration, a size, a number or a boolean does not
+  take one: that is a configuration error. A setting of a plugin that is
+  written as text does, a duration included. The names of entries and keys
+  are not looked at.
+- A reference that names nothing - the variable is not set, the file can not
+  be read - is a configuration error that says which entry and which key:
+  `plugin(jwtAuth): secret: environment variable JWT_SECRET is not set`. A
+  start fails on it, `pingap -t` reports it, a reload keeps the running
+  configuration. It is never taken as the text it is, which would make
+  `$ENV:JWT_SECRET` the secret.
+- What a reference gives is the value. It is not looked at for further
+  references.
+
+References are replaced in the configuration a process runs with, and nowhere
+else:
+
+- The admin shows and saves the reference as it is written, and so do
+  `--to-hcl`, `--to-kdl` and `--sync`. A change saved through the admin is
+  checked with the references replaced, so a variable that is missing on that
+  machine is reported before the change is stored. A control panel node
+  (`--cp`) stores a configuration other machines run: there a reference it can
+  not look up is left alone, and the entry it is in is not checked for the
+  form of its values (an address written as a reference is no address). The
+  same holds for the commands that only print, compare or copy.
+- What a reference stood for is kept out of the difference a reload writes to
+  the log and sends to the webhook, whatever its key is called: it is shown
+  as a checksum, like the values of the keys that are known to be credentials,
+  so a change still shows as a change.
+- With `--autoreload` or `--autorestart` the files that are referred to are
+  read each time the process looks whether its configuration has changed
+  (every ten seconds, or `basic.auto_restart_check_interval` when that is
+  shorter): a secret that is rotated in place is taken like a change of the
+  configuration would be, without a restart where that kind of entry reloads
+  hot. Replace such a file by renaming a new one over it, as a mounted secret
+  is replaced: one that is written in place can be read half written. A file
+  that has gone is reported like any reload that fails, and the running
+  configuration stays. The environment of a process does not change while it
+  runs, and a restart pingap performs itself (`--autorestart`, the admin)
+  hands its own environment to the replacement: a new value of a variable is
+  there once the process is started anew.
+
+Whoever can change the configuration can have the process read a file or a
+variable this way. That is not new - a `directory` plugin serves any path it
+is given - but it is a reason to keep the admin and the storage behind the
+same care as the secrets.
 
 Conversion and migration on the command line:
 
@@ -329,7 +413,52 @@ pingap -c /opt/pingap/conf --to-kdl > conf.kdl        # dump as KDL
 pingap -c /opt/pingap/conf --sync etcd://127.0.0.1:2379/pingap   # file -> etcd
 pingap --template > pingap.toml                       # starter config
 pingap -c /opt/pingap/conf -t                         # validate and exit
+pingap -c /opt/pingap/conf --diff /tmp/new-conf       # what would change
 ```
+
+### Checking a configuration: `-t`
+
+`-t` goes as far as a start does without serving: the document is read, its
+includes and `$ENV:` / `$FILE:` references are replaced, every entry is
+validated, and then every upstream, location, plugin, certificate and server
+is built the way startup builds it. A server is built up to where its
+listeners would open their sockets, which is where its TLS settings are made:
+a `tls_min_version` that is no version or a cipher list the TLS library does
+not take used to pass `-t` and fail the start. Nothing is bound, so the check
+can run next to a process that is serving on the same addresses, and no access
+log is opened. The admin runs the same checks on the configuration a change
+would leave in the storage, before it stores it.
+
+### Previewing a change: `--diff`
+
+`pingap -c <running> --diff <candidate>` prints what would change if the
+configuration at `<candidate>` (a file, a directory or an etcd address)
+replaced the one of `-c`, and exits:
+
+```text
+++ [ADDED] upstream:u2
+
+[MODIFIED] plugin:auth
+- keys = ["crc32:983E2A19"]
++ keys = ["crc32:CD38375F"]
+
+[MODIFIED] upstream:api
+- addrs = ["127.0.0.1:5001"]
++ addrs = ["127.0.0.1:5002"]
+```
+
+It is the difference a reload writes to the log and sends to the webhook,
+before anything is applied: `-` is what `-c` has, `+` what the candidate has,
+each with its includes and references replaced. Credentials are shown as
+checksums - the keys that are known to hold one, and everything a `$ENV:` or
+`$FILE:` reference stood for - so a changed secret shows as a change and
+nothing else. `no difference` is printed when there is none. Neither side is
+written to, and neither is validated: run `-t` on the candidate for that. A
+reference that names nothing on the machine the command runs on is compared as
+the text it is written as. The exit status is `0` whether or not there is a
+difference, and not `0` when one of the two does not load, or the candidate
+does not exist or has no configuration in it (an etcd prefix with a slip in
+it).
 
 ## Hot reload
 
@@ -415,7 +544,10 @@ includes = ["commonTimeouts"]
 ```
 
 `to_pingap_config(replace_include)` controls whether includes are expanded; the
-admin UI reads the unexpanded form so edits stay readable. `--to-hcl`,
+admin UI reads the unexpanded form so edits stay readable.
+`to_running_config(missing)` gives the configuration a process runs with:
+includes expanded and every `$ENV:` / `$FILE:` reference replaced (see
+[Values from the environment and from files](#values-from-the-environment-and-from-files)). `--to-hcl`,
 `--to-kdl` and `--sync` write the unexpanded form too: the entry keeps its
 `includes` and the fragment stays the one place its keys are defined. A fragment's keys
 override the entry's own, and a later include overrides an earlier one. An

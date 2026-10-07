@@ -14,9 +14,10 @@
 
 use super::{
     Error, accepts_encoding, get_bool_conf, get_hash_key, get_int_conf,
-    get_str_conf, is_partial_content, weaken_etag,
+    get_str_conf, get_str_slice_conf, is_partial_content, weaken_etag,
 };
 use async_trait::async_trait;
+use fancy_regex::Regex;
 use http::header::{
     ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING,
     CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING, VARY,
@@ -113,8 +114,17 @@ pub struct Compression {
     // Compress the upstream response body here (`mode = "upstream"`)
     // instead of through pingora's downstream module
     upstream_mode: bool,
-    // Minimum length of the response body to be compressed, only for upstream response mode
+    /// A response that says it is shorter than this is not compressed;
+    /// `0` for no such floor. One that does not say how long it is, is
+    /// compressed.
     min_length: u64,
+    /// The content types that are compressed, as prefixes in lower case
+    /// (`*` for any). `None` leaves it to the rule of the mode: pingora's
+    /// in the default mode, `is_compressible_content_type` in upstream
+    /// mode.
+    types: Option<Vec<String>>,
+    /// Requests whose path and query match are not compressed.
+    skip: Option<Regex>,
     // Unique identifier for caching and tracking plugin instances
     hash_value: String,
 }
@@ -172,6 +182,36 @@ impl TryFrom<&PluginConf> for Compression {
         let support_compression = gzip_level + br_level + zstd_level > 0;
 
         let min_length = get_int_conf(value, "min_length").max(0) as u64;
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::Compression.to_string(),
+            message,
+        };
+        // A list that is there and empty would compress nothing at all,
+        // which is not what leaving the key out does.
+        let types = if value.contains_key("types") {
+            let types = get_str_slice_conf(value, "types")
+                .into_iter()
+                .map(|item| item.trim().to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            if types.is_empty() || types.iter().any(String::is_empty) {
+                return Err(invalid(
+                    "types needs at least one content type, and none of them empty"
+                        .to_string(),
+                ));
+            }
+            Some(types)
+        } else {
+            None
+        };
+        let skip = get_str_conf(value, "skip");
+        let skip = if skip.is_empty() {
+            None
+        } else {
+            Some(Regex::new(&skip).map_err(|e| Error::Regex {
+                category: PluginCategory::Compression.to_string(),
+                source: Box::new(e),
+            })?)
+        };
 
         let params = Self {
             hash_value,
@@ -197,6 +237,8 @@ impl TryFrom<&PluginConf> for Compression {
                     .collect(),
             ),
             min_length,
+            types,
+            skip,
             // Plugin runs during early request phase
             plugin_step: PluginStep::EarlyRequest,
         };
@@ -254,6 +296,39 @@ fn has_no_transform(headers: &http::HeaderMap) -> bool {
         .any(|directive| directive.trim().eq_ignore_ascii_case("no-transform"))
 }
 
+/// Whether the content type of the response starts with one of `types`,
+/// which are in lower case. Parameters (`; charset=utf-8`) are not a part
+/// of it, and a response that names no type matches nothing, `*`
+/// included: neither mode compresses what it knows nothing about.
+fn matches_types(types: &[String], headers: &http::HeaderMap) -> bool {
+    let Some(mime) = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|mime| !mime.is_empty())
+    else {
+        return false;
+    };
+    types.iter().any(|prefix| {
+        prefix == "*"
+            || mime.as_bytes().get(..prefix.len()).is_some_and(|head| {
+                head.eq_ignore_ascii_case(prefix.as_bytes())
+            })
+    })
+}
+
+/// Whether the response says it is shorter than `min_length`. One that
+/// does not say how long it is, is not too short.
+fn is_shorter_than(min_length: u64, headers: &http::HeaderMap) -> bool {
+    min_length > 0
+        && headers
+            .get(CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .is_some_and(|content_length| content_length < min_length)
+}
+
 impl Compression {
     /// Creates a new Compression plugin instance from the provided configuration
     ///
@@ -269,7 +344,34 @@ impl Compression {
         );
         Self::try_from(params)
     }
-    fn get_compress_level(&self, session: &Session) -> (u32, u32, u32) {
+    /// Whether the request is one of those `skip` takes out.
+    ///
+    /// By the path and query the client asked for, and not what a rewrite
+    /// of the location made of them. Upstream mode needs the answer
+    /// twice, for the cache key and for the response, and does not ask
+    /// twice: see `chosen_levels`.
+    fn is_skipped(&self, session: &Session, ctx: &Ctx) -> bool {
+        let Some(skip) = &self.skip else {
+            return false;
+        };
+        let uri = ctx
+            .features
+            .as_ref()
+            .and_then(|features| features.original_uri.as_ref())
+            .unwrap_or(&session.req_header().uri);
+        let target = uri
+            .path_and_query()
+            .map_or(uri.path(), |value| value.as_str());
+        skip.is_match(target).unwrap_or_default()
+    }
+    fn get_compress_level(
+        &self,
+        session: &Session,
+        ctx: &Ctx,
+    ) -> (u32, u32, u32) {
+        if self.is_skipped(session, ctx) {
+            return (0, 0, 0);
+        }
         // Extract and validate Accept-Encoding header
         let header = session.req_header();
         let Some(accept_encoding) = header.headers.get(ACCEPT_ENCODING) else {
@@ -298,6 +400,29 @@ impl Compression {
             gzip_level = self.gzip_level;
         }
         (zstd_level, br_level, gzip_level)
+    }
+}
+
+impl Compression {
+    /// The coding upstream mode compresses the response with, as levels:
+    /// the one that was settled when the request came in and is in its
+    /// cache key.
+    ///
+    /// Not decided again from the request as it is by now. A location may
+    /// have rewritten the path that `skip` goes by, `key_auth` taken its
+    /// parameter out of the query, another plugin replaced
+    /// `Accept-Encoding`: with a second answer that differed from the
+    /// first, a compressed response was stored under the key of the
+    /// clients that take no coding, and served to them.
+    fn chosen_levels(&self, session: &Session, ctx: &Ctx) -> (u32, u32, u32) {
+        match ctx.get_plugin_note(&self.handler_id) {
+            Some(ZSTD) => (self.zstd_level, 0, 0),
+            Some(BR) => (0, self.br_level, 0),
+            Some(GZIP) => (0, 0, self.gzip_level),
+            Some(_) => (0, 0, 0),
+            // The request step did not run for this request.
+            None => self.get_compress_level(session, ctx),
+        }
     }
 }
 
@@ -338,6 +463,19 @@ impl Plugin for Compression {
         Cow::Borrowed(&self.hash_value)
     }
 
+    /// In the default mode pingora compresses what a plugin answers with
+    /// as well - the files of `directory` above all - so `types` and
+    /// `min_length` have to be asked about those too, or the fonts and
+    /// documents of a static site are compressed with a list that names
+    /// only text. All `handle_response` does in that mode is switch the
+    /// compression off.
+    #[inline]
+    fn handles_plugin_response(&self) -> bool {
+        !self.upstream_mode
+            && self.support_compression
+            && (self.types.is_some() || self.min_length > 0)
+    }
+
     /// Processes incoming HTTP requests to configure response compression
     ///
     /// # Arguments
@@ -366,7 +504,7 @@ impl Plugin for Compression {
             // there for something else, decompression say.
             if self.upstream_mode && self.support_compression {
                 let (zstd_level, br_level, gzip_level) =
-                    self.get_compress_level(session);
+                    self.get_compress_level(session, ctx);
                 let key = if zstd_level > 0 {
                     ZSTD
                 } else if br_level > 0 {
@@ -376,6 +514,9 @@ impl Plugin for Compression {
                 } else {
                     ""
                 };
+                // Settled here, once: the cache key below says it, and
+                // the response is compressed by it.
+                ctx.set_plugin_note(&self.handler_id, key);
                 // The coding is a part of the cache key, one of those a
                 // request can ask for: a `PURGE`, which asks for none,
                 // removes the entry of each.
@@ -422,7 +563,7 @@ impl Plugin for Compression {
             return Ok(RequestPluginResult::Skipped);
         }
         let (zstd_level, br_level, gzip_level) =
-            self.get_compress_level(session);
+            self.get_compress_level(session, ctx);
 
         debug!(
             zstd_level,
@@ -484,7 +625,7 @@ impl Plugin for Compression {
             return Ok(ResponsePluginResult::Unchanged);
         }
         let (zstd_level, br_level, gzip_level) =
-            self.get_compress_level(session);
+            self.chosen_levels(session, ctx);
         let chosen = zstd_level > 0 || br_level > 0 || gzip_level > 0;
         if upstream_response.headers.contains_key(CONTENT_ENCODING) {
             // Compressed by the upstream, for a client this plugin has no
@@ -506,28 +647,23 @@ impl Plugin for Compression {
         {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        let Some(content_type) = upstream_response.headers.get(CONTENT_TYPE)
-        else {
-            return Ok(ResponsePluginResult::Unchanged);
+        // The configured types where there are some, the fixed list
+        // where there are none.
+        let compressible = match &self.types {
+            Some(types) => matches_types(types, &upstream_response.headers),
+            None => upstream_response
+                .headers
+                .get(CONTENT_TYPE)
+                .is_some_and(is_compressible_content_type),
         };
-        if !is_compressible_content_type(content_type) {
+        if !compressible {
             return Ok(ResponsePluginResult::Unchanged);
         }
         if !chosen {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if self.min_length > 0 {
-            let is_too_small = upstream_response
-                .headers
-                .get(CONTENT_LENGTH)
-                .and_then(|header| header.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(|content_length| content_length < self.min_length)
-                .unwrap_or(false);
-
-            if is_too_small {
-                return Ok(ResponsePluginResult::Unchanged);
-            }
+        if is_shorter_than(self.min_length, &upstream_response.headers) {
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         debug!(
@@ -574,7 +710,11 @@ impl Plugin for Compression {
     ///
     /// In the default mode the compression is pingora's, which decides by
     /// the response header right after this hook: a response that is not
-    /// to be transformed has it switched off here.
+    /// to be transformed has it switched off here, and so has one that
+    /// `types` or `min_length` leave out. pingora's own rule (text,
+    /// `application/*`, `font/*` and a few more, none with `zip` in it,
+    /// nothing under twenty bytes) still applies to what is left: the
+    /// list can narrow it, not widen it.
     async fn handle_response(
         &self,
         session: &mut Session,
@@ -584,8 +724,15 @@ impl Plugin for Compression {
         if !self.upstream_mode {
             // `adjust_level` panics once the module has gone on to the
             // body, so it is only called while it is still at the header.
+            let headers = &upstream_response.headers;
+            let left_out = must_not_transform(headers)
+                || self
+                    .types
+                    .as_ref()
+                    .is_some_and(|types| !matches_types(types, headers))
+                || is_shorter_than(self.min_length, headers);
             if self.support_compression
-                && must_not_transform(&upstream_response.headers)
+                && left_out
                 && let Some(c) = session
                     .downstream_modules_ctx
                     .get_mut::<ResponseCompression>()
@@ -718,6 +865,393 @@ zstd_level = 6
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         session
+    }
+
+    fn new_compression(conf: &str) -> Compression {
+        Compression::new(&toml::from_str::<PluginConf>(conf).unwrap()).unwrap()
+    }
+
+    /// A session of the default mode, with pingora's compression module
+    /// the way the proxy adds it.
+    async fn new_module_session(input: &str) -> Session {
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+        let mut session =
+            Session::new_h1_with_modules(Box::new(mock_io), &modules);
+        session.read_request().await.unwrap();
+        session
+    }
+
+    fn module_enabled(session: &Session) -> bool {
+        session
+            .downstream_modules_ctx
+            .get::<ResponseCompression>()
+            .unwrap()
+            .is_enabled()
+    }
+
+    fn response(
+        content_type: &str,
+        content_length: Option<u64>,
+    ) -> ResponseHeader {
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        if !content_type.is_empty() {
+            resp.append_header("Content-Type", content_type).unwrap();
+        }
+        if let Some(content_length) = content_length {
+            resp.append_header("Content-Length", content_length.to_string())
+                .unwrap();
+        }
+        resp
+    }
+
+    #[test]
+    fn test_matches_types() {
+        let types = |items: &[&str]| -> Vec<String> {
+            items.iter().map(|item| item.to_string()).collect()
+        };
+        let matches = |items: &[&str], content_type: &str| {
+            matches_types(&types(items), &response(content_type, None).headers)
+        };
+        let text = ["text/", "application/json", "image/svg+xml"];
+        assert_eq!(true, matches(&text, "text/html"));
+        assert_eq!(true, matches(&text, "Text/CSS; charset=utf-8"));
+        assert_eq!(true, matches(&text, "application/json"));
+        assert_eq!(true, matches(&text, " application/json ;charset=utf-8"));
+        assert_eq!(true, matches(&text, "image/svg+xml"));
+        // A prefix, so what begins the same is taken along.
+        assert_eq!(true, matches(&text, "application/json-seq"));
+        assert_eq!(false, matches(&text, "image/png"));
+        assert_eq!(false, matches(&text, "application/octet-stream"));
+        assert_eq!(false, matches(&text, "text"));
+        // The parameters are not a part of the type.
+        assert_eq!(false, matches(&["charset"], "text/html; charset=utf-8"));
+        // Anything that names a type, and nothing that names none.
+        assert_eq!(true, matches(&["*"], "video/mp4"));
+        assert_eq!(false, matches(&["*"], ""));
+        assert_eq!(false, matches(&text, ""));
+
+        assert_eq!(
+            true,
+            is_shorter_than(1024, &response("text/html", Some(1023)).headers)
+        );
+        assert_eq!(
+            false,
+            is_shorter_than(1024, &response("text/html", Some(1024)).headers)
+        );
+        // A response that does not say how long it is, is not too short,
+        // and neither is any without a floor.
+        assert_eq!(
+            false,
+            is_shorter_than(1024, &response("text/html", None).headers)
+        );
+        assert_eq!(
+            false,
+            is_shorter_than(0, &response("text/html", Some(1)).headers)
+        );
+    }
+
+    #[test]
+    fn test_compression_rule_params() {
+        let compression = new_compression(
+            "gzip_level = 6\ntypes = [\" Text/ \", \"application/JSON\"]\nmin_length = 512\nskip = \"^/download/\"",
+        );
+        assert_eq!(
+            Some(vec!["text/".to_string(), "application/json".to_string()]),
+            compression.types
+        );
+        assert_eq!(512, compression.min_length);
+        assert_eq!(true, compression.skip.is_some());
+        // The responses of other plugins are looked at only in the default
+        // mode, and only with a rule that is about the response.
+        assert_eq!(true, compression.handles_plugin_response());
+        for (conf, asks) in [
+            ("gzip_level = 6", false),
+            ("gzip_level = 6\nskip = \"^/download/\"", false),
+            ("gzip_level = 6\nmin_length = 512", true),
+            ("gzip_level = 6\ntypes = [\"text/\"]", true),
+            ("types = [\"text/\"]", false),
+            (
+                "mode = \"upstream\"\ngzip_level = 6\ntypes = [\"text/\"]",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                asks,
+                new_compression(conf).handles_plugin_response(),
+                "{conf}"
+            );
+        }
+
+        let error = |conf: &str| {
+            Compression::new(&toml::from_str::<PluginConf>(conf).unwrap())
+                .err()
+                .unwrap()
+                .to_string()
+        };
+        for conf in ["types = []", "types = [\"text/\", \" \"]"] {
+            assert_eq!(
+                "Plugin compression invalid, message: types needs at least one content type, and none of them empty",
+                error(conf),
+                "{conf}"
+            );
+        }
+        assert_eq!(
+            true,
+            error("skip = \"(\"")
+                .starts_with("Plugin compression, regex error ")
+        );
+    }
+
+    /// `types`, `min_length` and `skip` in upstream mode, where the plugin
+    /// compresses by itself.
+    #[tokio::test]
+    async fn test_upstream_mode_types_min_length_and_skip() {
+        const REQUEST: &str =
+            "GET /api/users?page=1 HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n";
+        async fn compressed(
+            compression: &Compression,
+            request: &str,
+            ctx: &mut Ctx,
+            mut resp: ResponseHeader,
+        ) -> bool {
+            let mut session = new_session(request).await;
+            compression
+                .handle_upstream_response(&mut session, ctx, &mut resp)
+                .unwrap();
+            resp.headers.contains_key(CONTENT_ENCODING)
+        }
+
+        // Without `types` it is the fixed list, as before.
+        let fixed = new_compression("mode = \"upstream\"\ngzip_level = 6");
+        for (content_type, expected) in [
+            ("text/css", true),
+            ("application/json", true),
+            ("application/javascript", false),
+            ("image/svg+xml", false),
+        ] {
+            assert_eq!(
+                expected,
+                compressed(
+                    &fixed,
+                    REQUEST,
+                    &mut Ctx::default(),
+                    response(content_type, None)
+                )
+                .await,
+                "{content_type}"
+            );
+        }
+
+        // With `types` it is what the list says, and nothing else.
+        let listed = new_compression(
+            "mode = \"upstream\"\ngzip_level = 6\ntypes = [\"application/javascript\", \"image/svg\"]\nmin_length = 100",
+        );
+        for (content_type, content_length, expected) in [
+            ("application/javascript", None, true),
+            ("image/svg+xml; charset=utf-8", Some(100), true),
+            ("text/css", None, false),
+            ("application/json", None, false),
+            ("", None, false),
+            // Listed, and said to be too short.
+            ("application/javascript", Some(99), false),
+        ] {
+            assert_eq!(
+                expected,
+                compressed(
+                    &listed,
+                    REQUEST,
+                    &mut Ctx::default(),
+                    response(content_type, content_length)
+                )
+                .await,
+                "{content_type} {content_length:?}"
+            );
+        }
+
+        // `skip` is asked about the path and query of the request.
+        let skipping = new_compression(
+            "mode = \"upstream\"\ngzip_level = 6\nskip = \"^/api/|[?&]raw=1\"",
+        );
+        for (target, expected) in [
+            ("/api/users", false),
+            ("/web/index.html", true),
+            ("/web/index.html?raw=1", false),
+            ("/web/api/users", true),
+        ] {
+            let request = format!(
+                "GET {target} HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n"
+            );
+            assert_eq!(
+                expected,
+                compressed(
+                    &skipping,
+                    &request,
+                    &mut Ctx::default(),
+                    response("text/html", None)
+                )
+                .await,
+                "{target}"
+            );
+        }
+
+        // A request that is skipped is one that takes no coding: the
+        // cache key says so, and the client's header is left as it came.
+        let mut session = new_session(
+            "GET /api/users HTTP/1.1\r\nAccept-Encoding: gzip, br\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        skipping
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            "gzip, br",
+            session.req_header().headers.get(ACCEPT_ENCODING).unwrap()
+        );
+        let keys = ctx.cache.as_ref().and_then(|cache| cache.keys.clone());
+        assert_eq!(Some(vec![]), keys);
+
+        // The location rewrote the path between the two times the plugin
+        // asks: the answer is the one for what the client asked for, both
+        // times. By the rewritten path the response was compressed and
+        // stored under the key of the clients that take no coding.
+        let mut session = new_session(
+            "GET /internal/users HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        ctx.features.get_or_insert_default().original_uri =
+            Some("/api/users".parse().unwrap());
+        let mut resp = response("text/html", None);
+        skipping
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        assert_eq!(false, resp.headers.contains_key(CONTENT_ENCODING));
+    }
+
+    /// Regression: upstream mode decided twice, for the cache key when
+    /// the request came in and for the body when the response did, each
+    /// time from the request as it was then. In between `key_auth` takes
+    /// its parameter out of the query, and another plugin may replace
+    /// `Accept-Encoding`: with `skip` matching the first and not the
+    /// second, a gzip body was stored under the key of the clients that
+    /// take no coding.
+    #[tokio::test]
+    async fn test_upstream_mode_decides_once() {
+        let compression = new_compression(
+            "mode = \"upstream\"\ngzip_level = 6\nskip = \"[?&]sig=\"",
+        );
+        // Skipped by its query, which is gone by the time of the response.
+        let mut session = new_session(
+            "GET /file?sig=abc HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        compression
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            Some(vec![]),
+            ctx.cache.as_ref().and_then(|cache| cache.keys.clone())
+        );
+        session.req_header_mut().set_uri("/file".parse().unwrap());
+        let mut resp = response("text/html", None);
+        compression
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        assert_eq!(false, resp.headers.contains_key(CONTENT_ENCODING));
+
+        // The other way round: gzip is in the key, and the header that
+        // asked for it has been replaced since.
+        let mut session =
+            new_session("GET /file HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n")
+                .await;
+        let mut ctx = Ctx::default();
+        compression
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            Some(vec!["gzip".to_string()]),
+            ctx.cache.as_ref().and_then(|cache| cache.keys.clone())
+        );
+        session
+            .req_header_mut()
+            .insert_header(ACCEPT_ENCODING, "identity")
+            .unwrap();
+        session
+            .req_header_mut()
+            .set_uri("/file?sig=abc".parse().unwrap());
+        let mut resp = response("text/html", None);
+        compression
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        assert_eq!("gzip", resp.headers.get(CONTENT_ENCODING).unwrap());
+    }
+
+    /// The same three in the default mode, where pingora compresses and
+    /// the plugin can only tell it not to.
+    #[tokio::test]
+    async fn test_response_mode_types_min_length_and_skip() {
+        async fn enabled(
+            compression: &Compression,
+            target: &str,
+            mut resp: ResponseHeader,
+        ) -> bool {
+            let mut session = new_module_session(&format!(
+                "GET {target} HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n"
+            ))
+            .await;
+            let mut ctx = Ctx::default();
+            compression
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            compression
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap();
+            module_enabled(&session)
+        }
+
+        // No rule: the plugin switches nothing off, whatever the type and
+        // the length. What is compressed is pingora's to say.
+        let plain = new_compression("gzip_level = 6");
+        assert_eq!(
+            true,
+            enabled(&plain, "/a.woff2", response("font/woff2", Some(10))).await
+        );
+
+        let ruled = new_compression(
+            "gzip_level = 6\ntypes = [\"text/\", \"application/json\"]\nmin_length = 100\nskip = \"^/download/\"",
+        );
+        for (target, content_type, content_length, expected) in [
+            ("/", "text/html; charset=utf-8", Some(4096), true),
+            ("/api", "application/json", None, true),
+            ("/doc.pdf", "application/pdf", Some(4096), false),
+            ("/font.woff2", "font/woff2", None, false),
+            ("/", "", Some(4096), false),
+            // Of a listed type, and said to be too short.
+            ("/", "text/html", Some(99), false),
+            ("/", "text/html", Some(100), true),
+            // Taken out by its path, whatever it is.
+            ("/download/report.html", "text/html", Some(4096), false),
+        ] {
+            assert_eq!(
+                expected,
+                enabled(&ruled, target, response(content_type, content_length))
+                    .await,
+                "{target} {content_type} {content_length:?}"
+            );
+        }
     }
 
     /// Upstream mode compresses only responses that have a body, and adds
@@ -1276,7 +1810,7 @@ zstd_level = 7
             let mock_io = Builder::new().read(input_header.as_bytes()).build();
             let mut session = Session::new_h1(Box::new(mock_io));
             session.read_request().await.unwrap();
-            compression.get_compress_level(&session)
+            compression.get_compress_level(&session, &Ctx::default())
         }
 
         let c = &compression;

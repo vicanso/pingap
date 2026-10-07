@@ -14,12 +14,13 @@
 
 use super::{
     Error, get_bool_conf, get_duration_conf, get_hash_key, get_str_conf,
+    get_str_slice_conf,
 };
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
-use http::StatusCode;
+use http::{HeaderName, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -30,8 +31,9 @@ use pingap_core::{
 };
 use pingap_core::{
     HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED, HttpResponse,
+    protect_from_connection_header,
 };
-use pingora::http::ResponseHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -67,6 +69,187 @@ struct Claims {
 /// and the time claims themselves, and nothing here reads the rest.
 #[derive(Deserialize)]
 struct NoClaims {}
+
+/// Every claim of a token, for the rules that are about more than its
+/// times.
+type ClaimMap = serde_json::Map<String, serde_json::Value>;
+
+/// What the claims of a token are held to once its signature and its times
+/// have checked out, and what is passed on of them to the upstream.
+///
+/// A token used to be good for any location it was shown at as long as the
+/// key was the right one: one issued for another service of the same
+/// issuer, or by another tenant of the same identity provider, was let in.
+/// And the upstream was told nothing of who it was for, and had to verify
+/// the token a second time to find out.
+#[derive(Default)]
+struct ClaimRules {
+    /// `iss` has to be one of these.
+    issuers: Vec<String>,
+    /// `aud`, or one entry of it, has to be one of these.
+    audiences: Vec<String>,
+    /// Claims a token has to have, whatever they say.
+    required: Vec<String>,
+    /// Claims to send to the upstream, and the header each goes in.
+    to_headers: Vec<(String, HeaderName)>,
+    /// The names of those headers. They are the proxy's: see
+    /// `protect_from_connection_header`.
+    own_headers: Vec<HeaderName>,
+}
+
+/// Why the claims of a token with a good signature were not enough.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimRejection {
+    Issuer,
+    Audience,
+    Missing(String),
+}
+
+impl ClaimRejection {
+    fn message(&self) -> Bytes {
+        match self {
+            Self::Issuer => {
+                Bytes::from_static(b"Jwt authorization issuer is not allowed")
+            },
+            Self::Audience => {
+                Bytes::from_static(b"Jwt authorization audience is not allowed")
+            },
+            Self::Missing(name) => {
+                Bytes::from(format!("Jwt authorization has no {name}"))
+            },
+        }
+    }
+}
+
+/// A claim as the value of a header: text as it is, a number or a boolean
+/// as it is written, a list of those joined by commas. `None` for what has
+/// no such form - an object, a list of objects - and for text a header
+/// cannot carry, a line break in it above all.
+fn claim_header_value(value: &serde_json::Value) -> Option<HeaderValue> {
+    use serde_json::Value;
+    let scalar = |value: &Value| match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    };
+    let text = match value {
+        Value::Array(items) => items
+            .iter()
+            .map(scalar)
+            .collect::<Option<Vec<_>>>()?
+            .join(","),
+        other => scalar(other)?,
+    };
+    HeaderValue::from_bytes(text.as_bytes()).ok()
+}
+
+impl ClaimRules {
+    /// Whether there is anything to look at the claims for.
+    fn is_empty(&self) -> bool {
+        self.issuers.is_empty()
+            && self.audiences.is_empty()
+            && self.required.is_empty()
+            && self.to_headers.is_empty()
+    }
+
+    fn check(
+        &self,
+        claims: &ClaimMap,
+    ) -> std::result::Result<(), ClaimRejection> {
+        use serde_json::Value;
+        if !self.issuers.is_empty() {
+            let allowed = claims
+                .get("iss")
+                .and_then(Value::as_str)
+                .is_some_and(|iss| self.issuers.iter().any(|item| item == iss));
+            if !allowed {
+                return Err(ClaimRejection::Issuer);
+            }
+        }
+        if !self.audiences.is_empty() {
+            let is_allowed =
+                |aud: &str| self.audiences.iter().any(|item| item == aud);
+            // One audience, or a list of them of which one is enough.
+            let allowed = match claims.get("aud") {
+                Some(Value::String(aud)) => is_allowed(aud),
+                Some(Value::Array(list)) => {
+                    list.iter().filter_map(Value::as_str).any(is_allowed)
+                },
+                _ => false,
+            };
+            if !allowed {
+                return Err(ClaimRejection::Audience);
+            }
+        }
+        for name in &self.required {
+            if matches!(claims.get(name), None | Some(Value::Null)) {
+                return Err(ClaimRejection::Missing(name.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes out of the request what the client sent under the names the
+    /// claims go to.
+    ///
+    /// And under what an upstream may read as one of them. `X_User_Id` is
+    /// another header than `X-User-Id` to a proxy, and the same variable
+    /// (`HTTP_X_USER_ID`) to whatever sits behind CGI, WSGI, Rack or PHP:
+    /// with only the one removed, the other reached such an upstream next
+    /// to, or in place of, what the token says. nginx drops every header
+    /// with an underscore for this reason; here it is the ones that would
+    /// pass for a claim.
+    fn strip(&self, header: &mut RequestHeader) {
+        if self.own_headers.is_empty() {
+            return;
+        }
+        let folded = |name: &str| {
+            name.bytes()
+                .map(|byte| if byte == b'_' { b'-' } else { byte })
+                .collect::<Vec<u8>>()
+        };
+        let own: Vec<Vec<u8>> = self
+            .own_headers
+            .iter()
+            .map(|name| folded(name.as_str()))
+            .collect();
+        let sent: Vec<HeaderName> = header
+            .headers
+            .keys()
+            .filter(|name| own.contains(&folded(name.as_str())))
+            .cloned()
+            .collect();
+        for name in sent {
+            header.remove_header(&name);
+        }
+    }
+
+    /// Puts the claims on the request, each under its header. What the
+    /// client sent under one of these names is removed first, whether or
+    /// not the token has the claim: the header says what the token says,
+    /// and nothing when the token says nothing.
+    fn apply(&self, claims: &ClaimMap, header: &mut RequestHeader) {
+        if self.to_headers.is_empty() {
+            return;
+        }
+        self.strip(header);
+        for (claim, name) in &self.to_headers {
+            if let Some(value) = claims.get(claim).and_then(claim_header_value)
+            {
+                let _ = header.insert_header(name, value);
+            }
+        }
+        protect_from_connection_header(header, &self.own_headers);
+    }
+}
+
+/// The claims of a token whose signature has been checked.
+fn decode_claims(token: &str) -> Option<ClaimMap> {
+    let payload = token.split('.').nth(1)?;
+    let raw = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
 
 /// Why an HMAC token was refused; the body of the 401 says which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +369,10 @@ fn verify_hmac_token(
             let hash = hmac_sha256::HMAC::mac(content, secret);
             signature_matches(&hash, signature, &mut encoded)
         },
+        "HS384" => {
+            let hash = hmac_sha512::sha384::HMAC::mac(content, secret);
+            signature_matches(&hash, signature, &mut encoded)
+        },
         "HS512" => {
             let hash = hmac_sha512::HMAC::mac(content, secret);
             signature_matches(&hash, signature, &mut encoded)
@@ -299,6 +486,9 @@ pub struct JwtAuth {
     /// refused as not yet valid by one configuration and not by another.
     leeway: Duration,
 
+    /// What the claims are held to and which of them go to the upstream.
+    claim_rules: ClaimRules,
+
     /// Pre-parsed decoding key and the validation pinned to its algorithm,
     /// for asymmetric verification (RS*/ES*/PS*). `Some` when an asymmetric
     /// `algorithm` and `public_key` are configured; HMAC algorithms leave
@@ -346,6 +536,7 @@ fn build_asymmetric_key(
             | Algorithm::PS512
             | Algorithm::ES256
             | Algorithm::ES384
+            | Algorithm::EdDSA
     );
     if !is_asymmetric {
         return Ok(None);
@@ -361,6 +552,7 @@ fn build_asymmetric_key(
         Algorithm::ES256 | Algorithm::ES384 => {
             DecodingKey::from_ec_pem(public_key.as_bytes())
         },
+        Algorithm::EdDSA => DecodingKey::from_ed_pem(public_key.as_bytes()),
         _ => DecodingKey::from_rsa_pem(public_key.as_bytes()),
     }
     .map_err(|e| Error::Invalid {
@@ -398,14 +590,38 @@ impl JwksCache {
             .map(|entry| &entry.key)
     }
 
+    /// `Some` for a token one of the keys verifies, with its claims when
+    /// they are asked for.
     fn verify(
         &self,
         token: &str,
         kid: Option<&str>,
         validation: &Validation,
-    ) -> bool {
-        self.candidates(kid)
-            .any(|key| decode::<NoClaims>(token, key, validation).is_ok())
+        with_claims: bool,
+    ) -> Option<Option<ClaimMap>> {
+        self.candidates(kid).find_map(|key| {
+            verify_with_key(token, key, validation, with_claims)
+        })
+    }
+}
+
+/// Verifies `token` under `key`: `None` when it does not check out,
+/// otherwise its claims when they are asked for. They are only put into a
+/// map for a plugin that has rules about them.
+fn verify_with_key(
+    token: &str,
+    key: &DecodingKey,
+    validation: &Validation,
+    with_claims: bool,
+) -> Option<Option<ClaimMap>> {
+    if with_claims {
+        decode::<ClaimMap>(token, key, validation)
+            .ok()
+            .map(|data| Some(data.claims))
+    } else {
+        decode::<NoClaims>(token, key, validation)
+            .ok()
+            .map(|_| None)
     }
 }
 
@@ -478,16 +694,25 @@ impl JwksSource {
         }
     }
 
+    #[cfg(test)]
     async fn verify(&self, token: &str) -> bool {
-        let Ok(header) = decode_header(token) else {
-            return false;
-        };
+        self.verify_claims(token, false).await.is_some()
+    }
+
+    /// `Some` for a token that checks out, with its claims when they are
+    /// asked for.
+    async fn verify_claims(
+        &self,
+        token: &str,
+        with_claims: bool,
+    ) -> Option<Option<ClaimMap>> {
+        let header = decode_header(token).ok()?;
         // Only asymmetric algorithms are accepted, so a token cannot be signed
         // with symmetric HMAC using the public key as the secret (algorithm
         // confusion). `decode` also rejects an alg that mismatches the JWK's
         // key type.
         if !is_asymmetric_alg(header.alg) {
-            return false;
+            return None;
         }
         let validation =
             jwks_validation(header.alg, self.require_exp, self.leeway);
@@ -495,16 +720,17 @@ impl JwksSource {
         // Fresh cache hit: verify without touching the network.
         if let Some(cache) = self.cache.load_full()
             && cache.fetched_at.elapsed() <= self.ttl
-            && cache.verify(token, kid, &validation)
+            && let Some(claims) =
+                cache.verify(token, kid, &validation, with_claims)
         {
-            return true;
+            return Some(claims);
         }
         // Miss / expired / rotated kid: refresh (rate-limited), then retry with
         // whatever we have (including a stale cache if the refetch failed).
         self.refresh().await;
-        self.cache
-            .load_full()
-            .is_some_and(|cache| cache.verify(token, kid, &validation))
+        self.cache.load_full().and_then(|cache| {
+            cache.verify(token, kid, &validation, with_claims)
+        })
     }
 }
 
@@ -582,6 +808,74 @@ fn build_jwks_source(
     })))
 }
 
+/// The settings that are about the claims of a token: `issuers`,
+/// `audiences`, `required_claims` and `claims_to_headers`.
+fn parse_claim_rules(value: &PluginConf) -> Result<ClaimRules> {
+    let invalid = |message: String| Error::Invalid {
+        category: PluginCategory::Jwt.to_string(),
+        message,
+    };
+    // An entry that is empty would be a rule that nothing can meet, or
+    // that everything does: it is a slip of the configuration either way.
+    let names = |key: &str| -> Result<Vec<String>> {
+        get_str_slice_conf(value, key)
+            .into_iter()
+            .map(|item| {
+                let item = item.trim().to_string();
+                if item.is_empty() {
+                    return Err(invalid(format!("{key}: an entry is empty")));
+                }
+                Ok(item)
+            })
+            .collect()
+    };
+    let to_headers = get_str_slice_conf(value, "claims_to_headers")
+        .iter()
+        .map(|item| {
+            // At the last colon: a header name has none, and the name of
+            // a claim may - the namespaced ones are urls
+            // (`https://example.com/roles`).
+            let (claim, header) = item
+                .rsplit_once(':')
+                .map(|(claim, header)| (claim.trim(), header.trim()))
+                .filter(|(claim, _)| !claim.is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "claims_to_headers: {item:?} should be claim:Header-Name"
+                    ))
+                })?;
+            let name =
+                HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
+                    invalid(format!(
+                        "claims_to_headers: {header:?} is not a header name"
+                    ))
+                })?;
+            // What frames the body or names the upstream is not a place
+            // for something a token says.
+            if [
+                http::header::CONTENT_LENGTH,
+                http::header::TRANSFER_ENCODING,
+                http::header::HOST,
+                http::header::CONNECTION,
+            ]
+            .contains(&name)
+            {
+                return Err(invalid(format!(
+                    "claims_to_headers: {name} is not a header for a claim"
+                )));
+            }
+            Ok((claim.to_string(), name))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ClaimRules {
+        issuers: names("issuers")?,
+        audiences: names("audiences")?,
+        required: names("required_claims")?,
+        own_headers: to_headers.iter().map(|(_, name)| name.clone()).collect(),
+        to_headers,
+    })
+}
+
 impl TryFrom<&PluginConf> for JwtAuth {
     type Error = Error;
 
@@ -653,6 +947,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
                 message: "invalid leeway: it is at most 1d".to_string(),
             });
         }
+        let claim_rules = parse_claim_rules(value)?;
         let decoding_key = build_asymmetric_key(
             &algorithm,
             &get_str_conf(value, "public_key"),
@@ -670,6 +965,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
             algorithm,
             require_exp,
             leeway,
+            claim_rules,
             decoding_key,
             jwks,
             delay,
@@ -692,14 +988,18 @@ impl TryFrom<&PluginConf> for JwtAuth {
                     message: "Jwt secret is not allowed empty".to_string(),
                 });
             }
-            // Only HS256 and HS512 are implemented on the secret path. Anything
-            // else (HS384, or an asymmetric algorithm without a key) would
-            // otherwise be accepted here and then reject every single token.
-            if !matches!(params.algorithm.as_str(), "" | "HS256" | "HS512") {
+            // HS256, HS384 and HS512 are what the secret path does. Anything
+            // else (an asymmetric algorithm without a key, a name that is
+            // not an algorithm) would otherwise be accepted here and then
+            // reject every single token.
+            if !matches!(
+                params.algorithm.as_str(),
+                "" | "HS256" | "HS384" | "HS512"
+            ) {
                 return Err(Error::Invalid {
                     category: PluginCategory::Jwt.to_string(),
                     message: format!(
-                        "Jwt algorithm({}) is not supported, expect HS256 or HS512, or set public_key/jwks_url",
+                        "Jwt algorithm({}) is not supported, expect HS256, HS384 or HS512, or set public_key/jwks_url",
                         params.algorithm
                     ),
                 });
@@ -762,6 +1062,10 @@ impl Plugin for JwtAuth {
             session
                 .req_header_mut()
                 .remove_header(&http::header::ACCEPT_ENCODING);
+            // No token is asked for here, so there is no claim to pass
+            // on: the headers that carry them are the client's own, and
+            // do not go to an upstream that takes them for the proxy's.
+            self.claim_rules.strip(session.req_header_mut());
             return Ok(RequestPluginResult::Skipped);
         }
         let req_header = session.req_header();
@@ -787,55 +1091,68 @@ impl Plugin for JwtAuth {
             resp.body = Bytes::from_static(b"Jwt authorization is missing");
             return Ok(RequestPluginResult::Respond(resp));
         }
-        // Asymmetric verification: the configured algorithm is pinned (the
-        // token's own `alg` header is not trusted, preventing algorithm
-        // confusion), and jsonwebtoken checks the signature and `exp` together.
-        if let Some((key, validation)) = &self.decoding_key {
-            if decode::<NoClaims>(value, key, validation).is_ok() {
-                return Ok(RequestPluginResult::Continue);
+        // The claims are only read out for a plugin that has rules about
+        // them.
+        let with_claims = !self.claim_rules.is_empty();
+        const INVALID: &[u8] = b"Jwt authorization is invalid";
+        // What the token turned out to be: its claims, where they are
+        // wanted, or what to answer and whether to wait before answering.
+        let verified = if let Some((key, validation)) = &self.decoding_key {
+            // Asymmetric verification: the configured algorithm is pinned
+            // (the token's own `alg` header is not trusted, preventing
+            // algorithm confusion), and jsonwebtoken checks the signature
+            // and `exp` together.
+            verify_with_key(value, key, validation, with_claims)
+                .ok_or((Bytes::from_static(INVALID), true))
+        } else if let Some(jwks) = &self.jwks {
+            // Remote JWKS verification: the key is selected by the token's
+            // `kid` and pinned to that JWK's algorithm.
+            jwks.verify_claims(value, with_claims)
+                .await
+                .ok_or((Bytes::from_static(INVALID), true))
+        } else {
+            match verify_hmac_token(
+                value,
+                self.secret.as_bytes(),
+                &self.algorithm,
+                pingap_core::now_sec(),
+                self.require_exp,
+                self.leeway.as_secs(),
+            ) {
+                Ok(()) if with_claims => decode_claims(value)
+                    .map(Some)
+                    .ok_or((HmacRejection::Format.message(), false)),
+                Ok(()) => Ok(None),
+                // Only a bad signature is worth slowing down: it is the
+                // one outcome a guess can produce.
+                Err(rejection) => Err((
+                    rejection.message(),
+                    rejection == HmacRejection::Signature,
+                )),
             }
-            if let Some(d) = self.delay {
-                sleep(d).await;
-            }
+        };
+        let refuse = |body: Bytes| {
             let mut resp = self.unauthorized_resp.clone();
-            resp.body = Bytes::from_static(b"Jwt authorization is invalid");
-            return Ok(RequestPluginResult::Respond(resp));
-        }
-        // Remote JWKS verification: the key is selected by the token's `kid`
-        // and pinned to that JWK's algorithm.
-        if let Some(jwks) = &self.jwks {
-            if jwks.verify(value).await {
-                return Ok(RequestPluginResult::Continue);
-            }
-            if let Some(d) = self.delay {
-                sleep(d).await;
-            }
-            let mut resp = self.unauthorized_resp.clone();
-            resp.body = Bytes::from_static(b"Jwt authorization is invalid");
-            return Ok(RequestPluginResult::Respond(resp));
-        }
-        match verify_hmac_token(
-            value,
-            self.secret.as_bytes(),
-            &self.algorithm,
-            pingap_core::now_sec(),
-            self.require_exp,
-            self.leeway.as_secs(),
-        ) {
-            Ok(()) => Ok(RequestPluginResult::Continue),
-            Err(rejection) => {
-                // Only a bad signature is worth slowing down: it is the one
-                // outcome a guess can produce.
-                if rejection == HmacRejection::Signature
-                    && let Some(d) = self.delay
-                {
+            resp.body = body;
+            Ok(RequestPluginResult::Respond(resp))
+        };
+        let claims = match verified {
+            Ok(claims) => claims,
+            Err((body, slow)) => {
+                if slow && let Some(d) = self.delay {
                     sleep(d).await;
                 }
-                let mut resp = self.unauthorized_resp.clone();
-                resp.body = rejection.message();
-                Ok(RequestPluginResult::Respond(resp))
+                return refuse(body);
             },
+        };
+        if let Some(claims) = &claims {
+            // A token that is good, and not for here.
+            if let Err(rejection) = self.claim_rules.check(claims) {
+                return refuse(rejection.message());
+            }
+            self.claim_rules.apply(claims, session.req_header_mut());
         }
+        Ok(RequestPluginResult::Continue)
     }
 
     /// Handles responses for the token generation endpoint
@@ -958,8 +1275,11 @@ impl ModifyResponseBody for Sign {
                 "jwt: the response to sign has no exp",
             ));
         }
-        let is_hs512 = self.algorithm == "HS512";
-        let alg = if is_hs512 { "HS512" } else { "HS256" };
+        let alg = match self.algorithm.as_str() {
+            "HS384" => "HS384",
+            "HS512" => "HS512",
+            _ => "HS256",
+        };
         // spellchecker:off
         let header = URL_SAFE_NO_PAD
             .encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
@@ -967,12 +1287,15 @@ impl ModifyResponseBody for Sign {
         let payload = URL_SAFE_NO_PAD.encode(&self.buffer);
         let content = format!("{header}.{payload}");
         let secret = self.secret.as_bytes();
-        let sign = if is_hs512 {
-            let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-            URL_SAFE_NO_PAD.encode(hash)
-        } else {
-            let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
-            URL_SAFE_NO_PAD.encode(hash)
+        let sign = match alg {
+            "HS384" => URL_SAFE_NO_PAD.encode(hmac_sha512::sha384::HMAC::mac(
+                content.as_bytes(),
+                secret,
+            )),
+            "HS512" => URL_SAFE_NO_PAD
+                .encode(hmac_sha512::HMAC::mac(content.as_bytes(), secret)),
+            _ => URL_SAFE_NO_PAD
+                .encode(hmac_sha256::HMAC::mac(content.as_bytes(), secret)),
         };
         let token = format!("{content}.{sign}");
         *body = Some(Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token)));
@@ -1787,6 +2110,364 @@ algorithm = "{algorithm}"
         );
     }
 
+    /// One request through a plugin: what it was answered with, or the
+    /// headers it goes on to the upstream with, sorted.
+    async fn through(
+        auth: &JwtAuth,
+        token: &str,
+        headers: &str,
+    ) -> std::result::Result<Vec<String>, (u16, String)> {
+        let input = format!(
+            "GET / HTTP/1.1\r\nAuthorization: Bearer {token}\r\n{headers}\r\n"
+        );
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = auth
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        if let RequestPluginResult::Respond(resp) = result {
+            return Err((
+                resp.status.as_u16(),
+                String::from_utf8_lossy(&resp.body).to_string(),
+            ));
+        }
+        let mut headers: Vec<String> = session
+            .req_header()
+            .headers
+            .iter()
+            .filter(|(name, _)| *name != "authorization")
+            .map(|(name, value)| {
+                format!("{name}: {}", String::from_utf8_lossy(value.as_bytes()))
+            })
+            .collect();
+        headers.sort();
+        Ok(headers)
+    }
+
+    /// `issuers`, `audiences` and `required_claims`: a token with a good
+    /// signature is still not one for here unless it says so. And
+    /// `claims_to_headers`: the upstream is told who the token is for,
+    /// by the token and by nobody else.
+    #[tokio::test]
+    async fn test_jwt_claim_rules() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use serde_json::json;
+        let key = EncodingKey::from_secret(b"123123");
+        let exp = pingap_core::now_sec() + 3600;
+        let sign = |mut claims: serde_json::Value| {
+            claims["exp"] = json!(exp);
+            encode(&Header::new(Algorithm::HS256), &claims, &key).unwrap()
+        };
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+secret = "123123"
+header = "Authorization"
+issuers = ["https://id.example.com", "https://id2.example.com"]
+audiences = ["api"]
+required_claims = ["sub"]
+claims_to_headers = ["sub:X-User-Id", "roles:X-User-Roles", "tenant:X-Tenant", "name:X-User-Name"]
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let good = json!({
+            "iss": "https://id.example.com",
+            "aud": ["web", "api"],
+            "sub": "u-42",
+            "roles": ["admin", "dev"],
+            "name": "José",
+        });
+
+        // What the token says goes to the upstream; what the client said
+        // under those names does not, also where the token says nothing
+        // (`tenant`). And the client does not get to drop one of them by
+        // calling it hop-by-hop.
+        let headers = through(
+            &auth,
+            &sign(good.clone()),
+            "X-User-Id: admin\r\nX-Tenant: other\r\nX-Mine: 1\r\nConnection: X-User-Id, keep-alive\r\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            vec![
+                "connection: keep-alive",
+                "x-mine: 1",
+                "x-user-id: u-42",
+                "x-user-name: José",
+                "x-user-roles: admin,dev",
+            ],
+            headers
+        );
+        // Nor under a name that only differs by an underscore, which is
+        // the same variable to an upstream behind CGI or WSGI. A header
+        // that is no claim's keeps its underscore.
+        let headers = through(
+            &auth,
+            &sign(good.clone()),
+            "X_User_Id: admin\r\nx_user-id: root\r\nX_Tenant: other\r\nX_Mine: 2\r\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            vec![
+                "x-user-id: u-42",
+                "x-user-name: José",
+                "x-user-roles: admin,dev",
+                "x_mine: 2",
+            ],
+            headers
+        );
+        // One audience as a string is the same as a list of one.
+        let mut single = good.clone();
+        single["aud"] = json!("api");
+        assert_eq!(true, through(&auth, &sign(single), "").await.is_ok());
+
+        let refused = async |change: fn(&mut serde_json::Value)| {
+            let mut claims = good.clone();
+            change(&mut claims);
+            through(&auth, &sign(claims), "").await.unwrap_err()
+        };
+        let unauthorized = |body: &str| (401, body.to_string());
+        assert_eq!(
+            unauthorized("Jwt authorization issuer is not allowed"),
+            refused(|claims| claims["iss"] = json!("https://evil.example"))
+                .await
+        );
+        assert_eq!(
+            unauthorized("Jwt authorization issuer is not allowed"),
+            refused(|claims| {
+                claims.as_object_mut().unwrap().remove("iss");
+            })
+            .await
+        );
+        assert_eq!(
+            unauthorized("Jwt authorization audience is not allowed"),
+            refused(|claims| claims["aud"] = json!(["web"])).await
+        );
+        assert_eq!(
+            unauthorized("Jwt authorization audience is not allowed"),
+            refused(|claims| claims["aud"] = json!("apis")).await
+        );
+        assert_eq!(
+            unauthorized("Jwt authorization has no sub"),
+            refused(|claims| claims["sub"] = json!(null)).await
+        );
+        // A claim that cannot be a header is left off, not sent broken.
+        let mut broken = good.clone();
+        broken["sub"] = json!("u-42\r\nX-Admin: 1");
+        broken["roles"] = json!({"a": 1});
+        let headers = through(&auth, &sign(broken), "").await.unwrap();
+        assert_eq!(vec!["x-user-name: José"], headers);
+
+        // Without rules the claims are not looked at, as before.
+        let plain = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                "secret = \"123123\"\nheader = \"Authorization\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(true, plain.claim_rules.is_empty());
+        let headers = through(
+            &plain,
+            &sign(json!({"iss": "anyone"})),
+            "X-User-Id: kept\r\n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(vec!["x-user-id: kept"], headers);
+    }
+
+    /// The same rules on the public key paths, and EdDSA with a key from
+    /// the configuration.
+    #[tokio::test]
+    async fn test_jwt_claim_rules_with_public_keys() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use serde_json::json;
+        // spellchecker:off
+        let private_key = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJJTTQkyOiwPTX0NvxGAoNi6WosIFJJbFpt9ivsmWJM6\n-----END PRIVATE KEY-----";
+        let public_key = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAjKwmFJwgUVvShgVbDiUw8Er4IKACUnfHr9XbsU7SmTo=\n-----END PUBLIC KEY-----";
+        // spellchecker:on
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "header = \"Authorization\"\nalgorithm = \"EdDSA\"\npublic_key = \"\"\"\n{public_key}\n\"\"\"\naudiences = [\"api\"]\nclaims_to_headers = [\"sub:X-User-Id\"]\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let exp = pingap_core::now_sec() + 3600;
+        let sign = |claims: serde_json::Value| {
+            encode(
+                &Header::new(Algorithm::EdDSA),
+                &claims,
+                &EncodingKey::from_ed_pem(private_key.as_bytes()).unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            Ok(vec!["x-user-id: u-7".to_string()]),
+            through(
+                &auth,
+                &sign(json!({"exp": exp, "aud": "api", "sub": "u-7"})),
+                "X-User-Id: admin\r\n"
+            )
+            .await
+        );
+        assert_eq!(
+            Err((401, "Jwt authorization audience is not allowed".to_string())),
+            through(&auth, &sign(json!({"exp": exp, "aud": "web"})), "").await
+        );
+        // The times are still the library's to check.
+        assert_eq!(
+            Err((401, "Jwt authorization is invalid".to_string())),
+            through(&auth, &sign(json!({"exp": exp - 7200, "aud": "api"})), "")
+                .await
+        );
+    }
+
+    /// HS384 on the secret path, verified and minted.
+    #[test]
+    fn test_jwt_hs384() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        let secret = b"123123";
+        let now = pingap_core::now_sec();
+        let token = encode(
+            &Header::new(Algorithm::HS384),
+            &serde_json::json!({"exp": now + 60}),
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap();
+        assert_eq!(Ok(()), verify_hmac_token(&token, secret, "", now, true, 0));
+        assert_eq!(
+            Ok(()),
+            verify_hmac_token(&token, secret, "HS384", now, true, 0)
+        );
+        // Pinned to another algorithm, or under another secret.
+        assert_eq!(
+            Err(HmacRejection::Signature),
+            verify_hmac_token(&token, secret, "HS256", now, true, 0)
+        );
+        assert_eq!(
+            Err(HmacRejection::Signature),
+            verify_hmac_token(&token, b"other", "HS384", now, true, 0)
+        );
+    }
+
+    #[test]
+    fn test_jwt_claim_rules_params() {
+        let error = |conf: &str| {
+            JwtAuth::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    "secret = \"123123\"\nheader = \"Authorization\"\n{conf}"
+                ))
+                .unwrap(),
+            )
+            .err()
+            .map(|e| e.to_string())
+        };
+        let prefix = "Plugin jwt invalid, message: ";
+        for (conf, message) in [
+            ("issuers = [\"\"]", "issuers: an entry is empty"),
+            ("audiences = [\" \"]", "audiences: an entry is empty"),
+            (
+                "claims_to_headers = [\"sub\"]",
+                r#"claims_to_headers: "sub" should be claim:Header-Name"#,
+            ),
+            (
+                "claims_to_headers = [\":X-User\"]",
+                r#"claims_to_headers: ":X-User" should be claim:Header-Name"#,
+            ),
+            (
+                "claims_to_headers = [\"sub:X User\"]",
+                r#"claims_to_headers: "X User" is not a header name"#,
+            ),
+            (
+                "claims_to_headers = [\"sub:Host\"]",
+                "claims_to_headers: host is not a header for a claim",
+            ),
+        ] {
+            assert_eq!(
+                Some(format!("{prefix}{message}")),
+                error(conf),
+                "{conf}"
+            );
+        }
+        assert_eq!(None, error("claims_to_headers = [\"sub: X-User-Id\"]"));
+        // The name of a claim may have colons in it, a header name none.
+        assert_eq!(
+            None,
+            error(
+                "claims_to_headers = [\"https://example.com/roles:X-Roles\"]"
+            )
+        );
+    }
+
+    /// A claim named by a url, as identity providers name their own, and
+    /// the request to `auth_path`, which carries no token: the headers of
+    /// the claims are not the client's to set there either.
+    #[tokio::test]
+    async fn test_jwt_namespaced_claim_and_auth_path() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use serde_json::json;
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+secret = "123123"
+header = "Authorization"
+auth_path = "/login"
+claims_to_headers = ["https://example.com/roles:X-Roles", "sub:X-User-Id"]
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &json!({
+                "exp": pingap_core::now_sec() + 3600,
+                "sub": "u-42",
+                "https://example.com/roles": ["dev", "ops"],
+            }),
+            &EncodingKey::from_secret(b"123123"),
+        )
+        .unwrap();
+        assert_eq!(
+            vec!["x-roles: dev,ops", "x-user-id: u-42"],
+            through(&auth, &token, "X-Roles: root\r\n").await.unwrap()
+        );
+
+        let mock_io = Builder::new()
+            .read(b"POST /login HTTP/1.1\r\nX-User-Id: admin\r\nX_Roles: root\r\nX-Mine: 1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = auth
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Skipped);
+        let names: Vec<&str> = session
+            .req_header()
+            .headers
+            .keys()
+            .map(|name| name.as_str())
+            .collect();
+        assert_eq!(vec!["x-mine"], names);
+    }
+
     /// An hmac algorithm the secret path cannot verify is rejected at startup
     /// rather than silently rejecting every request.
     #[test]
@@ -1796,7 +2477,7 @@ algorithm = "{algorithm}"
                 r###"
 secret = "123123"
 header = "Authorization"
-algorithm = "HS384"
+algorithm = "HS1024"
 "###,
             )
             .unwrap(),
@@ -1804,7 +2485,7 @@ algorithm = "HS384"
         .err()
         .unwrap();
         assert_eq!(
-            "Plugin jwt invalid, message: Jwt algorithm(HS384) is not supported, expect HS256 or HS512, or set public_key/jwks_url",
+            "Plugin jwt invalid, message: Jwt algorithm(HS1024) is not supported, expect HS256, HS384 or HS512, or set public_key/jwks_url",
             err.to_string()
         );
     }

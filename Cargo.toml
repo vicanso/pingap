@@ -291,7 +291,9 @@ hickory-resolver = "0.26.3"
 http = "1.5.0"
 hmac = "0.13.0"
 hmac-sha256 = "1.1.14"
-hmac-sha512 = { version = "1.1.12", default-features = false }
+hmac-sha512 = { version = "1.1.12", default-features = false, features = [
+    "sha384",
+] }
 hostname = "0.4.2"
 humantime = "2.4.0"
 humantime-serde = "1.1.1"

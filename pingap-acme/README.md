@@ -68,9 +68,12 @@ waiting for a TXT record nobody is going to add.
 
 The value of any query parameter of `dns_service_url`, or the whole of it, may
 be written as `$ENV:NAME` and is read from the environment, so credentials stay
-out of the configuration file. A variable that is not set leaves the text as it
-is. (Only the whole value was read this way before: `?token=$ENV:CF_TOKEN`,
-the form shown above, reached the provider as that text.)
+out of the configuration file. In a query parameter, a variable that is not
+set leaves the text as it is. The whole value written as a reference follows
+the rule of every other value of the configuration (see
+[pingap-config](../pingap-config/README.md), which also has `$FILE:/path`): a
+variable that is not set is a configuration error, where it used to reach the
+provider as that text.
 
 The provider adds the `_acme-challenge` TXT record, waits for validation, and
 removes it afterwards. The zone is the registrable domain of the record name,

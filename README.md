@@ -165,6 +165,10 @@ Graceful Restart (-a or --autorestart): For fundamental changes (like modifying 
 
 Strict mode (--strict): A key or section Pingap does not know is normally reported with a warning and otherwise ignored. With `--strict` it is an error: `pingap -t --strict` fails on it (use that in CI), and a running Pingap does not take a reload that has one.
 
+Check and preview (-t, --diff): `pingap -c conf -t` goes as far as a start does without serving - every upstream, location, plugin, certificate and server is built, TLS settings included, and nothing is bound. `pingap -c conf --diff new-conf` prints what would change if `new-conf` replaced `conf`, with credentials shown as checksums.
+
+Secrets from the environment and from files: any text value of the configuration can be written `$ENV:NAME` or `$FILE:/path` as a whole, and is replaced when the configuration is loaded to run. The admin, `--to-hcl` and `--sync` keep it as written. See the [config documentation](https://pingap.io/en/#/crates/config).
+
 The hand-over is readiness-driven rather than timed: the replacement is started with `-d -u`, reports back over a unix socket next to the upgrade socket the moment it is ready to take over the listeners, and only then does the running process send itself SIGQUIT. If the replacement exits, its daemon dies, or `basic.restart_ready_timeout` (default 1m) passes first, the restart is abandoned and the running process keeps serving. The replacement is started in the directory the first process was started in, with the same `--autoreload` / `--autorestart`, so relative paths (`--log=logs/pingap.log`, paths in the config) keep meaning what they did.
 
 
