@@ -46,6 +46,35 @@ pub fn set_control_panel() {
     CONTROL_PANEL.store(true, Ordering::Relaxed);
 }
 
+/// `--strict`: what the configuration has that pingap does not read is an
+/// error, where it is otherwise a warning.
+static STRICT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_strict(strict: bool) {
+    STRICT.store(strict, Ordering::Relaxed);
+}
+
+fn is_strict() -> bool {
+    STRICT.load(Ordering::Relaxed)
+}
+
+/// The error of a configuration that has keys pingap does not read, when
+/// it is held to having none.
+fn refuse_unknown_keys(
+    found: &[String],
+    strict: bool,
+) -> Result<(), Box<dyn Error>> {
+    if found.is_empty() || !strict {
+        return Ok(());
+    }
+    Err(format!(
+        "the config has {} that pingap does not read, which --strict does not allow: {}",
+        if found.len() == 1 { "a key" } else { "keys" },
+        found.join("; ")
+    )
+    .into())
+}
+
 /// Builds each location the way startup does, so `--test` reports what only
 /// building one finds: a path or host regex that does not compile, a
 /// rewrite rule with too many parts. `PingapConfig::validate` cannot do it,
@@ -134,6 +163,16 @@ pub fn validate_built(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
 pub fn validate_stored(
     config: &PingapTomlConfig,
 ) -> Result<(), Box<dyn Error>> {
+    validate_stored_as(config, is_strict())
+}
+
+/// [`validate_stored`], held to having no unknown keys or not.
+fn validate_stored_as(
+    config: &PingapTomlConfig,
+    strict: bool,
+) -> Result<(), Box<dyn Error>> {
+    // What a reload would refuse is not stored through the admin either.
+    refuse_unknown_keys(&config.unknown_keys(), strict)?;
     let config = config.to_pingap_config(true)?;
     config.validate()?;
     if CONTROL_PANEL.load(Ordering::Relaxed) {
@@ -154,17 +193,22 @@ static UNKNOWN_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
 /// [`PingapTomlConfig::unknown_keys`]. The same findings are reported
 /// once, however often the document is looked at: at startup, and then by
 /// every pass of the reload that reads it again.
-pub fn report_unknown_keys(document: &PingapTomlConfig) {
+///
+/// With `--strict` they are an error as well, every time: a start or a
+/// `--test` fails on them, and a reload does not take the document.
+pub fn check_unknown_keys(
+    document: &PingapTomlConfig,
+) -> Result<(), Box<dyn Error>> {
     let found = document.unknown_keys();
     let mut hasher = DefaultHasher::new();
     found.hash(&mut hasher);
     let hash = if found.is_empty() { 0 } else { hasher.finish() };
-    if UNKNOWN_KEYS_REPORTED.swap(hash, Ordering::Relaxed) == hash {
-        return;
+    if UNKNOWN_KEYS_REPORTED.swap(hash, Ordering::Relaxed) != hash {
+        for message in found.iter() {
+            warn!(target: LOG_TARGET, "config: {message}");
+        }
     }
-    for message in found {
-        warn!(target: LOG_TARGET, "config: {message}");
-    }
+    refuse_unknown_keys(&found, is_strict())
 }
 
 /// The answer to a change the admin is about to store, for
@@ -207,6 +251,51 @@ addrs = ["127.0.0.1:5000"]
 upstream = "u1"
 path = "/api"
 "#;
+
+    /// `--strict`: a key pingap does not read is an error, and a warning
+    /// without it.
+    #[test]
+    fn test_strict_refuses_unknown_keys() {
+        // spellchecker:off
+        let document = toml_config(
+            r#"
+[upstreams.u1]
+addrs = ["127.0.0.1:5000"]
+read_timout = "3s"
+
+[locations.l1]
+upstream = "u1"
+weigth = 10
+"#,
+        );
+        let found = document.unknown_keys();
+        assert_eq!(2, found.len(), "{found:?}");
+        assert_eq!(true, refuse_unknown_keys(&found, false).is_ok());
+        let refused =
+            refuse_unknown_keys(&found, true).unwrap_err().to_string();
+        assert_eq!(
+            true,
+            refused.starts_with("the config has keys that pingap does not read, which --strict does not allow: "),
+            "{refused}"
+        );
+        // Each of them, so that one run names everything there is to fix.
+        assert_eq!(true, refused.contains("read_timout"), "{refused}");
+        assert_eq!(true, refused.contains("weigth"), "{refused}");
+        // spellchecker:on
+        // Nothing unknown is nothing to refuse.
+        assert_eq!(
+            true,
+            refuse_unknown_keys(&toml_config(VALID).unknown_keys(), true)
+                .is_ok()
+        );
+
+        // What the admin is asked to store is held to the same.
+        assert_eq!(true, validate_stored_as(&document, false).is_ok());
+        let refused =
+            validate_stored_as(&document, true).unwrap_err().to_string();
+        assert_eq!(true, refused.contains("--strict"), "{refused}");
+        assert_eq!(true, validate_stored_as(&toml_config(VALID), true).is_ok());
+    }
 
     /// What `PingapConfig::validate` passes and startup refuses.
     #[test]

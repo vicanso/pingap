@@ -237,6 +237,14 @@ pub trait LocationInstance: Send + Sync {
     fn on_request(&self) -> pingora::Result<(u64, i32)>;
     /// Called when the response is received from the upstream
     fn on_response(&self);
+    /// Puts the timeouts of the location in place of the upstream's, on the
+    /// peer of one of its requests. A location that sets none leaves the
+    /// peer as it is.
+    fn apply_timeouts(
+        &self,
+        _options: &mut pingora::upstreams::peer::PeerOptions,
+    ) {
+    }
 }
 
 /// Information about the upstream (backend) server.
@@ -274,6 +282,20 @@ pub struct UpstreamInfo {
     pub max_retry_window: Option<Duration>,
 }
 
+/// What a limit has left for the client of this request, as the
+/// `X-RateLimit-*` response headers tell it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitQuota {
+    /// What the limit allows: requests in any one interval, or at once.
+    pub limit: u64,
+    /// How many of them are left, this request counted.
+    pub remaining: u64,
+    /// In how many seconds all of them are back if nothing more is sent.
+    /// `None` for a limit on concurrent requests, where that is whenever
+    /// they end.
+    pub reset: Option<u64>,
+}
+
 /// State related to the current request being processed.
 #[derive(Default)]
 pub struct RequestState {
@@ -300,6 +322,9 @@ pub struct RequestState {
     /// the proxy says of it: pingora asks whether it may be kept only for
     /// a request that failed in one of the filters.
     pub proxying: bool,
+    /// The budget to report to the client, from the limit that has the
+    /// least left of those that were asked to report theirs.
+    pub rate_limit: Option<RateLimitQuota>,
 }
 
 /// Components of the cache key that stand for something this request

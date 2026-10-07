@@ -106,6 +106,7 @@ Each request-step plugin returns one of three results:
 | `referer_restriction` | Allow/deny by `Referer` host | [docs/referer_restriction.md](docs/referer_restriction.md) |
 | `ua_restriction` | Allow/deny by `User-Agent` regex | [docs/ua_restriction.md](docs/ua_restriction.md) |
 | `geo_restriction` | Allow/deny by GeoIP country (feature `geo`) | [docs/geo_restriction.md](docs/geo_restriction.md) |
+| `uri_block` | Block requests by path or query pattern, or by method | [docs/uri_block.md](docs/uri_block.md) |
 
 ### Traffic control
 
@@ -123,6 +124,7 @@ Each request-step plugin returns one of three results:
 | `accept_encoding` | Normalise the client `Accept-Encoding` header | [docs/accept_encoding.md](docs/accept_encoding.md) |
 | `directory` | Serve static files, with range requests and autoindex | [docs/directory.md](docs/directory.md) |
 | `sub_filter` | Literal / regex substitution in the response body | [docs/sub_filter.md](docs/sub_filter.md) |
+| `request_headers` | Add / set / remove / rename the request headers sent to the upstream | [docs/request_headers.md](docs/request_headers.md) |
 | `response_headers` | Add / set / remove / rename response headers | [docs/response_headers.md](docs/response_headers.md) |
 | `cors` | CORS preflight and response headers | [docs/cors.md](docs/cors.md) |
 | `redirect` | HTTP↔HTTPS redirects and path prefixing | [docs/redirect.md](docs/redirect.md) |

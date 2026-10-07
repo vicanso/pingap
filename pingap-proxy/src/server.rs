@@ -1529,12 +1529,16 @@ impl ProxyHttp for Server {
             ctx.state.payload_size = 0;
         }
         // Async: a transparent upstream resolves the request's host here.
-        let Some(peer) = upstream
+        let Some(mut peer) = upstream
             .new_http_peer(session, &mut ctx.conn.client_ip, first_attempt)
             .await
         else {
             return Err(no_available_upstream(ctx));
         };
+        // What this location waits for the upstream, where it says so.
+        if let Some(location) = &location {
+            location.apply_timeouts(&mut peer.options);
+        }
         // Recorded only now that there is a peer: `new_http_peer` counts
         // the request once it has one, and `logging` takes that count back
         // for the instance it finds here. Recorded earlier, a request that

@@ -45,7 +45,7 @@ Additional hooks that are not plugin steps but matter operationally:
 
 | Callback | Role |
 | --- | --- |
-| `upstream_peer` | Chooses the backend and applies the location's retry budget (`max_retries`, `max_retry_window`) |
+| `upstream_peer` | Chooses the backend and applies the location's retry budget (`max_retries`, `max_retry_window`) and its timeouts (`connection_timeout`, `read_timeout`, `write_timeout`, each in place of the upstream's) |
 | `connected_to_upstream` | Records reuse, TCP connect and TLS handshake timings |
 | `request_body_filter` | Enforces the location's `client_max_body_size`. After a `101` the client's half of the tunnel is not a request body and is not held to the limit: a websocket can send any amount |
 | `fail_to_proxy` | Classifies the failure and renders the error page from the configured template (see [Error responses](#error-responses)) |

@@ -29,6 +29,7 @@ use pingap_core::{
     LocationInstance, MissingPlugin, NamedPlugin, PluginProvider,
 };
 use pingora::http::RequestHeader;
+use pingora::upstreams::peer::PeerOptions;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::borrow::Cow;
@@ -504,6 +505,13 @@ pub struct Location {
 
     /// Maximum window for retries
     pub max_retry_window: Option<Duration>,
+
+    /// What the requests of this location wait for the upstream, where it
+    /// is not what the upstream says for everyone: see
+    /// [`Location::apply_timeouts`].
+    connection_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
 }
 
 /// Formats a vector of header strings into internal HttpHeader representation.
@@ -540,6 +548,29 @@ fn get_content_length(header: &RequestHeader) -> Option<usize> {
 }
 
 impl Location {
+    /// Puts the timeouts of this location in place of the upstream's, on
+    /// the peer of one of its requests.
+    ///
+    /// The timeouts were the upstream's alone, so an upload path, a long
+    /// poll and an ordinary endpoint on one upstream all waited the same.
+    /// What a location does not set stays as the upstream has it. A
+    /// connection timeout longer than the upstream's limit on connect and
+    /// handshake together takes that limit up with it, or it would not be
+    /// the time that counts.
+    pub fn apply_timeouts(&self, options: &mut PeerOptions) {
+        if let Some(timeout) = self.connection_timeout {
+            options.connection_timeout = Some(timeout);
+            options.total_connection_timeout = options
+                .total_connection_timeout
+                .map(|total| total.max(timeout));
+        }
+        if let Some(timeout) = self.read_timeout {
+            options.read_timeout = Some(timeout);
+        }
+        if let Some(timeout) = self.write_timeout {
+            options.write_timeout = Some(timeout);
+        }
+    }
     /// Creates a new Location from configuration
     /// Validates and compiles path/host patterns and other settings
     pub fn new(name: &str, conf: &LocationConf) -> Result<Location> {
@@ -635,6 +666,9 @@ impl Location {
             //     .unwrap_or_default(),
             max_retries: conf.max_retries,
             max_retry_window: conf.max_retry_window,
+            connection_timeout: conf.connection_timeout,
+            read_timeout: conf.read_timeout,
+            write_timeout: conf.write_timeout,
         };
         debug!(
             target: LOG_TARGET,
@@ -828,6 +862,9 @@ impl LocationInstance for Location {
     }
     fn client_body_size_limit(&self) -> usize {
         self.client_max_body_size
+    }
+    fn apply_timeouts(&self, options: &mut PeerOptions) {
+        Location::apply_timeouts(self, options);
     }
     fn upstream(&self) -> &str {
         self.upstream.as_ref()
@@ -1061,6 +1098,73 @@ mod tests {
             location("other.example.com.")
                 .match_host_path(request_host, "/")
                 .0
+        );
+    }
+
+    #[test]
+    fn test_location_timeouts_take_the_place_of_the_upstreams() {
+        use pingora::upstreams::peer::PeerOptions;
+        let of_upstream = || {
+            let mut options = PeerOptions::new();
+            options.connection_timeout = Some(Duration::from_secs(3));
+            options.total_connection_timeout = Some(Duration::from_secs(10));
+            options.read_timeout = Some(Duration::from_secs(30));
+            options.write_timeout = None;
+            options
+        };
+        let timeouts = |options: &PeerOptions| {
+            (
+                options.connection_timeout.map(|value| value.as_secs()),
+                options
+                    .total_connection_timeout
+                    .map(|value| value.as_secs()),
+                options.read_timeout.map(|value| value.as_secs()),
+                options.write_timeout.map(|value| value.as_secs()),
+            )
+        };
+        let apply = |conf: LocationConf| {
+            let location = Location::new("lo", &conf).unwrap();
+            let mut options = of_upstream();
+            location.apply_timeouts(&mut options);
+            timeouts(&options)
+        };
+        let upstream = Some("charts".to_string());
+
+        // Nothing set: the upstream's, as they were.
+        assert_eq!(
+            (Some(3), Some(10), Some(30), None),
+            apply(LocationConf {
+                upstream: upstream.clone(),
+                ..Default::default()
+            })
+        );
+        // Each on its own, also where the upstream has none.
+        assert_eq!(
+            (Some(3), Some(10), Some(300), Some(20)),
+            apply(LocationConf {
+                upstream: upstream.clone(),
+                read_timeout: Some(Duration::from_secs(300)),
+                write_timeout: Some(Duration::from_secs(20)),
+                ..Default::default()
+            })
+        );
+        // A connect shorter than the upstream's leaves its total alone,
+        // a longer one takes it along.
+        assert_eq!(
+            (Some(1), Some(10), Some(30), None),
+            apply(LocationConf {
+                upstream: upstream.clone(),
+                connection_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            (Some(60), Some(60), Some(30), None),
+            apply(LocationConf {
+                upstream: upstream.clone(),
+                connection_timeout: Some(Duration::from_secs(60)),
+                ..Default::default()
+            })
         );
     }
 

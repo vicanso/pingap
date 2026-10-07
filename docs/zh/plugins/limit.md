@@ -21,6 +21,10 @@
 | `max` | int | — | **必填。**每个 `interval` 允许的请求数（rate），或并发数（inflight）。负数是配置错误。 |
 | `interval` | duration | `10s` | rate 的窗口，至少 `1ms`。`inflight` 忽略。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
+| `headers` | bool | `false` | 通过 `X-RateLimit-Limit`、`X-RateLimit-Remaining`、`X-RateLimit-Reset` 把额度告诉客户端。见[额度响应头](#额度响应头)。 |
+| `status` | int | `429` | 超限时响应的状态码，`400` 到 `599`。 |
+| `message` | string | — | 超限时响应的正文，替代 `Plugin limit, exceed limit <value>/<max>`。 |
+| `missing_key` | string | `pass` | 请求里取不到键值时怎么办：`pass` 放行且不限流；`reject` 返回 `400`。 |
 
 ### `max` 与 `interval` 如何作用
 
@@ -77,9 +81,21 @@ step = "proxy_upstream"
 
 | Situation | Result |
 | --- | --- |
-| 键值缺失或为空 | **不限流** — 请求放行 |
+| 键值缺失或为空 | **不限流** — 请求放行。`missing_key = "reject"` 时：`400 Bad Request`，正文 `Plugin limit, the header X-API-Key is required`（或 `the cookie …`、`the query parameter …`） |
 | 未超限 | `Continue` |
-| 超限 | `429 Too Many Requests`，正文 `Plugin limit, exceed limit <value>/<max>`；`rate` 限流器附带 `Retry-After: <interval 秒数>` |
+| 超限 | `429 Too Many Requests`（或 `status`），正文 `Plugin limit, exceed limit <value>/<max>`（或 `message`）；`rate` 限流器附带 `Retry-After: <interval 秒数>` |
+
+### 额度响应头
+
+`headers = true` 时把当前额度告诉客户端：
+
+| Header | Value |
+| --- | --- |
+| `X-RateLimit-Limit` | `max` |
+| `X-RateLimit-Remaining` | 计入本次请求之后还剩多少；被拒绝时为 `0` |
+| `X-RateLimit-Reset` | 不再发请求的话，多少秒后额度全部恢复。只有 `rate` 有：`inflight` 没有这样一个时间 |
+
+这三个头会加在上游的响应上、插件自己的拒绝响应上，以及同一 location 的其他插件直接返回的响应上（比如排在它后面的认证插件返回的 `401`）。代理自己生成的错误页（`502`、`504`）不带。`X-RateLimit-Reset` 是上限：估算值是逐渐衰减的，一部分额度会更早恢复；被拒绝之后应以 `Retry-After` 为准。一个 location 上有多个 `limit` 都开启了上报时，告诉客户端的是剩余最少的那一个；被拒绝时带的是做出拒绝的那个 `limit` 的额度，它没有开启上报时就不带。
 
 ## 使用说明
 

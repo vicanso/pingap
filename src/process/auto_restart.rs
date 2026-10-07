@@ -176,7 +176,7 @@ async fn diff_and_update_config(
     }
     let applied = async {
         let document = PingapTomlConfig::from_toml(&raw)?;
-        crate::validate::report_unknown_keys(&document);
+        crate::validate::check_unknown_keys(&document)?;
         let new_config = document.to_pingap_config(true)?;
         let restart_requested =
             apply_config(config_manager, &new_config, hot_reload_only).await?;

@@ -21,7 +21,7 @@ use http::{HeaderName, HeaderValue, StatusCode};
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_client_ip, get_host,
+    ensure_client_ip, get_host, protect_from_connection_header,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -288,6 +288,11 @@ impl Plugin for ForwardAuth {
             for (name, value) in to_add {
                 let _ = req_header.insert_header(name, value);
             }
+            // And they reach it: a client that named one of them in its
+            // `Connection` had it taken off the request again further on,
+            // so the upstream saw a request the auth service had said
+            // nothing about.
+            protect_from_connection_header(req_header, &self.add_headers);
             return Ok(RequestPluginResult::Continue);
         }
 
@@ -459,6 +464,7 @@ mod tests {
             "X-User-Id: 1",
             "X-User-Role: admin",
             "Cookie: session=abc",
+            "Connection: keep-alive, X-User-Id",
             "\r\n",
         ]
         .join("\r\n");
@@ -530,6 +536,11 @@ mod tests {
         assert_eq!("42", headers.get("X-User-Id").unwrap());
         assert_eq!(1, headers.get_all("X-User-Id").iter().count());
         assert_eq!(None, headers.get("X-User-Role"));
+        // And it does get it. A header named in the client's `Connection`
+        // is removed again on the way to the upstream: the client's
+        // `Connection: X-User-Id` must not be what decides that for the
+        // word of the auth service.
+        assert_eq!("keep-alive", headers.get("Connection").unwrap());
     }
 
     /// Anything but 2xx is relayed: status, headers and body, minus the

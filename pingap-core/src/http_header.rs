@@ -947,11 +947,102 @@ pub fn set_path_and_query(
     Ok(())
 }
 
+/// Takes `names` out of what the `Connection` header of a request
+/// nominates, for the headers the proxy itself has put on the request.
+///
+/// A header named in `Connection` is one its sender calls hop-by-hop, and
+/// it is removed from the request that goes to the upstream. For a header
+/// of the client's own that is as it should be. For one a plugin set - the
+/// address of the client, what the auth service said of it - it let the
+/// client decide that the upstream does not get it: `Connection: X-User-Id`
+/// was enough. Only `Host` and the `X-Forwarded-*` headers were safe from
+/// that.
+///
+/// The rest of the header stays as it is: `keep-alive`, `upgrade` and what
+/// else the client nominated.
+pub fn protect_from_connection_header(
+    req: &mut RequestHeader,
+    names: &[HeaderName],
+) {
+    if names.is_empty() || !req.headers.contains_key(header::CONNECTION) {
+        return;
+    }
+    let nominated = |token: &str| {
+        names
+            .iter()
+            .any(|name| name.as_str().eq_ignore_ascii_case(token))
+    };
+    let mut kept = vec![];
+    let mut removed = false;
+    for value in req.headers.get_all(header::CONNECTION).iter() {
+        // A value that is not text has no name in it to take out.
+        let Ok(value) = value.to_str() else {
+            return;
+        };
+        for token in value.split(',').map(str::trim) {
+            if token.is_empty() {
+                continue;
+            }
+            if nominated(token) {
+                removed = true;
+            } else {
+                kept.push(token);
+            }
+        }
+    }
+    if !removed {
+        return;
+    }
+    let kept = kept.join(", ");
+    req.remove_header(&header::CONNECTION);
+    if !kept.is_empty() {
+        let _ = req.insert_header(header::CONNECTION, kept);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{ConnectionInfo, UpstreamInfo, new_test_session};
     use pretty_assertions::assert_eq;
+
+    /// Regression: a client could name a header the proxy set in its
+    /// `Connection`, and the upstream never got it.
+    #[test]
+    fn test_protect_from_connection_header() {
+        let protected = [
+            HeaderName::from_static("x-real-ip"),
+            HeaderName::from_static("x-user-id"),
+        ];
+        let after = |connection: &[&str]| {
+            let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+            for value in connection {
+                req.append_header(header::CONNECTION, *value).unwrap();
+            }
+            protect_from_connection_header(&mut req, &protected);
+            req.headers
+                .get_all(header::CONNECTION)
+                .iter()
+                .map(|value| value.to_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        // Taken out, in whatever case and among whatever else.
+        assert_eq!(Vec::<String>::new(), after(&["X-Real-IP"]));
+        assert_eq!(vec!["keep-alive"], after(&["keep-alive, x-real-ip"]));
+        assert_eq!(
+            vec!["keep-alive, upgrade, X-Other"],
+            after(&[" keep-alive ,X-USER-ID,upgrade", "x-real-ip, X-Other"])
+        );
+        // Nothing of ours in it: left exactly as it came.
+        assert_eq!(
+            vec!["keep-alive , Upgrade"],
+            after(&["keep-alive , Upgrade"])
+        );
+        assert_eq!(vec!["close", "X-Other"], after(&["close", "X-Other"]));
+        assert_eq!(Vec::<String>::new(), after(&[]));
+        // A name that only begins like one of ours is another name.
+        assert_eq!(vec!["x-real-ip-2"], after(&["x-real-ip-2"]));
+    }
 
     #[test]
     fn test_convert_headers() {

@@ -82,4 +82,5 @@ x-forwarded-for: 1.2.3.4
 - `timeout` 限制整个子请求。过大时认证故障会变成延迟故障；通常 1–3 s 合适。
 - `request_headers` 为空会把 `Authorization`、Cookie 等全部转给 `auth_url`。认证服务由他人运营时请显式列出。
 - 认证*成功*响应中的 `Set-Cookie` 等不会传给客户端——只有 `add_headers` 会，且只加到上游请求上。
+- `add_headers` 一定会到达上游，不受客户端 `Connection` 头的影响。在 `Connection` 里被点名的头会在转发上游时被去掉（客户端自己的逐跳头本该如此）；以前客户端在里面写上 `X-User-Id`，认证服务返回的这个头也会被一并去掉。
 - `request_headers` 和 `add_headers` 的每一项都必须是合法的头名，大小写不限。不合法的（`X Bad`、`X-User:`、空字符串）是配置错误，`pingap -t` 会报出来；以前这样的配置能加载，但什么都匹配不到，认证服务在这个名字下返回的值也就到不了上游。

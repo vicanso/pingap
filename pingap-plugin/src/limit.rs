@@ -13,21 +13,24 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
+    get_str_conf,
 };
 use async_trait::async_trait;
+use bytes::Bytes;
 use http::header::RETRY_AFTER;
-use http::{HeaderValue, StatusCode};
+use http::{HeaderName, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpHeader, HttpResponse, Inflight, Plugin, PluginStep, Rate,
-    RequestPluginResult,
+    RateLimitQuota, RequestPluginResult, ResponsePluginResult,
 };
 use pingap_core::{
     ensure_verified_client_ip, get_cookie_value, get_query_value,
     get_req_header_value,
 };
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::time::Duration;
@@ -89,6 +92,77 @@ pub struct Limiter {
     /// `Retry-After` for a rate limiter's 429: the window length, the
     /// soonest the budget can have moved on.
     retry_after: Option<HttpHeader>,
+
+    /// Whether the client is told its budget, in `X-RateLimit-Limit`,
+    /// `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+    headers: bool,
+
+    /// The status of the response to a request over the limit, `429`
+    /// unless set.
+    status: StatusCode,
+
+    /// Its body, in place of the one that names the count and the limit.
+    message: Option<Bytes>,
+
+    /// Whether a request without a value for the key is refused. It is let
+    /// through, unlimited, unless `missing_key = "reject"`.
+    reject_missing_key: bool,
+}
+
+/// What became of a request at the limiter.
+enum Verdict {
+    /// Let through, counted or - without a value for the key - not.
+    Pass,
+    /// Over the limit, by the count and the limit it was held to.
+    Exceeded(f64),
+    /// No value for the key, and the limiter was told to refuse that.
+    MissingKey,
+}
+
+static X_RATELIMIT_LIMIT: HeaderName =
+    HeaderName::from_static("x-ratelimit-limit");
+static X_RATELIMIT_REMAINING: HeaderName =
+    HeaderName::from_static("x-ratelimit-remaining");
+static X_RATELIMIT_RESET: HeaderName =
+    HeaderName::from_static("x-ratelimit-reset");
+
+/// The three headers of `quota`, `X-RateLimit-Reset` left out where there
+/// is no time to name.
+fn quota_headers(quota: &RateLimitQuota) -> Vec<HttpHeader> {
+    let mut headers = vec![
+        (X_RATELIMIT_LIMIT.clone(), HeaderValue::from(quota.limit)),
+        (
+            X_RATELIMIT_REMAINING.clone(),
+            HeaderValue::from(quota.remaining),
+        ),
+    ];
+    if let Some(reset) = quota.reset {
+        headers.push((X_RATELIMIT_RESET.clone(), HeaderValue::from(reset)));
+    }
+    headers
+}
+
+/// In how many seconds a client's budget is back in full if it sends
+/// nothing more, from the two windows it is counted in: what is in the
+/// current one fades over the whole of the next, what is left of the one
+/// before is gone when the current one ends.
+///
+/// `fraction` is how much of the current window has passed.
+fn seconds_to_reset(
+    interval: Duration,
+    prev_samples: isize,
+    curr_samples: isize,
+    fraction: f64,
+) -> u64 {
+    let left = 1.0 - fraction;
+    let windows = if curr_samples > 0 {
+        left + 1.0
+    } else if prev_samples > 0 {
+        left
+    } else {
+        return 0;
+    };
+    (interval.as_secs_f64() * windows).ceil().max(1.0) as u64
 }
 
 /// Converts a plugin configuration into a Limiter instance
@@ -193,6 +267,32 @@ impl TryFrom<&PluginConf> for Limiter {
             ));
         }
 
+        // What a refused client is answered with. A status that is not an
+        // error would tell it the request went through.
+        let status = if value.contains_key("status") {
+            u16::try_from(get_int_conf(value, "status"))
+                .ok()
+                .filter(|status| (400..600).contains(status))
+                .and_then(|status| StatusCode::from_u16(status).ok())
+                .ok_or_else(|| {
+                    invalid("status must be between 400 and 599".to_string())
+                })?
+        } else {
+            StatusCode::TOO_MANY_REQUESTS
+        };
+        let message = get_str_conf(value, "message");
+        let message = (!message.is_empty()).then(|| Bytes::from(message));
+        let reject_missing_key =
+            match get_str_conf(value, "missing_key").as_str() {
+                "" | "pass" => false,
+                "reject" => true,
+                other => {
+                    return Err(invalid(format!(
+                        "Invalid missing_key({other}), expect pass or reject"
+                    )));
+                },
+            };
+
         // `weight` blended the previous window into the estimate by a fixed
         // share. It has no part in the sliding window that replaced that,
         // and a config that still has it is told so instead of refused.
@@ -211,11 +311,24 @@ impl TryFrom<&PluginConf> for Limiter {
             rate,
             plugin_step: step,
             retry_after,
+            headers: get_bool_conf(value, "headers"),
+            status,
+            message,
+            reject_missing_key,
         })
     }
 }
 
 impl Limiter {
+    /// What the key is, for the client that did not send it.
+    fn key_description(&self) -> String {
+        match self.tag {
+            LimitTag::Ip => "the client address".to_string(),
+            LimitTag::RequestHeader => format!("the header {}", self.key),
+            LimitTag::Cookie => format!("the cookie {}", self.key),
+            LimitTag::Query => format!("the query parameter {}", self.key),
+        }
+    }
     /// Creates a new Limiter instance from plugin configuration
     ///
     /// # Arguments
@@ -239,20 +352,55 @@ impl Limiter {
         );
         Self::try_from(params)
     }
-    /// Increments and checks the limit counter for the current request
+    /// The error of a request that took the count to `value`.
+    fn exceeded(&self, value: f64) -> Error {
+        Error::Exceed {
+            category: PluginCategory::Limit.to_string(),
+            max: self.max,
+            value,
+        }
+    }
+
+    /// Counts the request, and fails when that takes it over the limit.
+    #[cfg(test)]
+    fn incr(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
+        match self.check(session, ctx) {
+            Verdict::Exceeded(value) => Err(self.exceeded(value)),
+            _ => Ok(()),
+        }
+    }
+
+    /// Notes what is left of this limit for the response headers, unless
+    /// another limit of the request has less left.
     ///
-    /// # Arguments
-    /// * `session` - The HTTP session containing request details
-    /// * `ctx` - Mutable state context for storing request data
-    ///
-    /// # Returns
-    /// * `Result<()>` - Ok if within limits, Error if limit exceeded
-    ///
-    /// # Effects
-    /// * For rate limiting: Records request in time window
-    /// * For inflight limiting: Increments counter and stores RAII guard in context
-    /// * For IP-based limiting: Stores client IP in context
-    pub fn incr(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
+    /// The limit that refuses the request is the one the refusal is about:
+    /// its budget is what is reported, whatever another limit noted before
+    /// it, and nothing at all when it is not one that reports.
+    fn note_quota(&self, ctx: &mut Ctx, value: f64, reset: Option<u64>) {
+        let refused = value > self.max;
+        if !self.headers {
+            if refused {
+                ctx.state.rate_limit = None;
+            }
+            return;
+        }
+        let quota = RateLimitQuota {
+            limit: self.max as u64,
+            remaining: (self.max - value).max(0.0) as u64,
+            reset,
+        };
+        if refused
+            || ctx
+                .state
+                .rate_limit
+                .is_none_or(|noted| quota.remaining < noted.remaining)
+        {
+            ctx.state.rate_limit = Some(quota);
+        }
+    }
+
+    /// Counts the request against its key and says what became of it.
+    fn check(&self, session: &Session, ctx: &mut Ctx) -> Verdict {
         // Extract the key value based on configured tag type.
         // Borrow where possible — Rate/Inflight only need `Hash`, not an owned String.
         let key: Cow<'_, str> = match self.tag {
@@ -275,13 +423,19 @@ impl Limiter {
             _ => Cow::Borrowed(ensure_verified_client_ip(session, ctx)),
         };
 
-        // Skip limiting if no key found (e.g., missing header/cookie)
+        // No value for the key (a missing header or cookie): unlimited,
+        // unless told to refuse it.
         if key.is_empty() {
-            return Ok(());
+            return if self.reject_missing_key {
+                Verdict::MissingKey
+            } else {
+                Verdict::Pass
+            };
         }
 
         // Track request based on limiter type.
         // Pass `&Cow` (Sized) rather than `&str` — pingora-limits requires `T: Hash + Sized`.
+        let mut reset = None;
         let value = if let Some(rate) = &self.rate {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request
@@ -291,11 +445,27 @@ impl Limiter {
             // half of each, as a rate per second, so a client new to the
             // limiter - nothing in its previous window - got twice `max`
             // before it was stopped.
-            let value = rate.rate_with(&key, |info| {
-                info.prev_samples.max(0) as f64
+            let max = self.max;
+            let (value, seconds) = rate.rate_with(&key, |info| {
+                let value = info.prev_samples.max(0) as f64
                     * (1.0 - info.current_interval_fraction)
-                    + info.curr_samples.max(0) as f64
+                    + info.curr_samples.max(0) as f64;
+                // By what stays counted: a request that is refused is
+                // taken off again below.
+                let counted = if value > max {
+                    info.curr_samples - 1
+                } else {
+                    info.curr_samples
+                };
+                let seconds = seconds_to_reset(
+                    info.interval,
+                    info.prev_samples,
+                    counted,
+                    info.current_interval_fraction,
+                );
+                (value, seconds)
             });
+            reset = Some(seconds);
             // A request that is turned away is taken off again, so what is
             // counted is what was let through: a client over its limit
             // goes on getting `max` per interval and not, for as long as
@@ -320,15 +490,11 @@ impl Limiter {
             0.0
         };
 
-        // Check if limit exceeded
+        self.note_quota(ctx, value, reset);
         if value > self.max {
-            return Err(Error::Exceed {
-                category: PluginCategory::Limit.to_string(),
-                max: self.max,
-                value,
-            });
+            return Verdict::Exceeded(value);
         }
-        Ok(())
+        Verdict::Pass
     }
 }
 
@@ -366,19 +532,67 @@ impl Plugin for Limiter {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        // Try to increment counter
-        if let Err(e) = self.incr(session, ctx) {
-            // If limit exceeded, return 429 Too Many Requests
-            return Ok(RequestPluginResult::Respond(HttpResponse {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                headers: self.retry_after.clone().map(|header| vec![header]),
-                body: e.to_string().into(),
-                ..Default::default()
-            }));
+        match self.check(session, ctx) {
+            Verdict::Pass => Ok(RequestPluginResult::Continue),
+            // Over the limit: 429 Too Many Requests, unless set otherwise.
+            Verdict::Exceeded(value) => {
+                let mut headers: Vec<HttpHeader> =
+                    self.retry_after.iter().cloned().collect();
+                // The response of this plugin is not shown to its own
+                // `handle_response`: the budget goes on it here.
+                if self.headers
+                    && let Some(quota) = &ctx.state.rate_limit
+                {
+                    headers.extend(quota_headers(quota));
+                }
+                let body = self
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| self.exceeded(value).to_string().into());
+                Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: self.status,
+                    headers: (!headers.is_empty()).then_some(headers),
+                    body,
+                    ..Default::default()
+                }))
+            },
+            // Not a request too many: one that does not say who it is from.
+            Verdict::MissingKey => {
+                Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: StatusCode::BAD_REQUEST,
+                    body: format!(
+                        "Plugin limit, {} is required",
+                        self.key_description()
+                    )
+                    .into(),
+                    ..Default::default()
+                }))
+            },
         }
+    }
 
-        // Continue normal request processing if within limits
-        Ok(RequestPluginResult::Continue)
+    /// Tells the client its budget on the response of the upstream.
+    #[inline]
+    async fn handle_response(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        let Some(quota) = ctx.state.rate_limit.filter(|_| self.headers) else {
+            return Ok(ResponsePluginResult::Unchanged);
+        };
+        for (name, value) in quota_headers(&quota) {
+            let _ = upstream_response.insert_header(name, value);
+        }
+        Ok(ResponsePluginResult::Modified)
+    }
+
+    /// And on the response another plugin answered with, a `401` after
+    /// this limiter counted the request for one.
+    #[inline]
+    fn handles_plugin_response(&self) -> bool {
+        self.headers
     }
 }
 
@@ -870,6 +1084,264 @@ interval = "1s"
         // interval.
         let limiter = new_rate_limiter("max = 3\ninterval = \"500ms\"");
         assert_eq!(3, admitted(&limiter, 10, "1.1.1.1", no_headers).await);
+    }
+
+    /// One request from `peer` through the limiter: whether it went on, or
+    /// the response it was answered with, and what the upstream's response
+    /// came back with from `handle_response`.
+    async fn one_request(
+        limiter: &Limiter,
+        peer: &str,
+        headers: &str,
+    ) -> (Option<HttpResponse>, Vec<(String, String)>) {
+        let input = format!("GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n");
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = from_peer(peer);
+        let result = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let mut upstream_response = ResponseHeader::build(200, None).unwrap();
+        limiter
+            .handle_response(&mut session, &mut ctx, &mut upstream_response)
+            .await
+            .unwrap();
+        let quota = upstream_response
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                (name.to_string(), value.to_str().unwrap().to_string())
+            })
+            .collect();
+        match result {
+            RequestPluginResult::Respond(resp) => (Some(resp), quota),
+            _ => (None, quota),
+        }
+    }
+
+    fn header_of(resp: &HttpResponse, name: &str) -> Option<String> {
+        resp.headers.iter().flatten().find_map(|(key, value)| {
+            (key.as_str() == name).then(|| value.to_str().unwrap().to_string())
+        })
+    }
+
+    /// `headers = true`: the client is told its budget, on what the
+    /// upstream answers and on the refusal alike.
+    #[tokio::test]
+    async fn test_rate_limit_headers() {
+        let limiter =
+            new_rate_limiter("max = 3\ninterval = \"1m\"\nheaders = true");
+        assert_eq!(true, limiter.handles_plugin_response());
+        for remaining in ["2", "1", "0"] {
+            let (resp, quota) = one_request(&limiter, "1.1.1.1", "").await;
+            assert_eq!(true, resp.is_none());
+            assert_eq!(3, quota.len(), "{quota:?}");
+            assert_eq!(
+                ("x-ratelimit-limit".to_string(), "3".to_string()),
+                quota[0]
+            );
+            assert_eq!(
+                ("x-ratelimit-remaining".to_string(), remaining.to_string()),
+                quota[1]
+            );
+            // All of it is back once the window in progress and the next
+            // have passed: between one minute and two from now.
+            assert_eq!("x-ratelimit-reset", quota[2].0);
+            let reset: u64 = quota[2].1.parse().unwrap();
+            assert_eq!(true, (60..=120).contains(&reset), "{reset}");
+        }
+        // The fourth is refused, and says the same of the budget.
+        let (resp, _) = one_request(&limiter, "1.1.1.1", "").await;
+        let resp = resp.unwrap();
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
+        assert_eq!(Some("60".to_string()), header_of(&resp, "retry-after"));
+        assert_eq!(
+            Some("3".to_string()),
+            header_of(&resp, "x-ratelimit-limit")
+        );
+        assert_eq!(
+            Some("0".to_string()),
+            header_of(&resp, "x-ratelimit-remaining")
+        );
+        assert_eq!(true, header_of(&resp, "x-ratelimit-reset").is_some());
+        // Another client has all of its own.
+        let (_, quota) = one_request(&limiter, "1.1.1.2", "").await;
+        assert_eq!("2", quota[1].1);
+
+        // Not asked for: nothing is added, anywhere.
+        let silent = new_rate_limiter("max = 1\ninterval = \"1m\"");
+        assert_eq!(false, silent.handles_plugin_response());
+        let (resp, quota) = one_request(&silent, "1.1.1.1", "").await;
+        assert_eq!((true, 0), (resp.is_none(), quota.len()));
+        let (resp, _) = one_request(&silent, "1.1.1.1", "").await;
+        assert_eq!(None, header_of(&resp.unwrap(), "x-ratelimit-limit"));
+
+        // A limit on concurrent requests has no time to name.
+        let inflight = Limiter::new(
+            &toml::from_str::<PluginConf>(
+                "type = \"inflight\"\nmax = 5\nheaders = true",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let (_, quota) = one_request(&inflight, "1.1.1.1", "").await;
+        assert_eq!(
+            vec![
+                ("x-ratelimit-limit".to_string(), "5".to_string()),
+                ("x-ratelimit-remaining".to_string(), "4".to_string()),
+            ],
+            quota
+        );
+    }
+
+    /// Of two limits that report, the one with less left is what the
+    /// client is told.
+    #[tokio::test]
+    async fn test_the_tightest_limit_is_reported() {
+        let wide =
+            new_rate_limiter("max = 100\ninterval = \"1m\"\nheaders = true");
+        let narrow =
+            new_rate_limiter("max = 2\ninterval = \"1m\"\nheaders = true");
+        for limiters in [[&wide, &narrow], [&narrow, &wide]] {
+            let mock_io =
+                Builder::new().read(b"GET / HTTP/1.1\r\n\r\n").build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = from_peer("2.2.2.2");
+            for limiter in limiters {
+                limiter
+                    .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(Some(2), ctx.state.rate_limit.map(|quota| quota.limit));
+        }
+
+        // The limit that refuses is the one the refusal is about: its
+        // budget is reported, also where another has no more left ...
+        let through = async |limiters: &[&Limiter], peer: &str| {
+            let mock_io =
+                Builder::new().read(b"GET / HTTP/1.1\r\n\r\n").build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = from_peer(peer);
+            let mut refused = false;
+            for limiter in limiters {
+                let result = limiter
+                    .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                    .await
+                    .unwrap();
+                if matches!(result, RequestPluginResult::Respond(_)) {
+                    refused = true;
+                    break;
+                }
+            }
+            (refused, ctx.state.rate_limit.map(|quota| quota.limit))
+        };
+        let two =
+            new_rate_limiter("max = 2\ninterval = \"1m\"\nheaders = true");
+        let one =
+            new_rate_limiter("max = 1\ninterval = \"1m\"\nheaders = true");
+        assert_eq!((false, Some(1)), through(&[&two, &one], "3.3.3.3").await);
+        // `two` is at 0 left after this one, and so is `one`, which refuses.
+        assert_eq!((true, Some(1)), through(&[&two, &one], "3.3.3.3").await);
+
+        // ... and nothing is, where the one that refuses does not report:
+        // the budget another noted is not that of this refusal.
+        let quiet = new_rate_limiter("max = 1\ninterval = \"1m\"");
+        assert_eq!(
+            (false, Some(100)),
+            through(&[&wide, &quiet], "4.4.4.4").await
+        );
+        assert_eq!((true, None), through(&[&wide, &quiet], "4.4.4.4").await);
+    }
+
+    #[test]
+    fn test_seconds_to_reset() {
+        let minute = Duration::from_secs(60);
+        // Nothing counted: nothing to wait for.
+        assert_eq!(0, seconds_to_reset(minute, 0, 0, 0.5));
+        // Only the window before: gone when the current one ends.
+        assert_eq!(30, seconds_to_reset(minute, 4, 0, 0.5));
+        // The current window fades over the whole of the next.
+        assert_eq!(90, seconds_to_reset(minute, 0, 1, 0.5));
+        assert_eq!(120, seconds_to_reset(minute, 3, 1, 0.0));
+        // Never less than a second while something is counted.
+        assert_eq!(1, seconds_to_reset(Duration::from_millis(100), 1, 1, 0.99));
+    }
+
+    /// `status` and `message` are what a refused client gets, and
+    /// `missing_key = "reject"` refuses the request that names no key.
+    #[tokio::test]
+    async fn test_limit_rejection_is_configurable() {
+        let limiter = new_rate_limiter(
+            "max = 1\ninterval = \"1m\"\nstatus = 503\nmessage = \"slow down\"",
+        );
+        assert_eq!(
+            true,
+            one_request(&limiter, "1.1.1.1", "").await.0.is_none()
+        );
+        let resp = one_request(&limiter, "1.1.1.1", "").await.0.unwrap();
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, resp.status);
+        assert_eq!("slow down", String::from_utf8_lossy(&resp.body));
+        // Without them: 429 and the count.
+        let limiter = new_rate_limiter("max = 1\ninterval = \"1m\"");
+        one_request(&limiter, "1.1.1.1", "").await;
+        let resp = one_request(&limiter, "1.1.1.1", "").await.0.unwrap();
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
+        assert_eq!(
+            "Plugin limit, exceed limit 2/1",
+            String::from_utf8_lossy(&resp.body)
+        );
+
+        // A request without the key: let through and not counted, unless
+        // told to refuse it.
+        let by_key =
+            "max = 1\ninterval = \"1m\"\ntag = \"header\"\nkey = \"X-Api-Key\"";
+        let lenient = new_rate_limiter(by_key);
+        for _ in 0..3 {
+            let (resp, _) = one_request(&lenient, "1.1.1.1", "").await;
+            assert_eq!(true, resp.is_none());
+        }
+        let strict =
+            new_rate_limiter(&format!("{by_key}\nmissing_key = \"reject\""));
+        let resp = one_request(&strict, "1.1.1.1", "").await.0.unwrap();
+        assert_eq!(StatusCode::BAD_REQUEST, resp.status);
+        assert_eq!(
+            "Plugin limit, the header X-Api-Key is required",
+            String::from_utf8_lossy(&resp.body)
+        );
+        // With it, it is limited as before.
+        let with_key = "X-Api-Key: abc\r\n";
+        assert_eq!(
+            true,
+            one_request(&strict, "1.1.1.1", with_key).await.0.is_none()
+        );
+        let resp = one_request(&strict, "1.1.1.1", with_key).await.0.unwrap();
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
+
+        // Values that are not ones.
+        let invalid = |conf: &str| {
+            Limiter::new(
+                &toml::from_str::<PluginConf>(&format!("max = 1\n{conf}"))
+                    .unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string()
+        };
+        for status in [200, 302, 399, 600, -1, 70000] {
+            assert_eq!(
+                "Plugin limit invalid, message: status must be between 400 and 599",
+                invalid(&format!("status = {status}")),
+            );
+        }
+        assert_eq!(
+            "Plugin limit invalid, message: Invalid missing_key(deny), expect pass or reject",
+            invalid("missing_key = \"deny\"")
+        );
     }
 
     /// Regression: the client ip was whatever `X-Forwarded-For` said when

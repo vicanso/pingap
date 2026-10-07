@@ -917,6 +917,24 @@ pub struct LocationConf {
     #[serde(with = "humantime_serde")]
     pub max_retry_window: Option<Duration>,
 
+    /// Timeout for establishing a connection to the upstream, for the
+    /// requests of this location, in place of the upstream's own.
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub connection_timeout: Option<Duration>,
+
+    /// Timeout for each read from the upstream, for the requests of this
+    /// location, in place of the upstream's own.
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub read_timeout: Option<Duration>,
+
+    /// Timeout for each write to the upstream, for the requests of this
+    /// location, in place of the upstream's own.
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub write_timeout: Option<Duration>,
+
     /// Optional description/notes about this location
     pub remark: Option<String>,
 }
@@ -931,6 +949,19 @@ impl LocationConf {
         &self,
         upstream_names: Option<&[String]>,
     ) -> Result<()> {
+        // A timeout of nothing is every request timing out: of the three
+        // a location may set in place of its upstream's.
+        for (name, timeout) in [
+            ("connection_timeout", self.connection_timeout),
+            ("read_timeout", self.read_timeout),
+            ("write_timeout", self.write_timeout),
+        ] {
+            if timeout.is_some_and(|timeout| timeout.is_zero()) {
+                return Err(Error::Invalid {
+                    message: format!("{name} must be greater than zero"),
+                });
+            }
+        }
         // The same parse the proxy applies when it builds the location, so
         // what validates here is what loads there.
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
@@ -3004,6 +3035,38 @@ h1_upgrade = "preserve"
         conf.rewrite = Some(r"^/api /".to_string());
         let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_ok());
+
+        // The timeouts of a location, as they are written.
+        let conf: LocationConf = toml::from_str(
+            r#"
+upstream = "upstream1"
+connection_timeout = "2s"
+read_timeout = "5m"
+write_timeout = "1m"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(Duration::from_secs(2)), conf.connection_timeout);
+        assert_eq!(Some(Duration::from_secs(300)), conf.read_timeout);
+        assert_eq!(Some(Duration::from_secs(60)), conf.write_timeout);
+        assert_eq!(None, LocationConf::default().read_timeout);
+        assert_eq!(
+            true,
+            conf.validate_with_upstream(Some(&upstream_names)).is_ok()
+        );
+        // Zero is not a timeout.
+        for name in ["connection_timeout", "read_timeout", "write_timeout"] {
+            let conf: LocationConf = toml::from_str(&format!(
+                "upstream = \"upstream1\"\n{name} = \"0s\"\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                format!("Invalid error {name} must be greater than zero"),
+                conf.validate_with_upstream(Some(&upstream_names))
+                    .expect_err("")
+                    .to_string()
+            );
+        }
     }
 
     #[test]

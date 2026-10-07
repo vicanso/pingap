@@ -61,6 +61,14 @@ The keys of an entry are checked with its `includes` put in, so a typo inside
 a storage fragment is reported for the entry that includes it. Plugin settings
 are not checked this way: which keys a plugin takes is for the plugin to say.
 
+With `--strict` (or `PINGAP_STRICT` set to anything but empty) each of these findings is an error
+instead: `pingap -t --strict` exits non-zero and names every one of them, a
+start fails, a reload leaves the running configuration as it is and reports
+the failure like any other, and the admin API refuses a change that brings an
+unknown key in. A restart passes the flag on to the process that takes over.
+Use it for `-t` in CI, where a misspelt key should stop the pipeline rather
+than be read past.
+
 ## Storage backends
 
 The backend is chosen from the value of `-c` / `PINGAP_CONF`:

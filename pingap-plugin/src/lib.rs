@@ -456,11 +456,13 @@ mod mock;
 mod ping;
 mod redirect;
 mod referer_restriction;
+mod request_headers;
 mod request_id;
 mod response_headers;
 mod sub_filter;
 mod traffic_splitting;
 mod ua_restriction;
+mod uri_block;
 
 mod plugin;
 

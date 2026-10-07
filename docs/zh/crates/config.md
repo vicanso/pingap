@@ -40,6 +40,8 @@ config: location(api): unknown key "client_max_body_sizes", did you mean "client
 
 条目的键是在展开 `includes` 之后检查的，所以 storage 片段里写错的键会报在引用它的条目上。插件的配置不做这项检查：插件接受哪些键由插件自己决定。
 
+加上 `--strict`（或把 `PINGAP_STRICT` 设成任意非空值）后，上面每一处都变成错误：`pingap -t --strict` 以非零状态退出并列出全部问题，启动会失败，重载时运行中的配置保持不变并像其他重载失败一样上报，admin API 会拒绝引入未知键的修改。重启时这个开关会传给接替的进程。建议 CI 里的 `-t` 总是带上它：写错的键应该让流水线停下来，而不是被忽略过去。
+
 ## 存储后端
 
 由 `-c` / `PINGAP_CONF` 的值选择后端：

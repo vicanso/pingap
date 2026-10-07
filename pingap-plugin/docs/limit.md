@@ -22,6 +22,10 @@ Either one can be keyed by client IP, a header, a cookie or a query parameter.
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
 | `interval` | duration | `10s` | Rate window, at least `1ms`. Ignored by `inflight`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
+| `headers` | bool | `false` | Tell the client its budget in `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`. See [Quota headers](#quota-headers). |
+| `status` | int | `429` | Status of the response to a request over the limit, `400` to `599`. |
+| `message` | string | — | Body of that response, in place of `Plugin limit, exceed limit <value>/<max>`. |
+| `missing_key` | string | `pass` | What becomes of a request that has no value for the key: `pass` lets it through, unlimited; `reject` answers it `400`. |
 
 ### How `max` and `interval` interact
 
@@ -96,9 +100,29 @@ step = "proxy_upstream"
 
 | Situation | Result |
 | --- | --- |
-| Key value is missing or empty | **Not limited** — the request passes |
+| Key value is missing or empty | **Not limited** — the request passes. With `missing_key = "reject"`: `400 Bad Request`, body `Plugin limit, the header X-API-Key is required` (or `the cookie …`, `the query parameter …`) |
 | Within limit | `Continue` |
-| Over limit | `429 Too Many Requests`, body `Plugin limit, exceed limit <value>/<max>`; a `rate` limiter adds `Retry-After: <interval in seconds>` |
+| Over limit | `429 Too Many Requests` (or `status`), body `Plugin limit, exceed limit <value>/<max>` (or `message`); a `rate` limiter adds `Retry-After: <interval in seconds>` |
+
+### Quota headers
+
+With `headers = true` the client is told where it stands:
+
+| Header | Value |
+| --- | --- |
+| `X-RateLimit-Limit` | `max` |
+| `X-RateLimit-Remaining` | What is left of it, this request counted; `0` on a refusal |
+| `X-RateLimit-Reset` | In how many seconds the whole budget is back if nothing more is sent. `rate` only: an `inflight` limit has no such time |
+
+They are set on the upstream's response, on the plugin's own refusal, and on
+the response another plugin of the location answers with (a `401` from an
+authentication plugin after this one). An error page of the proxy itself
+(`502`, `504`) does not carry them. `X-RateLimit-Reset` is an upper bound: the
+estimate fades gradually, so some of the budget is back sooner, and after a
+refusal `Retry-After` is the time to go by. With more than one `limit` on a
+location reporting, the client is told about the one with the least left; a
+refusal carries the budget of the limit that refused, and none when that limit
+does not report.
 
 ## Usage notes
 

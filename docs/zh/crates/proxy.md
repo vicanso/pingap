@@ -38,7 +38,7 @@
 
 | Callback | Role |
 | --- | --- |
-| `upstream_peer` | 选择后端并应用 location 的重试预算（`max_retries`、`max_retry_window`） |
+| `upstream_peer` | 选择后端并应用 location 的重试预算（`max_retries`、`max_retry_window`）和超时（`connection_timeout`、`read_timeout`、`write_timeout`，各自替代 upstream 上的同名设置） |
 | `connected_to_upstream` | 记录复用、TCP 连接与 TLS 握手时序 |
 | `request_body_filter` | 强制 location 的 `client_max_body_size`。`101` 之后客户端发来的是隧道数据而不是请求体，不受这个上限约束：WebSocket 可以发送任意多的数据 |
 | `fail_to_proxy` | 对失败分类，并用配置的模板渲染错误页（见[错误响应](#错误响应)） |

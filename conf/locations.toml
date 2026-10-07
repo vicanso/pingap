@@ -94,6 +94,14 @@ upstream = "charts"
 # Default `none`
 # max_retry_window = "5s"
 
+# How long the requests of this location wait for the upstream: to connect,
+# for each read and for each write. Each takes the place of the upstream's
+# setting of the same name; what is not set here stays as the upstream has
+# it. Default `none`
+# connection_timeout = "3s"
+# read_timeout = "5m"
+# write_timeout = "30s"
+
 # Names of storage entries whose settings are put into this location.
 # Default `none`
 # includes = ["commonLocation"]

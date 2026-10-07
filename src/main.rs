@@ -188,6 +188,10 @@ struct Args {
     /// Enable automatic config reload capability
     #[arg(long)]
     autoreload: bool,
+    /// Fail on config keys that are not known, instead of warning: at
+    /// start, with --test, and for a reload
+    #[arg(long)]
+    strict: bool,
     /// Sync configuration to specified storage location
     #[arg(long)]
     sync: Option<String>,
@@ -427,6 +431,11 @@ fn restart_arguments(args: &Args) -> Vec<String> {
     } else if args.autoreload {
         new_args.push("--autoreload".to_string());
     }
+    // From the command line or the environment alike: the replacement
+    // holds the configuration to what this process held it to.
+    if args.strict {
+        new_args.push("--strict".to_string());
+    }
     new_args
 }
 
@@ -665,6 +674,9 @@ fn parse_arguments() -> Args {
     if !args.autoreload && !get_from_env("autoreload").is_empty() {
         args.autoreload = true;
     }
+    if !args.strict && !get_from_env("strict").is_empty() {
+        args.strict = true;
+    }
 
     args
 }
@@ -809,7 +821,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     // After the logger is there, so that `--test` shows it like a start
     // does: the document is valid, and says something pingap does not read.
-    validate::report_unknown_keys(&config_as_stored);
+    validate::set_strict(args.strict);
+    validate::check_unknown_keys(&config_as_stored)?;
 
     // TODO a better way
     // since the cache will be initialized in validate function
@@ -1306,6 +1319,15 @@ mod tests {
             ..args
         };
         assert_eq!(vec!["-d", "-u", "--autoreload"], restart_arguments(&args));
+        // What the configuration is held to goes with the process.
+        let args = Args {
+            strict: true,
+            ..args
+        };
+        assert_eq!(
+            vec!["-d", "-u", "--autoreload", "--strict"],
+            restart_arguments(&args)
+        );
     }
 
     /// An entry may take a required field from its include, the `addrs`

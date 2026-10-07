@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
+    Error, accepts_encoding, get_bool_conf, get_hash_key, get_step_conf_in,
+    get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
@@ -31,7 +31,7 @@ use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::fs::Metadata;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -167,12 +167,114 @@ fn parse_range_header(range_header: &str, file_size: u64) -> RangeRequest {
 /// only while the client's copy is the current one, told by the entity tag
 /// the file was sent with: a client resuming a download of a file that has
 /// changed since gets the new file whole instead of a piece of it appended
-/// to the old one. A date never matches, as no `Last-Modified` is sent.
-fn if_range_holds(if_range: Option<&HeaderValue>, etag: Option<&str>) -> bool {
+/// to the old one. A date holds when it is the `Last-Modified` the file
+/// was sent with, to the letter.
+fn if_range_holds(
+    if_range: Option<&HeaderValue>,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+) -> bool {
     let Some(if_range) = if_range else {
         return true;
     };
-    etag.is_some_and(|etag| if_range.as_bytes() == etag.as_bytes())
+    [etag, last_modified]
+        .into_iter()
+        .flatten()
+        .any(|validator| if_range.as_bytes() == validator.as_bytes())
+}
+
+/// A coding a file may be kept in next to itself: `app.js.br` beside
+/// `app.js`, see `Directory::precompressed`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Precompressed {
+    /// The `Content-Encoding`, as `Accept-Encoding` names it.
+    coding: &'static str,
+    /// What the name of the encoded file ends in.
+    extension: &'static str,
+}
+
+impl Precompressed {
+    fn from_name(name: &str) -> Option<Self> {
+        let (coding, extension) = match name {
+            "br" => ("br", "br"),
+            "gzip" => ("gzip", "gz"),
+            "zstd" => ("zstd", "zst"),
+            _ => return None,
+        };
+        Some(Self { coding, extension })
+    }
+}
+
+/// When the file was last changed, in seconds since the epoch.
+fn modified_secs(meta: &Metadata) -> Option<u64> {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_secs())
+        .filter(|secs| *secs > 0)
+}
+
+/// `secs` as the date of a `Last-Modified`.
+fn http_date(secs: u64) -> Option<String> {
+    chrono::DateTime::from_timestamp(secs as i64, 0)
+        .map(|time| time.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+}
+
+/// The seconds since the epoch of the date in an `If-Modified-Since`.
+fn parse_http_date(value: &HeaderValue) -> Option<u64> {
+    let time = chrono::DateTime::parse_from_rfc2822(value.to_str().ok()?);
+    u64::try_from(time.ok()?.timestamp()).ok()
+}
+
+/// Whether `file`, under `root`, is in a place that begins with a dot:
+/// `.env`, anything below `.git/`. `.well-known` is not one of them, it is
+/// there to be asked for.
+fn is_hidden(file: &Path, root: &Path) -> bool {
+    file.strip_prefix(root).is_ok_and(|relative| {
+        relative.components().any(|component| match component {
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+                name.starts_with('.') && name != ".well-known"
+            },
+            _ => false,
+        })
+    })
+}
+
+/// Makes the `Vary` of `headers` name `Accept-Encoding`: added to the one
+/// that is there, or as a header of its own. Of several `Vary` in the
+/// list the last is the one that is sent, so that is the one looked at.
+fn vary_by_accept_encoding(headers: &mut Vec<HttpHeader>) {
+    let Some((_, vary)) = headers
+        .iter_mut()
+        .rev()
+        .find(|(name, _)| *name == header::VARY)
+    else {
+        headers
+            .push((header::VARY, HeaderValue::from_static("Accept-Encoding")));
+        return;
+    };
+    let Ok(current) = vary.to_str() else {
+        return;
+    };
+    let covered = current.split(',').map(str::trim).any(|name| {
+        name == "*" || name.eq_ignore_ascii_case("accept-encoding")
+    });
+    if !covered
+        && let Ok(value) =
+            HeaderValue::from_str(&format!("{current}, Accept-Encoding"))
+    {
+        *vary = value;
+    }
+}
+
+/// Whether the error says that there is no such file, as opposed to one
+/// that cannot be read.
+fn is_missing(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 /// The redirect for a directory asked for without its closing slash, from
@@ -307,6 +409,22 @@ pub struct Directory {
     // what release-symlink layouts rely on.
     follow_symlinks: bool,
 
+    // The file a request for something that does not exist is answered
+    // with, as a 200: the page of a single page application, which has
+    // routes of its own under the directory. Only for a path whose last
+    // segment has no extension, so that a missing script or image is still
+    // a 404 and not the page.
+    fallback: Option<PathBuf>,
+
+    // The codings a file may be kept in next to itself (`app.js.br`), in
+    // the order they are preferred. A client that accepts one is sent that
+    // file as it is.
+    precompressed: Vec<Precompressed>,
+
+    // Whether what begins with a dot is served: `.env`, anything below
+    // `.git/`. Off unless set; `.well-known` is served either way.
+    hidden: bool,
+
     // Unique identifier for this plugin instance
     hash_value: String,
 }
@@ -361,11 +479,17 @@ fn io_error_response(err: &std::io::Error) -> HttpResponse {
 ///   - bool: whether file is cacheable (false for HTML files)
 ///   - usize: file size in bytes
 ///   - Vec<HttpHeader>: generated headers including Content-Type and ETag
+///
+/// `file` is the file that was asked for and `meta` that of the file that
+/// is sent, which with `coding` is the same content in that coding: the
+/// type is the one of the former, the size and the validators those of the
+/// latter.
 fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
     charset: &Option<String>,
     support_range: bool,
+    coding: Option<&'static str>,
 ) -> (bool, usize, Vec<HttpHeader>) {
     // Guess MIME type from file extension
     let result = mime_guess::from_path(file);
@@ -391,23 +515,36 @@ fn get_cacheable_and_headers_from_meta(
 
     let size = meta.len() as usize;
 
-    // Generate ETag based on file size and modification time
-    if let Ok(mod_time) = meta.modified() {
-        let value = mod_time
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if value > 0 {
-            let etag = format!(r###"W/"{size:x}-{value:x}""###);
-            if let Ok(value) = HeaderValue::from_str(&etag) {
-                headers.push((header::ETAG, value));
-            }
+    // Generate ETag based on file size and modification time. The coding
+    // is part of it: the same file in another coding is another answer,
+    // and a cache must not take one for the other.
+    if let Some(value) = modified_secs(meta) {
+        let etag = match coding {
+            Some(coding) => format!(r###"W/"{size:x}-{value:x}-{coding}""###),
+            None => format!(r###"W/"{size:x}-{value:x}""###),
+        };
+        if let Ok(value) = HeaderValue::from_str(&etag) {
+            headers.push((header::ETAG, value));
+        }
+        // For the clients and caches that go by the date: there was only
+        // the entity tag.
+        if let Some(value) =
+            http_date(value).and_then(|date| HeaderValue::from_str(&date).ok())
+        {
+            headers.push((header::LAST_MODIFIED, value));
         }
     }
+    if let Some(coding) = coding {
+        headers
+            .push((header::CONTENT_ENCODING, HeaderValue::from_static(coding)));
+    }
 
-    // Add Accept-Ranges header to indicate support for range requests
-    if support_range && let Ok(value) = HeaderValue::from_str("bytes") {
-        headers.push((header::ACCEPT_RANGES, value));
+    // Add Accept-Ranges header to indicate support for range requests. Not
+    // on a file sent in a coding: a range is answered from the file as it
+    // is, which is another representation than this one.
+    if support_range && coding.is_none() {
+        headers
+            .push((header::ACCEPT_RANGES, HeaderValue::from_static("bytes")));
     }
 
     (cacheable, size, headers)
@@ -509,6 +646,35 @@ impl TryFrom<&PluginConf> for Directory {
         let follow_symlinks = !value.contains_key("follow_symlinks")
             || get_bool_conf(value, "follow_symlinks");
 
+        // A file of the directory, named from its root like a request
+        // names one.
+        let fallback = get_str_conf(value, "fallback");
+        let fallback = if fallback.is_empty() {
+            None
+        } else {
+            let file = path
+                .join(fallback.trim_start_matches('/'))
+                .absolutize()
+                .map(|file| file.to_path_buf())
+                .map_err(|e| invalid(format!("invalid fallback: {e}")))?;
+            if !file.starts_with(&path) || file == path {
+                return Err(invalid(
+                    "fallback must be a file inside path".to_string(),
+                ));
+            }
+            Some(file)
+        };
+        let precompressed = get_str_slice_conf(value, "precompressed")
+            .iter()
+            .map(|name| {
+                Precompressed::from_name(name.trim()).ok_or_else(|| {
+                    invalid(format!(
+                        "invalid precompressed({name}), expect br, gzip or zstd"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
             hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
@@ -522,6 +688,9 @@ impl TryFrom<&PluginConf> for Directory {
             download: get_bool_conf(value, "download"),
             follow_symlinks,
             headers: Some(headers),
+            fallback,
+            precompressed,
+            hidden: get_bool_conf(value, "hidden"),
         })
     }
 }
@@ -576,6 +745,59 @@ impl Directory {
             && fs::canonicalize(file)
                 .await
                 .is_ok_and(|resolved| !resolved.starts_with(&self.path))
+    }
+    /// The file to answer with in place of one that is not there: the
+    /// `fallback`, when the request is for a path whose last segment has
+    /// no extension. `/app/users/1` is a route of the page, `/app/main.js`
+    /// a file that is missing.
+    fn fallback_for(
+        &self,
+        requested: &str,
+        err: &std::io::Error,
+    ) -> Option<&PathBuf> {
+        // A path that ends in a slash names a directory, whatever its
+        // last segment looks like: `/v1.2/` is a route.
+        self.fallback.as_ref().filter(|_| {
+            is_missing(err)
+                && (requested.ends_with('/')
+                    || Path::new(requested).extension().is_none())
+        })
+    }
+    /// The file `file` is kept as in a coding the client accepts, opened:
+    /// the first of `precompressed`, in its order, that is acceptable and
+    /// there. None for a request with a `Range`, which is for bytes of the
+    /// file as it is.
+    async fn precompressed_for(
+        &self,
+        session: &Session,
+        file: &Path,
+    ) -> Option<(&'static str, (Metadata, fs::File))> {
+        if self.precompressed.is_empty() {
+            return None;
+        }
+        let headers = &session.req_header().headers;
+        if headers.contains_key(header::RANGE) {
+            return None;
+        }
+        let accept_encoding = headers
+            .get(header::ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok())?;
+        for precompressed in self.precompressed.iter() {
+            if !accepts_encoding(accept_encoding, precompressed.coding) {
+                continue;
+            }
+            let mut name = file.as_os_str().to_os_string();
+            name.push(".");
+            name.push(precompressed.extension);
+            let encoded = PathBuf::from(name);
+            if self.escapes_root(&encoded).await {
+                continue;
+            }
+            if let Ok(data) = get_data(&encoded).await {
+                return Some((precompressed.coding, data));
+            }
+        }
+        None
     }
     /// The answer to a HEAD: the headers the GET would have, `length` as
     /// the size of the body it would send, and no body. `cache` is whether
@@ -643,15 +865,19 @@ static IGNORE_RESPONSE: LazyLock<HttpResponse> =
 ///
 /// Entries are read asynchronously and sorted by name (a glob used to do
 /// this, synchronously, and broke on a directory whose name held a glob
-/// character). Dotfiles are skipped, names are escaped and hrefs
+/// character). Dotfiles are skipped unless `hidden`, names are escaped and hrefs
 /// percent-encoded, so a file called `<script>` or `a b#c` is listed as
 /// text and linked correctly.
-async fn get_autoindex_html(path: &Path) -> std::io::Result<String> {
+async fn get_autoindex_html(
+    path: &Path,
+    hidden: bool,
+) -> std::io::Result<String> {
     let mut entries = Vec::new();
     let mut dir = fs::read_dir(path).await?;
     while let Some(entry) = dir.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.is_empty() || name.starts_with('.') {
+        // What is not served is not listed.
+        if name.is_empty() || (!hidden && name.starts_with('.')) {
             continue;
         }
         // An entry that vanished between the listing and the stat is
@@ -786,6 +1012,13 @@ impl Plugin for Directory {
         if !file.starts_with(&self.path) {
             return Ok(RequestPluginResult::Respond(forbidden()));
         }
+        // As if it were not there: a `403` would say that it is, which is
+        // why this comes before the check on where it leads.
+        if !self.hidden && is_hidden(&file, &self.path) {
+            return Ok(RequestPluginResult::Respond(HttpResponse::not_found(
+                "Not Found",
+            )));
+        }
         // `absolutize` above is lexical, so it cannot see a symlink inside the
         // root that points outside it. Only enforce when the path resolves; a
         // path that does not exist cannot escape anywhere and is handled as a
@@ -800,7 +1033,7 @@ impl Plugin for Directory {
         // when `autoindex` is on, otherwise its `index` file: that used to
         // work for `/` alone, and `/docs/` was a 404 even with
         // `docs/index.html` in place.
-        let file = match fs::metadata(&file).await {
+        let resolved = match fs::metadata(&file).await {
             Ok(meta) if meta.is_dir() => {
                 // By the address the client used, which is the one its
                 // links resolve against: after a rewrite the path here is
@@ -817,10 +1050,11 @@ impl Plugin for Directory {
                     ));
                 }
                 if self.autoindex {
-                    let resp = match get_autoindex_html(&file).await {
-                        Ok(html) => HttpResponse::html(html),
-                        Err(err) => io_error_response(&err),
-                    };
+                    let resp =
+                        match get_autoindex_html(&file, self.hidden).await {
+                            Ok(html) => HttpResponse::html(html),
+                            Err(err) => io_error_response(&err),
+                        };
                     return Ok(RequestPluginResult::Respond(resp));
                 }
                 // The index file is a path of its own and is checked like
@@ -831,24 +1065,45 @@ impl Plugin for Directory {
                 if self.escapes_root(&index).await {
                     return Ok(RequestPluginResult::Respond(forbidden()));
                 }
-                index
+                Ok(index)
             },
-            Ok(_) => file,
+            Ok(_) => Ok(file),
+            Err(err) => Err(err),
+        };
+        let opened = match resolved {
+            Ok(file) => get_data(&file).await.map(|data| (file, data)),
+            Err(err) => Err(err),
+        };
+        // Nothing there, a directory without its index included: the
+        // fallback, where the path is one a page would route.
+        let (file, (meta, f)) = match opened {
+            Ok(opened) => opened,
             Err(err) => {
-                return Ok(RequestPluginResult::Respond(io_error_response(
-                    &err,
-                )));
+                let Some(fallback) = self.fallback_for(relative_path, &err)
+                else {
+                    return Ok(RequestPluginResult::Respond(
+                        io_error_response(&err),
+                    ));
+                };
+                if self.escapes_root(fallback).await {
+                    return Ok(RequestPluginResult::Respond(forbidden()));
+                }
+                match get_data(fallback).await {
+                    Ok(data) => (fallback.clone(), data),
+                    Err(err) => {
+                        return Ok(RequestPluginResult::Respond(
+                            io_error_response(&err),
+                        ));
+                    },
+                }
             },
         };
-
-        let (meta, mut f) = match get_data(&file).await {
-            Ok(data) => data,
-            Err(err) => {
-                return Ok(RequestPluginResult::Respond(io_error_response(
-                    &err,
-                )));
-            },
-        };
+        // The same file in a coding the client takes, kept next to it.
+        let (coding, meta, mut f) =
+            match self.precompressed_for(session, &file).await {
+                Some((coding, (meta, f))) => (Some(coding), meta, f),
+                None => (None, meta, f),
+            };
 
         // generate response headers
         let (cacheable, size, mut headers) =
@@ -857,23 +1112,43 @@ impl Plugin for Directory {
                 &meta,
                 &self.charset,
                 true,
+                coding,
             );
         self.apply_custom_headers(&file, &mut headers);
+        // Which of them is sent goes by what the request accepts, whether
+        // or not this one got a coded file. After the configured headers:
+        // a `Vary` among them is the one that is sent, and it has to say
+        // this too.
+        if !self.precompressed.is_empty() {
+            vary_by_accept_encoding(&mut headers);
+        }
 
         // A client revalidating with the ETag it was given gets a 304 and
         // no body; without this every conditional request re-sent the file.
-        let etag = headers
-            .iter()
-            .find(|(name, _)| *name == header::ETAG)
-            .and_then(|(_, value)| value.to_str().ok());
-        if let Some(etag) = etag
-            && session
-                .req_header()
-                .headers
-                .get(header::IF_NONE_MATCH)
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|if_none_match| etag_matches(if_none_match, etag))
-        {
+        let validator = |wanted: header::HeaderName| {
+            headers
+                .iter()
+                .find(|(name, _)| *name == wanted)
+                .and_then(|(_, value)| value.to_str().ok())
+        };
+        let etag = validator(header::ETAG);
+        let last_modified = validator(header::LAST_MODIFIED);
+        let req_headers = &session.req_header().headers;
+        let if_none_match = req_headers.get(header::IF_NONE_MATCH);
+        // The entity tag where the client sent one, and only without it
+        // the date: a copy no older than the file is current.
+        let not_modified = match (if_none_match, etag) {
+            (Some(if_none_match), Some(etag)) => if_none_match
+                .to_str()
+                .is_ok_and(|if_none_match| etag_matches(if_none_match, etag)),
+            (Some(_), None) => false,
+            (None, _) => req_headers
+                .get(header::IF_MODIFIED_SINCE)
+                .and_then(parse_http_date)
+                .zip(modified_secs(&meta))
+                .is_some_and(|(since, modified)| modified <= since),
+        };
+        if not_modified {
             return Ok(RequestPluginResult::Respond(HttpResponse {
                 status: StatusCode::NOT_MODIFIED,
                 max_age: if cacheable { self.max_age } else { None },
@@ -883,13 +1158,16 @@ impl Plugin for Directory {
             }));
         }
 
-        let req_headers = &session.req_header().headers;
         let range = match req_headers
             .get(header::RANGE)
             .and_then(|v| v.to_str().ok())
         {
             Some(value)
-                if if_range_holds(req_headers.get(header::IF_RANGE), etag) =>
+                if if_range_holds(
+                    req_headers.get(header::IF_RANGE),
+                    etag,
+                    last_modified,
+                ) =>
             {
                 parse_range_header(value, size as u64)
             },
@@ -1317,13 +1595,16 @@ download = true
             r#"("content-type", "text/html")"#,
             format!("{:?}", headers[0])
         );
+        // The entity tag and the date of the file come in between.
+        assert_eq!("etag", headers[1].0.as_str());
+        assert_eq!("last-modified", headers[2].0.as_str());
         assert_eq!(
             r#"("accept-ranges", "bytes")"#,
-            format!("{:?}", headers[2])
+            format!("{:?}", headers[3])
         );
         assert_eq!(
             r#"("content-disposition", "attachment; filename=\"index.html\"")"#,
-            format!("{:?}", headers[3])
+            format!("{:?}", headers[4])
         );
         assert_eq!(true, !resp.body.is_empty());
 
@@ -1570,6 +1851,7 @@ follow_symlinks = {follow_symlinks}
             &meta,
             &Some("utf-8".to_string()),
             false,
+            None,
         );
         assert_eq!(false, cacheable);
         assert_eq!(
@@ -1587,6 +1869,325 @@ follow_symlinks = {follow_symlinks}
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.to_str().unwrap().to_string())
             .unwrap_or_default()
+    }
+
+    /// `fallback`: what is not there is answered with the page, where the
+    /// path is one a page would route - and a file that is missing is
+    /// still missing.
+    #[tokio::test]
+    async fn test_directory_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("index.html"), "<p>app</p>").unwrap();
+        std::fs::write(root.path().join("main.js"), "let a = 1;").unwrap();
+        std::fs::create_dir(root.path().join("empty")).unwrap();
+        let get = async |dir: &Directory, path: &str| {
+            let resp =
+                request(dir, &format!("GET {path} HTTP/1.1\r\n\r\n")).await;
+            (
+                resp.status.as_u16(),
+                String::from_utf8_lossy(&resp.body).to_string(),
+            )
+        };
+
+        let app = new_directory(root.path(), "fallback = \"/index.html\"");
+        let page = (200, "<p>app</p>".to_string());
+        // Routes of the page, however deep, and a directory with no index.
+        for path in [
+            "/users",
+            "/users/1",
+            "/users/1/",
+            "/v1.2/users",
+            "/v1.2/",
+            "/empty/",
+        ] {
+            assert_eq!(page, get(&app, path).await, "{path}");
+        }
+        // What is there is served as it is.
+        assert_eq!(
+            (200, "let a = 1;".to_string()),
+            get(&app, "/main.js").await
+        );
+        // A file that is missing is a 404, not the page under its name.
+        for path in ["/missing.js", "/assets/logo.png", "/users/1.json"] {
+            assert_eq!(404, get(&app, path).await.0, "{path}");
+        }
+        // The page is html: sent as such, and not for caches to keep.
+        let resp = request(&app, "GET /users HTTP/1.1\r\n\r\n").await;
+        assert_eq!("text/html", header_of(&resp, header::CONTENT_TYPE));
+        assert_eq!(None, resp.max_age);
+        let head = request(&app, "HEAD /users HTTP/1.1\r\n\r\n").await;
+        assert_eq!(StatusCode::OK, head.status);
+        assert_eq!("10", header_of(&head, header::CONTENT_LENGTH));
+
+        // Without it, as before.
+        let plain = new_directory(root.path(), "");
+        assert_eq!(404, get(&plain, "/users").await.0);
+        // A fallback that is not there leaves the 404.
+        let gone = new_directory(root.path(), "fallback = \"/app.html\"");
+        assert_eq!(404, get(&gone, "/users").await.0);
+
+        // It is a file of the directory.
+        for fallback in ["/../index.html", "/", ""] {
+            let conf = format!(
+                "path = \"{}\"\nfallback = \"{fallback}\"",
+                root.path().display()
+            );
+            let result =
+                Directory::new(&toml::from_str::<PluginConf>(&conf).unwrap());
+            assert_eq!(
+                fallback.is_empty(),
+                result.is_ok(),
+                "{fallback:?}: {:?}",
+                result.err().map(|e| e.to_string())
+            );
+        }
+    }
+
+    /// `precompressed`: a file kept in a coding next to itself is sent in
+    /// that coding to a client that accepts it.
+    #[tokio::test]
+    async fn test_directory_precompressed() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("app.js"), "let answer = 42;").unwrap();
+        std::fs::write(root.path().join("app.js.br"), "br-bytes").unwrap();
+        std::fs::write(root.path().join("app.js.gz"), "gzip-data!").unwrap();
+        std::fs::write(root.path().join("plain.css"), "a{}").unwrap();
+        let dir = new_directory(
+            root.path(),
+            "precompressed = [\"br\", \"gzip\", \"zstd\"]",
+        );
+        let get = async |path: &str, headers: &str| {
+            request(&dir, &format!("GET {path} HTTP/1.1\r\n{headers}\r\n"))
+                .await
+        };
+
+        // The first of the list the client accepts, with the type of the
+        // file that was asked for and the length of the one that is sent.
+        let br = get("/app.js", "Accept-Encoding: gzip, br\r\n").await;
+        assert_eq!(StatusCode::OK, br.status);
+        assert_eq!("br-bytes", String::from_utf8_lossy(&br.body));
+        assert_eq!("br", header_of(&br, header::CONTENT_ENCODING));
+        assert_eq!("Accept-Encoding", header_of(&br, header::VARY));
+        assert_eq!(
+            true,
+            header_of(&br, header::CONTENT_TYPE).contains("javascript")
+        );
+        // Ranges are of the file as it is: not offered on this one.
+        assert_eq!("", header_of(&br, header::ACCEPT_RANGES));
+
+        let gzip = get("/app.js", "Accept-Encoding: gzip, br;q=0\r\n").await;
+        assert_eq!("gzip-data!", String::from_utf8_lossy(&gzip.body));
+        assert_eq!("gzip", header_of(&gzip, header::CONTENT_ENCODING));
+
+        // Not accepted, or no such file (zstd): the file as it is, and
+        // still told apart by what the request accepts.
+        for headers in [
+            "",
+            "Accept-Encoding: zstd\r\n",
+            "Accept-Encoding: identity\r\n",
+        ] {
+            let plain = get("/app.js", headers).await;
+            assert_eq!(
+                "let answer = 42;",
+                String::from_utf8_lossy(&plain.body),
+                "{headers}"
+            );
+            assert_eq!("", header_of(&plain, header::CONTENT_ENCODING));
+            assert_eq!("Accept-Encoding", header_of(&plain, header::VARY));
+            assert_eq!("bytes", header_of(&plain, header::ACCEPT_RANGES));
+        }
+        let css = get("/plain.css", "Accept-Encoding: br\r\n").await;
+        assert_eq!("a{}", String::from_utf8_lossy(&css.body));
+
+        // Each coding is an answer of its own to a cache.
+        let etags: Vec<String> = [&br, &gzip, &get("/app.js", "").await]
+            .iter()
+            .map(|resp| header_of(resp, header::ETAG))
+            .collect();
+        assert_eq!(true, etags[0].ends_with(r#"-br""#), "{etags:?}");
+        assert_eq!(true, etags[1].ends_with(r#"-gzip""#), "{etags:?}");
+        assert_ne!(etags[0], etags[2]);
+        // Revalidating the coded file answers for the coded file.
+        let fresh = get(
+            "/app.js",
+            &format!("Accept-Encoding: br\r\nIf-None-Match: {}\r\n", etags[0]),
+        )
+        .await;
+        assert_eq!(StatusCode::NOT_MODIFIED, fresh.status);
+
+        // A range is for bytes of the file itself.
+        let range =
+            get("/app.js", "Accept-Encoding: br\r\nRange: bytes=0-2\r\n").await;
+        assert_eq!(StatusCode::PARTIAL_CONTENT, range.status);
+        assert_eq!("let", String::from_utf8_lossy(&range.body));
+        assert_eq!("", header_of(&range, header::CONTENT_ENCODING));
+
+        // A HEAD says what the GET would send.
+        let head = request(
+            &dir,
+            "HEAD /app.js HTTP/1.1\r\nAccept-Encoding: br\r\n\r\n",
+        )
+        .await;
+        assert_eq!("8", header_of(&head, header::CONTENT_LENGTH));
+        assert_eq!("br", header_of(&head, header::CONTENT_ENCODING));
+
+        // A `Vary` of the configuration is kept, and says this as well.
+        for (configured, sent) in [
+            ("Vary: Origin", "Origin, Accept-Encoding"),
+            ("Vary: accept-encoding, Origin", "accept-encoding, Origin"),
+            ("Vary: *", "*"),
+        ] {
+            let dir = new_directory(
+                root.path(),
+                &format!(
+                    "precompressed = [\"br\"]\nheaders = [\"{configured}\"]"
+                ),
+            );
+            for headers in ["", "Accept-Encoding: br\r\n"] {
+                let resp = request(
+                    &dir,
+                    &format!("GET /app.js HTTP/1.1\r\n{headers}\r\n"),
+                )
+                .await;
+                // Of the headers of the response the last of a name is
+                // the one that goes out.
+                let vary = resp
+                    .headers
+                    .iter()
+                    .flatten()
+                    .rfind(|(name, _)| *name == header::VARY)
+                    .map(|(_, value)| value.to_str().unwrap().to_string());
+                assert_eq!(Some(sent.to_string()), vary, "{configured}");
+            }
+        }
+
+        // Not set: the coded file is never looked for, and a request for
+        // it by name gets it like any file.
+        let plain = new_directory(root.path(), "");
+        let resp = request(
+            &plain,
+            "GET /app.js HTTP/1.1\r\nAccept-Encoding: br\r\n\r\n",
+        )
+        .await;
+        assert_eq!("let answer = 42;", String::from_utf8_lossy(&resp.body));
+        assert_eq!("", header_of(&resp, header::VARY));
+
+        let conf = format!(
+            "path = \"{}\"\nprecompressed = [\"br\", \"deflate\"]",
+            root.path().display()
+        );
+        assert_eq!(
+            "Plugin directory invalid, message: invalid precompressed(deflate), expect br, gzip or zstd",
+            Directory::new(&toml::from_str::<PluginConf>(&conf).unwrap())
+                .err()
+                .unwrap()
+                .to_string()
+        );
+    }
+
+    /// What begins with a dot is not served unless `hidden` says so.
+    #[tokio::test]
+    async fn test_directory_hidden_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".env"), "SECRET=1").unwrap();
+        std::fs::create_dir_all(root.path().join(".git")).unwrap();
+        std::fs::write(root.path().join(".git/config"), "[core]").unwrap();
+        std::fs::create_dir_all(root.path().join("a/.cache")).unwrap();
+        std::fs::write(root.path().join("a/.cache/x.txt"), "x").unwrap();
+        std::fs::create_dir_all(root.path().join(".well-known")).unwrap();
+        std::fs::write(root.path().join(".well-known/security.txt"), "ok")
+            .unwrap();
+        std::fs::write(root.path().join("a/file.txt"), "file").unwrap();
+        let status = async |dir: &Directory, path: &str| {
+            request(dir, &format!("GET {path} HTTP/1.1\r\n\r\n"))
+                .await
+                .status
+                .as_u16()
+        };
+        let hidden = [
+            "/.env",
+            "/.git/config",
+            "/a/.cache/x.txt",
+            "/a/../.env",
+            "/%2eenv",
+        ];
+
+        let dir = new_directory(root.path(), "");
+        for path in hidden {
+            assert_eq!(404, status(&dir, path).await, "{path}");
+        }
+        assert_eq!(200, status(&dir, "/.well-known/security.txt").await);
+        assert_eq!(200, status(&dir, "/a/file.txt").await);
+
+        let open = new_directory(root.path(), "hidden = true");
+        for path in hidden {
+            assert_eq!(200, status(&open, path).await, "{path}");
+        }
+        // Listed where they are served, and only there.
+        let listing = async |extra: &str| {
+            let dir = new_directory(root.path(), extra);
+            let resp = request(&dir, "GET / HTTP/1.1\r\n\r\n").await;
+            String::from_utf8_lossy(&resp.body).contains(".env")
+        };
+        assert_eq!(false, listing("autoindex = true").await);
+        assert_eq!(true, listing("autoindex = true\nhidden = true").await);
+    }
+
+    /// The date of a file is sent, and a client that has a copy no older
+    /// is told so.
+    #[tokio::test]
+    async fn test_directory_last_modified() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("a.txt");
+        std::fs::write(&file, "hello").unwrap();
+        let modified =
+            modified_secs(&std::fs::metadata(&file).unwrap()).unwrap();
+        let dir = new_directory(root.path(), "");
+        let get = async |headers: &str| {
+            request(&dir, &format!("GET /a.txt HTTP/1.1\r\n{headers}\r\n"))
+                .await
+        };
+
+        let resp = get("").await;
+        let last_modified = header_of(&resp, header::LAST_MODIFIED);
+        assert_eq!(http_date(modified).unwrap(), last_modified);
+        assert_eq!(true, last_modified.ends_with(" GMT"), "{last_modified}");
+        assert_eq!(
+            Some(modified),
+            parse_http_date(&HeaderValue::from_str(&last_modified).unwrap())
+        );
+
+        let since = |secs: u64| {
+            format!("If-Modified-Since: {}\r\n", http_date(secs).unwrap())
+        };
+        // The copy is as new as the file, or newer.
+        for secs in [modified, modified + 3600] {
+            let resp = get(&since(secs)).await;
+            assert_eq!(StatusCode::NOT_MODIFIED, resp.status);
+            assert_eq!(true, resp.body.is_empty());
+        }
+        // Older, or not a date.
+        assert_eq!(StatusCode::OK, get(&since(modified - 1)).await.status);
+        assert_eq!(
+            StatusCode::OK,
+            get("If-Modified-Since: yesterday\r\n").await.status
+        );
+        // An entity tag, where there is one, is what counts.
+        let stale = format!("If-None-Match: \"other\"\r\n{}", since(modified));
+        assert_eq!(StatusCode::OK, get(&stale).await.status);
+
+        // A range holds for the copy the date is of, to the letter.
+        let range = |if_range: &str| {
+            format!("Range: bytes=0-1\r\nIf-Range: {if_range}\r\n")
+        };
+        assert_eq!(
+            StatusCode::PARTIAL_CONTENT,
+            get(&range(&last_modified)).await.status
+        );
+        assert_eq!(
+            StatusCode::OK,
+            get(&range(&http_date(modified - 1).unwrap())).await.status
+        );
     }
 
     /// Regression: a directory asked for without its closing slash got its

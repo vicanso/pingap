@@ -447,6 +447,14 @@ export default {
     maxRetriesPlaceholder: "Input the max retries to upstream",
     maxRetryWindow: "Max Retry Window",
     maxRetryWindowPlaceholder: "Input the max retry window to upstream",
+    connectionTimeout: "Connection Timeout",
+    connectionTimeoutPlaceholder: "Time to connect to the upstream, e.g. 3s",
+    readTimeout: "Read Timeout",
+    readTimeoutPlaceholder: "Time for each read from the upstream, e.g. 30s",
+    writeTimeout: "Write Timeout",
+    writeTimeoutPlaceholder: "Time for each write to the upstream, e.g. 30s",
+    timeoutTips:
+      "For the requests of this location, in place of the upstream's setting of the same name. Leave empty to use the upstream's.",
     enableReverseProxyHeaders: "Enable Reverse Proxy Headers",
     weight: "Weight",
     weightPlaceholder: "Input the weight of location",
@@ -663,6 +671,17 @@ export default {
     dirFollowSymlinks: "Follow Symlinks",
     dirFollowSymlinksTips:
       "Unset or yes serves whatever a link inside the directory points at. No refuses a file that resolves to somewhere outside it.",
+    dirHidden: "Hidden Files",
+    dirHiddenTips:
+      "Whether what begins with a dot is served (.env, anything below .git/). Unset or no answers such a path 404; .well-known is served either way.",
+    dirFallback: "Fallback",
+    dirFallbackPlaceholder: "File for a path that does not exist, e.g. /index.html",
+    dirFallbackTips:
+      "For a single page application: a path that does not exist is answered with this file and 200. Only a path whose last segment has no extension, so a missing script or image is still 404.",
+    dirPrecompressed: "Precompressed",
+    dirPrecompressedPlaceholder: "br, gzip or zstd",
+    dirPrecompressedTips:
+      "Codings a file may be kept in next to itself (app.js.br, app.js.gz, app.js.zst), in order of preference. A client that accepts one is sent that file as it is.",
     dirHeaderName: "Response Headers",
     dirHeaderNamePlaceholder:
       "Input the response header name : Input the response header value",
@@ -810,6 +829,16 @@ export default {
     limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
+    limitHeaders: "Quota Headers",
+    limitHeadersTips:
+      "Add X-RateLimit-Limit, X-RateLimit-Remaining and X-RateLimit-Reset to the response, so the client knows what is left of its budget.",
+    limitMissingKey: "Missing Key",
+    limitMissingKeyTips:
+      "A request without a value for the key (no such header, cookie or query parameter): pass lets it through unlimited, which is the default; reject answers it 400.",
+    limitStatus: "Reject Status",
+    limitStatusPlaceholder: "Status when over the limit, default: 429",
+    limitMessage: "Reject Message",
+    limitMessagePlaceholder: "Body of the response when over the limit",
     ipRestrictionMode: "Restriction Mode",
     ipList: "Ip List",
     ipListPlaceholder: "Input the ip for restriction",
@@ -867,6 +896,32 @@ export default {
     responseHeadersRemoveHeaderPlaceholder: "Input the header name",
     responseHeadersMode: "Mode",
     responseHeadersModePlaceholder: "Select the mode of response headers",
+    requestHeadersAddHeader: "Add Header",
+    requestHeadersSetHeader: "Set Header",
+    requestHeadersSetHeaderNotExists: "Set Header If Not Exists",
+    requestHeadersHeaderPlaceholder:
+      "Input the header name : Input the header value",
+    requestHeadersRemoveHeader: "Remove Header",
+    requestHeadersRemoveHeaderPlaceholder: "Input the header name",
+    requestHeadersRenameHeader: "Rename Header",
+    requestHeadersRenamePlaceholder:
+      "Input the original header name : Input the new header name",
+    uriBlockPaths: "Paths",
+    uriBlockPathsPlaceholder: "A regex, e.g. \\.env$",
+    uriBlockPathsTips:
+      "A request whose path matches one of these patterns is blocked. The path is matched decoded and with its dots resolved, so /%2eenv is /.env.",
+    uriBlockQueries: "Queries",
+    uriBlockQueriesPlaceholder: "A regex, e.g. \\.\\./",
+    uriBlockQueriesTips:
+      "A request whose query matches one of these patterns is blocked, as it was sent or as it reads once decoded.",
+    uriBlockMethods: "Allowed Methods",
+    uriBlockMethodsPlaceholder: "GET",
+    uriBlockMethodsTips:
+      "Only these methods are let through. Leave empty for any method.",
+    uriBlockStatus: "Status",
+    uriBlockStatusPlaceholder: "Status of the refusal, default: 403",
+    uriBlockMessage: "Message",
+    uriBlockMessagePlaceholder: "Body of the refusal",
     combinedAuthAuthorizations: "Authorizations",
     combinedAuthAuthParameters: "Parameters",
     combinedAuthAuthAppIdPlaceholder: "Input the app id",

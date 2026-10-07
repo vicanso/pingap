@@ -39,6 +39,8 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.TRAFFIC_SPLITTING] = [0];
   pluginSupportSteps[PluginCategory.GEO_RESTRICTION] = [0];
   pluginSupportSteps[PluginCategory.FORWARD_AUTH] = [0];
+  pluginSupportSteps[PluginCategory.REQUEST_HEADERS] = [0, 1];
+  pluginSupportSteps[PluginCategory.URI_BLOCK] = [0];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -147,4 +149,6 @@ export enum PluginCategory {
   TRAFFIC_SPLITTING = "traffic_splitting",
   GEO_RESTRICTION = "geo_restriction",
   FORWARD_AUTH = "forward_auth",
+  REQUEST_HEADERS = "request_headers",
+  URI_BLOCK = "uri_block",
 }

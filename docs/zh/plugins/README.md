@@ -77,6 +77,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `referer_restriction` | 按 `Referer` 主机允许/拒绝 | [referer_restriction](./referer_restriction.md) |
 | `ua_restriction` | 按 `User-Agent` 正则允许/拒绝 | [ua_restriction](./ua_restriction.md) |
 | `geo_restriction` | 按 GeoIP 国家允许/拒绝（feature `geo`） | [geo_restriction](./geo_restriction.md) |
+| `uri_block` | 按路径、查询串的规则或请求方法拦截请求 | [uri_block](./uri_block.md) |
 
 ### 流量控制
 
@@ -94,6 +95,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `accept_encoding` | 规范化客户端 `Accept-Encoding` | [accept_encoding](./accept_encoding.md) |
 | `directory` | 静态文件，支持 range 与 autoindex | [directory](./directory.md) |
 | `sub_filter` | 响应体字面量 / 正则替换 | [sub_filter](./sub_filter.md) |
+| `request_headers` | 添加 / 设置 / 删除 / 重命名发往上游的请求头 | [request_headers](./request_headers.md) |
 | `response_headers` | 添加 / 设置 / 删除 / 重命名响应头 | [response_headers](./response_headers.md) |
 | `cors` | CORS 预检与响应头 | [cors](./cors.md) |
 | `redirect` | HTTP↔HTTPS 重定向与路径前缀 | [redirect](./redirect.md) |

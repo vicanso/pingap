@@ -10,7 +10,11 @@ import {
   newBooleanOptions,
   newStringOptions,
 } from "@/constants";
-import { newZodBytes, omitEmptyArrayString } from "@/helpers/util";
+import {
+  newZodBytes,
+  newZodDuration,
+  omitEmptyArrayString,
+} from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
@@ -236,6 +240,36 @@ export default function Locations() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "connection_timeout",
+      section: sec.upstream,
+      label: locationI18n("connectionTimeout"),
+      placeholder: locationI18n("connectionTimeoutPlaceholder"),
+      tips: locationI18n("timeoutTips"),
+      defaultValue: locationConfig.connection_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "read_timeout",
+      section: sec.upstream,
+      label: locationI18n("readTimeout"),
+      placeholder: locationI18n("readTimeoutPlaceholder"),
+      tips: locationI18n("timeoutTips"),
+      defaultValue: locationConfig.read_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "write_timeout",
+      section: sec.upstream,
+      label: locationI18n("writeTimeout"),
+      placeholder: locationI18n("writeTimeoutPlaceholder"),
+      tips: locationI18n("timeoutTips"),
+      defaultValue: locationConfig.write_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "enable_reverse_proxy_headers",
       section: sec.upstream,
       label: locationI18n("enableReverseProxyHeaders"),
@@ -364,6 +398,10 @@ export default function Locations() {
 
   const schema = z.object({
     client_max_body_size: newZodBytes().optional(),
+    max_retry_window: newZodDuration().optional(),
+    connection_timeout: newZodDuration().optional(),
+    read_timeout: newZodDuration().optional(),
+    write_timeout: newZodDuration().optional(),
   });
   const onRemove = async () => {
     return remove("location", currentLocation).then(() => {

@@ -61,6 +61,9 @@ export interface Location {
   proxy_add_headers?: string[];
   max_retries?: number;
   max_retry_window?: string;
+  connection_timeout?: string;
+  read_timeout?: string;
+  write_timeout?: string;
   enable_reverse_proxy_headers?: boolean;
   rewrite?: string;
   client_max_body_size?: string;
