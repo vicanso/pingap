@@ -141,3 +141,31 @@ locations = ["lo"]
 # List of modules to enable for this server, only `grpc-web` is supported now.
 # Default `none`
 # modules = []
+
+# How long to wait for the client while reading its request.
+# Default `none`
+# downstream_read_timeout = "30s"
+
+# How long to wait for the client while writing the response.
+# Default `none`
+# downstream_write_timeout = "30s"
+
+# TCP_USER_TIMEOUT of the accepted connections (Linux): how long data that
+# was sent may stay unacknowledged before the connection is closed.
+# Default `none`
+# tcp_user_timeout = "1m"
+
+# Set SO_REUSEPORT on the listening socket.
+# Default `false`
+# reuse_port = true
+
+# Add a `Server-Timing` response header with the timings of the request.
+# Default `false`
+# enable_server_timing = true
+
+# Names of storage entries whose settings are put into this server.
+# Default `none`
+# includes = ["commonServer"]
+
+# Description of this server
+# remark = ""

@@ -92,27 +92,60 @@ pub async fn try_update_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<Vec<String>> {
-    let (mut upstreams, updated_upstreams) = new_ahash_upstreams(
-        upstream_configs,
-        UPSTREAM_PROVIDER.clone(),
-        sender,
-    )
-    .map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
+    // Built off the thread the reload runs on: an upstream with static
+    // addresses resolves their names when it is built, with a blocking
+    // call.
+    let configs = upstream_configs.clone();
+    let built = tokio::task::spawn_blocking(move || {
+        new_ahash_upstreams(&configs, UPSTREAM_PROVIDER.clone(), sender)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|built| built);
+    let (mut upstreams, updated_upstreams) =
+        built.map_err(|message| Error::Invalid { message })?;
+    // run health check before switch to new upstream, all of them at
+    // once: one after the other, every upstream that changed added its
+    // own wait - up to the connect timeout of a backend that is down - to
+    // the time the whole reload took to come into effect.
+    let mut checks = tokio::task::JoinSet::new();
+    // Which upstream a check that did not finish was of.
+    let mut checking = HashMap::new();
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
         if !updated_upstreams.contains(name) {
             continue;
         }
-        // run health check before switch to new upstream
-        if let Err(e) = up.run_health_check().await {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                upstream = name,
-                "update upstream health check fail"
-            );
+        let (name, up) = (name.clone(), up.clone());
+        let upstream = name.clone();
+        let check = checks.spawn(async move {
+            let result = up.run_health_check().await;
+            (name, result.map_err(|e| e.to_string()))
+        });
+        checking.insert(check.id(), upstream);
+    }
+    while let Some(checked) = checks.join_next().await {
+        match checked {
+            Ok((_, Ok(()))) => {},
+            Ok((name, Err(error))) => {
+                error!(
+                    target: LOG_TARGET,
+                    error,
+                    upstream = name,
+                    "update upstream health check fail"
+                );
+            },
+            // A check that panicked: the upstream goes into service as it
+            // is, which is what a check that failed leaves as well.
+            Err(error) => {
+                error!(
+                    target: LOG_TARGET,
+                    error = %error,
+                    upstream = checking.get(&error.id()),
+                    "update upstream health check did not finish"
+                );
+            },
         }
     }
     for (name, upstream) in UPSTREAM_PROVIDER.list() {

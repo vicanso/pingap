@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use super::LOG_TARGET;
-use super::file_appender::{LogFiles, new_rolling_file_writer};
+use super::file_appender::{
+    ACCESS_LOG_PARAMS, LogFiles, new_rolling_file_writer,
+    unknown_file_log_params,
+};
 #[cfg(unix)]
 use super::syslog::{SyslogSender, new_syslog_sender};
 use super::target::{LogTarget, parse_log_target};
@@ -27,7 +30,7 @@ use std::io::{self, BufWriter, Write};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_appender::rolling::RollingFileAppender;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -40,6 +43,8 @@ enum AccessLogSink {
     /// Unbuffered: each line is its own message.
     #[cfg(unix)]
     Syslog(SyslogSender),
+    /// The application log: each line is an event of it.
+    Application,
 }
 
 /// Line then newline, straight into the `BufWriter`: no growing the line
@@ -61,6 +66,16 @@ impl AccessLogSink {
             Self::Stderr(writer) => write_buffered(writer, line),
             #[cfg(unix)]
             Self::Syslog(sender) => sender.send(line),
+            Self::Application => {
+                // Under the target the proxy itself logged these with, so
+                // a filter written for it goes on applying.
+                info!(
+                    target: "pingap::proxy",
+                    "{}",
+                    String::from_utf8_lossy(line)
+                );
+                Ok(())
+            },
         }
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -70,6 +85,7 @@ impl AccessLogSink {
             Self::Stderr(writer) => writer.flush(),
             #[cfg(unix)]
             Self::Syslog(_) => Ok(()),
+            Self::Application => Ok(()),
         }
     }
     /// Standard streams are read as they are written (`docker logs`, a
@@ -77,6 +93,12 @@ impl AccessLogSink {
     /// the timer; under load a batch is still one write.
     fn flushes_every_batch(&self) -> bool {
         matches!(self, Self::Stdout(_) | Self::Stderr(_))
+    }
+    /// Whether whoever sends the lines can write them without this task.
+    /// A line of the application log is an event anyone can emit; the
+    /// other destinations are held by the task alone.
+    fn senders_can_write(&self) -> bool {
+        matches!(self, Self::Application)
     }
 }
 
@@ -128,6 +150,14 @@ fn new_sink(target: &str) -> Result<(AccessLogSink, Option<LogFiles>)> {
         LogTarget::File(_) => {
             let rolling_file_writer = new_rolling_file_writer(target)
                 .map_err(|e| invalid(e.to_string()))?;
+            for param in unknown_file_log_params(target, ACCESS_LOG_PARAMS) {
+                warn!(
+                    target: LOG_TARGET,
+                    param,
+                    log = target,
+                    "this parameter of the log is not known and has no effect"
+                );
+            }
             Ok((
                 AccessLogSink::File(BufWriter::new(rolling_file_writer.writer)),
                 Some(rolling_file_writer.files),
@@ -164,6 +194,37 @@ pub async fn new_async_logger(
     };
 
     Ok((tx, task))
+}
+
+/// How many lines wait for the application log before the request path
+/// writes its own again: more than the others keep, since each of these is
+/// a write of its own to whatever the application log goes to.
+const APPLICATION_CHANNEL_BUFFER: usize = 8192;
+
+/// The access log task for an access log that names no destination: its
+/// lines are events of the application log.
+///
+/// They used to be written where the request ended, on a worker thread:
+/// a lock shared by every thread that logs, and with the log on stderr a
+/// write to it, for each request. Four threads logging that way spent 17
+/// microseconds a line waiting on each other; handing the line to this
+/// task takes half of one.
+///
+/// A sender whose `try_send` fails is expected to write the line itself:
+/// that is the case when the task is behind by the whole buffer, and from
+/// the shutdown signal on, when the task takes no more lines.
+pub fn new_application_logger() -> (Sender<BytesMut>, AsyncLoggerTask) {
+    let (tx, rx) = channel::<BytesMut>(APPLICATION_CHANNEL_BUFFER);
+    let task = AsyncLoggerTask {
+        files: None,
+        channel_buffer: APPLICATION_CHANNEL_BUFFER,
+        path: "application log".to_string(),
+        receiver: Mutex::new(Some(rx)),
+        sink: Mutex::new(Some(AccessLogSink::Application)),
+        // Nothing of its own to flush.
+        flush_timeout: Duration::from_secs(3600),
+    };
+    (tx, task)
 }
 
 #[async_trait]
@@ -219,6 +280,14 @@ impl BackgroundService for AsyncLoggerTask {
                 _ = shutdown.changed(), if !shutting_down => {
                     shutting_down = true;
                     flush(&mut sink);
+                    // What is still waiting when the runtimes are torn down
+                    // is lost. Where the senders can write the lines
+                    // themselves, take no more of them: a send fails from
+                    // here on, and the loop ends once it has written out
+                    // what it holds.
+                    if sink.senders_can_write() {
+                        receiver.close();
+                    }
                 }
                 msg = receiver.recv() => {
                     let Some(msg) = msg else {
@@ -396,5 +465,81 @@ mod tests {
         .expect("error")
         .to_string();
         assert_eq!(true, err.contains("access log params"), "{err}");
+    }
+
+    /// An access log without a destination is written by the task, as
+    /// events of the application log under the proxy's target, until the
+    /// process is told to stop.
+    #[tokio::test]
+    async fn test_application_logger_writes_events() {
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone, Default)]
+        struct Captured(Arc<StdMutex<Vec<u8>>>);
+        impl io::Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for Captured {
+            type Writer = Captured;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let (tx, task) = new_application_logger();
+        assert_eq!(true, task.get_log_files().is_none());
+        tx.send(BytesMut::from("GET /a 200")).await.unwrap();
+        tx.send(BytesMut::from("GET /b 404")).await.unwrap();
+        // With every sender gone the task writes what is left and ends.
+        drop(tx);
+        let (_stop, shutdown) = tokio::sync::watch::channel(false);
+        task.start(shutdown).await;
+
+        let output =
+            String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        let lines: Vec<_> = output
+            .lines()
+            .filter(|line| line.contains("pingap::proxy"))
+            .collect();
+        assert_eq!(2, lines.len(), "{output}");
+        assert_eq!(true, lines[0].ends_with("GET /a 200"), "{output}");
+        assert_eq!(true, lines[1].ends_with("GET /b 404"), "{output}");
+        assert_eq!(true, lines[0].contains("INFO"), "{output}");
+
+        // Lines waiting for the task when the runtimes are torn down are
+        // lost. From the shutdown signal on it takes no more: it writes
+        // what it holds and ends, though the sender is still there (as the
+        // proxy's is), and the sender is told to write the line itself.
+        // In this test and not one of its own: two threads meeting the
+        // event for the first time can leave it disabled for both.
+        let (tx, task) = new_application_logger();
+        tx.send(BytesMut::from("GET /c 200")).await.unwrap();
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        stop.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task.start(shutdown))
+            .await
+            .expect("the task should end after the shutdown signal");
+        let refused = tx.try_send(BytesMut::from("GET /d 200"));
+        assert_eq!(
+            "GET /d 200",
+            String::from_utf8_lossy(&refused.unwrap_err().into_inner())
+        );
+        let output =
+            String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(true, output.contains("GET /c 200"), "{output}");
+        assert_eq!(false, output.contains("GET /d 200"), "{output}");
     }
 }

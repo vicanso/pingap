@@ -560,6 +560,18 @@ impl Validate for UpstreamConf {
 
         self.validate_backend_stats_interval()?;
 
+        // A share of the requests: one above a hundred is never reached,
+        // and the rule it was to set never applied.
+        if self
+            .circuit_break_max_failure_percent
+            .is_some_and(|percent| percent > 100)
+        {
+            return Err(Error::Invalid {
+                message: "circuit break max failure percent should be 0 to 100"
+                    .to_string(),
+            });
+        }
+
         Ok(())
     }
 }
@@ -2683,6 +2695,24 @@ value = ''
         for interval in ["1ms", "10s"] {
             assert_eq!(true, conf(interval).validate().is_ok(), "{interval}");
         }
+
+        // A percentage is one.
+        let percent = |value: u16| {
+            toml::from_str::<UpstreamConf>(&format!(
+                "addrs = [\"127.0.0.1:8080\"]\ncircuit_break_max_failure_percent = {value}\n"
+            ))
+            .unwrap()
+            .validate()
+        };
+        assert_eq!(true, percent(100).is_ok());
+        assert_eq!(true, percent(0).is_ok());
+        assert_eq!(
+            true,
+            percent(101)
+                .expect_err("101")
+                .to_string()
+                .contains("0 to 100")
+        );
     }
 
     #[test]

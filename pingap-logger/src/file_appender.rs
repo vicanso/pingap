@@ -99,6 +99,38 @@ impl TryFrom<&str> for RollingFileWriterParams {
     }
 }
 
+/// The parameters the path of the application log takes.
+pub(crate) const APPLICATION_LOG_PARAMS: &[&str] = &["rolling"];
+/// The parameters the path of an access log takes: `rolling`, and the two
+/// its task reads.
+pub(crate) const ACCESS_LOG_PARAMS: &[&str] =
+    &["rolling", "channel_buffer", "flush_timeout"];
+
+/// The parameters of `log_path` that are not among `known`, the ones
+/// whoever opens the log reads.
+///
+/// They used to be listed in the README as if they were: `compression`,
+/// `level`, `days_ago` and `time_point_hour` on the path of a log have
+/// never had an effect, the compression of rotated files is set with
+/// `basic.log_compress_*`. A parameter that is not known is not an error,
+/// since configurations written by that README carry them; whoever opens
+/// the log says so in it.
+pub(crate) fn unknown_file_log_params(
+    log_path: &str,
+    known: &[&str],
+) -> Vec<String> {
+    let Some((_, query)) = log_path.split_once('?') else {
+        return vec![];
+    };
+    query
+        .split('&')
+        .filter_map(|pair| pair.split('=').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !known.contains(name))
+        .map(str::to_string)
+        .collect()
+}
+
 pub(crate) fn new_rolling_file_writer(
     log_path: &str,
 ) -> Result<RollingFileWriter> {
@@ -317,6 +349,31 @@ mod tests {
                 file: "".to_string(),
                 rolling: "monthly".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn test_unknown_file_log_params() {
+        use super::{
+            ACCESS_LOG_PARAMS, APPLICATION_LOG_PARAMS, unknown_file_log_params,
+        };
+        use pretty_assertions::assert_eq;
+        let access =
+            |path: &str| unknown_file_log_params(path, ACCESS_LOG_PARAMS);
+        let application =
+            |path: &str| unknown_file_log_params(path, APPLICATION_LOG_PARAMS);
+        assert_eq!(true, access("/var/log/a.log").is_empty());
+        let with_task_params =
+            "/var/log/a.log?rolling=hourly&flush_timeout=5s&channel_buffer=10";
+        assert_eq!(true, access(with_task_params).is_empty());
+        // The application log has no task that reads those two.
+        assert_eq!(
+            vec!["flush_timeout".to_string(), "channel_buffer".to_string()],
+            application(with_task_params)
+        );
+        assert_eq!(
+            vec!["compression".to_string(), "days_ago".to_string()],
+            access("/var/log/a.log?rolling=daily&compression=gzip&days_ago=7")
         );
     }
 }

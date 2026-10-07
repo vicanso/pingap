@@ -87,6 +87,9 @@ pub struct FileCache {
     touched: Box<[AtomicU64]>,
 }
 
+/// The share of `max_size` an eviction frees, as its divisor: a tenth.
+const EVICT_ROOM_DIVISOR: u64 = 10;
+
 /// How often, at most, the file of an object is marked as read.
 const TOUCH_INTERVAL: u32 = 60;
 /// How soon an object may take a slot of the table below from another.
@@ -455,10 +458,17 @@ impl FileCache {
         self.current_size
             .store(files.iter().map(|file| file.len).sum(), Ordering::Relaxed);
         files.sort_by_key(|file| file.accessed);
+        // Room for this object, and when that is less, for a tenth of the
+        // budget. With no more freed than the one object needed the cache
+        // was full again after it, and every write from then on walked the
+        // whole directory to evict one file: forty milliseconds a write at
+        // twenty thousand files.
+        let room = need.max(self.max_size / EVICT_ROOM_DIVISOR);
+        let keep = self.max_size.saturating_sub(room);
         let mut evicted = 0u64;
         let mut count = 0u32;
         for file in files {
-            if !over(need) {
+            if self.current_size.load(Ordering::Relaxed) <= keep {
                 break;
             }
             match fs::remove_file(&file.path).await {
@@ -1648,6 +1658,59 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(true, marked(), "the neighbour was not marked as read");
+    }
+
+    /// Regression: an eviction freed what the one object needed and no
+    /// more, so the cache was full again after it and every write that
+    /// followed walked the whole directory to evict one file.
+    #[tokio::test]
+    async fn test_eviction_frees_room_for_the_writes_to_come() {
+        let dir = tempdir().unwrap();
+        let each = 1024 + 2 + 8;
+        let cache = FileCache::new(&format!(
+            "{}?max_size={}",
+            dir.path().to_str().unwrap(),
+            100 * each
+        ))
+        .unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from(vec![7u8; 1024]),
+        };
+        let name = |index: u32| format!("{index:032x}");
+        let count = || {
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .count()
+        };
+        // Full to the byte, the lower the index the longer ago it was read.
+        for index in 0..100 {
+            cache.put(&name(index), b"", obj.clone()).await.unwrap();
+            filetime::set_file_atime(
+                cache.get_file_path(&name(index), ""),
+                filetime::FileTime::from_system_time(
+                    SystemTime::now()
+                        - Duration::from_secs(3600 - index as u64),
+                ),
+            )
+            .unwrap();
+        }
+        assert_eq!(100, count());
+
+        // One more: a tenth of the budget goes, the ten read longest ago.
+        cache.put(&name(100), b"", obj.clone()).await.unwrap();
+        assert_eq!(91, count());
+        assert_eq!(false, cache.get_file_path(&name(9), "").exists());
+        assert_eq!(true, cache.get_file_path(&name(10), "").exists());
+
+        // Which is room for the next nine without another eviction.
+        for index in 101..110 {
+            cache.put(&name(index), b"", obj.clone()).await.unwrap();
+        }
+        assert_eq!(100, count());
+        assert_eq!(true, cache.get_file_path(&name(10), "").exists());
+        assert_eq!(100 * each, cache.current_size.load(Ordering::Relaxed));
     }
 
     #[test]

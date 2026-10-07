@@ -40,7 +40,7 @@ use pingap_logger::{logger_try_init, LoggerParams};
 
 fn main() {
     let params = LoggerParams {
-        log: "/tmp/pingap-test.log?rolling=daily&compression=gzip".to_string(),
+        log: "/tmp/pingap-test.log?rolling=daily".to_string(),
         level: "info".to_string(),
         capacity: 4096,
         json: true,
@@ -193,6 +193,20 @@ a space:
 | `stdout json` | Standard output; `stderr` for standard error |
 | `syslog://10.0.0.5?protocol=tcp combined` | A syslog server, one message per line |
 
+Whatever the destination, the line is handed to a task that writes it; the
+thread a request ends on does not write. That holds for an access log in the
+application log as well: its lines used to be written where the request ended,
+a lock shared by every thread and, with the log on stderr, a write for each
+request. Lines for a file, a standard stream or syslog are dropped, and
+counted, when the task falls behind by more than `channel_buffer`. Lines for
+the application log are then written by the request itself instead of being
+dropped: such a line carries the time it was written and may come before lines
+of earlier requests that are still waiting. From the moment the process is
+told to stop gracefully (SIGTERM, a restart), requests write their lines
+themselves again and the task writes out what it still holds. A fast stop
+(SIGINT) ends the task where it is: lines it had not written yet are lost, as
+they are for the other destinations.
+
 The predefined formats are:
 
 ```text
@@ -211,7 +225,7 @@ json      {"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host}
 A destination is one of:
 
 - **A file**, which takes the parameters of file logging described below,
-  such as `rolling` and `compression`:
+  such as `rolling`:
   `/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`.
 - **`stdout` or `stderr`**, for containers that collect the standard streams.
   `/dev/stdout` and `/dev/stderr` mean the same; as file paths they would get
@@ -296,12 +310,16 @@ per-line cost is the fields themselves.
 
 The logger is configured via a URI-like string in the `log` field of `LoggerParams`.
 
-- **File Logging:** `"/path/to/file.log?rolling=daily&compression=gzip"`
+- **File Logging:** `"/path/to/file.log?rolling=daily"`
   - `rolling`: `daily` (default), `hourly`, `minutely`, `never`; any other value is rejected. Rotation boundaries and the file name suffix (`file.log.YYYY-MM-DD[-HH[-MM]]`) use **UTC**, not the machine's local time zone: on a UTC+8 host a daily file switches at 08:00 local time and an entry written at 18:00 local lands in the `-10` hourly file. This comes from `tracing-appender`, which has no time zone option; the timestamps inside the log lines are local time.
-  - `compression`: `gzip` or `zstd`.
-  - `level`: Compression level.
-  - `days_ago`: Compress a rotated file once it has not been **modified** for this many days (default 7); the original is removed afterwards. The archive is the file's whole name with the extension added, `file.log.2026-10-05.zst` (or `.gz`). Only the files this log rotated itself are touched, the ones named `file.log.YYYY-MM-DD[-HH[-MM]]` in the log's own directory: other files there, subdirectories and a log with `rolling=never` are left alone.
-  - `time_point_hour`: The hour of the day to run the compression job. The job runs on the blocking thread pool, so compressing a large file does not hold up the other background tasks.
+  - An access log also takes `channel_buffer` (lines held for the writer, default 1000) and `flush_timeout` (default `10s`). The application log does not: there they are reported like any other unknown parameter.
+  - These are all the parameters of the path. One that is not among them is reported with a warning when the log is opened and has no effect; this README used to list the settings of the compression here as if they were parameters.
+
+  Rotated files are compressed by the task from `new_log_compress_service()`, which is set up with `LogCompressParams` and not through the path. In pingap that is `basic.log_compress_algorithm`, `basic.log_compress_level`, `basic.log_compress_days_ago` and `basic.log_compress_time_point_hour`:
+  - algorithm: `gzip` or `zstd`.
+  - level: compression level.
+  - days ago: compress a rotated file once it has not been **modified** for this many days (default 7); the original is removed afterwards. The archive is the file's whole name with the extension added, `file.log.2026-10-05.zst` (or `.gz`). Only the files this log rotated itself are touched, the ones named `file.log.YYYY-MM-DD[-HH[-MM]]` in the log's own directory: other files there, subdirectories and a log with `rolling=never` are left alone.
+  - time point hour: the hour of the day to run the compression job. The job runs on the blocking thread pool, so compressing a large file does not hold up the other background tasks.
   - `capacity` (`LoggerParams`, `basic.log_buffered_size` in pingap): with 4096 bytes or more the file is written through a buffer of that size. A buffered log is flushed by the task from `new_log_flush_service()` (once a minute in pingap) and by `flush_application_log()`, which pingap calls right before it exits; without those a quiet server's last lines would sit in the buffer, and the lines before an exit would be lost.
 
   Parameters that do not parse (`rolling=monthly`, `flush_timeout=soon` on the access log, an unknown syslog `facility`) are errors at startup rather than silently the defaults.

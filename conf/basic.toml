@@ -130,3 +130,32 @@
 # The cache is set up per `cache` plugin, with its `directory` option: a
 # path for a file cache, `memory://?max_size=100mb` for the memory cache.
 # There is no cache setting here.
+
+# The addresses of the proxies in front of pingap, as IPs or CIDRs.
+# When set, `X-Forwarded-For` and `X-Real-IP` are only taken from a
+# connection that comes from one of them. The plugins that decide by the
+# client's address (`ip_restriction`, `limit` by ip, the admin's lock) go by
+# the address of the connection unless it is one of these.
+# Default `none`
+# trusted_proxies = ["10.0.0.0/8", "192.168.1.10"]
+
+# How many tasks accept connections on each listening socket.
+# Default `1`
+# listener_tasks_per_fd = 1
+
+# Compress the rotated files of the logs that go to a file: "gzip" or "zstd".
+# Default `none` (not compressed)
+# log_compress_algorithm = "zstd"
+
+# The compression level, up to 9 for gzip and 22 for zstd.
+# Default `9`
+# log_compress_level = 9
+
+# Compress a rotated file once it has not been modified for this many days;
+# the original is removed afterwards.
+# Default `7`
+# log_compress_days_ago = 7
+
+# The hour of the day, 0 to 23, at which the compression runs.
+# Default `0`
+# log_compress_time_point_hour = 0

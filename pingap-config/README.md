@@ -306,21 +306,18 @@ plugin "blockList" {
 A plugin setting that takes a list of strings also accepts a single string in
 its place, so `ip_list "1.2.3.4"` works as well.
 
-HCL supports `$ENV:NAME` interpolation, so secrets can come from the
-environment instead of the file:
-
-```hcl
-upstream "api" {
-  addrs     = ["$ENV:PINGAP_API_ADDR"]
-  discovery = "dns"
-}
-```
+`$ENV:NAME` is not a general interpolation: it is read in one place, the
+`dns_service_url` of a certificate, in whatever format the configuration is
+written (see [pingap-acme](../pingap-acme/README.md)). Anywhere else it is
+taken as the text it is, so an address written `"$ENV:PINGAP_API_ADDR"` is an
+address that does not parse. A header value may name an environment variable
+as `$NAME` (see `proxy_set_headers`).
 
 Conversion and migration on the command line:
 
 ```bash
-pingap -c /opt/pingap/conf --to-hcl ./conf.hcl        # dump as HCL
-pingap -c /opt/pingap/conf --to-kdl ./conf.kdl        # dump as KDL
+pingap -c /opt/pingap/conf --to-hcl > conf.hcl        # dump as HCL
+pingap -c /opt/pingap/conf --to-kdl > conf.kdl        # dump as KDL
 pingap -c /opt/pingap/conf --sync etcd://127.0.0.1:2379/pingap   # file -> etcd
 pingap --template > pingap.toml                       # starter config
 pingap -c /opt/pingap/conf -t                         # validate and exit

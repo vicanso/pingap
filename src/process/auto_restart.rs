@@ -321,9 +321,17 @@ async fn apply_config(
     new_config: &PingapConfig,
     hot_reload_only: bool,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    new_config.validate()?;
-    validate_servers_tls_for_backend(&new_config.servers)?;
-    plugin::validate_plugin_references(new_config)?;
+    // Off this thread: validating an upstream resolves the names among
+    // its static addresses, with a blocking call.
+    let checked = new_config.clone();
+    tokio::task::spawn_blocking(move || {
+        checked.validate().map_err(|e| e.to_string())?;
+        validate_servers_tls_for_backend(&checked.servers)
+            .map_err(|e| e.to_string())?;
+        plugin::validate_plugin_references(&checked).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let current_config: PingapConfig =
         config_manager.get_current_config().as_ref().clone();
 

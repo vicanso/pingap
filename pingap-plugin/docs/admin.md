@@ -143,6 +143,12 @@ A request body is read up to 8 MiB; a larger one is answered `413`.
 | `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
 | `POST` | `/restart` | Trigger a graceful restart |
 
+`/basic` describes the process: its `user`, `group` and `config_hash` are
+those of the configuration it is running, not of what is stored, and the UI,
+which asks for it every few seconds, reads nothing from the storage. A control
+panel node runs no configuration: there `user` and `group` are read from the
+storage on each request, and `config_hash` is that of an empty configuration.
+
 `{category}` is one of `basic`, `server`, `location`, `upstream`, `plugin`,
 `certificate`, `storage`. A `POST` to any other category is answered `400`
 (`pingap`, the name the UI posts the basic config under, is accepted as

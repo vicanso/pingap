@@ -94,6 +94,8 @@ admin 前缀下的路径分两类。`/api` 及其下的路径是接口，一律�
 | `POST` | `/aes` | UI 用于密钥的 AES 加解密辅助 |
 | `POST` | `/restart` | 触发优雅重启 |
 
+`/basic` 描述的是进程本身：其中的 `user`、`group`、`config_hash` 取自运行中的配置，而不是存储里的；UI 每隔几秒请求一次，所以它不读存储。控制面板节点不运行配置：那里的 `user`、`group` 每次请求时从存储读取，`config_hash` 是空配置的哈希。
+
 `{category}` 为 `basic`、`server`、`location`、`upstream`、`plugin`、`certificate`、`storage` 之一。向其他分类 `POST` 返回 `400`（UI 保存 basic 配置时用的名字 `pingap` 等同于 `basic`）。
 
 ### 写入时的校验

@@ -267,6 +267,26 @@ pub(crate) fn list_config_files(
         .collect())
 }
 
+/// Whether `dir` holds a config file with the extension `ext`: what
+/// [`list_config_files`] would say of "is there any", without listing them
+/// all. Every write asks this, and with a file per entry an import of a
+/// few hundred entries listed, and resolved, every file written so far
+/// before each of them.
+pub(crate) fn has_config_file(dir: &str, ext: &str) -> Result<bool> {
+    let pattern = format!("{dir}/**/*.{ext}");
+    let root = std::path::Path::new(dir);
+    for file in glob(&pattern).map_err(|e| Error::Pattern {
+        source: e,
+        path: dir.to_string(),
+    })? {
+        let file = file.map_err(|e| Error::Glob { source: e })?;
+        if !is_under_hidden_dir(root, &file) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Adds the tables of one file to the document the directory makes up.
 ///
 /// A category may be spread over files - `[upstreams.a]` here,

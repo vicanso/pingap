@@ -1106,7 +1106,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for server_conf in server_conf_list {
         let listen_80_port = server_conf.addr.ends_with(":80");
-        let (_, log_path) =
+        let (log_format, log_path) =
             parse_access_log_directive(server_conf.access_log.as_ref());
 
         let access_logger = if let Some(log_path) = log_path {
@@ -1115,6 +1115,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             if let Some(files) = task.get_log_files() {
                 application_log_paths.push(files);
             }
+            my_server.add_service(background_service("access_logger", task));
+            Some(tx)
+        } else if log_format.is_some() {
+            // No destination: the lines go to the application log, and
+            // through a task as well, so that the thread a request ends
+            // on does not write them there itself.
+            let (tx, task) = pingap_logger::new_application_logger();
             my_server.add_service(background_service("access_logger", task));
             Some(tx)
         } else {

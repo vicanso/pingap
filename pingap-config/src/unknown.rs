@@ -252,6 +252,47 @@ else = 1
         // spellchecker:on
     }
 
+    /// Every key pingap reads is in the sample of its section, as a
+    /// setting or as a comment: a field that is added without its line
+    /// there fails here. The samples are where people look for what can be
+    /// set, and thirty-odd keys were not in them.
+    #[test]
+    fn test_sample_configs_document_every_key() {
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../conf");
+        let documented = |name: &str| -> std::collections::HashSet<String> {
+            std::fs::read_to_string(dir.join(name))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| {
+                    let rest = line.strip_prefix("# ").unwrap_or(line);
+                    let (key, _) = rest.split_once(" = ")?;
+                    Some(key.trim().to_string())
+                })
+                .collect()
+        };
+        let mut missing = vec![];
+        let mut check = |name: &str, known: Vec<String>| {
+            let documented = documented(name);
+            // No sample at hand (a packaged crate): nothing to hold it to.
+            if documented.is_empty() {
+                return;
+            }
+            for key in known {
+                if !documented.contains(&key) {
+                    missing.push(format!("{name}: {key}"));
+                }
+            }
+        };
+        check("basic.toml", known_keys::<BasicConf>());
+        check("servers.toml", known_keys::<ServerConf>());
+        check("locations.toml", known_keys::<LocationConf>());
+        check("upstreams.toml", known_keys::<UpstreamConf>());
+        check("certificates.toml", known_keys::<CertificateConf>());
+        missing.sort();
+        assert_eq!(true, missing.is_empty(), "{missing:#?}");
+    }
+
     /// Every key the samples document is one pingap knows: a field that
     /// stops being listed (it is skipped when it serializes, say) would
     /// show here as unknown.

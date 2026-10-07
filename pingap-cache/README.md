@@ -91,7 +91,11 @@ error from `new_cache_backend`, not silently the default.
 
 Staying under `max_size` costs one directory walk per write that finds the
 budget exceeded (on the blocking pool, so no worker thread stalls), after which
-files are deleted in access order until the new object fits. Writes that arrive
+files are deleted in access order until a tenth of the budget is free (or the
+new object fits, when it needs more than that). Freeing only what the one
+object needed left the cache full again, and every write after it walked the
+whole directory: with twenty thousand files, a hundred writes took over four
+seconds instead of a sixth of one. Writes that arrive
 while that eviction runs go ahead without waiting. An object larger than the
 whole budget is not written at all; evicting everything for it would only empty
 the cache. The usage figure is a running estimate; that walk sets it back to

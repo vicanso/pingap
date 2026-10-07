@@ -17,12 +17,12 @@ Selected with `discovery` in `UpstreamConf`:
 
 | Value | Behaviour |
 | --- | --- |
-| `static` *(default)* | Resolve `addrs` once at startup and keep the result |
-| `dns` | Re-resolve `addrs` periodically, so DNS changes take effect |
+| `static` | Resolve `addrs` once at startup and keep the result. The default when every address is an IP address |
+| `dns` | Re-resolve `addrs` periodically, so DNS changes take effect. The default when an address is a host name |
 | `docker` | Look up containers by label through the Docker API |
 | `transparent` | No discovery — forward to the address from the request itself |
 
-`update_frequency` controls how often `dns` and `docker` refresh. The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s. It has to be greater than zero for these two: `0s` used to mean "look up once and never again" and is now a configuration error.
+`update_frequency` controls how often `dns` and `docker` refresh (default `1m`). The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s. It has to be greater than zero for these two: `0s` used to mean "look up once and never again" and is now a configuration error.
 
 `discovery` is one of the four values above, in any case (`DNS` is `dns`). Anything else is a configuration error; it used to be accepted and treated as `static`, so a typo such as `dsn` resolved its hosts once at startup.
 
@@ -37,8 +37,9 @@ An address may carry a trailing weight (`host:port weight`), which the load
 balancer honours; an IPv6 literal with a port is written `[::1]:8080`. The
 port and the weight are checked when the configuration is loaded, so a port
 that does not parse or a weight of `0` (a backend that would never be
-selected) is rejected rather than silently dropped. Hostnames are resolved
-once, at startup: use `dns` if the address behind the name changes.
+selected) is rejected rather than silently dropped. With `discovery = "static"`
+set, host names are resolved once, at startup; without it an upstream with a
+host name among its addresses is a `dns` one, and follows the name.
 
 ### DNS
 
@@ -86,7 +87,8 @@ update_frequency = "10s"
 Each entry is `label[:port] [weight]`. Containers are matched by Docker label
 and their published address becomes a backend, so `docker compose up --scale
 api=5` is picked up on the next refresh. The Docker daemon is reached through
-`DOCKER_HOST`, falling back to the default socket. A background watcher
+its unix socket: the one `DOCKER_HOST` names when that is a `unix://` path,
+else the default one. A `tcp://` `DOCKER_HOST` is not used. A background watcher
 follows container events and refreshes the list as they happen; it re-lists
 the containers after every reconnect to the daemon, and stops when a reload
 replaces the upstream. A daemon that cannot be reached is reported once, when

@@ -77,3 +77,26 @@ upstream = "charts"
 # - X-Forwarded-Port: $server_port
 # Default `false`
 # enable_reverse_proxy_headers = true
+
+# Further conditions on the request, each "name:value" for an exact value or
+# "name" for presence. The location matches when host and path match and
+# every condition listed holds.
+# Default `none`
+# match_headers = ["X-Canary:1"]
+# match_query = ["version:2"]
+# match_cookies = ["beta"]
+
+# How many times a request is sent again when the upstream could not be
+# reached. Default `none` (pingap adds no retry of its own)
+# max_retries = 2
+
+# A request is only sent again within this time of its arrival.
+# Default `none`
+# max_retry_window = "5s"
+
+# Names of storage entries whose settings are put into this location.
+# Default `none`
+# includes = ["commonLocation"]
+
+# Description of this location
+# remark = ""

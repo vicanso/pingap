@@ -16,9 +16,7 @@ use crate::Error;
 use crate::hcl::{convert_hcl_to_toml, convert_toml_to_hcl};
 use crate::kdl::{convert_kdl_to_toml, convert_toml_to_kdl};
 use crate::storage::{History, Storage};
-use crate::{
-    list_config_files, permission_error_message, read_all_config_files,
-};
+use crate::{has_config_file, permission_error_message, read_all_config_files};
 use async_trait::async_trait;
 use glob::glob;
 use pingap_core::now_sec;
@@ -372,11 +370,11 @@ impl FileStorage {
             return Ok(());
         }
         let dir = self.path.to_string_lossy();
-        if !list_config_files(&dir, "toml")?.is_empty() {
+        if has_config_file(&dir, "toml")? {
             return Ok(());
         }
         for ext in ["hcl", "kdl"] {
-            if !list_config_files(&dir, ext)?.is_empty() {
+            if has_config_file(&dir, ext)? {
                 return Err(Error::Invalid {
                     message: format!(
                         "{dir} holds {ext} files, which are read but not written; change the files themselves, or keep the config in toml to change it through pingap"
@@ -1015,5 +1013,27 @@ addrs = ["127.0.0.1:5000"]
         storage.delete("pingap.toml").await.unwrap();
         let data = storage.fetch("pingap.toml").await.unwrap();
         assert_eq!("", data);
+    }
+
+    /// A write asks whether the directory has any toml file. It listed and
+    /// resolved all of them to answer that, before every single write.
+    #[test]
+    fn test_has_config_file() {
+        use crate::has_config_file;
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        assert_eq!(false, has_config_file(&root, "toml").unwrap());
+
+        // What a mounted ConfigMap keeps under `..data` is not a file of
+        // the config, here as for the loader.
+        std::fs::create_dir(dir.path().join("..data")).unwrap();
+        std::fs::write(dir.path().join("..data").join("a.toml"), "").unwrap();
+        assert_eq!(false, has_config_file(&root, "toml").unwrap());
+
+        std::fs::create_dir(dir.path().join("upstreams")).unwrap();
+        std::fs::write(dir.path().join("upstreams").join("u1.toml"), "")
+            .unwrap();
+        assert_eq!(true, has_config_file(&root, "toml").unwrap());
+        assert_eq!(false, has_config_file(&root, "hcl").unwrap());
     }
 }

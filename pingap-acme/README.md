@@ -66,8 +66,11 @@ as aliases because earlier documentation used those spellings. Anything else is
 rejected by `pingap -t` rather than quietly falling back to the manual task and
 waiting for a TXT record nobody is going to add.
 
-Any value in `dns_service_url` may be written as `$ENV:NAME` and is read from the
-environment, so credentials stay out of the configuration file.
+The value of any query parameter of `dns_service_url`, or the whole of it, may
+be written as `$ENV:NAME` and is read from the environment, so credentials stay
+out of the configuration file. A variable that is not set leaves the text as it
+is. (Only the whole value was read this way before: `?token=$ENV:CF_TOKEN`,
+the form shown above, reached the provider as that text.)
 
 The provider adds the `_acme-challenge` TXT record, waits for validation, and
 removes it afterwards. The zone is the registrable domain of the record name,
@@ -123,6 +126,19 @@ means:
 - With the **quick start**, the certificate is persisted to
   `~/.pingap/acme/<domains>.toml` (owner-readable only) and restored on the next
   start.
+
+The challenge path (`/.well-known/acme-challenge/<token>`) is answered ahead of
+every plugin, to anyone. A token of an order this process made is answered
+from memory. Any other may belong to an order of another instance on the same
+storage, or of the process this one took over from in a restart, so it is
+looked for among the tokens in the storage. Those are read once for everyone
+who asks within a second, and requests that arrive during the read wait for
+it: a flood of made-up tokens costs one read a second and cannot keep a real
+one from being found. An order waits a second and a half between storing a
+token and telling the CA to validate it, so that no instance still answers
+from a read older than the token. Every request used to read the storage: the
+whole configuration file parsed again, or a request to etcd, for anyone who
+cared to ask.
 
 The HTTP-01 challenge token also round-trips through configuration storage, which
 is why ACME needs a writable backend. Tokens are stored with a `created_at`

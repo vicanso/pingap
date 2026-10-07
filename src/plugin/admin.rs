@@ -1029,7 +1029,26 @@ async fn handle_request_admin(
         }))
         .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/basic" {
-        let current_config = plugin.load_config(true).await?;
+        // What is running, where something is. The page asks every five
+        // seconds, and each time the storage was read, parsed and its
+        // includes expanded for two fields, and every entry of the running
+        // configuration written out for a hash of it. A control panel node
+        // runs nothing: there the two fields are the stored ones.
+        let (current_config, config_hash) =
+            match plugin.manager.current_config_hash() {
+                Some(hash) => {
+                    (plugin.manager.get_current_config(), hash.as_ref().clone())
+                },
+                None => {
+                    let stored = Arc::new(plugin.load_config(true).await?);
+                    let hash = plugin
+                        .manager
+                        .get_current_config()
+                        .hash()
+                        .unwrap_or_default();
+                    (stored, hash)
+                },
+            };
         let info = get_process_system_info();
 
         let (processing, accepted) = get_processing_accepted();
@@ -1038,11 +1057,7 @@ async fn handle_request_admin(
             start_time: get_start_time(),
             version: pingap_util::get_pkg_version().to_string(),
             rustc_version: pingap_util::get_rustc_version().to_string(),
-            config_hash: plugin
-                .manager
-                .get_current_config()
-                .hash()
-                .unwrap_or_default(),
+            config_hash,
             user: current_config.basic.user.clone().unwrap_or_default(),
             group: current_config.basic.group.clone().unwrap_or_default(),
             pid: info.pid.to_string(),

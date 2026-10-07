@@ -19,7 +19,7 @@ use crate::file_storage::{FileStorage, is_config_dir};
 use crate::memory_storage::MemoryStorage;
 use crate::storage::{History, Storage};
 use crate::{Category, Error, Observer};
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use pingap_util::resolve_path;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::collections::BTreeMap;
@@ -333,6 +333,9 @@ pub struct ConfigManager {
     storage: Arc<dyn Storage>,
     mode: ConfigMode,
     current_config: ArcSwap<PingapConfig>,
+    /// The hash of `current_config`, worked out when it is set; `None`
+    /// until a configuration has been.
+    current_hash: ArcSwapOption<String>,
     // Serializes read-modify-write config mutations (update/delete/save_all)
     // so concurrent admin/ACME writes to the same storage file cannot clobber
     // each other's changes.
@@ -345,6 +348,7 @@ impl ConfigManager {
             storage,
             mode,
             current_config: ArcSwap::from_pointee(PingapConfig::default()),
+            current_hash: ArcSwapOption::const_empty(),
             write_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -368,7 +372,16 @@ impl ConfigManager {
         // client-IP resolution (X-Forwarded-For handling) is applied on both
         // boot and every reload without a separate wiring point.
         pingap_core::set_trusted_proxies(&config.basic.trusted_proxies);
+        // Once here, not by whoever asks for it: the hash is every entry
+        // written out, and the admin's home page asks every five seconds.
+        let hash = config.hash().unwrap_or_default();
         self.current_config.store(Arc::new(config));
+        self.current_hash.store(Some(Arc::new(hash)));
+    }
+    /// The hash of the running configuration, `None` when none has been
+    /// set: a control panel node stores a configuration and runs none.
+    pub fn current_config_hash(&self) -> Option<Arc<String>> {
+        self.current_hash.load_full()
     }
 
     /// get storage key
@@ -677,6 +690,27 @@ impl ConfigManager {
 
         self.storage.save(&key, &value).await?;
         Ok(())
+    }
+    /// Every entry of `category` as the storage holds it.
+    ///
+    /// Where the layout keeps the categories apart only this one is read,
+    /// so what is wrong with an entry of another does not stand in the
+    /// way; with the whole configuration in one file it is that file.
+    pub async fn load_category(
+        &self,
+        category: Category,
+    ) -> Result<PingapTomlConfig> {
+        let name = format_category(&category);
+        let key = match self.mode {
+            ConfigMode::Single => SINGLE_KEY.to_string(),
+            ConfigMode::MultiByType => format!("{name}.toml"),
+            ConfigMode::MultiByItem if category == Category::Basic => {
+                format!("{name}.toml")
+            },
+            ConfigMode::MultiByItem => format!("{name}/"),
+        };
+        let data = self.storage.fetch(&key).await?;
+        PingapTomlConfig::from_toml(&data)
     }
     pub async fn get<T: DeserializeOwned + Send>(
         &self,
@@ -1111,6 +1145,25 @@ value = "/storage22"
             toml::to_string(&new_storage_config).unwrap(),
             toml::to_string(&value).unwrap()
         );
+        // The category on its own: every entry of it, and where the layout
+        // keeps the categories apart nothing of the others.
+        let stored = manager.load_category(Category::Storage).await.unwrap();
+        let mut names: Vec<_> = stored
+            .storages
+            .iter()
+            .flatten()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        assert_eq!(vec!["storage1", "storage2"], names);
+        assert_eq!(
+            Some(&new_storage_config),
+            stored.get(&Category::Storage, "storage2")
+        );
+        assert_eq!(mode == ConfigMode::Single, stored.upstreams.is_some());
+        let basic = manager.load_category(Category::Basic).await.unwrap();
+        assert_eq!(true, basic.basic.is_some());
+        assert_eq!(mode == ConfigMode::Single, basic.storages.is_some());
         // ----- storage config test end ----- //
 
         // ----- delete config test start ----- //
@@ -1455,6 +1508,32 @@ value = "/storage22"
         ))
         .unwrap();
         test_config_manger(manager, ConfigMode::MultiByItem).await;
+    }
+
+    /// The hash of the running configuration is worked out when it is
+    /// set, not each time somebody asks.
+    #[test]
+    fn test_current_config_hash() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager =
+            new_file_config_manager(&dir.path().to_string_lossy()).unwrap();
+        // Nothing runs yet, as on a control panel node.
+        assert_eq!(true, manager.current_config_hash().is_none());
+
+        let config = PingapTomlConfig::from_toml(
+            "[upstreams.u1]\naddrs = [\"127.0.0.1:7080\"]\n",
+        )
+        .unwrap()
+        .to_pingap_config(true)
+        .unwrap();
+        let expected = config.hash().unwrap();
+        manager.set_current_config(config);
+        assert_eq!(
+            Some(expected),
+            manager
+                .current_config_hash()
+                .map(|hash| hash.as_ref().clone())
+        );
     }
 
     #[tokio::test]

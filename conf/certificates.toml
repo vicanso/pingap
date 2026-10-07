@@ -20,3 +20,28 @@
 
 # Whether this is the default certificate for SNI. Default `false`
 # is_default = true
+
+# Whether this is a CA certificate: with its key, a certificate is issued for
+# each server name on demand. Default `false`
+# is_ca = false
+
+# For a certificate with `acme`: answer the DNS-01 challenge instead of
+# HTTP-01. Needed for wildcard domains. Default `false`
+# dns_challenge = true
+
+# The DNS provider the DNS-01 challenge is answered through:
+# "ali", "cf", "huawei", "tencent" or "manual"
+# dns_provider = "cf"
+
+# The endpoint and credentials of the DNS provider. The value of a query
+# parameter, or the whole of it, written `$ENV:NAME` is read from the
+# environment.
+# dns_service_url = "https://api.cloudflare.com?token=$ENV:CF_TOKEN"
+
+# With `acme`: renew the certificate this many days before it expires
+# (default `14`, or a third of what the certificate lasts when that is less).
+# Without: warn this many days before it expires (default `7`).
+# buffer_days = 14
+
+# Description of this certificate
+# remark = ""

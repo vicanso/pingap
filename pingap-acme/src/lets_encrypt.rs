@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AcmeDnsTask, Error, LOG_TARGET, Result, get_value_from_env};
+use super::{AcmeDnsTask, Error, LOG_TARGET, Result, dns_service_url_from_env};
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
@@ -49,11 +49,12 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 #[cfg(feature = "openssl")]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
@@ -534,8 +535,8 @@ impl BackgroundTask for LetsEncryptTask {
             if acme.is_empty() || domains.is_empty() {
                 continue;
             }
-            let dns_service_url = get_value_from_env(
-                &certificate.dns_service_url.clone().unwrap_or_default(),
+            let dns_service_url = dns_service_url_from_env(
+                certificate.dns_service_url.as_deref().unwrap_or_default(),
             );
 
             params.push(UpdateCertificateParams {
@@ -739,22 +740,27 @@ pub async fn handle_lets_encrypt(
             return Ok(true);
         }
 
-        let value =
-            load_http_01_token(&config_manager, token)
-                .await
-                .map_err(|e| {
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        token,
-                        "load http-01 token fail"
-                    );
-                    pingora::Error::because(
-                        pingora::ErrorType::HTTPStatus(500),
-                        e.to_string(),
-                        pingora::Error::new(pingora::ErrorType::InternalError),
-                    )
-                })?;
+        // A token of an order of this process is answered from memory.
+        // Any other may be one of another instance on the same storage,
+        // or of the process this one took over from: those are answered
+        // from what the storage held when it was last read.
+        let value = match own_token(token) {
+            Some(value) => Ok(Some(value)),
+            None => STORED_TOKENS.get(&config_manager, token).await,
+        };
+        let value = value.map_err(|e| {
+            error!(
+                target: LOG_TARGET,
+                error = e,
+                token,
+                "load http-01 token fail"
+            );
+            pingora::Error::because(
+                pingora::ErrorType::HTTPStatus(500),
+                e,
+                pingora::Error::new(pingora::ErrorType::InternalError),
+            )
+        })?;
         // The validation request normally comes from the CA; the address
         // tells scanner probes and misrouted requests apart from real ones.
         let remote_addr = pingap_core::get_remote_addr(session)
@@ -798,8 +804,131 @@ pub async fn handle_lets_encrypt(
     }
 }
 
-/// The key authorization stored for an http-01 `token`, `None` when there
-/// is no such token.
+/// The tokens of the orders this process has made, with their answers and
+/// when they were noted: the challenge of an order of its own is answered
+/// from here, whatever else is going on at the storage.
+static OWN_TOKENS: LazyLock<Mutex<HashMap<String, (String, u64)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn remember_own_token(token: &str, key_authorization: &str) {
+    let now = pingap_core::now_sec();
+    let mut tokens = OWN_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+    // An order is over within minutes, one way or the other.
+    tokens.retain(|_, (_, at)| now.saturating_sub(*at) < HTTP_01_TOKEN_MAX_AGE);
+    tokens.insert(token.to_string(), (key_authorization.to_string(), now));
+}
+
+fn own_token(token: &str) -> Option<String> {
+    let tokens = OWN_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+    tokens.get(token).map(|(value, _)| value.clone())
+}
+
+/// How long the tokens read from the storage are answered from.
+///
+/// The challenge path is open to everyone on port 80, ahead of every
+/// plugin, and each request to it read the storage: the whole
+/// configuration file parsed again, or a request to etcd. The storage is
+/// now read once for everyone who asks within this time, however many they
+/// are, so what a flood of made-up tokens costs is one read a second - and
+/// the token of another instance is still found among them, which a cap on
+/// the number of lookups could not promise.
+const STORED_TOKENS_TTL: Duration = Duration::from_secs(1);
+
+/// How long a read that failed stands for: the storage is not asked again
+/// by every request of a flood while it is down, and the requests of one
+/// validation, which come moments apart, are not all told of a failure
+/// that was over with the next read.
+const STORED_TOKENS_FAILURE_TTL: Duration = Duration::from_millis(100);
+
+/// How long an order waits between storing a token and telling the CA to
+/// come for it: longer than [`STORED_TOKENS_TTL`], so that whatever another
+/// instance read before the token was there is too old to answer from by
+/// the time the validation request arrives.
+const TOKEN_SETTLE_DELAY: Duration = Duration::from_millis(1500);
+
+/// The http-01 tokens the storage held when it was last read.
+struct StoredTokens {
+    state: tokio::sync::Mutex<StoredTokensState>,
+    ttl: Duration,
+    failure_ttl: Duration,
+}
+
+#[derive(Default)]
+struct StoredTokensState {
+    tokens: HashMap<String, String>,
+    /// When the last read of the storage began.
+    loaded_at: Option<Instant>,
+    /// What the last read failed with, when it did. `tokens` are then
+    /// those of the read before.
+    failure: Option<String>,
+}
+
+impl StoredTokensState {
+    /// Whether a request that arrived at `asked_at` is answered from what
+    /// is held: the read is no older than `ttl`, or began after the request
+    /// arrived - then it holds whatever the request may be after, however
+    /// long it took. A storage that takes seconds to answer is so read
+    /// once for all the requests that were waiting, not once for each.
+    fn answers(&self, asked_at: Instant, ttl: Duration) -> bool {
+        self.loaded_at
+            .is_some_and(|at| at >= asked_at || at.elapsed() < ttl)
+    }
+}
+
+static STORED_TOKENS: LazyLock<StoredTokens> = LazyLock::new(|| {
+    StoredTokens::new(STORED_TOKENS_TTL, STORED_TOKENS_FAILURE_TTL)
+});
+
+impl StoredTokens {
+    fn new(ttl: Duration, failure_ttl: Duration) -> Self {
+        Self {
+            state: Default::default(),
+            ttl,
+            failure_ttl,
+        }
+    }
+    /// The key authorization stored for an http-01 `token`, `None` when
+    /// there is no such token.
+    ///
+    /// The lock is held while the storage is read: the requests that arrive
+    /// meanwhile wait for that one read instead of starting their own.
+    async fn get(
+        &self,
+        config_manager: &ConfigManager,
+        token: &str,
+    ) -> Result<Option<String>, String> {
+        let asked_at = Instant::now();
+        let mut state = self.state.lock().await;
+        let ttl = if state.failure.is_some() {
+            self.failure_ttl
+        } else {
+            self.ttl
+        };
+        if !state.answers(asked_at, ttl) {
+            // When the read began is what counts, what it returns is no
+            // newer; and it is noted once the read is over, so that one
+            // that was given up half way leaves nothing behind.
+            let began = Instant::now();
+            match load_http_01_tokens(config_manager).await {
+                Ok(tokens) => {
+                    state.tokens = tokens;
+                    state.failure = None;
+                },
+                Err(e) => state.failure = Some(e.to_string()),
+            }
+            state.loaded_at = Some(began);
+        }
+        match (state.tokens.get(token), &state.failure) {
+            // After a failure too: what was read before may hold the token.
+            (Some(value), _) => Ok(Some(value.clone())),
+            (None, None) => Ok(None),
+            // Not "no such token": nobody knows.
+            (None, Some(failure)) => Err(failure.clone()),
+        }
+    }
+}
+
+/// The http-01 tokens in the storage, with their key authorizations.
 ///
 /// The request path only picks a name, and the storage holds more than
 /// tokens: the ACME account credentials, the includes, whatever was added
@@ -807,15 +936,24 @@ pub async fn handle_lets_encrypt(
 /// the remark every token carries. Without that check
 /// `/.well-known/acme-challenge/lets_encrypt_account` handed out the
 /// account key on port 80.
-async fn load_http_01_token(
+///
+/// Only the storage category is read, as a lookup of one token did: a
+/// server or a plugin that does not parse is no reason to fail a
+/// validation.
+async fn load_http_01_tokens(
     config_manager: &ConfigManager,
-    token: &str,
-) -> Result<Option<String>, pingap_config::Error> {
-    let value: Option<StorageConf> =
-        config_manager.get(Category::Storage, token).await?;
-    Ok(value
-        .filter(|conf| conf.remark.as_deref() == Some(HTTP_01_TOKEN_REMARK))
-        .map(|conf| conf.value))
+) -> Result<HashMap<String, String>, pingap_config::Error> {
+    let config = config_manager.load_category(Category::Storage).await?;
+    let mut tokens = HashMap::new();
+    for (name, value) in config.storages.iter().flatten() {
+        let Ok(conf) = value.clone().try_into::<StorageConf>() else {
+            continue;
+        };
+        if conf.remark.as_deref() == Some(HTTP_01_TOKEN_REMARK) {
+            tokens.insert(name.clone(), conf.value);
+        }
+    }
+    Ok(tokens)
 }
 
 /// The storage entry the ACME account credentials live in, one per CA
@@ -1232,6 +1370,7 @@ async fn new_lets_encrypt(
 
                 let identifier = challenge.identifier().to_string();
                 let key_auth = challenge.key_authorization();
+                remember_own_token(&challenge.token, key_auth.as_str());
                 config_manager
                     .update(
                         Category::Storage,
@@ -1261,6 +1400,9 @@ async fn new_lets_encrypt(
                     identifier,
                     "save let's encrypt http-01 challenge token",
                 );
+                // Another instance may be the one the CA reaches, and it
+                // answers from what it last read from the storage.
+                tokio::time::sleep(TOKEN_SETTLE_DELAY).await;
                 challenge
             };
             challenge.set_ready().await.map_err(|e| Error::Instant {
@@ -1699,6 +1841,136 @@ mod tests {
         );
     }
 
+    /// The challenge path asked the storage on every request. It is read
+    /// once for everyone who asks within a second, a token of another
+    /// instance is still found there, and a token of an order of this
+    /// process does not need the storage at all.
+    #[tokio::test]
+    async fn test_stored_tokens_are_read_once_for_everyone() {
+        use super::{
+            HTTP_01_TOKEN_REMARK, StoredTokens, StoredTokensState, own_token,
+            remember_own_token,
+        };
+        use pingap_config::{Category, StorageConf};
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        let store = async |name: &str| {
+            manager
+                .update(
+                    Category::Storage,
+                    name,
+                    &StorageConf {
+                        category: "config".to_string(),
+                        value: format!("{name}.thumbprint"),
+                        secret: None,
+                        remark: Some(HTTP_01_TOKEN_REMARK.to_string()),
+                        created_at: None,
+                    },
+                )
+                .await
+                .unwrap();
+        };
+        // What was read is too old to answer from. The test sets that
+        // itself, with lifetimes no run of it outlasts, instead of waiting.
+        let expire = async |tokens: &StoredTokens| {
+            tokens.state.lock().await.loaded_at = None;
+        };
+        let hour = Duration::from_secs(3600);
+        store("first").await;
+
+        let tokens = StoredTokens::new(hour, hour);
+        // A token of another instance, among any number of made-up ones.
+        for index in 0..1000 {
+            let name = format!("made-up-{index}");
+            assert_eq!(None, tokens.get(&manager, &name).await.unwrap());
+        }
+        assert_eq!(
+            Some("first.thumbprint".to_string()),
+            tokens.get(&manager, "first").await.unwrap()
+        );
+
+        // The storage was read for the first of them only: a token added
+        // since is not seen until that read is too old.
+        store("second").await;
+        assert_eq!(None, tokens.get(&manager, "second").await.unwrap());
+        expire(&tokens).await;
+        assert_eq!(
+            Some("second.thumbprint".to_string()),
+            tokens.get(&manager, "second").await.unwrap()
+        );
+
+        // An entry of another category that does not parse is not in the
+        // way: only the storage category is read.
+        let upstreams = dir.path().join("upstreams");
+        std::fs::create_dir_all(&upstreams).unwrap();
+        std::fs::write(upstreams.join("broken.toml"), "not toml [").unwrap();
+        store("third").await;
+        expire(&tokens).await;
+        assert_eq!(
+            Some("third.thumbprint".to_string()),
+            tokens.get(&manager, "third").await.unwrap()
+        );
+
+        // A storage that cannot be read: what was read before is still
+        // answered, and for anything else the answer is the failure, not
+        // "no such token" - for the requests that did not read as well.
+        let storages = dir.path().join("storages");
+        std::fs::write(storages.join("broken.toml"), "not toml [").unwrap();
+        expire(&tokens).await;
+        for _ in 0..3 {
+            let failure = tokens.get(&manager, "made-up").await.unwrap_err();
+            assert_eq!(true, failure.contains("broken.toml"), "{failure}");
+            assert_eq!(
+                Some("first.thumbprint".to_string()),
+                tokens.get(&manager, "first").await.unwrap()
+            );
+        }
+        // Readable again: the failure is over with the next read.
+        std::fs::remove_file(storages.join("broken.toml")).unwrap();
+        expire(&tokens).await;
+        assert_eq!(None, tokens.get(&manager, "made-up").await.unwrap());
+
+        // A read that failed stands for less long than one that did not.
+        let impatient = StoredTokens::new(hour, Duration::ZERO);
+        std::fs::write(storages.join("broken.toml"), "not toml [").unwrap();
+        assert_eq!(true, impatient.get(&manager, "first").await.is_err());
+        std::fs::remove_file(storages.join("broken.toml")).unwrap();
+        assert_eq!(
+            Some("first.thumbprint".to_string()),
+            impatient.get(&manager, "first").await.unwrap()
+        );
+
+        // A read that took longer than it is good for: the requests that
+        // were waiting for it are answered from it, a later one is not.
+        let now = Instant::now();
+        let second = Duration::from_secs(1);
+        if let (Some(before), Some(began)) =
+            (now.checked_sub(second * 3), now.checked_sub(second * 2))
+        {
+            let slow = StoredTokensState {
+                loaded_at: Some(began),
+                ..Default::default()
+            };
+            assert_eq!(true, slow.answers(before, second));
+            assert_eq!(false, slow.answers(now, second));
+            assert_eq!(true, slow.answers(now, hour));
+        }
+        assert_eq!(false, StoredTokensState::default().answers(now, hour));
+
+        assert_eq!(None, own_token("token-of-nobody"));
+        remember_own_token("token-of-this-process", "token.thumbprint");
+        assert_eq!(
+            Some("token.thumbprint".to_string()),
+            own_token("token-of-this-process")
+        );
+    }
+
     #[test]
     fn test_retry_delay() {
         assert_eq!(600, retry_delay(1));
@@ -1889,7 +2161,7 @@ mod tests {
     async fn test_load_http_01_token_only_serves_tokens() {
         use super::{
             ACCOUNT_REMARK, HTTP_01_TOKEN_REMARK, account_storage_name,
-            load_http_01_token,
+            load_http_01_tokens,
         };
         use pingap_config::{Category, StorageConf};
 
@@ -1921,14 +2193,9 @@ mod tests {
                 .unwrap();
         }
 
-        let load = async |name: &str| {
-            load_http_01_token(&manager, name).await.unwrap()
-        };
-        assert_eq!(Some("key-auth".to_string()), load("token").await);
-        assert_eq!(None, load(account_storage_name(true)).await);
-        assert_eq!(None, load("include").await);
-        assert_eq!(None, load("user-data").await);
-        assert_eq!(None, load("unknown").await);
+        let tokens = load_http_01_tokens(&manager).await.unwrap();
+        assert_eq!(Some("key-auth"), tokens.get("token").map(|v| v.as_str()));
+        assert_eq!(1, tokens.len(), "{tokens:?}");
     }
 
     #[test]

@@ -135,7 +135,20 @@ body.
 
 Each failure is logged once, by pingap, with the client address, method, host
 and path, the pingora error type and the status; pingora's own line for the
-same error is suppressed. The response headers for the statuses pingap raises
+same error is suppressed. A `5xx` is logged at `error`. A `4xx` - no location
+for the host, a body over the limit, a location at its `max_processing` - is
+the request's doing and is logged at `info` (`request refused`): at `error`
+it was a line per request of whoever was scanning or being throttled.
+
+The connection stays open after the error page of a request that was refused
+before it was sent anywhere - no location for the host, a plugin or a limit
+that failed it - when the request had been read in full, so a client that is
+refused does not come back with a new connection, and a new TLS handshake, for
+every request. With some of the request body still to come it is closed, as it
+is after a malformed request or a read timeout. It is closed as well after a
+failure on the way to the upstream (no healthy backend, connect or read
+errors, a timeout): pingora ends the connection there whatever the error page
+says, so the page says `Connection: close`. The response headers for the statuses pingap raises
 itself are built once and cloned.
 
 ## Server configuration

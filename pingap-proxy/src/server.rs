@@ -242,6 +242,9 @@ pub struct Server {
 
     // logger
     access_logger: Option<Sender<BytesMut>>,
+    /// The access log names no destination: its lines are events of the
+    /// application log, handed to a task that writes them there.
+    access_log_to_application: bool,
 }
 
 pub struct ServerServices {
@@ -422,7 +425,7 @@ impl Server {
     pub fn new(conf: &ServerConf, ctx: AppContext) -> Result<Self> {
         debug!(target: LOG_TARGET, config = conf.to_string(), "new server");
         let mut p = None;
-        let (access_log, _) =
+        let (access_log, access_log_path) =
             parse_access_log_directive(conf.access_log.as_ref());
         if let Some(access_log) = access_log {
             p = Some(Parser::from(access_log.as_str()));
@@ -493,6 +496,7 @@ impl Server {
             plugin_provider: ctx.plugin_provider,
             certificate_provider: ctx.certificate_provider,
             access_logger: ctx.logger,
+            access_log_to_application: access_log_path.is_none(),
             config_manager: ctx.config_manager,
         };
         Ok(s)
@@ -1459,6 +1463,8 @@ impl ProxyHttp for Server {
         if done {
             return Ok(false);
         }
+        // The last of the filters: see `RequestState::proxying`.
+        ctx.state.proxying = true;
         Ok(true)
     }
 
@@ -2049,6 +2055,26 @@ impl ProxyHttp for Server {
                 status = code,
                 "client gone, no response sent"
             );
+        } else if code < 500 {
+            // The request's fault, or nothing's: no location for the host,
+            // a body over the limit, a location at its `max_processing`.
+            // An error in the log for each of these was a line per request
+            // of whoever was scanning or being throttled, with nothing in
+            // it to fix on this side.
+            info!(
+                target: LOG_TARGET,
+                error = %e,
+                remote_addr = ctx.conn.remote_addr,
+                client_ip = ctx.conn.client_ip,
+                user_agent,
+                error_type,
+                method,
+                host,
+                path,
+                status = code,
+                response_started,
+                "request refused"
+            );
         } else {
             error!(
                 target: LOG_TARGET,
@@ -2089,24 +2115,38 @@ impl ProxyHttp for Server {
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 
-        // TODO: we shouldn't be closing downstream connections on internally generated errors
-        // and possibly other upstream connect() errors (connection refused, timeout, etc)
+        // The connection is as good as it was when the request was refused
+        // by one of the filters - no location for it, a plugin or a limit
+        // saying no - and is all read: the answer is a complete response
+        // like any other, and the next request can follow it. Every error
+        // page used to close the connection, so a client that was refused
+        // came back with a new connection for each request, a TLS
+        // handshake included.
         //
-        // This change is only here because we DO NOT re-use downstream connections
-        // today on these errors and we should signal to the client that pingora is dropping it
-        // rather than a misleading the client with 'keep-alive'
-        server_session.set_keepalive(None);
+        // Not past the filters. pingora closes the connection after a
+        // request that failed on its way to an upstream whatever is
+        // answered here, and the page has to say so: told `keep-alive`, a
+        // client sends its next request into a connection that is gone.
+        // Nor with some of the request body still to come: it is not read
+        // for the sake of a request that failed.
+        let can_reuse_downstream = !ctx.state.proxying
+            && e.esource() != &pingora::ErrorSource::Downstream
+            && server_session.is_body_done();
+        if !can_reuse_downstream {
+            server_session.set_keepalive(None);
+        }
 
-        server_session
+        let header_written = server_session
             .write_response_header(Box::new(resp))
             .await
-            .unwrap_or_else(|e| {
+            .map_err(|e| {
                 error!(
                     target: LOG_TARGET,
                     error = %e,
                     "send error response to downstream fail"
                 );
-            });
+            })
+            .is_ok();
 
         // The page is the body of a GET. A HEAD is told its length and
         // gets none of it: HTTP/1.1 drops what is written after the header
@@ -2114,10 +2154,12 @@ impl ProxyHttp for Server {
         // stream with a protocol error instead of reading the status.
         let is_head = server_session.req_header().method == http::Method::HEAD;
         let body = if is_head { Bytes::new() } else { buf };
-        let _ = server_session.write_response_body(body, true).await;
+        let written = server_session.write_response_body(body, true).await;
         FailToProxy {
             error_code: code,
-            can_reuse_downstream: false,
+            can_reuse_downstream: can_reuse_downstream
+                && header_written
+                && written.is_ok(),
         }
     }
     /// pingora logs every proxy failure itself through the `log` crate,
@@ -2203,7 +2245,15 @@ impl ProxyHttp for Server {
         if let Some(p) = &self.log_parser {
             let buf = p.format(session, ctx);
             if let Some(logger) = &self.access_logger {
-                if logger.try_send(buf).is_err() {
+                if let Err(e) = logger.try_send(buf) {
+                    // A line for the application log is not dropped: with
+                    // the task behind, or no longer taking lines (it stops
+                    // at the shutdown signal), this request writes its own.
+                    if self.access_log_to_application {
+                        let msg = e.into_inner();
+                        info!(target: LOG_TARGET, "{}", msg.as_bstr());
+                        return;
+                    }
                     // Channel full: drop the line rather than block the request
                     // path, but surface the loss so operators can size the buffer.
                     let dropped =
@@ -4258,6 +4308,72 @@ value = 'proxy_set_headers = ["name:value"]'
         ctx.state.status = StatusCode::from_u16(499).ok();
         server.logging(&mut session, None, &mut ctx).await;
         assert_eq!(StatusCode::from_u16(499).ok(), ctx.state.status);
+    }
+
+    /// Regression: every error page closed the connection it was sent
+    /// over, so a client that was refused made a new one, handshake and
+    /// all, for each request. It is kept when the request is all read and
+    /// the failure is not one of reading it.
+    #[tokio::test]
+    async fn test_error_page_keeps_the_connection() {
+        let server = new_server();
+        let fail = async |request: &str,
+                          error: Box<pingora::Error>,
+                          proxying: bool| {
+            let (mut session, client) = new_duplex_session(request).await;
+            // As the proxy does for a request that asks to be kept alive.
+            session.set_keepalive(Some(60));
+            let mut ctx = Ctx::default();
+            ctx.state.proxying = proxying;
+            let result =
+                server.fail_to_proxy(&mut session, &error, &mut ctx).await;
+            drop(session);
+            (result, read_response(client).await.to_lowercase())
+        };
+        let no_location =
+            || pingap_core::new_internal_error(404, "No matching location");
+        let get = "GET /x HTTP/1.1\r\nHost: a.test\r\n\r\n";
+
+        let (result, response) = fail(get, no_location(), false).await;
+        assert_eq!(404, result.error_code);
+        assert_eq!(true, result.can_reuse_downstream);
+        assert_eq!(false, response.contains("connection: close"), "{response}");
+
+        // On its way to an upstream: pingora closes the connection after
+        // such a failure whatever is answered, so the page says so.
+        for error in [
+            pingora::Error::new_up(pingora::ErrorType::ConnectRefused),
+            pingap_core::new_internal_error(503, "No available upstream"),
+        ] {
+            let (result, response) = fail(get, error, true).await;
+            assert_eq!(false, result.can_reuse_downstream);
+            assert_eq!(
+                true,
+                response.contains("connection: close"),
+                "{response}"
+            );
+        }
+
+        // A body that was not read is not read for the sake of an error.
+        let (result, response) = fail(
+            "POST /x HTTP/1.1\r\nHost: a.test\r\nContent-Length: 5\r\n\r\nhello",
+            no_location(),
+            false,
+        )
+        .await;
+        assert_eq!(false, result.can_reuse_downstream);
+        assert_eq!(true, response.contains("connection: close"), "{response}");
+
+        // What went wrong was the reading itself.
+        let (result, response) = fail(
+            get,
+            pingora::Error::new_down(pingora::ErrorType::InvalidHTTPHeader),
+            false,
+        )
+        .await;
+        assert_eq!(400, result.error_code);
+        assert_eq!(false, result.can_reuse_downstream);
+        assert_eq!(true, response.contains("connection: close"), "{response}");
     }
 
     /// Once a final header is out the rest of the response is not ours to

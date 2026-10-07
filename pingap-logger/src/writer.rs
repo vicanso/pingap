@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file_appender::{LogFiles, new_rolling_file_writer};
+use super::file_appender::{
+    APPLICATION_LOG_PARAMS, LogFiles, new_rolling_file_writer,
+    unknown_file_log_params,
+};
 use super::new_env_filter;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
@@ -524,6 +527,19 @@ pub fn logger_try_init(
         utc_offset = chrono::Local::now().offset().to_string(),
         "init tracing subscriber success",
     );
+    // Said here, where there is a log to say it in.
+    if log_type == "file" {
+        for param in
+            unknown_file_log_params(&params.log, APPLICATION_LOG_PARAMS)
+        {
+            warn!(
+                target: LOG_TARGET,
+                param,
+                log = params.log,
+                "this parameter of the log is not known and has no effect"
+            );
+        }
+    }
 
     Ok((reload_handle, log_path))
 }

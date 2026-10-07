@@ -295,6 +295,11 @@ pub struct RequestState {
     pub location_processing_count: i32,
     /// The total number of requests accepted for this location.
     pub location_accepted_count: u64,
+    /// The request passed every filter and is on its way to an upstream.
+    /// A failure from here on closes the client's connection, whatever
+    /// the proxy says of it: pingora asks whether it may be kept only for
+    /// a request that failed in one of the filters.
+    pub proxying: bool,
 }
 
 /// Components of the cache key that stand for something this request

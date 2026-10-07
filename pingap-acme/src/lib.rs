@@ -61,6 +61,38 @@ fn get_value_from_env(value: &str) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+/// The `dns_service_url` of a certificate with what it takes from the
+/// environment filled in: the whole value written `$ENV:NAME`, or the value
+/// of any of its query parameters (`?token=$ENV:CF_TOKEN`).
+///
+/// Only the whole value used to be looked at, while the documentation showed
+/// the parameter form: the provider was handed the text `$ENV:CF_TOKEN` as
+/// its credential.
+fn dns_service_url_from_env(value: &str) -> String {
+    let value = get_value_from_env(value);
+    if !value.contains("$ENV:") {
+        return value;
+    }
+    let Ok(mut url) = url::Url::parse(&value) else {
+        return value;
+    };
+    let mut filled = false;
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(name, value)| {
+            let from_env = get_value_from_env(&value);
+            filled |= from_env != value;
+            (name.into_owned(), from_env)
+        })
+        .collect();
+    // Written out again only when something was filled in.
+    if !filled {
+        return value;
+    }
+    url.query_pairs_mut().clear().extend_pairs(pairs);
+    url.into()
+}
+
 /// Splits the name of a record into the part inside its zone and the zone:
 /// `_acme-challenge.www.example.com` is `("_acme-challenge.www",
 /// "example.com")`.
@@ -104,7 +136,9 @@ pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};
 
 #[cfg(test)]
 mod tests {
-    use super::{get_value_from_env, split_record_name};
+    use super::{
+        dns_service_url_from_env, get_value_from_env, split_record_name,
+    };
     use pretty_assertions::assert_eq;
 
     /// Regression: the zone was everything after the first dot.
@@ -161,5 +195,44 @@ mod tests {
             "$ENV:PINGAP_NOT_SET_FOR_SURE",
             get_value_from_env("$ENV:PINGAP_NOT_SET_FOR_SURE")
         );
+    }
+
+    /// Regression: `?token=$ENV:CF_TOKEN`, the form the documentation shows,
+    /// reached the provider as that text.
+    #[test]
+    fn test_dns_service_url_from_env() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        let query = |value: &str| -> Vec<(String, String)> {
+            url::Url::parse(&dns_service_url_from_env(value))
+                .unwrap()
+                .query_pairs()
+                .map(|(name, value)| (name.into_owned(), value.into_owned()))
+                .collect()
+        };
+        assert_eq!(
+            vec![
+                ("token".to_string(), path.clone()),
+                ("plain".to_string(), "a b+c".to_string()),
+                (
+                    "unset".to_string(),
+                    "$ENV:PINGAP_NOT_SET_FOR_SURE".to_string()
+                ),
+            ],
+            query(
+                "https://api.cloudflare.com?token=$ENV:PATH&plain=a%20b%2Bc&unset=$ENV:PINGAP_NOT_SET_FOR_SURE"
+            )
+        );
+        // The whole value, as before.
+        assert_eq!(path, dns_service_url_from_env("$ENV:PATH"));
+        // Nothing to fill in: the text is not touched.
+        for value in [
+            "",
+            "https://api.cloudflare.com?token=abc%20d",
+            "not a url $ENV:PATH",
+            "https://api.cloudflare.com?token=$ENV:PINGAP_NOT_SET_FOR_SURE&a=b%20c",
+            "https://user:$ENV:PATH@api.cloudflare.com/path",
+        ] {
+            assert_eq!(value, dns_service_url_from_env(value));
+        }
     }
 }

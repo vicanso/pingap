@@ -40,7 +40,7 @@ use pingap_logger::{logger_try_init, LoggerParams};
 
 fn main() {
     let params = LoggerParams {
-        log: "/tmp/pingap-test.log?rolling=daily&compression=gzip".to_string(),
+        log: "/tmp/pingap-test.log?rolling=daily".to_string(),
         level: "info".to_string(),
         capacity: 4096,
         json: true,
@@ -164,6 +164,8 @@ server 的 `access_log` 是一个格式，前面可以加上输出目标和一�
 | `stdout json` | 标准输出；`stderr` 为标准错误 |
 | `syslog://10.0.0.5?protocol=tcp combined` | syslog 服务器，每行一条消息 |
 
+不论输出到哪里，日志行都交给一个任务去写，请求结束时所在的线程不负责写。写入应用日志的访问日志同样如此：以前它是在请求结束的线程上直接写的，所有线程共用一把锁，应用日志在 stderr 时每个请求还有一次 write。写文件、标准流和 syslog 的日志在任务落后超过 `channel_buffer` 时会丢弃并计数。写应用日志的日志此时不丢弃，改由请求自己写出：这样的行带的是写出时的时间，可能排在还在排队的更早请求的行之前。进程收到优雅停止的信号（SIGTERM、重启）之后，请求重新自己写日志，任务把手里剩下的行写完。快速停止（SIGINT）会让任务就地结束：还没写出的行会丢失，其他输出目标也是如此。
+
 预定义格式如下：
 
 ```text
@@ -181,7 +183,7 @@ json      {"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host}
 
 输出目标可以是：
 
-- **文件**，支持下文“文件日志”的参数，如 `rolling`、`compression`：`/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`。
+- **文件**，支持下文“文件日志”的参数，如 `rolling`：`/var/log/pingap/access.log?rolling=hourly {client_ip} {status}`。
 - **`stdout` 或 `stderr`**，适合由容器收集标准输出的场景。`/dev/stdout` 与 `/dev/stderr` 含义相同；若当作文件路径，它们会被加上轮转后缀。
 - **`syslog://` URL**，本机或远程，参数见下文[配置](#配置)。每行是一条消息，因此 JSON 格式会以每条消息一个对象的形式到达。
 
@@ -242,12 +244,16 @@ access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {la
 
 日志器通过 `LoggerParams` 的 `log` 字段中的类 URI 字符串配置。
 
-- **文件日志：** `"/path/to/file.log?rolling=daily&compression=gzip"`
+- **文件日志：** `"/path/to/file.log?rolling=daily"`
   - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`，其他值会被拒绝。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
-  - `compression`：`gzip` 或 `zstd`。
-  - `level`：压缩级别。
-  - `days_ago`：已轮转文件超过这么多天未被**修改**后压缩（默认 7 天），压缩后删除原文件。压缩文件的名字是原文件的完整名字加上扩展名，如 `file.log.2026-10-05.zst`（或 `.gz`）。只处理这份日志自己轮转出来的文件，也就是日志所在目录里名为 `file.log.YYYY-MM-DD[-HH[-MM]]` 的文件：目录里的其他文件、子目录，以及 `rolling=never` 的日志都不会被处理。
-  - `time_point_hour`：运行压缩任务的小时。压缩在阻塞线程池上执行，压大文件不会拖住其他后台任务。
+  - 访问日志还接受 `channel_buffer`（等待写入的行数上限，默认 1000）和 `flush_timeout`（默认 `10s`）。应用日志不接受这两个，写了会和其他未知参数一样打警告。
+  - 路径上的参数只有这些。不在其中的参数在打开日志时会打一条警告，并且不起作用；本文档以前把压缩相关的设置列成了路径参数。
+
+  轮转后的文件由 `new_log_compress_service()` 返回的任务压缩，它通过 `LogCompressParams` 配置，而不是通过路径。在 pingap 里对应 `basic.log_compress_algorithm`、`basic.log_compress_level`、`basic.log_compress_days_ago`、`basic.log_compress_time_point_hour`：
+  - 算法：`gzip` 或 `zstd`。
+  - 级别：压缩级别。
+  - 天数：已轮转文件超过这么多天未被**修改**后压缩（默认 7 天），压缩后删除原文件。压缩文件的名字是原文件的完整名字加上扩展名，如 `file.log.2026-10-05.zst`（或 `.gz`）。只处理这份日志自己轮转出来的文件，也就是日志所在目录里名为 `file.log.YYYY-MM-DD[-HH[-MM]]` 的文件：目录里的其他文件、子目录，以及 `rolling=never` 的日志都不会被处理。
+  - 执行时间：运行压缩任务的小时。压缩在阻塞线程池上执行，压大文件不会拖住其他后台任务。
   - `capacity`（`LoggerParams`，pingap 里对应 `basic.log_buffered_size`）：不小于 4096 字节时文件经该大小的缓冲区写入。缓冲日志由 `new_log_flush_service()` 返回的任务（pingap 中每分钟一次）和 `flush_application_log()` 刷盘，后者 pingap 在退出前调用；否则安静的服务器上最后几行会一直留在缓冲区，退出前的几行则会丢失。
 
   无法解析的参数（`rolling=monthly`、访问日志的 `flush_timeout=soon`、未知的 syslog `facility`）在启动时报错，而不是静默使用默认值。

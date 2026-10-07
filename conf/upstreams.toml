@@ -15,7 +15,7 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 
 # How often to refresh the list of upstream servers when using service discovery.
 # Format: duration string (e.g. "1m", "30s", "1h").
-# It should be set when discovery is `dns` or `docker`. Default `none`
+# Used when discovery is `dns` or `docker`. Default `1m`
 # update_frequency = "1m"
 
 
@@ -183,6 +183,62 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - Requires kernel support and may not work with all clients/networks
 # - Default: none (system default)
 # tcp_fast_open = true
+
+# For `dns` discovery: the resolvers to ask, separated by commas, each an
+# IP address with an optional port.
+# Default `none` (the resolver of the system)
+# dns_server = "10.0.0.53:53"
+
+# For `dns` discovery: the domain added to a name that is not qualified.
+# dns_domain = "svc.cluster.local"
+
+# For `dns` discovery: the search list for a name that is not qualified.
+# dns_search = "default.svc.cluster.local"
+
+# TCP_USER_TIMEOUT of the connections to the backends (Linux): how long data
+# that was sent may stay unacknowledged before the connection is closed.
+# Default `none`
+# tcp_user_timeout = "1m"
+
+# Count the responses of each backend. Needed for the circuit breaker below.
+# Default `false`
+# enable_backend_stats = true
+
+# The statuses that count as a failure of the backend, separated by commas.
+# A connection that could not be made always counts.
+# Default `none` (every 5xx)
+# backend_failure_status_code = "500,502,503,504"
+
+# The window the requests and failures of a backend are counted over.
+# At least `1ms`. Default `1m`
+# backend_stats_interval = "1m"
+
+# Open the circuit breaker of a backend after this many failures in a row.
+# Default `0` (the rule is off)
+# circuit_break_max_consecutive_failures = 5
+
+# Open it when this share of the requests in the window failed, 0 to 100.
+# Default `0` (the rule is off)
+# circuit_break_max_failure_percent = 50
+
+# The share only counts once the window holds this many requests.
+# Default `10`
+# circuit_break_min_requests_threshold = 10
+
+# How long an open breaker keeps the backend out before it lets probes through.
+# Default `10s`
+# circuit_break_open_duration = "10s"
+
+# How many probes have to succeed in a row to close the breaker again.
+# Default `5`
+# circuit_break_half_open_consecutive_success_threshold = 5
+
+# Names of storage entries whose settings are put into this upstream.
+# Default `none`
+# includes = ["commonUpstream"]
+
+# Description of this upstream
+# remark = ""
 
 
 [upstreams.diving]

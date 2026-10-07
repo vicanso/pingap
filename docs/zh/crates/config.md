@@ -195,20 +195,13 @@ plugin "blockList" {
 
 插件里取字符串列表的配置项也接受单个字符串，所以 `ip_list "1.2.3.4"` 同样可用。
 
-HCL 支持 `$ENV:NAME` 插值，密钥可来自环境而非文件：
-
-```hcl
-upstream "api" {
-  addrs     = ["$ENV:PINGAP_API_ADDR"]
-  discovery = "dns"
-}
-```
+`$ENV:NAME` 不是通用的插值：只有证书的 `dns_service_url` 会读取它，和配置用哪种格式书写无关（见 [pingap-acme](acme.md)）。其他位置按字面处理，所以把地址写成 `"$ENV:PINGAP_API_ADDR"` 得到的是一个解析不了的地址。请求头的值可以用 `$NAME` 引用环境变量（见 `proxy_set_headers`）。
 
 命令行转换与迁移：
 
 ```bash
-pingap -c /opt/pingap/conf --to-hcl ./conf.hcl        # dump as HCL
-pingap -c /opt/pingap/conf --to-kdl ./conf.kdl        # dump as KDL
+pingap -c /opt/pingap/conf --to-hcl > conf.hcl        # dump as HCL
+pingap -c /opt/pingap/conf --to-kdl > conf.kdl        # dump as KDL
 pingap -c /opt/pingap/conf --sync etcd://127.0.0.1:2379/pingap   # file -> etcd
 pingap --template > pingap.toml                       # starter config
 pingap -c /opt/pingap/conf -t                         # validate and exit
