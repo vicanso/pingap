@@ -128,6 +128,7 @@ let parser = Parser::from(format);
 | `location` | 匹配到的 location 名称 |
 | `tls_version` | 下游 TLS 版本：OpenSSL 构建为 `TLSv1.3`，rustls 构建为 `TLSv1_3` |
 | `tls_cipher` | 下游 TLS 密码套件 |
+| `tls_client_subject`、`tls_client_fingerprint`、`tls_client_serial`、`tls_client_verified` | 配了 [`tls_client_ca`](proxy.md#客户端证书-双向-tls) 的 server 上客户端出示的证书：subject、SHA-256、序列号，以及有没有出示证书（`true` / `false`） |
 | `tls_handshake_time` | 下游 TLS 握手耗时，仅连接上的第一个请求有 |
 | `ja4` | 客户端的 [JA4 指纹](proxy.md#ja4-指纹)，如 `t13d1516h2_8daaf6152771_e5627efa2ab1`；需要 server 设置 `ja4 = true` |
 | `ja4_r` | `JA4_r`：排序后的密码套件与扩展列表本身，而非哈希 |
@@ -191,6 +192,53 @@ json      {"when":{when},"remote":{remote},"client_ip":{client_ip},"host":{host}
 
 第一个词后面跟着格式时，这个词总会被当作输出目标：`ACCESS {status}` 会写入名为 `ACCESS` 的文件。要写入应用日志，自定义格式请以标签开头。
 
+### 哪些请求会被记录
+
+默认每个请求一行，除非在输出目标上另有说明。条件写在 `rolling`、`channel_buffer` 所在的位置：
+
+```toml
+[servers.web]
+# 探活请求不记；错误和慢请求全记；其余的十个记一个
+access_log = "/var/log/pingap/access.log?skip=^/health$&min_status=400&min_latency=500ms&sample=0.1 combined"
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `skip` | 正则表达式；路径和查询串（`/health`、`/api/users?page=2`）匹配的请求不记录。路径取客户端发来的原样，在 location 的 `rewrite` 之前。 |
+| `min_status` | 状态码大于等于它的请求一定记录：`min_status=400` 是所有错误，`500` 是服务端自己的错误。 |
+| `min_latency` | 耗时大于等于它的请求一定记录：`min_latency=500ms`。 |
+| `sample` | 其余请求里记录的比例，`0` 到 `1`，均匀抽取：`sample=0.1` 是每十个记一个。 |
+
+- `min_status` 和 `min_latency` 说的是“一定要记的”，满足其一即可。配了其中之一而没配 `sample` 时，其他请求都不记；同时配了 `sample` 时，其余请求再按这个比例记录。
+- 只配 `sample` 时，它是全部请求里的比例。
+- `skip` 最先判断：它匹配的请求不论状态码是什么都不记录。
+- 不记录的请求在生成日志行之前就被排除，所以不记比记更省。
+- 参数值按 URL 参数的规则书写：正则里的 `&`、`+`、`%`、`#` 和空格分别写成 `%26`、`%2B`、`%25`、`%23`、`%20`（输出目标本身也在第一个空格处结束）。
+- 条件属于输出目标。没有写输出目标的访问日志（`access_log = "combined"`，写进应用日志）没有地方放这些条件，请写成 `stderr?min_status=400 combined`。
+- 解析不了的条件（`sample=2`、`min_status=abc`、不是正则的 `skip`）在启动和 `pingap -t` 时报错。
+
+### 配合 logrotate 轮转
+
+写文件的访问日志在进程收到 `SIGUSR1` 时会重新打开：缓冲里的内容写进原来的文件，下一行写进配置的文件名下新建的文件。`rolling=never` 配合 `logrotate` 需要的就是这个：
+
+```text
+/var/log/pingap/access.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    postrotate
+        kill -USR1 "$(cat /run/pingap.pid)"
+    endscript
+}
+```
+
+- 重新打开的是服务启动时配置里写的那个文件。相对路径只在启动时按当时的工作目录解析一次，之后进程切换目录也不会让日志换地方。
+- 文件重新打开失败（比如目录不再可写）时在应用日志里记一条错误，访问日志继续写原来打开的那个文件：不丢日志，下一次 `SIGUSR1` 会再试。目录不存在时会重新创建。
+- 只有写文件的访问日志监听这个信号。应用日志不会因此重新打开；没有文件访问日志的进程完全不处理这个信号，此时它会让进程退出——没人处理的信号本来就是这样。
+
+还没有做的：按大小轮转，以及对字段或整行长度的限制。
+
 #### JSON 格式
 
 以 `{"` 开头的格式是一个 JSON 对象，每个值都会被处理成合法的 JSON。字符串内的占位符会被转义后写进该字符串；单独出现的占位符则自成一个 JSON 值：
@@ -247,6 +295,7 @@ access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {la
 - **文件日志：** `"/path/to/file.log?rolling=daily"`
   - `rolling`：`daily`（默认）、`hourly`、`minutely`、`never`，其他值会被拒绝。轮转边界与文件名后缀（`file.log.YYYY-MM-DD[-HH[-MM]]`）使用 **UTC**，不是机器所在时区：UTC+8 的机器上 daily 文件在本地 08:00 切换，本地 18:00 写入的日志落在 `-10` 的小时文件里。这是 `tracing-appender` 的行为，它没有时区选项；日志行内的时间戳仍是本地时间。
   - 访问日志还接受 `channel_buffer`（等待写入的行数上限，默认 1000）和 `flush_timeout`（默认 `10s`）。应用日志不接受这两个，写了会和其他未知参数一样打警告。
+  - `keep`（访问日志）：日志轮转出来的文件保留多久，如 `keep=14d`。更早的文件在服务启动时以及此后每小时清理一次，压缩过的（`.gz`、`.zst`）和没压缩的都算，按最后写入时间判断。和压缩一样只处理这个日志自己轮转出来的文件；正在写的文件不会被删除。不配置时和以前一样永久保留。写到单个文件、`rolling=never` 的日志没有轮转文件，这种情况见[配合 logrotate 轮转](#配合-logrotate-轮转)。`keep`、`rolling`、`flush_timeout`、`channel_buffer` 解析不了或者为 0，在启动和 `pingap -t` 时报错；文件打不开在启动时报错（`-t` 不打开日志文件）。
   - 路径上的参数只有这些。不在其中的参数在打开日志时会打一条警告，并且不起作用；本文档以前把压缩相关的设置列成了路径参数。
 
   轮转后的文件由 `new_log_compress_service()` 返回的任务压缩，它通过 `LogCompressParams` 配置，而不是通过路径。在 pingap 里对应 `basic.log_compress_algorithm`、`basic.log_compress_level`、`basic.log_compress_days_ago`、`basic.log_compress_time_point_hour`：

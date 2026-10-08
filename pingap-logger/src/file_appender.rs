@@ -17,7 +17,7 @@ use pingap_util::resolve_path;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use tracing_appender::rolling::RollingFileAppender;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -51,6 +51,83 @@ impl LogFiles {
             date
         };
         is_rolling_date(date)
+    }
+}
+
+impl LogFiles {
+    /// Removes the files this log rolled that were last written more than
+    /// `keep` ago, compressed or not. Says how many went, and what stood
+    /// in the way of the first that did not: one file that can not be
+    /// removed is not a reason to keep the others.
+    ///
+    /// Never the file being written. On a site nobody visited for longer
+    /// than `keep` it is as old as the others, and removed it would go on
+    /// taking lines nobody can read until the next roll. Which one that
+    /// is can only be told by signs, so both are taken, of the files
+    /// that are not compressed: the one written last (a log whose
+    /// `rolling` was changed has files of both ways of naming them, and
+    /// an hourly one sorts after today's), and the one that is last by
+    /// its name (an older file somebody has touched or put back is the
+    /// one written last). At most one file too many is kept for it,
+    /// until the next roll.
+    pub(crate) fn remove_older_than(
+        &self,
+        keep: std::time::Duration,
+    ) -> std::io::Result<(usize, Option<std::io::Error>)> {
+        let now = std::time::SystemTime::now();
+        let mut rolled = vec![];
+        for entry in fs::read_dir(&self.dir)?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let (plain, compressed) = match name
+                .strip_suffix(".gz")
+                .or_else(|| name.strip_suffix(".zst"))
+            {
+                Some(plain) => (plain, true),
+                None => (name.as_str(), false),
+            };
+            if !self.is_rolled(plain) {
+                continue;
+            }
+            // Gone since it was listed, or not a file: nothing to do.
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let age = metadata
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .unwrap_or_default();
+            rolled.push((compressed, age, entry.path()));
+        }
+        let plain = || rolled.iter().filter(|(compressed, _, _)| !compressed);
+        let written_last = plain()
+            .min_by_key(|(_, age, _)| *age)
+            .map(|(_, _, path)| path.clone());
+        let last_by_name = plain().map(|(_, _, path)| path).max().cloned();
+        let mut removed = 0;
+        let mut failed = None;
+        for (_, age, path) in rolled {
+            if age <= keep
+                || Some(&path) == written_last.as_ref()
+                || Some(&path) == last_by_name.as_ref()
+            {
+                continue;
+            }
+            match fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                // Removed by someone else in the meantime: the
+                // compression of this log, or a second server that
+                // writes to the same one.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                Err(e) => {
+                    failed.get_or_insert(e);
+                },
+            }
+        }
+        Ok((removed, failed))
     }
 }
 
@@ -104,7 +181,7 @@ pub(crate) const APPLICATION_LOG_PARAMS: &[&str] = &["rolling"];
 /// The parameters the path of an access log takes: `rolling`, and the two
 /// its task reads.
 pub(crate) const ACCESS_LOG_PARAMS: &[&str] =
-    &["rolling", "channel_buffer", "flush_timeout"];
+    &["rolling", "channel_buffer", "flush_timeout", "keep"];
 
 /// The parameters of `log_path` that are not among `known`, the ones
 /// whoever opens the log reads.
@@ -129,6 +206,30 @@ pub(crate) fn unknown_file_log_params(
         .filter(|name| !name.is_empty() && !known.contains(name))
         .map(str::to_string)
         .collect()
+}
+
+/// How often a file log starts a new file. An unknown `rolling` used to
+/// mean daily without a word.
+fn parse_rotation(rolling: &str) -> Result<Rotation> {
+    Ok(match rolling {
+        "minutely" => Rotation::MINUTELY,
+        "hourly" => Rotation::HOURLY,
+        "never" => Rotation::NEVER,
+        "" | "daily" => Rotation::DAILY,
+        rolling => {
+            return Err(Error::Invalid {
+                message: format!(
+                    "rolling {rolling} is invalid, expected daily, hourly, minutely or never"
+                ),
+            });
+        },
+    })
+}
+
+/// Whether the parameters of a file log read, without touching the file.
+pub(crate) fn check_rolling_file_params(log_path: &str) -> Result<()> {
+    let params = RollingFileWriterParams::try_from(log_path)?;
+    parse_rotation(&params.rolling).map(|_| ())
 }
 
 pub(crate) fn new_rolling_file_writer(
@@ -159,20 +260,19 @@ pub(crate) fn new_rolling_file_writer(
             .to_string()
     };
     let prefix = filename.clone();
-    // An unknown rolling used to mean daily without a word.
-    let writer = match params.rolling.as_str() {
-        "minutely" => tracing_appender::rolling::minutely(dir, filename),
-        "hourly" => tracing_appender::rolling::hourly(dir, filename),
-        "never" => tracing_appender::rolling::never(dir, filename),
-        "" | "daily" => tracing_appender::rolling::daily(dir, filename),
-        rolling => {
-            return Err(Error::Invalid {
-                message: format!(
-                    "rolling {rolling} is invalid, expected daily, hourly, minutely or never"
-                ),
-            });
-        },
-    };
+    let rotation = parse_rotation(&params.rolling)?;
+    // Through the builder, which says when the file can not be opened.
+    // `rolling::daily` and the others of its kind panic then, and a
+    // release build ends the process on a panic: a log that is opened
+    // again while the server runs - after `logrotate` put a file in its
+    // place that this user may not write to - took the server with it.
+    let writer = RollingFileAppender::builder()
+        .rotation(rotation)
+        .filename_prefix(filename)
+        .build(dir)
+        .map_err(|e| Error::Invalid {
+            message: format!("log file {file} can not be opened: {e}"),
+        })?;
     Ok(RollingFileWriter {
         files: LogFiles {
             dir: dir.to_string_lossy().to_string(),
@@ -185,6 +285,149 @@ pub(crate) fn new_rolling_file_writer(
 #[cfg(test)]
 mod tests {
     use super::{LogFiles, RollingFileWriterParams, new_rolling_file_writer};
+    use pretty_assertions::assert_eq;
+
+    /// `keep`: what the log rolled long enough ago goes, compressed or
+    /// not; the file being written and what is not the log's stay.
+    #[test]
+    fn test_remove_older_than() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let day = Duration::from_secs(24 * 3600);
+        let touch = |name: &str, age: Duration| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, name).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::now() - age)
+                .unwrap();
+        };
+        let left = || {
+            let mut names: Vec<String> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| {
+                    entry.unwrap().file_name().to_string_lossy().to_string()
+                })
+                .collect();
+            names.sort();
+            names
+        };
+        touch("access.log.2026-09-01", day * 30);
+        touch("access.log.2026-09-02.gz", day * 29);
+        touch("access.log.2026-09-03.zst", day * 28);
+        touch("access.log.2026-09-28", day * 10);
+        // The one being written, on a site nobody has asked anything of
+        // for more than a week: past `keep` like the others, and the one
+        // that was written last.
+        touch("access.log.2026-09-30", day * 8);
+        // Not this log's.
+        touch("error.log.2026-09-01", day * 30);
+        touch("access.log", day * 30);
+        touch("access.log.bak", day * 30);
+        touch("notes.gz", day * 30);
+
+        let files = LogFiles {
+            dir: dir.path().to_string_lossy().to_string(),
+            prefix: "access.log".to_string(),
+        };
+        let (removed, failed) = files.remove_older_than(day * 7).unwrap();
+        assert_eq!((4, true), (removed, failed.is_none()));
+        assert_eq!(
+            vec![
+                "access.log",
+                "access.log.2026-09-30",
+                "access.log.bak",
+                "error.log.2026-09-01",
+                "notes.gz",
+            ],
+            left()
+        );
+        // Nothing more to do.
+        assert_eq!(0, files.remove_older_than(day * 7).unwrap().0);
+
+        // The file being written is the one written last, whatever the
+        // files are called: an hourly one from before `rolling` was
+        // changed sorts after today's by its name. That one stays as
+        // well, as the last by its name, until there is a later file.
+        touch("access.log.2026-10-01-23", day * 9);
+        touch("access.log.2026-10-01", day * 8 - Duration::from_secs(60));
+        assert_eq!(1, files.remove_older_than(day * 7).unwrap().0);
+        assert_eq!(
+            vec![
+                "access.log",
+                "access.log.2026-10-01",
+                "access.log.2026-10-01-23",
+                "access.log.bak",
+                "error.log.2026-09-01",
+                "notes.gz",
+            ],
+            left()
+        );
+        touch("access.log.2026-10-02", day * 8 - Duration::from_secs(120));
+        assert_eq!(2, files.remove_older_than(day * 7).unwrap().0);
+        assert_eq!(false, left().iter().any(|name| name.contains("10-01")));
+
+        // Regression: and it is the last by its name when an older file
+        // was written to since - touched, or put back from a backup. By
+        // the time of writing alone that one took the place of the file
+        // being written, which was removed.
+        touch("access.log.2026-09-15", Duration::from_secs(60));
+        assert_eq!(0, files.remove_older_than(day * 7).unwrap().0);
+        assert_eq!(
+            vec![
+                "access.log",
+                "access.log.2026-09-15",
+                "access.log.2026-10-02",
+                "access.log.bak",
+                "error.log.2026-09-01",
+                "notes.gz",
+            ],
+            left()
+        );
+    }
+
+    /// Regression: a log file that can not be opened was a panic, and a
+    /// release build ends the process on one. That is how a log is opened
+    /// again while the server runs, after `logrotate` has put a file in
+    /// its place.
+    #[cfg(unix)]
+    #[test]
+    fn test_file_that_can_not_be_opened_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(
+            dir.path(),
+            std::fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+        let target =
+            format!("{}/access.log?rolling=never", dir.path().display());
+        let result = new_rolling_file_writer(&target);
+        std::fs::set_permissions(
+            dir.path(),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        // Whoever may write anywhere has nothing to be refused.
+        if let Err(e) = result {
+            assert_eq!(
+                true,
+                e.to_string().contains("can not be opened"),
+                "{e}"
+            );
+        }
+
+        assert_eq!(
+            true,
+            super::check_rolling_file_params("a.log?rolling=hourly").is_ok()
+        );
+        assert_eq!(
+            true,
+            super::check_rolling_file_params("a.log?rolling=weekly").is_err()
+        );
+    }
 
     #[test]
     fn test_log_files_is_rolled() {
@@ -357,7 +600,6 @@ mod tests {
         use super::{
             ACCESS_LOG_PARAMS, APPLICATION_LOG_PARAMS, unknown_file_log_params,
         };
-        use pretty_assertions::assert_eq;
         let access =
             |path: &str| unknown_file_log_params(path, ACCESS_LOG_PARAMS);
         let application =

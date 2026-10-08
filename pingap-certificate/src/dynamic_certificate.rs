@@ -16,10 +16,10 @@ use super::CertificateProvider;
 use super::DynamicCertificates;
 use super::{Error, LOG_TARGET, LoadedCertificate, TlsCertificate};
 use ahash::AHashMap;
-#[cfg(feature = "openssl")]
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;
+use pingap_core::TlsClientCert;
 use pingora::listeners::tls::TlsSettings;
 #[cfg(feature = "openssl")]
 use pingora::tls::ssl::{NameType, SslRef, SslVersion};
@@ -134,7 +134,7 @@ pub fn parse_certificates(
 ///
 /// Contains all the necessary configuration options for setting up TLS,
 /// including protocol versions, cipher suites, and HTTP/2 support.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TlsSettingParams {
     pub server_name: String,
     pub enabled_h2: bool,            // Enable HTTP/2 support
@@ -142,6 +142,138 @@ pub struct TlsSettingParams {
     pub cipher_suites: Option<String>, // Modern cipher suites
     pub tls_min_version: Option<String>, // Minimum TLS version
     pub tls_max_version: Option<String>, // Maximum TLS version
+    /// The CA the certificate of a client has to come from: a PEM file
+    /// path, base64-encoded PEM or raw PEM, with one or more
+    /// certificates. `None` asks clients for no certificate.
+    pub client_ca: Option<String>,
+    /// With `client_ca`: a client that shows no certificate is let in
+    /// all the same. One that shows a certificate which does not verify
+    /// is not, in either case.
+    pub client_auth_optional: bool,
+}
+
+fn client_ca_error(server: &str, message: impl fmt::Display) -> Error {
+    Error::Invalid {
+        category: "tls_client_ca".to_string(),
+        message: format!("server {server}: {message}"),
+    }
+}
+
+/// The certificates of `tls_client_ca` as PEM blocks; an error when
+/// there is none in it.
+fn client_ca_pems(server: &str, value: &str) -> Result<Vec<Vec<u8>>> {
+    let pems = pingap_util::convert_pem(value)
+        .map_err(|e| client_ca_error(server, e))?;
+    if pems.is_empty() {
+        return Err(client_ca_error(server, "no certificate found"));
+    }
+    Ok(pems)
+}
+
+/// What is kept of the certificate a client showed, for the requests of
+/// its connection: who it is for, and what tells it from any other.
+///
+/// `der` is a certificate the handshake has verified.
+fn tls_client_cert(
+    der: &[u8],
+    fingerprint: &[u8],
+) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
+    let hex = |bytes: &[u8]| {
+        bytes.iter().fold(
+            String::with_capacity(bytes.len() * 2),
+            |mut text, byte| {
+                use std::fmt::Write;
+                let _ = write!(text, "{byte:02x}");
+                text
+            },
+        )
+    };
+    // Without the zero that DER puts in front of a number whose first
+    // bit is set: the number as `openssl x509 -serial` prints it, which
+    // is what a list of serials to refuse is made of.
+    let serial = cert.raw_serial();
+    let serial = &serial[serial
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(serial.len().saturating_sub(1))..];
+    // Stored as an `Arc` of its own, so that a request takes a reference
+    // and no copy.
+    let info = Arc::new(TlsClientCert {
+        subject: subject_text(cert.subject()),
+        fingerprint: hex(fingerprint),
+        serial: hex(serial),
+    });
+    Some(Arc::new(info))
+}
+
+/// The value of one part of a name, with what could be taken for the end
+/// of it escaped the way RFC 4514 escapes it.
+///
+/// The subject goes into a header and into the access log as one string,
+/// and whoever reads it there splits it again. Written as it is, an
+/// organization called `x, CN=admin` reads as an organization and a
+/// common name, and a line break in a value starts a line of the log that
+/// no request made. A CA signs such a name without a second look when it
+/// only checks what it is asked to check.
+fn escape_name_value(value: &str) -> String {
+    let mut text = String::with_capacity(value.len());
+    let last = value.len().saturating_sub(1);
+    for (index, c) in value.char_indices() {
+        match c {
+            ',' | '+' | '"' | '\\' | '<' | '>' | ';' | '=' => {
+                text.push('\\');
+                text.push(c);
+            },
+            '#' | ' ' if index == 0 => {
+                text.push('\\');
+                text.push(c);
+            },
+            ' ' if index == last => text.push_str("\\ "),
+            c if c.is_control() => {
+                use std::fmt::Write;
+                let mut bytes = [0u8; 4];
+                for byte in c.encode_utf8(&mut bytes).bytes() {
+                    let _ = write!(text, "\\{byte:02X}");
+                }
+            },
+            c => text.push(c),
+        }
+    }
+    text
+}
+
+/// A name as one string: its parts in the order the certificate has
+/// them, `O=Example, CN=device-42`, each value escaped.
+fn subject_text(name: &x509_parser::x509::X509Name<'_>) -> String {
+    use x509_parser::objects::{oid_registry, oid2abbrev};
+    name.iter_rdn()
+        .map(|rdn| {
+            rdn.iter()
+                .map(|attr| {
+                    let key = oid2abbrev(attr.attr_type(), oid_registry())
+                        .map(str::to_string)
+                        .unwrap_or_else(|_| attr.attr_type().to_id_string());
+                    // What is no text is written as its bytes, which is
+                    // how RFC 4514 writes it.
+                    let value = match attr.as_str() {
+                        Ok(value) => escape_name_value(value),
+                        Err(_) => attr.attr_value().data.iter().fold(
+                            String::from("#"),
+                            |mut text, byte| {
+                                use std::fmt::Write;
+                                let _ = write!(text, "{byte:02x}");
+                                text
+                            },
+                        ),
+                    };
+                    format!("{key}={value}")
+                })
+                .collect::<Vec<_>>()
+                .join("+")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The OpenSSL protocol version named by a `tls_min_version` /
@@ -261,6 +393,46 @@ impl GlobalCertificate {
             )?)
             .map_err(|e| invalid("set tls max proto version", &e))?;
 
+        if let Some(client_ca) = &params.client_ca {
+            use pingora::tls::ssl::SslVerifyMode;
+            use pingora::tls::x509::X509;
+            use pingora::tls::x509::store::X509StoreBuilder;
+            let invalid = |e: &dyn fmt::Display| client_ca_error(name, e);
+            let mut store = X509StoreBuilder::new().map_err(|e| invalid(&e))?;
+            let mut count = 0;
+            for pem in client_ca_pems(name, client_ca)? {
+                for cert in
+                    X509::stack_from_pem(&pem).map_err(|e| invalid(&e))?
+                {
+                    // The names of the CA are sent to the client, which
+                    // picks the certificate to show by them.
+                    tls_settings
+                        .add_client_ca(&cert)
+                        .map_err(|e| invalid(&e))?;
+                    store.add_cert(cert).map_err(|e| invalid(&e))?;
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                return Err(client_ca_error(name, "no certificate found"));
+            }
+            tls_settings
+                .set_verify_cert_store(store.build())
+                .map_err(|e| invalid(&e))?;
+            let mut mode = SslVerifyMode::PEER;
+            if !params.client_auth_optional {
+                mode |= SslVerifyMode::FAIL_IF_NO_PEER_CERT;
+            }
+            tls_settings.set_verify(mode);
+            // A session that is resumed is one whose client was verified
+            // under this context. Without a context OpenSSL refuses to
+            // resume a session of a server that verifies its clients, and
+            // the second connection of every client failed.
+            tls_settings
+                .set_session_id_context(b"pingap")
+                .map_err(|e| invalid(&e))?;
+        }
+
         if let Some(min_version) = tls_settings.min_proto_version() {
             info!(
                 target: LOG_TARGET,
@@ -290,12 +462,48 @@ impl GlobalCertificate {
     ) -> Result<TlsSettings> {
         let name = params.server_name.clone();
         // No certificate files: the resolver below supplies every certificate.
-        let mut tls_settings =
-            TlsSettings::intermediate("", "").map_err(|e| Error::Invalid {
-                category: "new_tls_settings".to_string(),
-                message: e.to_string(),
-            })?;
+        // With clients to verify the settings carry this as their
+        // callbacks too: what is kept of a client's certificate is made
+        // when its handshake is done.
+        let settings = if params.client_ca.is_some() {
+            TlsSettings::with_callbacks(Box::new(self.clone()))
+        } else {
+            TlsSettings::intermediate("", "")
+        };
+        let mut tls_settings = settings.map_err(|e| Error::Invalid {
+            category: "new_tls_settings".to_string(),
+            message: e.to_string(),
+        })?;
         tls_settings.set_cert_resolver(Arc::new(self.clone()));
+        if let Some(client_ca) = &params.client_ca {
+            use pingora::tls::{CertificateDer, WebPkiClientVerifier};
+            use rustls_pki_types::pem::PemObject;
+            let invalid = |e: &dyn fmt::Display| client_ca_error(&name, e);
+            let mut roots = rustls::RootCertStore::empty();
+            for pem in client_ca_pems(&name, client_ca)? {
+                for cert in CertificateDer::pem_slice_iter(&pem) {
+                    roots
+                        .add(cert.map_err(|e| invalid(&e))?)
+                        .map_err(|e| invalid(&e))?;
+                }
+            }
+            if roots.is_empty() {
+                return Err(client_ca_error(&name, "no certificate found"));
+            }
+            // The verifier takes the provider of the process, and there
+            // has to be one by now: without it making the verifier does
+            // not fail, it panics.
+            crate::install_default_crypto_provider();
+            let builder = WebPkiClientVerifier::builder(Arc::new(roots));
+            let builder = if params.client_auth_optional {
+                builder.allow_unauthenticated()
+            } else {
+                builder
+            };
+            tls_settings.set_client_cert_verifier(
+                builder.build().map_err(|e| invalid(&e))?,
+            );
+        }
         if params.enabled_h2 {
             tls_settings.enable_h2();
         }
@@ -335,6 +543,38 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         if let Some(certificate) = self.select(sni) {
             certificate.apply(ssl);
         }
+    }
+
+    /// Keeps what a request is told of the client's certificate. There is
+    /// one only on a server that asks for it, and then it has verified.
+    async fn handshake_complete_callback(
+        &self,
+        ssl: &SslRef,
+    ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        let cert = ssl.peer_certificate()?;
+        let der = cert.to_der().ok()?;
+        let fingerprint = cert
+            .digest(pingora::tls::hash::MessageDigest::sha256())
+            .ok()?;
+        tls_client_cert(&der, &fingerprint)
+    }
+}
+
+/// With rustls the certificates come from the resolver below; what is
+/// left for the callbacks is the client's certificate, once the
+/// handshake is done.
+#[cfg(feature = "tls-rustls")]
+#[async_trait]
+impl pingora::listeners::TlsAccept for GlobalCertificate {
+    async fn handshake_complete_callback(
+        &self,
+        tls: &pingora::protocols::tls::TlsRef,
+    ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        let der = tls.peer_certificate_der()?;
+        let fingerprint = pingora::tls::hash_certificate(
+            &pingora::tls::CertificateDer::from(der),
+        );
+        tls_client_cert(der, &fingerprint)
     }
 }
 
@@ -416,6 +656,90 @@ aqcrKJfS+xaKWxXPiNlpBMG5
                 .to_string(),
         )
         // spellchecker:on
+    }
+
+    // A CA, and a certificate it issued to `O=Pingap Test, CN=test-client`.
+    // spellchecker:off
+    const CLIENT_CA: &str = "-----BEGIN CERTIFICATE-----\nMIIBiDCCAS2gAwIBAgIUPFcjdGbZUo9hlQgHujn4VpJ+Bn8wCgYIKoZIzj0EAwIw\nGTEXMBUGA1UEAwwOcGluZ2FwIHRlc3QgY2EwHhcNMjYxMDA3MDk0MzQyWhcNMzYx\nMDA0MDk0MzQyWjAZMRcwFQYDVQQDDA5waW5nYXAgdGVzdCBjYTBZMBMGByqGSM49\nAgEGCCqGSM49AwEHA0IABEZvQgSvXHdnKYjnIDH30XZhifq/sLXbRk8RAoL9AWMd\nVqqPTi9rXv3+oH+HesJxsE1QXYDE9IykyX3GcMeiMvKjUzBRMB0GA1UdDgQWBBTi\nKcHWkQmZqdsiHyjrgovGsqq12DAfBgNVHSMEGDAWgBTiKcHWkQmZqdsiHyjrgovG\nsqq12DAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQDop5xPPcHB\n8M0GimlIbBfuVc6SkesW3MZiAeXHXOLhwgIhAPfmPP5CFvYZQisvjUuQz+VdTkwc\nFRoVRUyQmQTSRid3\n-----END CERTIFICATE-----";
+    const CLIENT_CERT: &str = "-----BEGIN CERTIFICATE-----\nMIIBiTCCAS+gAwIBAgIUNClp5P/VCqYvyxD/pG2zGGDTQlEwCgYIKoZIzj0EAwIw\nGTEXMBUGA1UEAwwOcGluZ2FwIHRlc3QgY2EwHhcNMjYxMDA3MDk0MzQyWhcNMzYx\nMDA0MDk0MzQyWjAsMRQwEgYDVQQKDAtQaW5nYXAgVGVzdDEUMBIGA1UEAwwLdGVz\ndC1jbGllbnQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQP4q5L3ngZ+aX9Ii7v\nI7ySNugQuzvMBIkx0DvmW9IYtpSKfrRvP10t0xSwQU3Xv4wslFixRT4mTfQNVgJD\n52Ato0IwQDAdBgNVHQ4EFgQU1Z/2+9o7WTm1B5SiK6o3qGsoPgswHwYDVR0jBBgw\nFoAU4inB1pEJmanbIh8o64KLxrKqtdgwCgYIKoZIzj0EAwIDSAAwRQIhAL5oqSvF\n56C0NkEz2nIdK6Ni8UET4SqhR6RzAshJRDNwAiByIrZeLMG/rOHoUs81cXF5u+k/\nxOuznx6ERPEBpBhckQ==\n-----END CERTIFICATE-----";
+    // spellchecker:on
+
+    struct NoCertificates;
+
+    impl CertificateProvider for NoCertificates {
+        fn get(&self, _sni: &str) -> Option<Arc<TlsCertificate>> {
+            None
+        }
+        fn list(&self) -> Arc<DynamicCertificates> {
+            Arc::new(DynamicCertificates::default())
+        }
+        fn store(&self, _data: DynamicCertificates) {}
+    }
+
+    /// `tls_client_ca`: the settings of a listener that verifies its
+    /// clients are made from a CA that reads, in both modes, and refused
+    /// from one that does not.
+    #[test]
+    fn test_tls_settings_with_client_ca() {
+        let certificates = GlobalCertificate::new(Arc::new(NoCertificates));
+        let settings = |client_ca: Option<&str>, optional: bool| {
+            certificates.new_tls_settings(&TlsSettingParams {
+                server_name: "web".to_string(),
+                client_ca: client_ca.map(str::to_string),
+                client_auth_optional: optional,
+                ..Default::default()
+            })
+        };
+        assert_eq!(true, settings(None, false).is_ok());
+        assert_eq!(true, settings(Some(CLIENT_CA), false).is_ok());
+        assert_eq!(true, settings(Some(CLIENT_CA), true).is_ok());
+        // As base64, like the other certificates of a configuration.
+        let encoded = pingap_util::base64_encode(CLIENT_CA);
+        assert_eq!(true, settings(Some(&encoded), false).is_ok());
+
+        for client_ca in ["not a certificate", "/pingap/not/there.pem"] {
+            let message = settings(Some(client_ca), false)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert_eq!(
+                true,
+                message.contains("category: tls_client_ca")
+                    && message.contains("server web: "),
+                "{client_ca}: {message}"
+            );
+        }
+    }
+
+    /// What a request is told of the certificate a client showed.
+    #[test]
+    fn test_tls_client_cert() {
+        let (_, pem) =
+            x509_parser::pem::parse_x509_pem(CLIENT_CERT.as_bytes()).unwrap();
+        let extension =
+            tls_client_cert(&pem.contents, &[0xb5, 0x45, 0x0d, 0x00]).unwrap();
+        let cert = extension.downcast_ref::<Arc<TlsClientCert>>().unwrap();
+        assert_eq!("O=Pingap Test, CN=test-client", cert.subject);
+        // The digest the handshake made of the certificate, in hex.
+        assert_eq!("b5450d00", cert.fingerprint);
+        assert_eq!("342969e4ffd50aa62fcb10ffa46db31860d34251", cert.serial);
+        // What is no certificate gives nothing.
+        assert_eq!(true, tls_client_cert(b"junk", &[1]).is_none());
+
+        // A value can not pass for more parts of the name than it is, nor
+        // for the start of another line.
+        for (value, expected) in [
+            ("device-42", "device-42"),
+            ("x, CN=admin", "x\\, CN\\=admin"),
+            ("a+b \"c\" <d>; e\\", "a\\+b \\\"c\\\" \\<d\\>\\; e\\\\"),
+            ("line\nbreak\r", "line\\0Abreak\\0D"),
+            (" padded ", "\\ padded\\ "),
+            ("#hash", "\\#hash"),
+            ("张三", "张三"),
+            ("", ""),
+        ] {
+            assert_eq!(expected, escape_name_value(value), "{value:?}");
+        }
     }
 
     #[cfg(feature = "openssl")]

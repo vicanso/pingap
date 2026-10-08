@@ -57,6 +57,7 @@ A value that is one of these, and nothing else, is replaced:
 | `$remote_port` | Client port |
 | `$server_addr` / `$server_port` | The address and port the request arrived on |
 | `$ja4` | The client's JA4 TLS fingerprint, on a server with `ja4 = true` |
+| `$tls_client_subject` / `$tls_client_fingerprint` / `$tls_client_serial` / `$tls_client_verified` | The certificate the client showed, on a server with [`tls_client_ca`](../../pingap-proxy/README.md#client-certificates-mutual-tls): its subject, SHA-256 and serial number, and `true` / `false` for whether there is one. Without a certificate the first three are empty, and the header is set all the same |
 | `$proxy_add_x_forwarded_for` | Existing `X-Forwarded-For` plus the client address |
 | `$http_<name>` | Value of request header `<name>`; underscores stand for dashes, so `$http_user_agent` reads `User-Agent` |
 | `$<NAME>` | Environment variable `NAME` |

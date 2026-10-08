@@ -128,12 +128,75 @@ then only what the request claims.
 
 The variables can be used in the header plugins as well.
 
+### Client certificates (mutual TLS)
+
+A server with `tls_client_ca` asks every client for a certificate and verifies
+it against that CA, in the TLS handshake:
+
+```toml
+[servers.devices]
+addr = "0.0.0.0:8443"
+global_certificates = true
+tls_client_ca = "/etc/pingap/device-ca.pem"   # a path, base64 or the PEM itself
+# tls_client_auth = "optional"                # default: "require"
+locations = ["devices"]
+
+[locations.devices]
+upstream = "devices"
+proxy_set_headers = [
+    "X-Client-Subject: $tls_client_subject",
+    "X-Client-Fingerprint: $tls_client_fingerprint",
+    "X-Client-Verified: $tls_client_verified",
+]
+```
+
+| `tls_client_auth` | A client without a certificate | A certificate that does not verify |
+| --- | --- | --- |
+| `require` (default) | handshake fails | handshake fails |
+| `optional` | let in, `$tls_client_verified` is `false` | handshake fails |
+
+A certificate that was not issued by the CA, has expired or is not yet valid
+never gets as far as a request. With `optional` it is for a location or a
+plugin to tell the two kinds of client apart; nothing of the proxy does on
+its own.
+
+| Variable | Access log | Value |
+| --- | --- | --- |
+| `$tls_client_subject` | `{:tls_client_subject}` | The subject of the certificate, in the order the certificate has it: `O=Example, CN=device-42`. A `,`, `+`, `"`, `` \ ``, `<`, `>`, `;` or `=` inside a value is written with a `` \ `` in front of it, as RFC 4514 does, so a value can not pass for another part of the name |
+| `$tls_client_fingerprint` | `{:tls_client_fingerprint}` | The SHA-256 of the certificate, in lower case hex |
+| `$tls_client_serial` | `{:tls_client_serial}` | Its serial number, in lower case hex: what `openssl x509 -noout -serial` prints, in lower case |
+| `$tls_client_verified` | `{:tls_client_verified}` | `true` when the client showed a certificate, `false` when it showed none |
+
+- As header values the first three are **empty** for a client without a
+  certificate, and the header is set all the same: what the client sent under
+  that name is replaced, never passed on as if the proxy had vouched for it.
+  That holds for `proxy_set_headers` and for `set_headers` of a
+  `request_headers` plugin, on every location of the server whose upstream
+  reads them. `proxy_add_headers`, `add_headers` and `set_headers_not_exists`
+  keep what the client sent, so they are not the ones to use here.
+- The certificate is the connection's: every request on it, and every stream
+  of an HTTP/2 connection, has the same one.
+- The CA is read when the server starts. A changed `tls_client_ca` is a change
+  of the server, which takes a restart (`--autorestart`), like its other TLS
+  settings. Revocation lists are not checked: to shut a certificate out before
+  it expires, refuse its fingerprint or serial in the upstream or a plugin.
+- Both TLS backends do this. `pingap -t` reads the CA and reports one that
+  does not parse.
+
 An interim response from the upstream, such as `103 Early Hints`, is passed on
 to the client as it is. The response plugins, the status in the access log and
 the metrics, and the upstream timings all belong to the final response; `101`
 counts as final, since it ends the HTTP exchange.
 
 ## Routing
+
+A request is routed by the path of its target. A target that is none of the
+forms HTTP has for one - a path (`/a?b=1`), a url (`http://host/a`) or `*` -
+is answered with `400` before that. `GET robots.txt HTTP/1.1`, without the
+slash, used to be routed, run through plugins and cached as `/` while the
+upstream was asked for `robots.txt`: `GET secret/report` went around the
+plugins of a location for `/secret`, and a `404` for such a target could
+become the cached front page.
 
 Locations attached to a server are sorted once, by descending weight, and the
 first one whose host, path and match conditions all hold wins. Weight is either

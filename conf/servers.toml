@@ -103,6 +103,19 @@ locations = ["lo"]
 # `{:ja4}` in the access log. Needs `global_certificates = true`.
 # ja4 = true
 
+# Ask every client for a certificate and verify it against this CA (mutual
+# TLS): a PEM file path, base64-encoded PEM or raw PEM, with one or more
+# certificates. Needs `global_certificates = true`. What the certificate
+# says is available as `$tls_client_subject`, `$tls_client_fingerprint`,
+# `$tls_client_serial` and `$tls_client_verified` in headers, and with
+# `{:...}` in the access log. Default `none`
+# tls_client_ca = "/opt/pingap/conf/client-ca.pem"
+#
+# With `tls_client_ca`: "require" (the default) ends the handshake of a
+# client that shows no certificate, "optional" lets it in. A certificate
+# that does not verify ends the handshake in both.
+# tls_client_auth = "optional"
+
 # TCP Keep-alive idle time:
 # Controls how long a connection must be idle before TCP starts sending keep-alive probes
 # Default `none`

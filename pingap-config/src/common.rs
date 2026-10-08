@@ -449,6 +449,15 @@ pub struct UpstreamConf {
     /// or self-signed backend keep `verify_cert` enabled.
     pub ca: Option<String>,
 
+    /// The certificate this proxy presents to the upstream, for a backend
+    /// that asks its clients for one (mutual TLS): a PEM file path,
+    /// base64-encoded PEM, or raw PEM, the certificate first and then
+    /// what leads from it to the CA. Set together with `client_key`.
+    pub client_cert: Option<String>,
+
+    /// The private key of `client_cert`, in the same forms.
+    pub client_key: Option<String>,
+
     /// HTTP/2 flow-control window advertised per stream to this upstream
     /// (RFC 9113 §6.9.2), between 1 and 2 GiB - 1; pingora defaults to
     /// 8 MiB. Larger windows help big responses on high-latency links.
@@ -556,6 +565,21 @@ impl Validate for UpstreamConf {
 
         // Validate the HTTP/1 upgrade policy name
         self.validate_h1_upgrade()?;
+
+        // A certificate without its key signs nothing, and a key without
+        // its certificate says nothing: the upstream would be asked
+        // without either, and refuse.
+        let given = |value: &Option<String>| {
+            value
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+        };
+        if given(&self.client_cert) != given(&self.client_key) {
+            return Err(Error::Invalid {
+                message: "client_cert and client_key are set together"
+                    .to_string(),
+            });
+        }
 
         // Validate the custom CA bundle and the HTTP/2 flow-control windows
         self.validate_ca()?;
@@ -1090,6 +1114,18 @@ pub struct ServerConf {
     /// Rejected at config validation under the rustls backend.
     pub tls_max_version: Option<String>,
 
+    /// The CA the certificates of clients are verified against, which
+    /// makes the server ask each client for one (mutual TLS): a PEM file
+    /// path, base64-encoded PEM or raw PEM, holding one or more
+    /// certificates. Needs a TLS listener (`global_certificates`).
+    pub tls_client_ca: Option<String>,
+
+    /// What becomes of a client that shows no certificate, with
+    /// `tls_client_ca`: `require` (the default) ends its handshake,
+    /// `optional` lets it in, for a location or a plugin to tell apart.
+    /// A certificate that does not verify ends the handshake in both.
+    pub tls_client_auth: Option<String>,
+
     /// Whether to use global certificates instead of per-server certs
     pub global_certificates: Option<bool>,
 
@@ -1257,6 +1293,8 @@ impl ServerConf {
             self.tcp_probe_count,
         )?;
 
+        self.validate_client_auth()?;
+
         // The fingerprint comes from the ClientHello, which only a TLS
         // listener receives; on a plain one the option would do nothing.
         if self.ja4.unwrap_or_default()
@@ -1269,6 +1307,41 @@ impl ServerConf {
             });
         }
 
+        Ok(())
+    }
+
+    /// `tls_client_ca` and `tls_client_auth`: a mode that is one of the
+    /// two there are, a CA for the mode to go with, and a listener that
+    /// speaks TLS. Each of the slips used to be possible only in the
+    /// other direction - a server that looks protected and lets everyone
+    /// in - so they are errors, not defaults.
+    fn validate_client_auth(&self) -> Result<()> {
+        fn given(value: &Option<String>) -> Option<&str> {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        }
+        let ca = given(&self.tls_client_ca);
+        let invalid = |message: &str| Error::Invalid {
+            message: message.to_string(),
+        };
+        match given(&self.tls_client_auth) {
+            None | Some("require") | Some("optional") => {},
+            Some(_) => {
+                return Err(invalid(
+                    "tls_client_auth should be require or optional",
+                ));
+            },
+        }
+        if given(&self.tls_client_auth).is_some() && ca.is_none() {
+            return Err(invalid("tls_client_auth needs tls_client_ca"));
+        }
+        if ca.is_some() && !self.global_certificates.unwrap_or_default() {
+            return Err(invalid(
+                "tls_client_ca needs a TLS listener (global_certificates = true)",
+            ));
+        }
         Ok(())
     }
 
@@ -3301,6 +3374,53 @@ write_timeout = "1m"
 
     /// Regression: the upstream a `traffic_splitting` plugin names was not
     /// checked, and could be removed while the plugin still used it.
+    /// `tls_client_ca` and `tls_client_auth` of a server.
+    #[test]
+    fn test_server_client_auth_is_validated() {
+        let server = |extra: &str| -> ServerConf {
+            toml::from_str(&format!("addr = \"127.0.0.1:443\"\n{extra}"))
+                .unwrap()
+        };
+        let error =
+            |extra: &str| server(extra).validate().err().map(|e| e.to_string());
+        let tls = "global_certificates = true\n";
+        assert_eq!(None, error(tls));
+        assert_eq!(
+            None,
+            error(&format!("{tls}tls_client_ca = \"/etc/ca.pem\""))
+        );
+        for mode in ["require", "optional"] {
+            assert_eq!(
+                None,
+                error(&format!(
+                    "{tls}tls_client_ca = \"/etc/ca.pem\"\ntls_client_auth = \"{mode}\""
+                )),
+                "{mode}"
+            );
+        }
+        assert_eq!(
+            Some(
+                "Invalid error tls_client_auth should be require or optional"
+                    .to_string()
+            ),
+            error(&format!(
+                "{tls}tls_client_ca = \"/etc/ca.pem\"\ntls_client_auth = \"on\""
+            ))
+        );
+        // A mode without the CA it is about would let everyone in.
+        assert_eq!(
+            Some(
+                "Invalid error tls_client_auth needs tls_client_ca".to_string()
+            ),
+            error(&format!("{tls}tls_client_auth = \"require\""))
+        );
+        // And so would a CA on a listener that does no handshake.
+        assert_eq!(
+            Some("Invalid error tls_client_ca needs a TLS listener (global_certificates = true)".to_string()),
+            error("tls_client_ca = \"/etc/ca.pem\"")
+        );
+    }
+
     #[test]
     fn test_plugin_upstream_reference() {
         let new_config = |upstream: &str| {

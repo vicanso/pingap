@@ -72,6 +72,7 @@ always = true
 | `$remote_port` | 客户端端口 |
 | `$upstream_addr` | 所选上游地址 |
 | `$ja4` | 客户端的 JA4 TLS 指纹，需 server 设置 `ja4 = true` |
+| `$tls_client_subject` / `$tls_client_fingerprint` / `$tls_client_serial` / `$tls_client_verified` | 配了 [`tls_client_ca`](../crates/proxy.md#客户端证书-双向-tls) 的 server 上客户端出示的证书：subject、SHA-256、序列号，以及有没有出示证书（`true` / `false`）。没有证书时前三项是空值，响应头照样会被设置 |
 | `$proxy_add_x_forwarded_for` | 已有 `X-Forwarded-For` 加上客户端地址 |
 | `$http_<name>` | 请求头 `<name>` 的值；下划线代表横线，`$http_user_agent` 读取的是 `User-Agent` |
 | `$<NAME>` | 环境变量 `NAME` |

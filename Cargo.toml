@@ -260,8 +260,10 @@ aes-gcm-siv = { version = "0.12.1", default-features = false, features = [
 ] }
 ahash = "0.8.12"
 arc-swap = "1.9.2"
+argon2 = "0.6.0"
 async-trait = "0.1.92"
 base64 = "0.23.1"
+bcrypt = "0.19.3"
 bytes = "1.12.1"
 bytesize = { version = "2.7.0", features = ["serde"] }
 bollard = "0.21.1"

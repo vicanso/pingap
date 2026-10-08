@@ -44,6 +44,7 @@ location 可以用 `proxy_set_headers`、`proxy_add_headers` 为上游设置和�
 | `$remote_port` | 客户端端口 |
 | `$server_addr` / `$server_port` | 请求到达的地址和端口 |
 | `$ja4` | 客户端的 JA4 TLS 指纹，需要 server 开启 `ja4 = true` |
+| `$tls_client_subject` / `$tls_client_fingerprint` / `$tls_client_serial` / `$tls_client_verified` | 配了 [`tls_client_ca`](../crates/proxy.md#客户端证书-双向-tls) 的 server 上客户端出示的证书：subject、SHA-256、序列号，以及有没有出示证书（`true` / `false`）。没有证书时前三项是空值，请求头照样会被设置 |
 | `$proxy_add_x_forwarded_for` | 已有的 `X-Forwarded-For` 加上客户端地址 |
 | `$http_<name>` | 请求头 `<name>` 的值；下划线代表连字符，`$http_user_agent` 读取的是 `User-Agent` |
 | `$<NAME>` | 环境变量 `NAME` |

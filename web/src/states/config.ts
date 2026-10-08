@@ -23,6 +23,8 @@ export interface Upstream {
   reject_malformed_connection_nominations?: boolean;
   h1_upgrade?: string;
   ca?: string;
+  client_cert?: string;
+  client_key?: string;
   h2_stream_window_size?: string;
   h2_connection_window_size?: string;
   health_check?: string;
@@ -135,6 +137,8 @@ export interface Server {
   tls_ciphersuites?: string;
   tls_min_version?: string;
   tls_max_version?: string;
+  tls_client_ca?: string;
+  tls_client_auth?: string;
   tcp_idle?: string;
   tcp_user_timeout?: string;
   tcp_interval?: string;

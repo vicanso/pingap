@@ -16,11 +16,15 @@
 //! of the `Server` `ProxyHttp` implementation to keep `server.rs` focused.
 //! These are free functions (they never touched `Server`'s state).
 
+use http::StatusCode;
 use pingap_core::Ctx;
 use pingora::cache::cache_control::{
     CacheControl, DirectiveKey, DirectiveValue, InterpretCacheControl,
 };
-use pingora::cache::{NoCacheReason, RespCacheable};
+use pingora::cache::filters::calculate_serve_stale_durations;
+use pingora::cache::{
+    CacheMeta, CacheMetaDefaults, NoCacheReason, RespCacheable,
+};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::time::{Duration, SystemTime};
@@ -95,6 +99,78 @@ pub(crate) fn limit_freshness(
     RespCacheable::Cacheable(meta)
 }
 
+/// Whether the origin says how long its response may be kept: a lifetime
+/// in `Cache-Control`, or an `Expires`.
+pub(crate) fn names_a_lifetime(
+    cc: Option<&CacheControl>,
+    resp: &ResponseHeader,
+) -> bool {
+    // By the directive being there, not by its value reading: `max-age=abc`
+    // is the origin having said something, and not what the plugin gives
+    // a response that says nothing.
+    cc.is_some_and(|cc| {
+        cc.directives.contains_key(&DirectiveKey::MaxAge)
+            || cc.directives.contains_key(&DirectiveKey::SMaxAge)
+    }) || resp.headers.contains_key(http::header::EXPIRES)
+}
+
+/// How long the `cache` plugin keeps a response of `status` that names no
+/// lifetime: what `status_ttl` says of the status, else `default_ttl` for
+/// the statuses `kept_by_default` knows, else what `kept_by_default`
+/// says. `None`, or a lifetime of zero, is "not kept".
+///
+/// A `304` is the answer to a revalidation of what was stored as a `200`,
+/// and renews it for as long as a `200` is kept.
+pub(crate) fn own_lifetime(
+    status: StatusCode,
+    default_ttl: Option<Duration>,
+    status_ttl: Option<&[(u16, Duration)]>,
+    kept_by_default: fn(StatusCode) -> Option<Duration>,
+) -> Option<Duration> {
+    let status = if status == StatusCode::NOT_MODIFIED {
+        StatusCode::OK
+    } else {
+        status
+    };
+    let listed = status_ttl.and_then(|list| {
+        list.iter()
+            .find(|(code, _)| *code == status.as_u16())
+            .map(|(_, ttl)| *ttl)
+    });
+    listed
+        .or_else(|| {
+            kept_by_default(status).map(|ttl| default_ttl.unwrap_or(ttl))
+        })
+        .filter(|ttl| !ttl.is_zero())
+}
+
+/// The response as one to store for `ttl`, the way pingora's
+/// `resp_cacheable` makes one of a response with a lifetime of its own.
+pub(crate) fn cacheable_for(
+    cc: Option<&CacheControl>,
+    resp: &ResponseHeader,
+    ttl: Option<Duration>,
+    defaults: &CacheMetaDefaults,
+) -> RespCacheable {
+    let now = SystemTime::now();
+    let Some(fresh_until) = ttl.and_then(|ttl| now.checked_add(ttl)) else {
+        return RespCacheable::Uncacheable(NoCacheReason::OriginNotCache);
+    };
+    let (stale_while_revalidate, stale_if_error) =
+        calculate_serve_stale_durations(cc, defaults);
+    let mut header = resp.clone();
+    if let Some(cc) = cc {
+        cc.strip_private_headers(&mut header);
+    }
+    RespCacheable::Cacheable(CacheMeta::new(
+        fresh_until,
+        now,
+        stale_while_revalidate,
+        stale_if_error,
+        header,
+    ))
+}
+
 /// Adds the `x-cache-status` / `x-cache-lookup` / `x-cache-lock` headers (and,
 /// under `tracing`, the matching OpenTelemetry attributes).
 #[inline]
@@ -166,6 +242,98 @@ mod tests {
         let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
         resp.append_header("Cache-Control", value).unwrap();
         CacheControl::from_resp_headers(&resp).unwrap()
+    }
+
+    /// The lifetime the plugin gives a response that names none.
+    #[test]
+    fn test_own_lifetime() {
+        use super::{cacheable_for, names_a_lifetime, own_lifetime};
+        use http::StatusCode;
+        // The statuses that are kept without being told to, as the proxy
+        // has them: one second each.
+        fn kept(status: StatusCode) -> Option<Duration> {
+            matches!(status.as_u16(), 200 | 301 | 404)
+                .then_some(Duration::from_secs(1))
+        }
+        let status = |code: u16| StatusCode::from_u16(code).unwrap();
+        let secs = Duration::from_secs;
+        let listed = [(404, secs(10)), (302, secs(60)), (301, Duration::ZERO)];
+
+        // `default_ttl` in place of the second, for the same statuses.
+        assert_eq!(
+            Some(secs(30)),
+            own_lifetime(status(200), Some(secs(30)), None, kept)
+        );
+        assert_eq!(None, own_lifetime(status(500), Some(secs(30)), None, kept));
+        assert_eq!(None, own_lifetime(status(302), Some(secs(30)), None, kept));
+        // `status_ttl` for its status, also one that is not kept by
+        // default; the others as before.
+        assert_eq!(
+            Some(secs(10)),
+            own_lifetime(status(404), Some(secs(30)), Some(&listed), kept)
+        );
+        assert_eq!(
+            Some(secs(60)),
+            own_lifetime(status(302), None, Some(&listed), kept)
+        );
+        assert_eq!(
+            Some(secs(1)),
+            own_lifetime(status(200), None, Some(&listed), kept)
+        );
+        // Zero keeps a status out, in either option.
+        assert_eq!(None, own_lifetime(status(301), None, Some(&listed), kept));
+        assert_eq!(
+            None,
+            own_lifetime(status(200), Some(Duration::ZERO), None, kept)
+        );
+        // A `304` renews what was stored as a `200`.
+        assert_eq!(
+            Some(secs(30)),
+            own_lifetime(status(304), Some(secs(30)), None, kept)
+        );
+
+        // Only for a response that names no lifetime itself.
+        let response = |headers: &[(&'static str, &str)]| {
+            let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+            for (name, value) in headers {
+                resp.append_header(*name, *value).unwrap();
+            }
+            let cc = CacheControl::from_resp_headers(&resp);
+            (names_a_lifetime(cc.as_ref(), &resp), cc, resp)
+        };
+        assert_eq!(false, response(&[]).0);
+        assert_eq!(false, response(&[("Cache-Control", "public")]).0);
+        assert_eq!(true, response(&[("Cache-Control", "max-age=5")]).0);
+        assert_eq!(true, response(&[("Cache-Control", "s-maxage=5")]).0);
+        // Said, and not understood: still the origin's word.
+        assert_eq!(true, response(&[("Cache-Control", "max-age=abc")]).0);
+        assert_eq!(true, response(&[("Cache-Control", "max-age=-1")]).0);
+        assert_eq!(
+            true,
+            response(&[("Expires", "Wed, 21 Oct 2015 07:28:00 GMT")]).0
+        );
+
+        // What is made of it: fresh for that long, and nothing at all
+        // without a lifetime.
+        const DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(kept, 0, 1);
+        let (_, cc, resp) = response(&[("Cache-Control", "public")]);
+        let RespCacheable::Cacheable(meta) =
+            cacheable_for(cc.as_ref(), &resp, Some(secs(30)), &DEFAULTS)
+        else {
+            panic!("a response with a lifetime should be cacheable");
+        };
+        let fresh = meta
+            .fresh_until()
+            .duration_since(SystemTime::now())
+            .unwrap();
+        assert_eq!(true, fresh > secs(28) && fresh <= secs(30), "{fresh:?}");
+        assert_eq!(
+            true,
+            matches!(
+                cacheable_for(cc.as_ref(), &resp, None, &DEFAULTS),
+                RespCacheable::Uncacheable(_)
+            )
+        );
     }
 
     /// `s-maxage` is the lifetime for a shared cache and wins over

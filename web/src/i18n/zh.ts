@@ -319,7 +319,7 @@ export default {
     accessLog: "访问日志格式化",
     accessLogPlaceholder: "输入日志格式化模板",
     accessLogTips:
-      '预定义格式（combined、common、short、tiny、json）或由 {标签} 组成的格式；以 {" 开头的是 JSON 对象，值会被转义。不写输出目标时写入应用日志；否则在前面加上文件路径、stdout、stderr 或 syslog:// URL 和一个空格，如 stdout json。',
+      '预定义格式（combined、common、short、tiny、json）或由 {标签} 组成的格式；以 {" 开头的是 JSON 对象，值会被转义。不写输出目标时写入应用日志；否则在前面加上文件路径、stdout、stderr 或 syslog:// URL 和一个空格，如 stdout json。输出目标可以在 ? 后面带参数，包括记录哪些请求（skip、min_status、min_latency、sample）和轮转文件保留多久（keep）：/var/log/access.log?min_status=400&keep=14d combined。',
     enabledH2: "启用http2(h2c)",
     h2MaxConcurrentStreams: "H2最大并发流",
     h2MaxConcurrentStreamsPlaceholder:
@@ -352,6 +352,14 @@ export default {
     tlsCiphersuitesPlaceholder: "输入tls密码套件列表，用于tls1.3版本认证使用",
     tlsMinVersion: "最低tls版本",
     tlsMaxVersion: "最高tls版本",
+    tlsClientCa: "客户端 CA",
+    tlsClientCaPlaceholder:
+      "输入用于校验客户端证书的 CA（PEM、base64 或 PEM 文件路径）",
+    tlsClientCaTips:
+      "配置后 server 会向每个客户端要证书（双向 TLS）。需要启用全局证书。证书内容可通过 $tls_client_subject、$tls_client_fingerprint、$tls_client_serial、$tls_client_verified 获取。",
+    tlsClientAuth: "客户端证书",
+    tlsClientAuthTips:
+      "require（配了客户端 CA 时的默认值）：没有证书的客户端握手失败；optional：放行。校验不通过的证书在两种模式下都会被拒绝。",
     tlsSettingsRustlsTips:
       "当前 rustls 构建不支持这些选项：固定提供 TLS 1.2/1.3 与 rustls 默认密码套件。请清空该值，或改用 openssl 构建。",
     tcpFastOpen: "tcp快速打开",
@@ -491,6 +499,14 @@ export default {
       "输入校验上游证书所用的 CA（PEM、base64 或 PEM 文件路径），替代系统信任库",
     caRustlsTips:
       "rustls（webpki）会拒绝带 CA:TRUE 的对端证书。用 openssl req -x509 随手生成的自签名证书会校验失败；请改用由此 CA 签发的叶子证书（或不带 CA 标记的自签名叶子）。",
+    clientCert: "客户端证书",
+    clientCertPlaceholder:
+      "输入向上游出示的证书（PEM、base64 或 PEM 文件路径）",
+    clientCertTips:
+      "用于要求客户端出示证书的上游（双向 TLS）。需和私钥一起配置；https 健康检查同样会出示它。",
+    clientKey: "客户端私钥",
+    clientKeyPlaceholder:
+      "输入客户端证书的私钥（PEM、base64 或 PEM 文件路径）",
     h2StreamWindowSize: "H2 流窗口大小",
     h2StreamWindowSizePlaceholder:
       "输入 HTTP/2 每个流的流控窗口，如 8mib（1 至 2GiB - 1）",
@@ -705,6 +721,28 @@ export default {
       "输入允许源站 Vary 产生变体的请求头，留空表示全部",
     cachePurgeIpList: "允许缓存清除ip",
     cachePurgeIpListPlaceholder: "输入允许执行缓存清除的ip",
+    cacheDefaultTtl: "默认缓存时间",
+    cacheDefaultTtlPlaceholder: "输入默认缓存时间，如 30s（默认 1s）",
+    cacheDefaultTtlTips:
+      "源站没有给出缓存时间时响应保留多久。源站对自己响应的说明优先。",
+    cacheRespectClientNoCache: "客户端 no-cache",
+    cacheRespectClientNoCacheTips:
+      "选“是”后，客户端可以用 Cache-Control: no-cache 或 max-age=0 让缓存的内容先向源站重新验证。任何人都可以借此让源站干活，公开站点请保持关闭。",
+    cacheStatusTtl: "按状态码的缓存时间",
+    cacheStatusTtlPlaceholder: "状态码，如 404 : 时长，如 10s",
+    cacheStatusTtlTips:
+      "源站没有给出缓存时间时，该状态码的响应保留多久；也可以指定默认不缓存的状态码。0s 表示该状态码不缓存。",
+    cacheBypassHeaders: "绕过缓存的请求头",
+    cacheBypassHeadersPlaceholder: "输入请求头名称",
+    cacheBypassCookies: "绕过缓存的 Cookie",
+    cacheBypassCookiesPlaceholder: "输入 Cookie 名称",
+    cacheBypassTips: "请求带其中任何一项时，既不用缓存应答，也不存入缓存。",
+    cacheIgnoreQuery: "忽略的查询参数",
+    cacheIgnoreQueryPlaceholder: "输入查询参数名，如 utm_source",
+    cacheQueryAllow: "保留的查询参数",
+    cacheQueryAllowPlaceholder: "输入查询参数名，如 page",
+    cacheQueryTips:
+      "哪些查询参数计入缓存键：忽略列出的，或只保留列出的（两项只能配一项）。保留下来的参数按名称排序，发往上游的请求用的也是这份查询串。",
     requestIdAlgo: "算法",
     requestIdAlgoPlaceholder: "选择生成请求id的算法",
     requestIdLength: "长度",
@@ -747,6 +785,14 @@ export default {
     basicAuthList: "Basic模式认证",
     basicAuthListPlaceholder:
       "输入basic模式认证信息，base64格式如下：base64(account:password)",
+    basicAuthHtpasswd: "哈希口令账号",
+    basicAuthHtpasswdPlaceholder:
+      "输入 user:哈希，即 htpasswd -nbB user password 输出的那一行",
+    basicAuthHtpasswdTips:
+      "口令以 bcrypt 或 argon2 哈希保存的账号，配置里看不到口令本身。可以和上面的列表一起用，也可以只用这个。",
+    basicAuthRealm: "Realm",
+    basicAuthRealmPlaceholder:
+      "显示在登录框里，默认: Access to the staging site",
     basicAuthFailDelay: "失败时延迟",
     basicAuthFailDelayPlaceholder: "输入失败时的延迟响应时长",
     basicAuthHideCredentials: "隐藏认证信息",

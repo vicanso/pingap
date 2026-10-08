@@ -42,7 +42,10 @@ use pingap_core::{
 };
 use pingap_core::{HTTP_HEADER_NAME_X_REQUEST_ID, get_digest_detail};
 use pingap_location::LocationProvider;
-use pingap_logger::{Parser, parse_access_log_directive};
+use pingap_logger::{
+    AccessLogFilter, Parser, check_access_log_target,
+    parse_access_log_directive,
+};
 #[cfg(feature = "tracing")]
 use pingap_otel::{KeyValue, trace::Span};
 #[cfg(feature = "tracing")]
@@ -55,9 +58,10 @@ use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::key::{CacheHashKey, HashBinary};
+use pingora::cache::storage::HitHandler;
 use pingora::cache::{
-    CacheKey, CacheMeta, CacheMetaDefaults, NoCacheReason, RespCacheable,
-    VarianceBuilder,
+    CacheKey, CacheMeta, CacheMetaDefaults, ForcedFreshness, NoCacheReason,
+    RespCacheable, VarianceBuilder,
 };
 #[cfg(feature = "tracing")]
 use pingora::connectors::ConnectorOptions;
@@ -153,6 +157,9 @@ pub struct Server {
 
     /// Optional parser for customizing access log format and output
     log_parser: Option<Parser>,
+    /// Which requests get a line in the access log; every one of them
+    /// when there is none.
+    log_filter: Option<AccessLogFilter>,
 
     /// HTML/JSON template used for rendering error responses, parsed once
     error_template: ErrorTemplate,
@@ -171,6 +178,13 @@ pub struct Server {
 
     /// Maximum TLS protocol version to accept
     tls_max_version: Option<String>,
+
+    /// The CA that clients' certificates are verified against, `None`
+    /// when clients are not asked for one.
+    tls_client_ca: Option<String>,
+
+    /// Whether a client without a certificate is let in all the same.
+    tls_client_auth_optional: bool,
 
     /// Whether HTTP/2 protocol is enabled
     enabled_h2: bool,
@@ -430,6 +444,24 @@ impl Server {
         if let Some(access_log) = access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
+        // The conditions are parameters of where the log goes to; one
+        // that goes to the application log has no place to carry them.
+        let log_filter = match &access_log_path {
+            Some(target) => {
+                let invalid = |message: String| Error::Common {
+                    category: "access_log".to_string(),
+                    message,
+                };
+                // The other parameters of the destination are read by
+                // the task that writes the log, which a check of the
+                // configuration does not start.
+                check_access_log_target(target)
+                    .map_err(|e| invalid(e.to_string()))?;
+                AccessLogFilter::new(target)
+                    .map_err(|e| invalid(e.to_string()))?
+            },
+            None => None,
+        };
         let tcp_socket_options = if conf.tcp_fastopen.is_some()
             || conf.tcp_keepalive.is_some()
             || conf.reuse_port.is_some()
@@ -461,11 +493,14 @@ impl Server {
             processing: AtomicI32::new(0),
             addr: conf.addr.clone(),
             log_parser: p,
+            log_filter,
             error_template: ErrorTemplate::new(&conf.error_template),
             tls_cipher_list: conf.tls_cipher_list.clone(),
             tls_ciphersuites: conf.tls_ciphersuites.clone(),
             tls_min_version: conf.tls_min_version.clone(),
             tls_max_version: conf.tls_max_version.clone(),
+            tls_client_ca: conf.tls_client_ca.clone(),
+            tls_client_auth_optional: conf.tls_client_auth_optional,
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
@@ -635,6 +670,8 @@ impl Server {
         let cipher_suites = self.tls_ciphersuites.clone();
         let tls_min_version = self.tls_min_version.clone();
         let tls_max_version = self.tls_max_version.clone();
+        let tls_client_ca = self.tls_client_ca.clone();
+        let tls_client_auth_optional = self.tls_client_auth_optional;
         let h2_options = self.new_h2_options();
         let h2_idle_timeout = self.h2_idle_timeout;
         let ja4_store = self.ja4.clone();
@@ -694,6 +731,8 @@ impl Server {
                         cipher_suites: cipher_suites.clone(),
                         tls_min_version: tls_min_version.clone(),
                         tls_max_version: tls_max_version.clone(),
+                        client_ca: tls_client_ca.clone(),
+                        client_auth_optional: tls_client_auth_optional,
                     })
                     .map_err(|e| Error::Common {
                         category: "tls".to_string(),
@@ -775,6 +814,7 @@ impl Server {
             }
             ctx.conn.tls_cipher = digest_detail.tls_cipher;
             ctx.conn.tls_version = digest_detail.tls_version;
+            ctx.conn.tls_client_cert = digest_detail.tls_client_cert;
             // The fingerprint was filed under this connection's socket
             // digest before its handshake.
             if let Some(store) = &self.ja4
@@ -1356,6 +1396,35 @@ fn get_upstream_with_variables(
     upstreams.get(key)
 }
 
+/// Whether the target of the request is one of the forms a request has
+/// (RFC 9112 §3.2): a path (`/a?b=1`), a url (`http://host/a`) or `*`.
+///
+/// pingora keeps a target of any other kind (`GET robots.txt HTTP/1.1`,
+/// no slash in front) as it came for the request to the upstream, and
+/// gives the uri of the request the path `/`. Everything here goes by
+/// that uri: such a request matched the locations of `/`, ran their
+/// plugins and was kept by a cache under the key of `/` - while the
+/// upstream was asked for `robots.txt`. `secret/report` got past the
+/// plugins of a location for `/secret` that way, and a `404` for `nf`
+/// became the cached front page. It is no request, and is answered
+/// with `400` before any of that.
+fn has_routable_target(header: &RequestHeader) -> bool {
+    use pingora::protocols::http::authority::{
+        RawTargetAuthority, raw_target_authority,
+    };
+    let target = header.raw_path();
+    if target.is_empty()
+        || matches!(target.first(), Some(b'/' | b'?'))
+        || target == b"*"
+    {
+        return true;
+    }
+    matches!(
+        raw_target_authority(target),
+        RawTargetAuthority::Absolute { .. }
+    )
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = Ctx;
@@ -1395,6 +1464,13 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
+        // Before anything goes by the path: see `has_routable_target`.
+        if !has_routable_target(session.req_header()) {
+            return Err(new_internal_error(
+                400,
+                "the target of the request is not a path or a url",
+            ));
+        }
         pingap_core::merge_cookie_headers(session.req_header_mut());
         // Counted before any routing, so the totals cover requests that
         // match no location, the admin endpoints, ACME challenges and the
@@ -1709,6 +1785,17 @@ impl ProxyHttp for Server {
         #[cfg(feature = "tracing")]
         inject_trace_context(ctx, upstream_response);
         set_append_proxy_headers(session, ctx, upstream_response);
+        // A cache that makes its key of a part of the query asks the
+        // upstream with that part, so that what is stored under a key
+        // can not depend on a parameter the key leaves out.
+        if let Some(cache) = &ctx.cache
+            && !cache.ask_with_key_query(upstream_response)
+        {
+            return Err(new_internal_error(
+                400,
+                "the query of the request can not be sent to the upstream",
+            ));
+        }
         Ok(())
     }
     /// Filters request body chunks before sending upstream.
@@ -1760,6 +1847,12 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<CacheKey> {
         debug!(target: LOG_TARGET, "--> cache key callback");
         defer!(debug!(target: LOG_TARGET, "<-- cache key callback"););
+        // Every request plugin has run by now: the query the key is made
+        // of is the one of the request as they left it, and the upstream
+        // is asked with the same.
+        if let Some(cache) = ctx.cache.as_mut() {
+            cache.settle_key_query(session.req_header());
+        }
         let key = get_cache_key(
             ctx,
             session.req_header().method.as_ref(),
@@ -1834,6 +1927,11 @@ impl ProxyHttp for Server {
             (false, None), // ctx.cache is None
             |c| (c.check_cache_control, c.max_ttl),
         );
+        // The lifetimes the plugin gives a response that names none.
+        let own_ttl = ctx.cache.as_ref().and_then(|c| {
+            (c.default_ttl.is_some() || c.status_ttl.is_some())
+                .then(|| (c.default_ttl, c.status_ttl.clone()))
+        });
 
         let mut cc = CacheControl::from_resp_headers(resp);
 
@@ -1868,10 +1966,53 @@ impl ProxyHttp for Server {
             ));
         }
 
+        // A response whose origin names no lifetime gets the plugin's:
+        // `status_ttl` for its status, `default_ttl` for the statuses
+        // that are kept by default. Only then: what the origin says
+        // about its own response comes first, as it does for the one
+        // second there is without these.
+        if let Some((default_ttl, status_ttl)) = own_ttl
+            && !crate::cache::names_a_lifetime(cc.as_ref(), resp)
+        {
+            return Ok(crate::cache::limit_freshness(
+                crate::cache::cacheable_for(
+                    cc.as_ref(),
+                    resp,
+                    crate::cache::own_lifetime(
+                        resp.status,
+                        default_ttl,
+                        status_ttl.as_deref().map(Vec::as_slice),
+                        default_fresh_duration,
+                    ),
+                    &META_DEFAULTS,
+                ),
+                max_ttl,
+            ));
+        }
+
         Ok(crate::cache::limit_freshness(
             resp_cacheable(cc.as_ref(), resp.clone(), false, &META_DEFAULTS),
             max_ttl,
         ))
+    }
+
+    /// A client that asked for a checked copy, where the `cache` plugin
+    /// lets clients ask (`respect_client_no_cache`), has what is cached
+    /// taken as expired: it is revalidated with the origin, and stays the
+    /// stored copy when the origin answers `304`.
+    async fn cache_hit_filter(
+        &self,
+        _session: &mut Session,
+        _meta: &CacheMeta,
+        _hit_handler: &mut HitHandler,
+        _is_fresh: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<Option<ForcedFreshness>> {
+        // Also for what has expired and would be served while it is
+        // being refreshed (`stale-while-revalidate`): that is a copy
+        // which was not checked either.
+        let revalidate = ctx.cache.as_ref().is_some_and(|c| c.revalidate);
+        Ok(revalidate.then_some(ForcedFreshness::ForceExpired))
     }
 
     /// Turns the origin's `Vary` header into pingora's variance key, so each
@@ -2297,6 +2438,29 @@ impl ProxyHttp for Server {
         set_otel_request_attrs(session, ctx);
 
         if let Some(p) = &self.log_parser {
+            // Before the line is made: a request that is not logged
+            // costs no formatting.
+            if let Some(filter) = &self.log_filter {
+                // What the client asked for, not what a rewrite of the
+                // location made of it.
+                let uri = ctx
+                    .features
+                    .as_ref()
+                    .and_then(|features| features.original_uri.as_ref())
+                    .unwrap_or(&session.req_header().uri);
+                let target = uri
+                    .path_and_query()
+                    .map_or(uri.path(), |value| value.as_str());
+                let status =
+                    ctx.state.status.map_or(0, |status| status.as_u16());
+                if !filter.allows(
+                    target,
+                    status,
+                    ctx.timing.created_at.elapsed(),
+                ) {
+                    return;
+                }
+            }
             let buf = p.format(session, ctx);
             if let Some(logger) = &self.access_logger {
                 if let Err(e) = logger.try_send(buf) {
@@ -3562,6 +3726,90 @@ value = 'proxy_set_headers = ["name:value"]'
         }
         // Still counted, for the access log and the metrics.
         assert_eq!(5 * 800, ctx.state.payload_size);
+    }
+
+    /// Regression: a target without a slash in front was routed and
+    /// cached as `/` and sent to the upstream as it came.
+    #[tokio::test]
+    async fn test_target_that_is_no_path_is_refused() {
+        let server = new_server();
+        let filter = async |target: &str| {
+            let input = format!("GET {target} HTTP/1.1\r\nHost: a\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let routable = has_routable_target(session.req_header());
+            let mut ctx = Ctx::default();
+            let result =
+                server.early_request_filter(&mut session, &mut ctx).await;
+            (routable, result.map_err(|e| format!("{:?}", e.etype())))
+        };
+        for target in ["secret/report", "nf", "robots.txt?a=1", "a:b"] {
+            let (routable, result) = filter(target).await;
+            assert_eq!(false, routable, "{target}");
+            assert_eq!(Err("HTTPStatus(400)".to_string()), result, "{target}");
+        }
+        for target in [
+            "/",
+            "/vicanso/pingap?size=1",
+            "?size=1",
+            "*",
+            "http://a/vicanso/pingap?size=1",
+        ] {
+            let (routable, result) = filter(target).await;
+            assert_eq!(true, routable, "{target}");
+            assert_eq!(Ok(()), result, "{target}");
+        }
+    }
+
+    /// A cache whose key is made of a part of the query asks the upstream
+    /// with that part. The request itself stays as the client sent it,
+    /// which is what the access log shows.
+    #[tokio::test]
+    async fn test_upstream_is_asked_with_the_query_of_the_cache_key() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /list?utm_source=mail&p%61ge=2&a=1 HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut upstream_request = session.req_header().clone();
+        let mut ctx = Ctx::default();
+        ctx.cache.get_or_insert_default().key_query = Some("a=1".to_string());
+        server
+            .upstream_request_filter(
+                &mut session,
+                &mut upstream_request,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!("/list?a=1", upstream_request.uri.to_string());
+        assert_eq!(
+            "/list?utm_source=mail&p%61ge=2&a=1",
+            session.req_header().uri.to_string()
+        );
+
+        // No cache, or one without a rule for the query: as it came.
+        for cache in [None, Some(Box::default())] {
+            let mut upstream_request = session.req_header().clone();
+            let mut ctx = Ctx {
+                cache,
+                ..Default::default()
+            };
+            server
+                .upstream_request_filter(
+                    &mut session,
+                    &mut upstream_request,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                "/list?utm_source=mail&p%61ge=2&a=1",
+                upstream_request.uri.to_string()
+            );
+        }
     }
 
     /// Regression: pingora asks for the peer again when a reused

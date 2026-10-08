@@ -25,6 +25,13 @@ IP-restricted `PURGE` method.
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
 | `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. See [who may purge](#who-may-purge) for the address that is checked. |
 | `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. |
+| `default_ttl` | duration | `1s` | How long a response is kept when the origin names no lifetime, for the statuses that are kept by default. `0s` keeps none of them. See [Lifetimes of your own](#lifetimes-of-your-own). |
+| `status_ttl` | string[] | — | `status:duration` entries (`"404:10s"`, `"301:1h"`): the same per status, also for a status that is not kept by default. `0s` keeps that status out. |
+| `bypass_headers` | string[] | — | A request with any of these headers is neither answered from the cache nor stored. |
+| `bypass_cookies` | string[] | — | The same for a request with any of these cookies. |
+| `ignore_query` | string[] | — | Query parameters that are left out of the cache key (`utm_source`, `fbclid`). The others are put in order by name. Not together with `query_allow`. |
+| `query_allow` | string[] | — | The only query parameters that are a part of the cache key, in order by name. |
+| `respect_client_no_cache` | bool | `false` | `true` lets a client have what is cached revalidated with the origin, with `Cache-Control: no-cache` or `max-age=0`. |
 
 ### Backend selection
 
@@ -84,6 +91,82 @@ searched by namespace: objects that were in memory only are gone too, and the
 other namespaces read theirs back from disk. It only cleans the local instance:
 in a multi-instance deployment, issue the request on every node.
 
+## Lifetimes of your own
+
+What the origin says about its response comes first: a lifetime in
+`Cache-Control`, or an `Expires`. A response that says nothing is kept for one
+second when its status is one of those listed under [Behaviour](#behaviour),
+and not at all otherwise. Two options change that, and only that:
+
+```toml
+[plugins.pageCache]
+category = "cache"
+default_ttl = "30s"
+status_ttl = ["404:10s", "301:1h", "302:1m", "410:0s"]
+max_ttl = "1h"
+```
+
+- `default_ttl` replaces the one second, for the same statuses.
+- `status_ttl` names a lifetime per status and wins over `default_ttl`. It
+  can name a status that is not kept by default (`302`, even `500`) and keep
+  one out with `0s`. Not `304`, which is a configuration error: it renews
+  what was stored as a `200`, for as long as a `200` is kept.
+- `max_ttl` caps these like any other lifetime, and `check_cache_control`
+  still refuses a response that has no `Cache-Control` header at all.
+- A response the origin marks `no-store`, `no-cache`, `private` or
+  `max-age=0`, one that sets a cookie, and one to a request with
+  `Authorization` stay out as before: these options give a lifetime to a
+  response that has none, they do not overrule the origin. A `max-age` that
+  does not read as a number counts as the origin having named one.
+
+## What the key is made of, and who gets past the cache
+
+```toml
+[plugins.pageCache]
+category = "cache"
+ignore_query = ["utm_source", "utm_medium", "utm_campaign", "fbclid", "gclid"]
+bypass_cookies = ["session"]
+bypass_headers = ["X-Preview"]
+```
+
+- With `ignore_query` or `query_allow` set, the query of the cache key is made
+  of the parameters that are kept, in the order of their names: `?b=2&a=1`
+  and `?a=1&b=2` are one entry, and a tracking parameter no longer makes one
+  entry per visitor. Parameters of the same name keep the order they came in.
+  Names are compared as written, without decoding. **The upstream is asked
+  with that same query**, not with the one the client sent: a parameter that
+  is not a part of the key does not reach it, on the requests the plugin
+  handles (a `POST`, a request that `skip` matches or one that is bypassed
+  goes as it came). Sent on, it would be the
+  upstream that decided what the response depends on, and a parameter spelled
+  in a way the rule does not know and the upstream does (`p%61ge=2`, `Page=2`,
+  `x=1;page=2`) would put page 2 into the cache as the page without a number,
+  for everyone. So an upstream that reads a tracking parameter itself no
+  longer sees it on a location with this plugin. Only the request to the
+  upstream is changed: the access log (`{uri}`, `{query}`) and the other
+  plugins still see what the client sent. The query is taken once all the
+  plugins of the request have run, so a parameter another plugin removes
+  (`key_auth` with `hide_credentials`) is in neither the key nor the request
+  to the upstream, wherever that plugin is listed.
+  Without either option the key and the request are as they came, as before;
+  setting one changes the keys, and what is cached under the old ones is
+  fetched again once.
+- A request with one of `bypass_headers` or `bypass_cookies` is somebody's
+  own - a logged in session, a preview - and the cache is not asked: it goes
+  to the upstream and what it gets is not kept. A cookie is found by its exact
+  name, whatever else the `Cookie` header holds. The plugin does not look at
+  cookies otherwise (see below), so this is how to keep the pages of logged
+  in users apart from the cached ones. A `PURGE` is not bypassed.
+- `respect_client_no_cache` is off by default because it hands the decision
+  to the client: with it, a request carrying `Cache-Control: no-cache` or
+  `max-age=0` (what a browser sends on reload) or `Pragma: no-cache` has the
+  cached response revalidated with the origin before it is served - a
+  conditional request when the stored response has a validator - and anyone
+  can make the origin work that way. Leave it off on a public site. It holds
+  for a response that has expired and would be served while it is refreshed
+  (`stale-while-revalidate`) as well, and such a client gets an error rather
+  than the stored copy when the origin can not be reached.
+
 ## Who may purge
 
 A `PURGE` is allowed when the address of the request is in `purge_ip_list`;
@@ -119,6 +202,8 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
     is one HTTP calls heuristically cacheable: 200, 203, 204, 206, 300, 301,
     308, 404, 405, 410, 414 or 501. Any other status, a 5xx or a 302 for
     example, is only stored when the origin gives it a lifetime.
+    `default_ttl` and `status_ttl` change both, see
+    [Lifetimes of your own](#lifetimes-of-your-own).
     `check_cache_control` goes further and stores nothing that comes without a
     `Cache-Control` header.
 - Two kinds of response are taken to belong to one client and are not stored.

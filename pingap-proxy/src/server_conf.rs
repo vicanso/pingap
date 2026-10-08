@@ -56,6 +56,14 @@ pub struct ServerConf {
     // Common values: "TLSv1.2", "TLSv1.3"
     pub tls_max_version: Option<String>,
 
+    /// The CA the certificates of clients are verified against; a server
+    /// with one asks every client for a certificate.
+    pub tls_client_ca: Option<String>,
+
+    /// With `tls_client_ca`: whether a client without a certificate is
+    /// let in (`tls_client_auth = "optional"`).
+    pub tls_client_auth_optional: bool,
+
     // Number of worker threads for handling connections
     // None means use system default
     pub threads: Option<usize>,
@@ -191,6 +199,15 @@ impl fmt::Display for ServerConf {
         )?;
         writeln!(
             f,
+            "    Client Certificates: {}",
+            match (&self.tls_client_ca, self.tls_client_auth_optional) {
+                (None, _) => "not asked for",
+                (Some(_), false) => "required",
+                (Some(_), true) => "optional",
+            }
+        )?;
+        writeln!(
+            f,
             "    Cipher List (TLS <1.3): {}",
             self.tls_cipher_list.clone().unwrap_or_default()
         )?;
@@ -267,6 +284,14 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             tls_ciphersuites: item.tls_ciphersuites.clone(),
             tls_min_version: item.tls_min_version.clone(),
             tls_max_version: item.tls_max_version.clone(),
+            tls_client_ca: item
+                .tls_client_ca
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
+            tls_client_auth_optional: item
+                .tls_client_auth
+                .as_deref()
+                .is_some_and(|mode| mode.trim() == "optional"),
             addr: item.addr,
             access_log: item.access_log,
             locations: item.locations.unwrap_or_default(),
@@ -353,6 +378,7 @@ mod tests {
     JA4 Fingerprint: false
     Min Version: 
     Max Version: 
+    Client Certificates: not asked for
     Cipher List (TLS <1.3): 
     Ciphersuites (TLS 1.3): 
   - TCP Settings:
@@ -386,6 +412,7 @@ mod tests {
     JA4 Fingerprint: false
     Min Version: 
     Max Version: 
+    Client Certificates: not asked for
     Cipher List (TLS <1.3): 
     Ciphersuites (TLS 1.3): 
   - TCP Settings:

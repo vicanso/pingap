@@ -15,6 +15,8 @@
 use super::{
     Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
+use arc_swap::ArcSwap;
+use argon2::PasswordVerifier;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderValue;
@@ -28,7 +30,10 @@ use pingap_core::{
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tokio::time::sleep;
 use tracing::debug;
 
@@ -40,6 +45,184 @@ const DEFAULT_IP_FAIL_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// Client IPs whose failures are tracked at once. Beyond this the least
 /// used are forgotten, which only ever lets an IP off early.
 const IP_FAIL_CAPACITY: usize = 4096;
+
+/// How long credentials that passed a hash stay verified. Until then a
+/// request with the same credentials is not hashed again.
+const VERIFIED_TTL: Duration = Duration::from_secs(5 * 60);
+/// Credentials kept as verified at once. One entry per account in use;
+/// beyond this the oldest are let go and verified again when they come.
+const VERIFIED_CAPACITY: usize = 1024;
+
+/// The hash functions an `htpasswd` entry may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HashKind {
+    /// `$2a$`, `$2b$`, `$2x$`, `$2y$`: what `htpasswd -B` writes.
+    Bcrypt,
+    /// `$argon2id$`, `$argon2i$`, `$argon2d$`.
+    Argon2,
+}
+
+/// The kind of `hash`, by how it starts.
+fn hash_kind(hash: &str) -> Option<HashKind> {
+    if ["$2a$", "$2b$", "$2x$", "$2y$"]
+        .iter()
+        .any(|prefix| hash.starts_with(prefix))
+    {
+        return Some(HashKind::Bcrypt);
+    }
+    hash.starts_with("$argon2").then_some(HashKind::Argon2)
+}
+
+/// Whether `password` is the one `hash` was made of. Tens of
+/// milliseconds of one core, by design of the hash: not for a thread that
+/// serves requests.
+fn verify_hash(kind: HashKind, password: &[u8], hash: &str) -> bool {
+    match kind {
+        HashKind::Bcrypt => bcrypt::verify(password, hash).unwrap_or(false),
+        HashKind::Argon2 => argon2::Argon2::default()
+            .verify_password(password, hash)
+            .is_ok(),
+    }
+}
+
+/// An account of `htpasswd`: its password is kept as a hash.
+struct HashedAccount {
+    user: Vec<u8>,
+    kind: HashKind,
+    hash: String,
+}
+
+/// The accounts whose passwords are hashes, and what keeps a request
+/// from costing a hash each time.
+///
+/// A hash of this kind is slow on purpose, so that a stolen configuration
+/// does not give the passwords away. Verified on every request it would
+/// be the proxy that pays: an API client sends its credentials with each
+/// call. So credentials that passed are remembered for a while, by a
+/// digest of them that is keyed with something only this process has -
+/// what is in memory is of no more use to whoever reads it than the hash
+/// in the configuration.
+struct Hashed {
+    accounts: Arc<Vec<HashedAccount>>,
+    /// The digest of credentials that were verified, with the time, in
+    /// seconds, until which that holds.
+    verified: ArcSwap<HashMap<[u8; 32], u64>>,
+    key: [u8; 32],
+    /// How many hashes are computed at once. A request with credentials
+    /// that are not verified yet costs one whoever sends it, and without
+    /// a bound enough of them would take every thread there is for
+    /// blocking work.
+    slots: Semaphore,
+}
+
+impl Hashed {
+    fn new(accounts: Vec<HashedAccount>) -> Self {
+        let slots = std::thread::available_parallelism()
+            .map_or(2, |cores| cores.get().max(2));
+        Self {
+            accounts: Arc::new(accounts),
+            verified: ArcSwap::from_pointee(HashMap::new()),
+            key: rand::random(),
+            slots: Semaphore::new(slots),
+        }
+    }
+
+    #[inline]
+    fn digest(&self, credentials: &[u8]) -> [u8; 32] {
+        hmac_sha256::HMAC::mac(credentials, self.key)
+    }
+
+    /// Whether `credentials`, as they are in the header, passed a hash
+    /// not long ago.
+    #[inline]
+    fn is_verified(&self, credentials: &[u8]) -> bool {
+        self.verified
+            .load()
+            .get(&self.digest(credentials))
+            .is_some_and(|until| *until > pingap_core::now_sec())
+    }
+
+    fn remember(&self, credentials: &[u8]) {
+        let digest = self.digest(credentials);
+        let now = pingap_core::now_sec();
+        let until = now + VERIFIED_TTL.as_secs();
+        self.verified.rcu(|current| {
+            let mut next: HashMap<[u8; 32], u64> = current
+                .iter()
+                .filter(|(_, until)| **until > now)
+                .map(|(digest, until)| (*digest, *until))
+                .collect();
+            // Full of credentials that still hold: start over. Each of
+            // them is verified once more, which is all it costs.
+            if next.len() >= VERIFIED_CAPACITY {
+                next.clear();
+            }
+            next.insert(digest, until);
+            next
+        });
+    }
+
+    /// Whether `credentials` (`user:password`, decoded) are those of an
+    /// account. Computes a hash, off the thread that serves the request.
+    ///
+    /// For a user that is not there as well, against the hash of another
+    /// account: answered at once, "no such user" could be told from
+    /// "wrong password" by the time it takes, and the names of the
+    /// accounts read off one by one.
+    ///
+    /// `still_allowed` is asked once the request has its turn, before
+    /// anything is computed. The wait for a turn is where requests pile
+    /// up: a client that sent a thousand guesses at once had every one of
+    /// them past the check of its failures before the first had failed,
+    /// and each of them hashed. `None` when it says no.
+    async fn verify(
+        &self,
+        credentials: Vec<u8>,
+        still_allowed: impl FnOnce() -> bool,
+    ) -> Option<bool> {
+        let Ok(_slot) = self.slots.acquire().await else {
+            return Some(false);
+        };
+        if !still_allowed() {
+            return None;
+        }
+        Some(self.verify_now(credentials).await)
+    }
+
+    async fn verify_now(&self, credentials: Vec<u8>) -> bool {
+        let accounts = self.accounts.clone();
+        tokio::task::spawn_blocking(move || {
+            let (user, password) =
+                match credentials.iter().position(|byte| *byte == b':') {
+                    Some(index) => {
+                        (&credentials[..index], &credentials[index + 1..])
+                    },
+                    None => (&credentials[..], &[][..]),
+                };
+            let account = accounts
+                .iter()
+                .find(|account| account.user.as_slice() == user);
+            match account.or(accounts.first()) {
+                Some(found) => {
+                    verify_hash(found.kind, password, &found.hash)
+                        && account.is_some()
+                },
+                None => false,
+            }
+        })
+        .await
+        .unwrap_or(false)
+    }
+}
+
+/// `realm` as the quoted string of a `WWW-Authenticate` header.
+fn quoted_realm(realm: &str) -> Option<HeaderValue> {
+    if realm.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    let escaped = realm.replace('\\', "\\\\").replace('"', "\\\"");
+    HeaderValue::from_str(&format!("Basic realm=\"{escaped}\"")).ok()
+}
 
 /// BasicAuth implements HTTP Basic Authentication functionality for HTTP requests.
 ///
@@ -62,6 +245,10 @@ pub struct BasicAuth {
     /// The base64 `username:password` of every account, without the
     /// scheme: `admin:password` is stored as `YWRtaW46cGFzc3dvcmQ=`.
     authorizations: Vec<Vec<u8>>,
+
+    /// The accounts of `htpasswd`, whose passwords are kept as hashes;
+    /// `None` when there are none.
+    hashed: Option<Hashed>,
 
     /// When true, removes the Authorization header after successful authentication
     /// This is a security feature to prevent credential leakage to backend services
@@ -131,18 +318,66 @@ impl TryFrom<&PluginConf> for BasicAuth {
             authorizations.push(item.as_bytes().to_vec());
         }
 
-        // Ensure at least one valid authorization is configured
-        if authorizations.is_empty() {
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::BasicAuth.to_string(),
+            message,
+        };
+        // The accounts whose password is a hash: `user:hash`, the line
+        // `htpasswd -nbB user password` prints.
+        let mut hashed = vec![];
+        for item in get_str_slice_conf(value, "htpasswd").iter() {
+            let (user, hash) = item
+                .trim()
+                .split_once(':')
+                .filter(|(user, hash)| !user.is_empty() && !hash.is_empty())
+                .ok_or_else(|| {
+                    invalid(
+                        "htpasswd: an entry should be user:hash".to_string(),
+                    )
+                })?;
+            // Said by the name of the account and not by the hash: the
+            // message ends up in a log.
+            let kind = hash_kind(hash).ok_or_else(|| {
+                invalid(format!(
+                    "htpasswd: the hash of {user} is not bcrypt ($2y$) or argon2 ($argon2id$)"
+                ))
+            })?;
+            let readable = match kind {
+                // With a cost bcrypt can be run at: one outside of that
+                // parses, and is then a password nothing ever matches.
+                HashKind::Bcrypt => hash
+                    .parse::<bcrypt::HashParts>()
+                    .is_ok_and(|parts| (4..=31).contains(&parts.get_cost())),
+                HashKind::Argon2 => argon2::PasswordHash::new(hash).is_ok(),
+            };
+            if !readable {
+                return Err(invalid(format!(
+                    "htpasswd: the hash of {user} can not be read"
+                )));
+            }
+            if hashed
+                .iter()
+                .any(|account: &HashedAccount| account.user == user.as_bytes())
+            {
+                return Err(invalid(format!(
+                    "htpasswd: {user} is there twice"
+                )));
+            }
+            hashed.push(HashedAccount {
+                user: user.as_bytes().to_vec(),
+                kind,
+                hash: hash.to_string(),
+            });
+        }
+
+        // Ensure at least one account is configured
+        if authorizations.is_empty() && hashed.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::BasicAuth.to_string(),
                 message: "basic authorizations can't be empty".to_string(),
             });
         }
         // Wrong passwords per client IP; 0 (the default) turns it off.
-        let invalid = |message: String| Error::Invalid {
-            category: PluginCategory::BasicAuth.to_string(),
-            message,
-        };
         let ip_fail_limit = match value.get("ip_fail_limit") {
             None => 0,
             Some(limit) => limit
@@ -175,12 +410,18 @@ impl TryFrom<&PluginConf> for BasicAuth {
             )
         });
 
-        let www_authenticate = Some(vec![(
-            http::header::WWW_AUTHENTICATE,
+        let realm = get_str_conf(value, "realm");
+        let challenge = if realm.is_empty() {
             HeaderValue::from_static(
                 r###"Basic realm="Access to the staging site""###,
-            ),
-        )]);
+            )
+        } else {
+            quoted_realm(&realm).ok_or_else(|| {
+                invalid("realm can not be put into a header".to_string())
+            })?
+        };
+        let www_authenticate =
+            Some(vec![(http::header::WWW_AUTHENTICATE, challenge)]);
 
         let params = Self {
             hash_value,
@@ -188,6 +429,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
             delay,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             authorizations,
+            hashed: (!hashed.is_empty()).then(|| Hashed::new(hashed)),
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: www_authenticate.clone(),
@@ -280,11 +522,46 @@ impl Plugin for BasicAuth {
 
         // Validate credentials against our authorized list, comparing in
         // constant time so a match position is not leaked via timing.
-        let authorized = basic_credentials(value).is_some_and(|credentials| {
+        let credentials = basic_credentials(value);
+        let mut authorized = credentials.is_some_and(|credentials| {
             self.authorizations
                 .iter()
                 .any(|auth| pingap_core::constant_time_eq(auth, credentials))
         });
+        // Then the accounts whose password is a hash: by what was
+        // verified a moment ago, or by computing the hash.
+        if !authorized
+            && let Some(hashed) = &self.hashed
+            && let Some(credentials) = credentials
+        {
+            authorized = hashed.is_verified(credentials);
+            if !authorized && let Ok(decoded) = base64_decode(credentials) {
+                let credentials = credentials.to_vec();
+                // The address the failures are counted by, taken now:
+                // the session is not there to ask while the hash waits
+                // for its turn.
+                let ip = self.ip_fail_limit.as_ref().map(|_| {
+                    ensure_verified_client_ip(session, ctx).to_string()
+                });
+                let verified = hashed
+                    .verify(decoded, || {
+                        match (&self.ip_fail_limit, ip.as_deref()) {
+                            (Some(limit), Some(ip)) => limit.validate(ip),
+                            _ => true,
+                        }
+                    })
+                    .await;
+                let Some(verified) = verified else {
+                    return Ok(RequestPluginResult::Respond(
+                        self.too_many_failures_resp.clone(),
+                    ));
+                };
+                authorized = verified;
+                if authorized {
+                    hashed.remember(&credentials);
+                }
+            }
+        }
         if !authorized {
             // Only wrong credentials count. A missing header does not: it is
             // how every browser starts, before the login prompt.
@@ -318,11 +595,15 @@ register_plugin!("basic_auth", BasicAuth);
 
 #[cfg(test)]
 mod tests {
-    use super::{BasicAuth, Plugin};
+    use super::{
+        BasicAuth, HashKind, Hashed, HashedAccount, Plugin, VERIFIED_CAPACITY,
+    };
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
 
@@ -521,6 +802,280 @@ hide_credentials = true
             RequestPluginResult::Respond(resp) => resp.status.as_u16(),
             _ => 0,
         }
+    }
+
+    fn basic(user: &str, password: &str) -> String {
+        format!(
+            "Basic {}",
+            pingap_util::base64_encode(format!("{user}:{password}"))
+        )
+    }
+
+    fn argon2_hash(password: &str) -> String {
+        use argon2::{Algorithm, Argon2, Params, PasswordHasher, Version};
+        // As small as the parameters go: a test does not need them to be
+        // slow.
+        Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            Params::new(8, 1, 1, None).unwrap(),
+        )
+        .hash_password(password.as_bytes())
+        .unwrap()
+        .to_string()
+    }
+
+    /// `htpasswd`: accounts whose password is kept as a hash, next to the
+    /// ones of `authorizations` or without them.
+    #[tokio::test]
+    async fn test_htpasswd() {
+        let bcrypt_hash = bcrypt::hash("b-secret", 4).unwrap();
+        // The prefix of `htpasswd -B`.
+        let bcrypt_hash = bcrypt_hash.replacen("$2b$", "$2y$", 1);
+        let auth = BasicAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "authorizations = [\"{}\"]\nhtpasswd = [\"alice:{bcrypt_hash}\", \"bob:{}\"]\nip_fail_limit = 100\n",
+                pingap_util::base64_encode("plain:p-secret"),
+                argon2_hash("a-secret"),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let hashed = auth.hashed.as_ref().unwrap();
+        let attempt = async |user: &str, password: &str| {
+            status(
+                &request(&auth, "1.1.1.1", Some(&basic(user, password))).await,
+            )
+        };
+        // Each kind of account with its own password.
+        assert_eq!(0, attempt("plain", "p-secret").await);
+        assert_eq!(0, attempt("alice", "b-secret").await);
+        assert_eq!(0, attempt("bob", "a-secret").await);
+        // Not with another's, not with none, and no account that is not
+        // there - also not with the password of the account whose hash
+        // stands in for it.
+        assert_eq!(401, attempt("alice", "a-secret").await);
+        assert_eq!(401, attempt("bob", "b-secret").await);
+        assert_eq!(401, attempt("alice", "").await);
+        assert_eq!(401, attempt("carol", "b-secret").await);
+        assert_eq!(401, attempt("", "b-secret").await);
+        assert_eq!(401, attempt("alice:b-secret", "").await);
+        // A password with a colon in it is everything after the first.
+        let with_colon = BasicAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "htpasswd = [\"dave:{}\"]",
+                bcrypt::hash("a:b", 4).unwrap()
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            0,
+            status(
+                &request(&with_colon, "1.1.1.1", Some(&basic("dave", "a:b")))
+                    .await
+            )
+        );
+
+        // What passed is remembered, so the next request with it costs no
+        // hash; what did not pass is not.
+        let header = basic("alice", "b-secret");
+        let credentials = header.strip_prefix("Basic ").unwrap().as_bytes();
+        assert_eq!(true, hashed.is_verified(credentials));
+        let wrong = basic("alice", "a-secret");
+        assert_eq!(
+            false,
+            hashed
+                .is_verified(wrong.strip_prefix("Basic ").unwrap().as_bytes())
+        );
+        // By a digest that is this plugin's own: nothing of the
+        // credentials is kept.
+        let kept = hashed.verified.load();
+        assert_eq!(2, kept.len());
+        assert_eq!(true, kept.contains_key(&hashed.digest(credentials)));
+        assert_eq!(
+            false,
+            kept.contains_key(&hmac_sha256::Hash::hash(credentials))
+        );
+    }
+
+    /// Regression: the failures of an address were looked at before a
+    /// request waited for its turn to be hashed, and counted after. A
+    /// thousand guesses sent at once were all past the check before the
+    /// first had failed, and every one of them was hashed.
+    #[tokio::test]
+    async fn test_failures_are_checked_when_a_hash_gets_its_turn() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const LIMIT: usize = 3;
+        const GUESSES: usize = 40;
+        let hashed = Arc::new(Hashed::new(vec![HashedAccount {
+            user: b"alice".to_vec(),
+            kind: HashKind::Bcrypt,
+            hash: bcrypt::hash("secret", 4).unwrap(),
+        }]));
+        let failures = Arc::new(AtomicUsize::new(0));
+        let mut tasks = vec![];
+        for index in 0..GUESSES {
+            let hashed = hashed.clone();
+            let failures = failures.clone();
+            tasks.push(tokio::spawn(async move {
+                let verified = hashed
+                    .verify(format!("alice:guess-{index}").into_bytes(), || {
+                        failures.load(Ordering::Relaxed) < LIMIT
+                    })
+                    .await;
+                if verified == Some(false) {
+                    failures.fetch_add(1, Ordering::Relaxed);
+                }
+                verified
+            }));
+        }
+        let mut computed = 0;
+        for task in tasks {
+            if task.await.unwrap().is_some() {
+                computed += 1;
+            }
+        }
+        // The limit, and what was being computed while it was reached.
+        let slots = std::thread::available_parallelism()
+            .map_or(2, |cores| cores.get().max(2));
+        assert_eq!(
+            true,
+            computed <= LIMIT + slots && computed < GUESSES,
+            "{computed} of {GUESSES} guesses were hashed"
+        );
+        // The right password is still taken where the address is allowed.
+        assert_eq!(
+            Some(true),
+            hashed.verify(b"alice:secret".to_vec(), || true).await
+        );
+        assert_eq!(
+            None,
+            hashed.verify(b"alice:secret".to_vec(), || false).await
+        );
+    }
+
+    /// What is remembered as verified is let go when its time is up or
+    /// there is no room left.
+    #[test]
+    fn test_verified_credentials_are_bounded() {
+        let hashed = Hashed::new(vec![]);
+        hashed.remember(b"first");
+        assert_eq!(true, hashed.is_verified(b"first"));
+        // Its time is up: not verified any more, and dropped by the next
+        // one that is remembered.
+        hashed.verified.store(Arc::new(HashMap::from([(
+            hashed.digest(b"first"),
+            pingap_core::now_sec() - 1,
+        )])));
+        assert_eq!(false, hashed.is_verified(b"first"));
+        hashed.remember(b"second");
+        assert_eq!(1, hashed.verified.load().len());
+
+        for index in 0..VERIFIED_CAPACITY + 10 {
+            hashed.remember(format!("user-{index}").as_bytes());
+        }
+        assert_eq!(true, hashed.verified.load().len() <= VERIFIED_CAPACITY);
+        assert_eq!(
+            true,
+            hashed.is_verified(
+                format!("user-{}", VERIFIED_CAPACITY + 9).as_bytes()
+            )
+        );
+    }
+
+    #[test]
+    fn test_htpasswd_and_realm_params() {
+        let error = |conf: &str| {
+            BasicAuth::new(&toml::from_str::<PluginConf>(conf).unwrap())
+                .err()
+                .map(|e| e.to_string())
+        };
+        let prefix = "Plugin basic_auth invalid, message: ";
+        let bcrypt_hash = bcrypt::hash("secret", 4).unwrap();
+        // On its own, without `authorizations`.
+        assert_eq!(None, error(&format!("htpasswd = [\"a:{bcrypt_hash}\"]")));
+        for (conf, message) in [
+            (
+                "htpasswd = [\"nocolon\"]",
+                "htpasswd: an entry should be user:hash",
+            ),
+            (
+                "htpasswd = [\":x\"]",
+                "htpasswd: an entry should be user:hash",
+            ),
+            (
+                "htpasswd = [\"a:\"]",
+                "htpasswd: an entry should be user:hash",
+            ),
+            // The default of `htpasswd` without `-B`, and a password as
+            // it is: neither is a hash that is slow to try.
+            (
+                "htpasswd = [\"a:$apr1$abcd$0123456789abcdefghijkl\"]",
+                "htpasswd: the hash of a is not bcrypt ($2y$) or argon2 ($argon2id$)",
+            ),
+            (
+                "htpasswd = [\"a:secret\"]",
+                "htpasswd: the hash of a is not bcrypt ($2y$) or argon2 ($argon2id$)",
+            ),
+            (
+                "htpasswd = [\"a:$2y$10$short\"]",
+                "htpasswd: the hash of a can not be read",
+            ),
+            (
+                "htpasswd = [\"a:$argon2id$broken\"]",
+                "htpasswd: the hash of a can not be read",
+            ),
+            // a cost bcrypt does not run at: it would never match
+            (
+                "htpasswd = [\"a:$2y$03$k6jyd5p6IGayudQCa5NLHuOeIKLGQyn1F2tqUkslMvPI6ZMCmmtxC\"]",
+                "htpasswd: the hash of a can not be read",
+            ),
+            ("", "basic authorizations can't be empty"),
+        ] {
+            assert_eq!(
+                Some(format!("{prefix}{message}")),
+                error(conf),
+                "{conf}"
+            );
+        }
+        assert_eq!(
+            Some(format!("{prefix}htpasswd: a is there twice")),
+            error(&format!(
+                "htpasswd = [\"a:{bcrypt_hash}\", \"a:{bcrypt_hash}\"]"
+            ))
+        );
+        assert_eq!(
+            Some(format!("{prefix}realm can not be put into a header")),
+            error(&format!(
+                "htpasswd = [\"a:{bcrypt_hash}\"]\nrealm = \"a\\nb\""
+            ))
+        );
+
+        let challenge = |realm: &str| {
+            let auth = BasicAuth::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    "htpasswd = [\"a:{bcrypt_hash}\"]\n{realm}"
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            let headers = auth.miss_authorization_resp.headers.unwrap();
+            headers[0].1.to_str().unwrap().to_string()
+        };
+        // As it always was when none is set.
+        assert_eq!(
+            r#"Basic realm="Access to the staging site""#,
+            challenge("")
+        );
+        assert_eq!(
+            r#"Basic realm="Internal""#,
+            challenge("realm = \"Internal\"")
+        );
+        assert_eq!(
+            r#"Basic realm="the \"A\" team""#,
+            challenge("realm = 'the \"A\" team'")
+        );
     }
 
     /// After `ip_fail_limit` wrong passwords an IP is refused, correct

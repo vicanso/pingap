@@ -20,12 +20,13 @@ use bstr::ByteSlice;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use fancy_regex::Regex;
-use http::{Method, StatusCode};
+use http::header::{CACHE_CONTROL, PRAGMA};
+use http::{HeaderName, Method, StatusCode};
 use humantime::parse_duration;
 use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    CacheQueryRule, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     ensure_verified_client_ip, get_cache_key,
 };
 use pingap_util::IpRules;
@@ -99,8 +100,70 @@ pub struct Cache {
     purge_ip_rules: IpRules,
     // Optional regex pattern to skip caching for certain requests
     skip: Option<Regex>,
+    /// How long a response stays fresh when the origin names no lifetime,
+    /// in place of one second.
+    default_ttl: Option<Duration>,
+    /// The same for single statuses.
+    status_ttl: Option<Arc<Vec<(u16, Duration)>>>,
+    /// A request with one of these headers is neither answered from the
+    /// cache nor stored.
+    bypass_headers: Vec<HeaderName>,
+    /// The same for a request with one of these cookies.
+    bypass_cookies: Vec<String>,
+    /// Which parameters of the query are a part of the cache key.
+    query_rule: Option<Arc<CacheQueryRule>>,
+    /// Whether a client may ask for what is cached to be checked with
+    /// the origin first.
+    respect_client_no_cache: bool,
     // Unique identifier for this cache configuration
     hash_value: String,
+}
+
+/// Whether the request carries a cookie of one of `names`.
+///
+/// Read from the bytes of the header. Through `to_str`, a `Cookie` header
+/// with one byte that is not ASCII in it - a name in UTF-8, which
+/// browsers send as it is - had no cookies at all, and the page of
+/// whoever is logged in came from the cache, or went into it.
+fn has_cookie(header: &pingora::http::RequestHeader, names: &[String]) -> bool {
+    if names.is_empty() {
+        return false;
+    }
+    header
+        .headers
+        .get_all(http::header::COOKIE)
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b';'))
+        .any(|pair| {
+            let name = pair
+                .split(|byte| *byte == b'=')
+                .next()
+                .unwrap_or(pair)
+                .trim_ascii();
+            names.iter().any(|wanted| wanted.as_bytes() == name)
+        })
+}
+
+/// Whether the client asks for a copy that is not older than the origin's:
+/// `Cache-Control: no-cache` or `max-age=0`, what a reload sends, or the
+/// `Pragma: no-cache` of HTTP/1.0.
+fn wants_fresh(header: &pingora::http::RequestHeader) -> bool {
+    let named = |name: &HeaderName, wanted: &[&str]| {
+        header
+            .headers
+            .get_all(name)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|directive| {
+                let directive = directive.trim();
+                wanted
+                    .iter()
+                    .any(|wanted| directive.eq_ignore_ascii_case(wanted))
+            })
+    };
+    named(&CACHE_CONTROL, &["no-cache", "max-age=0"])
+        || named(&PRAGMA, &["no-cache"])
 }
 
 /// Helper function to initialize or retrieve the eviction manager singleton.
@@ -291,6 +354,91 @@ impl TryFrom<&PluginConf> for Cache {
                     message: e.to_string(),
                 })?;
 
+        let invalid = |message: String| Error::Invalid {
+            category: PluginCategory::Cache.to_string(),
+            message,
+        };
+        let default_ttl = get_str_conf(value, "default_ttl");
+        let default_ttl = if default_ttl.is_empty() {
+            None
+        } else {
+            Some(
+                parse_duration(&default_ttl)
+                    .map_err(|e| invalid(format!("default_ttl: {e}")))?,
+            )
+        };
+        let mut status_ttl: Vec<(u16, Duration)> = vec![];
+        for item in get_str_slice_conf(value, "status_ttl").iter() {
+            let entry = item
+                .split_once(':')
+                .and_then(|(status, ttl)| {
+                    let status = status.trim().parse::<u16>().ok()?;
+                    let ttl = parse_duration(ttl.trim()).ok()?;
+                    (100..=599).contains(&status).then_some((status, ttl))
+                })
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "status_ttl: {item:?} should be status:duration, like 404:10s"
+                    ))
+                })?;
+            // The answer to a revalidation, which renews what was stored
+            // as a 200 for as long as a 200 is kept: a lifetime given to
+            // it here was never read.
+            if entry.0 == 304 {
+                return Err(invalid(
+                    "status_ttl: 304 renews a stored 200 and has no lifetime of its own, set the one of 200"
+                        .to_string(),
+                ));
+            }
+            if status_ttl.iter().any(|(status, _)| *status == entry.0) {
+                return Err(invalid(format!(
+                    "status_ttl: {} is there twice",
+                    entry.0
+                )));
+            }
+            status_ttl.push(entry);
+        }
+        let bypass_headers = get_str_slice_conf(value, "bypass_headers")
+            .iter()
+            .map(|name| {
+                HeaderName::from_bytes(name.trim().as_bytes()).map_err(|_| {
+                    invalid(format!(
+                        "bypass_headers: {name:?} is not a header name"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let names = |key: &str| -> Result<Vec<String>> {
+            get_str_slice_conf(value, key)
+                .into_iter()
+                .map(|name| {
+                    let name = name.trim().to_string();
+                    if name.is_empty() {
+                        return Err(invalid(format!(
+                            "{key}: an entry is empty"
+                        )));
+                    }
+                    Ok(name)
+                })
+                .collect()
+        };
+        let bypass_cookies = names("bypass_cookies")?;
+        let query_rule = match (names("ignore_query")?, names("query_allow")?) {
+            (ignore, allow) if !ignore.is_empty() && !allow.is_empty() => {
+                return Err(invalid(
+                    "ignore_query and query_allow can not both be set"
+                        .to_string(),
+                ));
+            },
+            (ignore, _) if !ignore.is_empty() => {
+                Some(Arc::new(CacheQueryRule::Ignore(ignore)))
+            },
+            (_, allow) if !allow.is_empty() => {
+                Some(Arc::new(CacheQueryRule::Allow(allow)))
+            },
+            _ => None,
+        };
+
         let skip_value = get_str_conf(value, "skip");
         let skip = if skip_value.is_empty() {
             None
@@ -362,6 +510,15 @@ impl TryFrom<&PluginConf> for Cache {
             purge_ip_rules,
             check_cache_control,
             skip,
+            default_ttl,
+            status_ttl: (!status_ttl.is_empty()).then(|| Arc::new(status_ttl)),
+            bypass_headers,
+            bypass_cookies,
+            query_rule,
+            respect_client_no_cache: get_bool_conf(
+                value,
+                "respect_client_no_cache",
+            ),
         };
         Ok(params)
     }
@@ -444,6 +601,7 @@ impl Plugin for Cache {
         // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
         let req_header = session.req_header();
         let method = &req_header.method;
+        let is_purge = method == *METHOD_PURGE;
         if ![&Method::GET, &Method::HEAD, &*METHOD_PURGE].contains(&method) {
             return Ok(RequestPluginResult::Skipped);
         }
@@ -456,11 +614,33 @@ impl Plugin for Cache {
             return Ok(RequestPluginResult::Skipped);
         }
 
+        // A request that carries one of these is somebody's own: a
+        // session cookie, a preview header. It is not answered with what
+        // is cached and what it gets is not kept. A purge is about the
+        // url, whoever sends it.
+        if !is_purge
+            && (self
+                .bypass_headers
+                .iter()
+                .any(|name| req_header.headers.contains_key(name))
+                || has_cookie(req_header, &self.bypass_cookies))
+        {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
         // Build cache key components including configured headers
         let mut keys = Vec::with_capacity(4);
         {
+            // The rule the key takes its query by, in place of the query
+            // as it came; a purge names the url the same way. The proxy
+            // settles the query when it makes the key, once every request
+            // plugin has run, and asks the upstream with the same
+            // (`CacheInfo::settle_key_query`, `ask_with_key_query`). The
+            // request itself stays as the client sent it, for the access
+            // log and the plugins after this one.
             let cache_info = ctx.cache.get_or_insert_default();
             cache_info.namespace = self.namespace.clone();
+            cache_info.query_rule = self.query_rule.clone();
         }
         if let Some(headers) = &self.headers {
             // One slot per configured header, kept for a header the
@@ -482,7 +662,7 @@ impl Plugin for Cache {
         }
 
         // Handle PURGE requests with IP-based access control
-        if method == *METHOD_PURGE {
+        if is_purge {
             // Not the plain client ip: without trusted proxies that is
             // whatever `X-Forwarded-For` says.
             let ip = ensure_verified_client_ip(session, ctx);
@@ -561,10 +741,15 @@ impl Plugin for Cache {
         }
 
         // Configure cache settings for this request
+        let revalidate =
+            self.respect_client_no_cache && wants_fresh(session.req_header());
         if let Some(cache_info) = &mut ctx.cache {
             cache_info.max_ttl = self.max_ttl;
             cache_info.check_cache_control = self.check_cache_control;
             cache_info.vary_headers = self.vary_headers.clone();
+            cache_info.default_ttl = self.default_ttl;
+            cache_info.status_ttl = self.status_ttl.clone();
+            cache_info.revalidate = revalidate;
         }
 
         // Enable caching for this session with configured components
@@ -715,6 +900,326 @@ vary_headers = ["Accept-Encoding", " accept "]
         assert_eq!(Some("https%3A//a.com:".to_string()), split);
         assert_eq!(Some("https://a.com%3A".to_string()), shifted);
         assert_eq!(Some("50%25:".to_string()), key_of("X-A: 50%\r\n").await);
+    }
+
+    #[test]
+    fn test_key_query() {
+        let ignore = CacheQueryRule::Ignore(vec![
+            "utm_source".to_string(),
+            "fbclid".to_string(),
+        ]);
+        // In the order of the names, whatever order they came in.
+        assert_eq!("a=1&b=2", ignore.key_query("b=2&a=1"));
+        assert_eq!("a=1&b=2", ignore.key_query("a=1&b=2"));
+        // What is ignored is gone, wherever it stands.
+        assert_eq!(
+            "a=1&b=2",
+            ignore.key_query("utm_source=x&b=2&fbclid=y&a=1")
+        );
+        assert_eq!("", ignore.key_query("utm_source=x"));
+        assert_eq!("", ignore.key_query(""));
+        // The same name twice keeps its order: it may mean something.
+        assert_eq!("a=1&id=2&id=1", ignore.key_query("id=2&id=1&a=1"));
+        // A name is the whole name, and a parameter may have no value.
+        assert_eq!(
+            "debug&utm_source2=x",
+            ignore.key_query("utm_source2=x&&debug")
+        );
+
+        let allow =
+            CacheQueryRule::Allow(vec!["page".to_string(), "size".to_string()]);
+        assert_eq!("page=2&size=10", allow.key_query("size=10&x=1&page=2"));
+        assert_eq!("", allow.key_query("x=1&y=2"));
+    }
+
+    #[test]
+    fn test_cache_control_params() {
+        let new = |conf: &str| {
+            Cache::try_from(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        let cache = new(
+            "default_ttl = \"30s\"\nstatus_ttl = [\"404:10s\", \" 301 : 1h \", \"500:0s\"]\nbypass_headers = [\"X-Preview\"]\nbypass_cookies = [\"session\"]\nignore_query = [\"utm_source\"]\nrespect_client_no_cache = true",
+        )
+        .unwrap();
+        assert_eq!(Some(Duration::from_secs(30)), cache.default_ttl);
+        assert_eq!(
+            Some(Arc::new(vec![
+                (404, Duration::from_secs(10)),
+                (301, Duration::from_secs(3600)),
+                (500, Duration::ZERO),
+            ])),
+            cache.status_ttl
+        );
+        assert_eq!(vec!["x-preview"], cache.bypass_headers);
+        assert_eq!(vec!["session"], cache.bypass_cookies);
+        assert_eq!(
+            Some(Arc::new(CacheQueryRule::Ignore(vec![
+                "utm_source".to_string()
+            ]))),
+            cache.query_rule
+        );
+        assert_eq!(true, cache.respect_client_no_cache);
+        // None of it unless it is asked for.
+        let plain = new("").unwrap();
+        assert_eq!(None, plain.default_ttl);
+        assert_eq!(None, plain.status_ttl);
+        assert_eq!(None, plain.query_rule);
+        assert_eq!(false, plain.respect_client_no_cache);
+
+        let error = |conf: &str| new(conf).err().unwrap().to_string();
+        let prefix = "Plugin cache invalid, message: ";
+        for (conf, message) in [
+            (
+                "status_ttl = [\"404\"]",
+                r#"status_ttl: "404" should be status:duration, like 404:10s"#,
+            ),
+            (
+                "status_ttl = [\"abc:10s\"]",
+                r#"status_ttl: "abc:10s" should be status:duration, like 404:10s"#,
+            ),
+            (
+                "status_ttl = [\"99:10s\"]",
+                r#"status_ttl: "99:10s" should be status:duration, like 404:10s"#,
+            ),
+            (
+                "status_ttl = [\"404:soon\"]",
+                r#"status_ttl: "404:soon" should be status:duration, like 404:10s"#,
+            ),
+            (
+                "status_ttl = [\"404:1s\", \"404:2s\"]",
+                "status_ttl: 404 is there twice",
+            ),
+            (
+                "status_ttl = [\"304:1m\"]",
+                "status_ttl: 304 renews a stored 200 and has no lifetime of its own, set the one of 200",
+            ),
+            (
+                "bypass_headers = [\"X Preview\"]",
+                r#"bypass_headers: "X Preview" is not a header name"#,
+            ),
+            (
+                "bypass_cookies = [\" \"]",
+                "bypass_cookies: an entry is empty",
+            ),
+            (
+                "ignore_query = [\"a\"]\nquery_allow = [\"b\"]",
+                "ignore_query and query_allow can not both be set",
+            ),
+        ] {
+            assert_eq!(format!("{prefix}{message}"), error(conf), "{conf}");
+        }
+        assert_eq!(
+            true,
+            error("default_ttl = \"soon\"")
+                .starts_with(&format!("{prefix}default_ttl: "))
+        );
+    }
+
+    /// Regression: the query of the key was taken when the cache plugin
+    /// ran, and the upstream asked with it. A `key_auth` listed after the
+    /// cache takes its credential out of the query (`hide_credentials`)
+    /// - and the upstream got it all the same, and each holder of a key
+    /// an entry of their own.
+    #[tokio::test]
+    async fn test_key_query_is_of_the_request_the_plugins_leave() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>("ignore_query = [\"utm_source\"]")
+                .unwrap(),
+        )
+        .unwrap();
+        let auth = crate::key_auth::KeyAuth::new(
+            &toml::from_str::<PluginConf>(
+                "query = \"apikey\"\nkeys = [\"S\"]\nhide_credentials = true",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new()
+            .read(b"GET /x?apikey=S&utm_source=mail&a=1 HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        for plugin in [&cache as &dyn Plugin, &auth] {
+            let result = plugin
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Continue);
+        }
+        // What the proxy does from here: the key, then the upstream.
+        let info = ctx.cache.as_mut().unwrap();
+        info.settle_key_query(session.req_header());
+        let mut upstream_request = session.req_header().clone();
+        assert_eq!(true, info.ask_with_key_query(&mut upstream_request));
+        assert_eq!("/x?a=1", upstream_request.uri.to_string());
+        let key = pingap_core::get_cache_key(&ctx, "GET", session.req_header());
+        assert_eq!(Some("GET:/x?a=1"), key.primary_key_str());
+    }
+
+    /// What the plugin tells the proxy about a request: whether the cache
+    /// is asked at all, what the key is made of, and whether the client
+    /// gets its copy checked.
+    #[tokio::test]
+    async fn test_cache_control_of_a_request() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                "bypass_headers = [\"X-Preview\"]\nbypass_cookies = [\"session\"]\nignore_query = [\"utm_source\"]\nrespect_client_no_cache = true\ndefault_ttl = \"30s\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let handle = async |cache: &Cache, target: &str, headers: &str| {
+            let input = format!("GET {target} HTTP/1.1\r\n{headers}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result = cache
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            // As the proxy does when it makes the key.
+            if let Some(info) = ctx.cache.as_mut() {
+                info.settle_key_query(session.req_header());
+            }
+            let key =
+                pingap_core::get_cache_key(&ctx, "GET", session.req_header());
+            // What the upstream is asked with, which the proxy makes of
+            // the request once it goes there, and the request itself.
+            let mut upstream_request = session.req_header().clone();
+            if let Some(info) = &ctx.cache {
+                assert_eq!(
+                    true,
+                    info.ask_with_key_query(&mut upstream_request)
+                );
+            }
+            let sent = upstream_request.uri.to_string();
+            let asked = session.req_header().uri.to_string();
+            (
+                result == RequestPluginResult::Continue
+                    && session.cache.enabled(),
+                key.primary_key_str().unwrap_or_default().to_string(),
+                ctx.cache.unwrap_or_default(),
+                (sent, asked),
+            )
+        };
+
+        // The key has the parameters in order and none that is ignored,
+        // and the upstream is asked with the same.
+        let (cached, key, info, (sent, asked)) =
+            handle(&cache, "/list?b=2&utm_source=mail&a=1", "").await;
+        assert_eq!(true, cached);
+        assert_eq!("GET:/list?a=1&b=2", key);
+        assert_eq!("/list?a=1&b=2", sent);
+        // The request is left as the client sent it: that is what the
+        // access log and the plugins after this one see.
+        assert_eq!("/list?b=2&utm_source=mail&a=1", asked);
+        assert_eq!(Some(Duration::from_secs(30)), info.default_ttl);
+        assert_eq!(false, info.revalidate);
+        let (_, same, _, (sent, asked)) =
+            handle(&cache, "/list?a=1&b=2", "").await;
+        assert_eq!(key, same);
+        // As it came: nothing to put in its place.
+        assert_eq!(("/list?a=1&b=2", "/list?a=1&b=2"), (&*sent, &*asked));
+        // Nothing left of the query is no query.
+        let (_, bare, _, (sent, _)) =
+            handle(&cache, "/list?utm_source=mail", "").await;
+        assert_eq!("GET:/list", bare);
+        assert_eq!("/list", sent);
+
+        // Regression: the key was made of the parameters the rule names
+        // and the upstream was asked with all of them. Spelled so that
+        // the rule does not know it and the upstream does, a parameter
+        // was out of the key and in the response: page 2, stored as the
+        // page without a number.
+        let allow = Cache::try_from(
+            &toml::from_str::<PluginConf>("query_allow = [\"page\"]").unwrap(),
+        )
+        .unwrap();
+        for target in [
+            "/list?p%61ge=2",
+            "/list?Page=2",
+            "/list?x=1;page=2",
+            "/list?x=1&p%61ge=2",
+        ] {
+            let (_, key, _, (sent, _)) = handle(&allow, target, "").await;
+            assert_eq!(
+                ("GET:/list", "/list"),
+                (key.as_str(), sent.as_str()),
+                "{target}"
+            );
+        }
+        let (_, key, _, (sent, _)) =
+            handle(&allow, "/list?x=1&page=2", "").await;
+        assert_eq!(
+            ("GET:/list?page=2", "/list?page=2"),
+            (key.as_str(), sent.as_str())
+        );
+        // The same with a list of what is left out: what hides behind
+        // the name of a parameter that is ignored goes with it.
+        let (_, key, _, (sent, _)) =
+            handle(&cache, "/list?utm_source=x;page=2&a=1", "").await;
+        assert_eq!(
+            ("GET:/list?a=1", "/list?a=1"),
+            (key.as_str(), sent.as_str())
+        );
+
+        // Somebody's own request: the cache is not asked. Also with a
+        // cookie next to it that is not ASCII, which browsers send as it
+        // is and which used to hide every cookie of the header.
+        for headers in [
+            "X-Preview: 1\r\n",
+            "Cookie: theme=dark; session=abc\r\n",
+            "Cookie: session=abc\r\n",
+            "Cookie: name=张三; session=abc\r\n",
+            "Cookie: theme=dark\r\nCookie: session=abc\r\n",
+        ] {
+            let (cached, ..) = handle(&cache, "/list", headers).await;
+            assert_eq!(false, cached, "{headers}");
+        }
+        // Another cookie is not, nor one that only starts or ends the
+        // same.
+        for headers in [
+            "Cookie: theme=dark\r\n",
+            "Cookie: session2=abc; my_session=abc\r\n",
+            "Cookie: name=session\r\n",
+        ] {
+            let (cached, ..) = handle(&cache, "/list", headers).await;
+            assert_eq!(true, cached, "{headers}");
+        }
+
+        // A reload asks for a checked copy, and gets one where the plugin
+        // says clients may.
+        for headers in [
+            "Cache-Control: no-cache\r\n",
+            "Cache-Control: max-age=0\r\n",
+            "Cache-Control: no-store, No-Cache\r\n",
+            "Pragma: no-cache\r\n",
+        ] {
+            let (cached, _, info, _) = handle(&cache, "/list", headers).await;
+            assert_eq!(true, cached, "{headers}");
+            assert_eq!(true, info.revalidate, "{headers}");
+        }
+        let (_, _, info, _) =
+            handle(&cache, "/list", "Cache-Control: max-age=60\r\n").await;
+        assert_eq!(false, info.revalidate);
+
+        // Without the options the key is the query as it came, and a
+        // client's `no-cache` is not gone by.
+        let plain = Cache::try_from(&toml::from_str::<PluginConf>("").unwrap())
+            .unwrap();
+        let (cached, key, info, (sent, asked)) = handle(
+            &plain,
+            "/list?b=2&a=1",
+            "Cache-Control: no-cache\r\nCookie: session=abc\r\n",
+        )
+        .await;
+        assert_eq!(true, cached);
+        assert_eq!("GET:/list?b=2&a=1", key);
+        assert_eq!(("/list?b=2&a=1", "/list?b=2&a=1"), (&*sent, &*asked));
+        assert_eq!(false, info.revalidate);
+        assert_eq!(None, info.key_query);
     }
 
     /// The backend is made once the rest of the configuration is known to

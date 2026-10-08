@@ -152,6 +152,7 @@ The same keys work in header values as `:<context_key>`, for example
 | `location` | Name of the matched location |
 | `tls_version` | Downstream TLS version: `TLSv1.3` on an OpenSSL build, `TLSv1_3` on a rustls build |
 | `tls_cipher` | Downstream TLS cipher |
+| `tls_client_subject`, `tls_client_fingerprint`, `tls_client_serial`, `tls_client_verified` | The certificate the client showed on a server with [`tls_client_ca`](../pingap-proxy/README.md#client-certificates-mutual-tls): its subject, SHA-256 and serial number, and `true` / `false` for whether there is one |
 | `tls_handshake_time` | Downstream TLS handshake, on the first request of a connection |
 | `ja4` | The client's [JA4 fingerprint](../pingap-proxy/README.md#ja4-fingerprint), e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`; needs `ja4 = true` on the server |
 | `ja4_r` | `JA4_r`: the sorted cipher and extension lists instead of their hashes |
@@ -243,6 +244,75 @@ A first word followed by a format is always read as the destination:
 `ACCESS {status}` writes to a file called `ACCESS`. Start a custom format with
 a tag to log to the application log instead.
 
+### Which requests are logged
+
+Every request gets a line unless the destination says otherwise, with
+parameters that go where `rolling` and `channel_buffer` go:
+
+```toml
+[servers.web]
+# no line for the probes, every error and every slow request, and one
+# in ten of the rest
+access_log = "/var/log/pingap/access.log?skip=^/health$&min_status=400&min_latency=500ms&sample=0.1 combined"
+```
+
+| Parameter | Effect |
+| --- | --- |
+| `skip` | A regular expression; a request whose path and query match (`/health`, `/api/users?page=2`) is not logged. The path is the one the client sent, before a location's `rewrite`. |
+| `min_status` | A request answered with this status or a higher one is always logged: `min_status=400` for every error, `500` for the server's own. |
+| `min_latency` | A request that took this long or longer is always logged: `min_latency=500ms`. |
+| `sample` | The share, `0` to `1`, of the other requests that is logged, taken evenly: `sample=0.1` is every tenth. |
+
+- `min_status` and `min_latency` say what is wanted for certain, and either is
+  enough. With one of them set and no `sample`, nothing else is logged; with
+  `sample` next to them, that share of the rest is logged as well.
+- `sample` alone is a share of all requests.
+- `skip` comes first: what it matches is not logged whatever its status.
+- A request that is left out is left out before its line is formatted, so not
+  logging it is cheaper than logging it.
+- The value of a parameter is the value of a url parameter: `&`, `+`, `%`, `#`
+  and a space in a regular expression are written `%26`, `%2B`, `%25`, `%23`
+  and `%20` (the destination also ends at the first space).
+- The conditions belong to a destination. An access log that names none
+  (`access_log = "combined"`, which goes to the application log) has no place
+  for them: write `stderr?min_status=400 combined`.
+- A condition that does not parse (`sample=2`, `min_status=abc`, a `skip` that
+  is no regular expression) is an error at startup and for `pingap -t`.
+
+### Rotating with logrotate
+
+A file access log is opened again when the process receives `SIGUSR1`: what is
+buffered is written to the file as it is, and the next line goes to a new file
+under the configured name. That is what `logrotate` needs with
+`rolling=never`:
+
+```text
+/var/log/pingap/access.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    postrotate
+        kill -USR1 "$(cat /run/pingap.pid)"
+    endscript
+}
+```
+
+- The file is the one the configuration named when the server started. A
+  relative path is resolved against the directory the process started in,
+  once, so a later change of directory does not move the log.
+- A file that can not be opened again (its directory is no longer writable,
+  for one) is an error in the application log, and the log goes on writing
+  to the file it had: nothing is lost, and the next `SIGUSR1` tries again. A
+  directory that is missing is made again.
+- Only file access logs listen for the signal. The application log is not
+  opened again by it, and a process without a file access log does not handle
+  the signal at all: there it ends the process, which is what a signal nobody
+  handles does.
+
+What is not there yet: rotating by size, and a bound on the length of a field
+or a line.
+
 #### JSON format
 
 A format that starts with `{"` is a JSON object, and every value is made safe
@@ -313,6 +383,7 @@ The logger is configured via a URI-like string in the `log` field of `LoggerPara
 - **File Logging:** `"/path/to/file.log?rolling=daily"`
   - `rolling`: `daily` (default), `hourly`, `minutely`, `never`; any other value is rejected. Rotation boundaries and the file name suffix (`file.log.YYYY-MM-DD[-HH[-MM]]`) use **UTC**, not the machine's local time zone: on a UTC+8 host a daily file switches at 08:00 local time and an entry written at 18:00 local lands in the `-10` hourly file. This comes from `tracing-appender`, which has no time zone option; the timestamps inside the log lines are local time.
   - An access log also takes `channel_buffer` (lines held for the writer, default 1000) and `flush_timeout` (default `10s`). The application log does not: there they are reported like any other unknown parameter.
+  - `keep` (access log): how long the files the log rotated are kept, `keep=14d`. Older ones are removed when the server starts and then every hour, compressed (`.gz`, `.zst`) or not, by when they were last written. Only the files this log rotated itself, as for the compression; the file being written is never removed. Without it they are kept for good, as before. A log written to one file with `rolling=never` has no rotated files, see [Rotating with logrotate](#rotating-with-logrotate) for that. A `keep`, `rolling`, `flush_timeout` or `channel_buffer` that does not parse, or is zero, is an error at startup and for `pingap -t`; a file that can not be opened is an error at startup (`-t` opens no log).
   - These are all the parameters of the path. One that is not among them is reported with a warning when the log is opened and has no effect; this README used to list the settings of the compression here as if they were parameters.
 
   Rotated files are compressed by the task from `new_log_compress_service()`, which is set up with `LogCompressParams` and not through the path. In pingap that is `basic.log_compress_algorithm`, `basic.log_compress_level`, `basic.log_compress_days_ago` and `basic.log_compress_time_point_hour`:

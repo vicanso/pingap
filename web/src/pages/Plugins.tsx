@@ -221,6 +221,7 @@ export default function Plugins() {
     timeout: newZodDuration().optional(),
     jwks_ttl: newZodDuration().optional(),
     leeway: newZodDuration().optional(),
+    default_ttl: newZodDuration().optional(),
   });
   let key = `${currentPlugin}-${version}`;
   if (currentPlugin == newPlugin) {

@@ -343,7 +343,7 @@ export default {
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
     accessLogTips:
-      'A preset (combined, common, short, tiny, json) or a format of {tags}; one starting with {" is a JSON object with escaped values. Without a destination it goes to the application log; otherwise put a file path, stdout, stderr or a syslog:// URL and a space first, e.g. stdout json.',
+      'A preset (combined, common, short, tiny, json) or a format of {tags}; one starting with {" is a JSON object with escaped values. Without a destination it goes to the application log; otherwise put a file path, stdout, stderr or a syslog:// URL and a space first, e.g. stdout json. A destination takes parameters after ?, among them which requests are logged (skip, min_status, min_latency, sample) and how long rotated files are kept (keep): /var/log/access.log?min_status=400&keep=14d combined.',
     enabledH2: "Enable Http2(h2c)",
     h2MaxConcurrentStreams: "H2 Max Concurrent Streams",
     h2MaxConcurrentStreamsPlaceholder:
@@ -380,6 +380,14 @@ export default {
     tlsCiphersuitesPlaceholder: "Input the ciphers for protocol tlsv1.3",
     tlsMinVersion: "Min Tls",
     tlsMaxVersion: "Max Tls",
+    tlsClientCa: "Client CA",
+    tlsClientCaPlaceholder:
+      "Input the CA that clients' certificates are verified against (PEM, base64 or a PEM file path)",
+    tlsClientCaTips:
+      "With a CA here the server asks every client for a certificate (mutual TLS). Needs Using Global Certificates. $tls_client_subject, $tls_client_fingerprint, $tls_client_serial and $tls_client_verified say what the certificate is.",
+    tlsClientAuth: "Client Certificate",
+    tlsClientAuthTips:
+      "Require (the default with a client CA) ends the handshake of a client without a certificate; optional lets it in. A certificate that does not verify is refused in both.",
     tlsSettingsRustlsTips:
       "Not supported by this rustls build: TLS is fixed to 1.2/1.3 with rustls default cipher suites. Remove the value or use an openssl build.",
     tcpFastOpen: "Tcp Fast Open",
@@ -537,6 +545,14 @@ export default {
       "Input the CA bundle (PEM, base64 or a PEM file path) that verifies the upstream certificate instead of the system trust store",
     caRustlsTips:
       "rustls (webpki) rejects a peer certificate that carries CA:TRUE. A quick openssl req -x509 self-signed cert will fail; use a proper leaf signed by this CA (or a self-signed leaf without the CA flag).",
+    clientCert: "Client Certificate",
+    clientCertPlaceholder:
+      "Input the certificate presented to the upstream (PEM, base64 or a PEM file path)",
+    clientCertTips:
+      "For an upstream that asks its clients for a certificate (mutual TLS). Set together with the key; an https health check presents it too.",
+    clientKey: "Client Key",
+    clientKeyPlaceholder:
+      "Input the private key of the client certificate (PEM, base64 or a PEM file path)",
     h2StreamWindowSize: "H2 Stream Window Size",
     h2StreamWindowSizePlaceholder:
       "Input the HTTP/2 per-stream flow-control window, e.g. 8mib (1 to 2GiB - 1)",
@@ -769,6 +785,29 @@ export default {
       "Input the request headers the origin's Vary may create variants for (all when empty)",
     cachePurgeIpList: "Ip Allow Purge",
     cachePurgeIpListPlaceholder: "Input the ip which allow purge",
+    cacheDefaultTtl: "Default TTL",
+    cacheDefaultTtlPlaceholder: "Input the default ttl, e.g. 30s (default 1s)",
+    cacheDefaultTtlTips:
+      "How long a response is kept when the origin names no lifetime. What the origin says about its own response comes first.",
+    cacheRespectClientNoCache: "Client No-Cache",
+    cacheRespectClientNoCacheTips:
+      "Yes lets a client have what is cached revalidated with the origin, by Cache-Control: no-cache or max-age=0. Anyone can then make the origin work: leave it off on a public site.",
+    cacheStatusTtl: "TTL By Status",
+    cacheStatusTtlPlaceholder: "Status, e.g. 404 : TTL, e.g. 10s",
+    cacheStatusTtlTips:
+      "The lifetime of a response of that status when the origin names none; also for a status that is not kept by default. 0s keeps the status out.",
+    cacheBypassHeaders: "Bypass Headers",
+    cacheBypassHeadersPlaceholder: "Input the name of a request header",
+    cacheBypassCookies: "Bypass Cookies",
+    cacheBypassCookiesPlaceholder: "Input the name of a cookie",
+    cacheBypassTips:
+      "A request with one of these is neither answered from the cache nor stored.",
+    cacheIgnoreQuery: "Ignore Query",
+    cacheIgnoreQueryPlaceholder: "Input a query parameter, e.g. utm_source",
+    cacheQueryAllow: "Query Allow",
+    cacheQueryAllowPlaceholder: "Input a query parameter, e.g. page",
+    cacheQueryTips:
+      "Which query parameters are a part of the cache key: all but the ignored ones, or only the allowed ones (set one of the two). The parameters that are kept are put in order by name, and the upstream is asked with the same query.",
     requestIdAlgo: "Algorithm",
     requestIdAlgoPlaceholder: "Select the algorithm of request id",
     requestIdLength: "Size",
@@ -814,6 +853,14 @@ export default {
     basicAuthList: "Basic Authorization",
     basicAuthListPlaceholder:
       "Input basic authorization, base64(account:password)",
+    basicAuthHtpasswd: "Hashed Accounts",
+    basicAuthHtpasswdPlaceholder:
+      "Input user:hash, the line that htpasswd -nbB user password prints",
+    basicAuthHtpasswdTips:
+      "Accounts whose password is kept as a bcrypt or argon2 hash, so that the configuration does not give it away. Can be used next to, or in place of, the list above.",
+    basicAuthRealm: "Realm",
+    basicAuthRealmPlaceholder:
+      "Shown in the login prompt, default: Access to the staging site",
     basicAuthFailDelay: "Fail Delay",
     basicAuthFailDelayPlaceholder: "Input the delay duration of fail auth",
     basicAuthHideCredentials: "Hide Credentials",

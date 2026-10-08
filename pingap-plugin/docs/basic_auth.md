@@ -11,7 +11,9 @@ dashboards and anything behind a browser where a login page is overkill.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `basic_auth`. |
-| `authorizations` | string[] | — | **Required, non-empty.** Base64 of `user:password`, one entry per account. |
+| `authorizations` | string[] | — | Base64 of `user:password`, one entry per account. At least one account is required, here or in `htpasswd`. |
+| `htpasswd` | string[] | — | `user:hash`, one entry per account, with the password as a bcrypt or argon2 hash. See [Hashed passwords](#hashed-passwords). |
+| `realm` | string | `Access to the staging site` | The realm of the `WWW-Authenticate` challenge, which a browser shows in its login prompt. |
 | `delay` | duration | none | Sleep this long before answering a failed attempt, to slow brute force. |
 | `hide_credentials` | bool | `false` | Strip `Authorization` before proxying upstream. |
 | `ip_fail_limit` | int | `0` | Wrong passwords per client IP before that IP is blocked with `403`. `0` turns it off. |
@@ -28,6 +30,55 @@ requires.
 echo -n "pingap:123123" | base64
 # cGluZ2FwOjEyMzEyMw==
 ```
+
+## Hashed passwords
+
+An `authorizations` entry is the password itself, base64 being no more than a
+spelling of it: whoever reads the configuration file, the etcd prefix or the
+admin has every password. An `htpasswd` entry holds a hash the password can
+not be read back from:
+
+```bash
+htpasswd -nbB pingap 123123
+# pingap:$2y$05$k6jyd5p6IGayudQCa5NLHuOeIKLGQyn1F2tqUkslMvPI6ZMCmmtxC
+```
+
+```toml
+[plugins.staging]
+category = "basic_auth"
+htpasswd = [
+    'pingap:$2y$05$k6jyd5p6IGayudQCa5NLHuOeIKLGQyn1F2tqUkslMvPI6ZMCmmtxC',
+]
+realm = "Staging"
+```
+
+- bcrypt (`$2y$`, `$2a$`, `$2b$`, `$2x$`) and argon2 (`$argon2id$`, also `i` and `d`)
+  are taken. What `htpasswd` writes without `-B` (`$apr1$`, MD5 based), SHA-1
+  and a plain password are refused at startup: they are fast to try, which is
+  what a hash is there to prevent. Write the entries in single quotes in TOML,
+  so that `$` and `\` are taken as they are.
+- Both lists can be used together. A user name can be in `htpasswd` once.
+- These hashes take tens of milliseconds to compute, on purpose. Credentials
+  that passed are therefore remembered for five minutes, by a keyed digest of
+  them that only this process can make, and a request with them is not hashed
+  again: an API client that sends its credentials with every call costs one
+  hash every five minutes. A changed entry takes effect with the reload that
+  brings it, which starts the memory anew.
+- A request with credentials that are not known yet costs a hash whoever sends
+  it, a wrong guess included. The hashes are computed off the threads that
+  serve requests, a few at a time; set `ip_fail_limit` so that guessing stops
+  being answered at all. The limit is looked at again when a request gets its
+  turn to be hashed, so guesses that arrive together are not all computed
+  before the first of them has failed: the ones that have their turn at the
+  same moment are, which is as many as the machine has cores, so the limit
+  can be passed by about that many.
+- A user that does not exist takes as long to refuse as a wrong password of
+  the first account, so the names of the accounts can not be told apart by
+  timing - as long as the accounts use the same kind of hash at the same
+  cost. Mixed, a name can be told by how long its refusal takes.
+- The cost of a hash is the one written in it. A bcrypt cost in the
+  twenties, or an argon2 hash made with gigabytes of memory, is paid by every
+  login and by every guess: make the entries with the defaults of the tool.
 
 ## Example
 

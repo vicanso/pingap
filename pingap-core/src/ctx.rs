@@ -137,8 +137,26 @@ pub struct ConnectionInfo {
     /// The JA4 fingerprint of the client's ClientHello, when the server
     /// collects it. Shared by every request on the connection.
     pub ja4: Option<Arc<Ja4Fingerprint>>,
+    /// The certificate the client presented in the TLS handshake, on a
+    /// server that asks for one (`tls_client_ca`). It was verified
+    /// against that CA: a certificate that does not verify ends the
+    /// handshake. Shared by every request on the connection.
+    pub tls_client_cert: Option<Arc<TlsClientCert>>,
     /// Indicates whether the connection was reused (e.g., HTTP keep-alive).
     pub reused: bool,
+}
+
+/// What is told about the certificate of a client: enough to say who it
+/// is to an upstream, a plugin or the access log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsClientCert {
+    /// The subject, its parts in the order the certificate has them:
+    /// `O=Example, CN=device-42`.
+    pub subject: String,
+    /// The SHA-256 of the certificate, in lower case hex.
+    pub fingerprint: String,
+    /// The serial number, in lower case hex.
+    pub serial: String,
 }
 
 /// All timing-related metrics for the request lifecycle.
@@ -345,6 +363,44 @@ pub struct CacheKeyVariant {
     pub alternatives: Arc<Vec<Vec<String>>>,
 }
 
+/// Which parameters of the query a cache key is made of.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CacheQueryRule {
+    /// All but these.
+    Ignore(Vec<String>),
+    /// These and no other.
+    Allow(Vec<String>),
+}
+
+impl CacheQueryRule {
+    /// The query string a cache key is made of: the parameters the rule
+    /// keeps, in the order of their names.
+    ///
+    /// `?b=2&a=1` and `?a=1&b=2` are the same page and were two entries,
+    /// and a tracking parameter (`utm_source`, `fbclid`) made one entry
+    /// per visitor. Parameters of the same name keep the order they came
+    /// in, which is theirs to mean something. Names are compared as they
+    /// are written, not decoded.
+    pub fn key_query(&self, query: &str) -> String {
+        fn name(pair: &str) -> &str {
+            pair.split('=').next().unwrap_or(pair)
+        }
+        let mut pairs: Vec<&str> = query
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .filter(|pair| {
+                let name = name(pair);
+                match self {
+                    Self::Ignore(names) => !names.iter().any(|n| n == name),
+                    Self::Allow(names) => names.iter().any(|n| n == name),
+                }
+            })
+            .collect();
+        pairs.sort_by(|a, b| name(a).cmp(name(b)));
+        pairs.join("&")
+    }
+}
+
 /// All cache-related configuration and statistics for a request.
 #[derive(Default)]
 pub struct CacheInfo {
@@ -362,10 +418,95 @@ pub struct CacheInfo {
     /// Request headers the origin's `Vary` response header may turn into
     /// cache variants (lowercased); `None` honours every header it names.
     pub vary_headers: Option<Arc<Vec<String>>>,
+    /// How long a response stays fresh when the origin names no lifetime,
+    /// for the statuses that are kept by default, in place of one second.
+    pub default_ttl: Option<Duration>,
+    /// The same for single statuses, also ones that are not kept by
+    /// default: `(status, lifetime)`. A lifetime of zero keeps a status
+    /// out.
+    pub status_ttl: Option<Arc<Vec<(u16, Duration)>>>,
+    /// Which parameters of the query the cache key is made of, where
+    /// the plugin has a rule for that.
+    pub query_rule: Option<Arc<CacheQueryRule>>,
+    /// The query the key of this request was made of by that rule, from
+    /// the moment the key is made (`settle_key_query`): with the
+    /// parameters the rule leaves out gone and the others in order.
+    /// Empty for no query at all. The upstream is asked with it too, see
+    /// `ask_with_key_query`.
+    pub key_query: Option<String>,
+    /// The client asked for a copy that is checked with the origin
+    /// (`Cache-Control: no-cache`), and the plugin lets clients do that:
+    /// what is cached is revalidated before it is served.
+    pub revalidate: bool,
     /// The number of cache read operations performed.
     pub reading_count: Option<u32>,
     /// The number of cache write operations performed.
     pub writing_count: Option<u32>,
+}
+
+impl CacheInfo {
+    /// Makes the query the cache key is made of, from the request as it
+    /// is now. Called when the key is made, which is after the request
+    /// plugins have run: one that takes a parameter out of the query
+    /// (`key_auth` with `hide_credentials`) has done so by then, also
+    /// when it is listed after the cache. Taken when the cache plugin
+    /// ran, the key query had the credential in it, and the upstream was
+    /// then asked with what was meant to be hidden from it.
+    pub fn settle_key_query(&mut self, header: &RequestHeader) {
+        if let Some(rule) = &self.query_rule {
+            self.key_query =
+                Some(rule.key_query(header.uri.query().unwrap_or_default()));
+        }
+    }
+
+    /// Gives `header`, the request that goes to the upstream, the query
+    /// the cache key is made of, where that is not the request's own.
+    ///
+    /// The key says which parameters a response depends on; with the
+    /// others sent on all the same it was the upstream that decided. A
+    /// parameter spelled another way than the rule has it (`p%61ge=2`
+    /// for `page`, `x=1;page=2`) was left out of the key and read by the
+    /// upstream, and page 2 was stored as the page without a number, for
+    /// everyone. Asked with the query of the key, the upstream can not
+    /// tell two requests of one key apart.
+    ///
+    /// Only the request to the upstream is changed, not the client's:
+    /// the access log and the plugins see what was asked for. `false`
+    /// when the uri can not be made, and then the request must not be
+    /// sent as it is.
+    pub fn ask_with_key_query(&self, header: &mut RequestHeader) -> bool {
+        let made;
+        let query = match (&self.key_query, &self.query_rule) {
+            (Some(query), _) => query.as_str(),
+            // No key was made for this request, so nothing is stored
+            // either: the rule is applied all the same, for an upstream
+            // that sees one kind of query on this location.
+            (None, Some(rule)) => {
+                made = rule.key_query(header.uri.query().unwrap_or_default());
+                made.as_str()
+            },
+            (None, None) => return true,
+        };
+        // `/a?` is `/a` in the key, and is sent as that.
+        if header.uri.query() == (!query.is_empty()).then_some(query) {
+            return true;
+        }
+        let path_and_query = if query.is_empty() {
+            header.uri.path().to_string()
+        } else {
+            format!("{}?{query}", header.uri.path())
+        };
+        let mut parts = header.uri.clone().into_parts();
+        let Ok(path_and_query) = path_and_query.parse() else {
+            return false;
+        };
+        parts.path_and_query = Some(path_and_query);
+        let Ok(uri) = http::Uri::from_parts(parts) else {
+            return false;
+        };
+        header.set_uri(uri);
+        true
+    }
 }
 
 /// Optional features like tracing, plugins, and response modifications.
@@ -483,6 +624,10 @@ pub enum CtxLogField {
     ConnectionReused,
     TlsVersion,
     TlsCipher,
+    TlsClientSubject,
+    TlsClientFingerprint,
+    TlsClientSerial,
+    TlsClientVerified,
     Ja4,
     #[strum(serialize = "ja4_r")]
     Ja4R,
@@ -561,6 +706,9 @@ pub struct DigestDetail {
     pub tls_version: Option<Cow<'static, str>>,
     /// TLS cipher suite in use if using HTTPS
     pub tls_cipher: Option<Cow<'static, str>>,
+    /// The certificate of the peer, where the listener's handshake kept
+    /// one for the connection.
+    pub tls_client_cert: Option<Arc<TlsClientCert>>,
 }
 
 #[inline]
@@ -614,6 +762,12 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         // Clone the Cow: Borrowed(&'static str) is allocation-free.
         tls_version: Some(ssl_digest.version.clone()),
         tls_cipher: Some(ssl_digest.cipher.clone()),
+        // Made once, when the handshake was done: a request takes a
+        // reference to it.
+        tls_client_cert: ssl_digest
+            .extension
+            .get::<Arc<TlsClientCert>>()
+            .cloned(),
     }
 }
 
@@ -949,6 +1103,28 @@ impl Ctx {
             CtxLogField::TlsCipher => {
                 if let Some(value) = &self.conn.tls_cipher {
                     buf.extend(value.as_bytes());
+                }
+            },
+            CtxLogField::TlsClientSubject => {
+                if let Some(cert) = &self.conn.tls_client_cert {
+                    buf.extend(cert.subject.as_bytes());
+                }
+            },
+            CtxLogField::TlsClientFingerprint => {
+                if let Some(cert) = &self.conn.tls_client_cert {
+                    buf.extend(cert.fingerprint.as_bytes());
+                }
+            },
+            CtxLogField::TlsClientSerial => {
+                if let Some(cert) = &self.conn.tls_client_cert {
+                    buf.extend(cert.serial.as_bytes());
+                }
+            },
+            CtxLogField::TlsClientVerified => {
+                if self.conn.tls_client_cert.is_some() {
+                    buf.extend(b"true");
+                } else {
+                    buf.extend(b"false");
                 }
             },
             CtxLogField::Ja4 => {
@@ -1315,7 +1491,18 @@ pub fn get_cache_key(
     // As it was sent, see `get_request_host`.
     let host = get_request_host(header).unwrap_or_default();
     let path = header.uri.path();
-    let query = header.uri.query();
+    // By the rule of the plugin where it has one: the query that was
+    // settled when the key of the request was made, or, for a key that is
+    // made of another request (a purge), the rule applied to that one.
+    let made;
+    let query = match (&cache_info.key_query, &cache_info.query_rule) {
+        (Some(query), _) => (!query.is_empty()).then_some(query.as_str()),
+        (None, Some(rule)) => {
+            made = rule.key_query(header.uri.query().unwrap_or_default());
+            (!made.is_empty()).then_some(made.as_str())
+        },
+        (None, None) => header.uri.query(),
+    };
     // pingora's CacheKey used to take the namespace as its own argument and
     // hashed `namespace ++ primary` as one unframed byte string. That argument
     // is gone, so the namespace is written straight in front of the primary
@@ -1370,6 +1557,79 @@ mod tests {
 
     /// A `PURGE` names a url and no coding or image format: it has to
     /// find the key of every request that named one.
+    #[test]
+    fn test_ask_with_key_query() {
+        let ask = |uri: &str, key_query: Option<&str>| {
+            let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+            header.set_uri(uri.parse().unwrap());
+            let info = CacheInfo {
+                key_query: key_query.map(str::to_string),
+                ..Default::default()
+            };
+            assert_eq!(true, info.ask_with_key_query(&mut header));
+            header.uri.to_string()
+        };
+        // no rule for the query: the request is sent as it came
+        assert_eq!("/a?b=2&a=1", ask("/a?b=2&a=1", None));
+        // the query of the key, whatever else the client sent
+        assert_eq!(
+            "/a?a=1&b=2",
+            ask("/a?b=2&utm_source=x&a=1", Some("a=1&b=2"))
+        );
+        // spellings the rule does not know do not reach the upstream
+        assert_eq!("/list", ask("/list?p%61ge=2", Some("")));
+        assert_eq!("/list", ask("/list?x=1;page=2", Some("")));
+        assert_eq!(
+            "/list?size=10",
+            ask("/list?Page=2&size=10", Some("size=10"))
+        );
+        // nothing to change
+        assert_eq!("/a?a=1", ask("/a?a=1", Some("a=1")));
+        assert_eq!("/a", ask("/a", Some("")));
+        // an empty query is no query, as in the key
+        assert_eq!("/a", ask("/a?", Some("")));
+
+        // The query is settled when the key is made, from the request as
+        // it is by then; until then the rule is what is applied.
+        let rule =
+            Arc::new(CacheQueryRule::Ignore(vec!["utm_source".to_string()]));
+        let mut info = CacheInfo {
+            query_rule: Some(rule),
+            ..Default::default()
+        };
+        let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+        header.set_uri("/a?b=2&utm_source=x&a=1".parse().unwrap());
+        let mut upstream = header.clone();
+        assert_eq!(true, info.ask_with_key_query(&mut upstream));
+        assert_eq!("/a?a=1&b=2", upstream.uri.to_string());
+        // a plugin after the cache took a parameter out
+        header.set_uri("/a?utm_source=x&a=1".parse().unwrap());
+        info.settle_key_query(&header);
+        assert_eq!(Some("a=1".to_string()), info.key_query);
+        let mut ctx = Ctx {
+            cache: Some(Box::new(info)),
+            ..Default::default()
+        };
+        assert_eq!(
+            Some("GET:/a?a=1"),
+            get_cache_key(&ctx, "GET", &header).primary_key_str()
+        );
+        // and a key that is made of another request goes by the rule
+        if let Some(info) = ctx.cache.as_mut() {
+            info.key_query = None;
+        }
+        header.set_uri("/a?z=9&utm_source=x&b=1".parse().unwrap());
+        assert_eq!(
+            Some("GET:/a?b=1&z=9"),
+            get_cache_key(&ctx, "GET", &header).primary_key_str()
+        );
+        // the rest of the uri is kept (HTTP/2 carries the authority)
+        assert_eq!(
+            "https://example.com/a?a=1",
+            ask("https://example.com/a?z=9&a=1", Some("a=1"))
+        );
+    }
+
     #[test]
     fn test_cache_key_alternatives() {
         let list = |items: &[&str]| {
@@ -1433,6 +1693,32 @@ mod tests {
     }
 
     /// Tests both adding and getting variables.
+    /// The certificate of a client in the access log, and that there is
+    /// nothing to print without one.
+    #[test]
+    fn test_tls_client_cert_log_fields() {
+        let mut ctx = Ctx::new();
+        let print = |ctx: &Ctx, key: &str| {
+            let mut buf = BytesMut::new();
+            ctx.append_log_value(&mut buf, key);
+            String::from_utf8_lossy(&buf).to_string()
+        };
+        assert_eq!("", print(&ctx, "tls_client_subject"));
+        assert_eq!("false", print(&ctx, "tls_client_verified"));
+        ctx.conn.tls_client_cert = Some(Arc::new(TlsClientCert {
+            subject: "O=Example, CN=device-42".to_string(),
+            fingerprint: "b545db7a".to_string(),
+            serial: "3429".to_string(),
+        }));
+        assert_eq!(
+            "O=Example, CN=device-42",
+            print(&ctx, "tls_client_subject")
+        );
+        assert_eq!("b545db7a", print(&ctx, "tls_client_fingerprint"));
+        assert_eq!("3429", print(&ctx, "tls_client_serial"));
+        assert_eq!("true", print(&ctx, "tls_client_verified"));
+    }
+
     #[test]
     fn test_plugin_notes() {
         let mut ctx = Ctx::new();
@@ -1510,6 +1796,10 @@ mod tests {
                 CtxLogField::UpstreamConnectOffloadWaitTime,
             ),
             ("tls_version", CtxLogField::TlsVersion),
+            ("tls_client_subject", CtxLogField::TlsClientSubject),
+            ("tls_client_fingerprint", CtxLogField::TlsClientFingerprint),
+            ("tls_client_serial", CtxLogField::TlsClientSerial),
+            ("tls_client_verified", CtxLogField::TlsClientVerified),
             ("ja4", CtxLogField::Ja4),
             ("ja4_r", CtxLogField::Ja4R),
             ("ja4_o", CtxLogField::Ja4O),

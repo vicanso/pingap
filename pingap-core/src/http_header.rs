@@ -49,6 +49,10 @@ const CLIENT_IP_TAG: &[u8] = b"$client_ip";
 const FORWARDED_PROTO_TAG: &[u8] = b"$forwarded_proto";
 const FORWARDED_HOST_TAG: &[u8] = b"$forwarded_host";
 const FORWARDED_PORT_TAG: &[u8] = b"$forwarded_port";
+const TLS_CLIENT_SUBJECT_TAG: &[u8] = b"$tls_client_subject";
+const TLS_CLIENT_FINGERPRINT_TAG: &[u8] = b"$tls_client_fingerprint";
+const TLS_CLIENT_SERIAL_TAG: &[u8] = b"$tls_client_serial";
+const TLS_CLIENT_VERIFIED_TAG: &[u8] = b"$tls_client_verified";
 
 // Define static HeaderValues for HTTP and HTTPS schemes to avoid re-creation.
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
@@ -238,7 +242,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
     if buf == HOST_NAME_TAG {
         return HeaderValue::from_str(get_hostname()).unwrap_or(value);
     }
-    let request_tags: [&[u8]; 13] = [
+    let request_tags: [&[u8]; 17] = [
         HOST_TAG,
         SCHEME_TAG,
         REMOTE_ADDR_TAG,
@@ -252,6 +256,10 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         FORWARDED_PROTO_TAG,
         FORWARDED_HOST_TAG,
         FORWARDED_PORT_TAG,
+        TLS_CLIENT_SUBJECT_TAG,
+        TLS_CLIENT_FINGERPRINT_TAG,
+        TLS_CLIENT_SERIAL_TAG,
+        TLS_CLIENT_VERIFIED_TAG,
     ];
     if request_tags.contains(&buf) || buf.starts_with(b"$http_") {
         return value;
@@ -263,6 +271,19 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         Ok(env_value) => HeaderValue::from_str(&env_value).unwrap_or(value),
         Err(_) => value,
     }
+}
+
+/// One field of the client's certificate as a header value: empty when
+/// the client showed none, or the field can not be a header value.
+fn tls_client_value(
+    ctx: &Ctx,
+    field: impl Fn(&crate::TlsClientCert) -> &str,
+) -> HeaderValue {
+    ctx.conn
+        .tls_client_cert
+        .as_deref()
+        .and_then(|cert| HeaderValue::from_str(field(cert)).ok())
+        .unwrap_or_else(|| HeaderValue::from_static(""))
 }
 
 /// Processes a `HeaderValue` that may contain a special dynamic variable (e.g., `$host`).
@@ -352,6 +373,27 @@ pub fn convert_header_value(
                     get_host(session.req_header()).and_then(to_header_value)
                 })
         },
+        // The certificate the client showed in the handshake, on a server
+        // that asks for one. Without a certificate the value is empty and
+        // not missing: the header is set all the same, and what the
+        // client sent under that name does not reach the upstream as if
+        // the proxy had vouched for it.
+        TLS_CLIENT_SUBJECT_TAG => {
+            Some(tls_client_value(ctx, |cert| cert.subject.as_str()))
+        },
+        TLS_CLIENT_FINGERPRINT_TAG => {
+            Some(tls_client_value(ctx, |cert| cert.fingerprint.as_str()))
+        },
+        TLS_CLIENT_SERIAL_TAG => {
+            Some(tls_client_value(ctx, |cert| cert.serial.as_str()))
+        },
+        TLS_CLIENT_VERIFIED_TAG => Some(HeaderValue::from_static(
+            if ctx.conn.tls_client_cert.is_some() {
+                "true"
+            } else {
+                "false"
+            },
+        )),
         // The port that goes with the scheme above: the one the proxy
         // names, or the default of the scheme it names. Without either it
         // is the port of this listener, as it has always been.
@@ -1152,7 +1194,9 @@ pub fn protect_from_connection_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ConnectionInfo, UpstreamInfo, new_test_session};
+    use crate::{
+        ConnectionInfo, TlsClientCert, UpstreamInfo, new_test_session,
+    };
     use pretty_assertions::assert_eq;
 
     /// Regression: a client could name a header the proxy set in its
@@ -1267,6 +1311,56 @@ mod tests {
                 HTTP_HEADER_CONTENT_TEXT.1.to_str().unwrap_or_default()
             )
         );
+    }
+
+    /// The certificate of a client as header values: its fields with one,
+    /// and empty - not left as the variable is written - without.
+    #[tokio::test]
+    async fn test_tls_client_header_values() {
+        let session = new_test_session(&["Host: pingap.io"], "/").await;
+        let value = |ctx: &Ctx, tag: &str| {
+            convert_header_value(
+                &HeaderValue::from_str(tag).unwrap(),
+                &session,
+                ctx,
+            )
+            .map(|value| value.to_str().unwrap().to_string())
+        };
+        let mut ctx = Ctx::default();
+        for tag in [
+            "$tls_client_subject",
+            "$tls_client_fingerprint",
+            "$tls_client_serial",
+        ] {
+            assert_eq!(Some("".to_string()), value(&ctx, tag), "{tag}");
+        }
+        assert_eq!(
+            Some("false".to_string()),
+            value(&ctx, "$tls_client_verified")
+        );
+
+        ctx.conn.tls_client_cert = Some(std::sync::Arc::new(TlsClientCert {
+            subject: "O=Example, CN=device-42".to_string(),
+            fingerprint: "b545db7a".to_string(),
+            serial: "3429".to_string(),
+        }));
+        assert_eq!(
+            Some("O=Example, CN=device-42".to_string()),
+            value(&ctx, "$tls_client_subject")
+        );
+        assert_eq!(
+            Some("b545db7a".to_string()),
+            value(&ctx, "$tls_client_fingerprint")
+        );
+        assert_eq!(Some("3429".to_string()), value(&ctx, "$tls_client_serial"));
+        assert_eq!(
+            Some("true".to_string()),
+            value(&ctx, "$tls_client_verified")
+        );
+        // Not an environment variable to look up when the configuration
+        // is read: it is the request's.
+        let tag = HeaderValue::from_static("$tls_client_subject");
+        assert_eq!(tag.clone(), resolve_static_header_value(tag));
     }
 
     #[tokio::test]

@@ -20,6 +20,7 @@ use tracing_subscriber::filter::Directive;
 mod access;
 mod async_logger;
 mod file_appender;
+mod filter;
 #[cfg(unix)]
 mod syslog;
 mod target;
@@ -57,4 +58,5 @@ pub fn new_env_filter(level: &str) -> EnvFilter {
 pub use access::*;
 pub use async_logger::*;
 pub use file_appender::LogFiles;
+pub use filter::AccessLogFilter;
 pub use writer::*;

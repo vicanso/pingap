@@ -35,6 +35,7 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # Specify the hostname to be used in the TLS handshake when connecting to upstream HTTPS servers.
 # Example: "example.com"
 # It should be set if the upstream server is https. Default `none`
+# `$host` asks the upstream for the host the client asked this proxy for.
 # sni = ""
 
 # Whether to check if upstream' server cert is valid and validated
@@ -119,6 +120,13 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # keep verify_cert enabled. Only matters when the upstream uses TLS.
 # Default `none` (system trust store)
 # ca = "/opt/pingap/conf/upstream-ca.pem"
+#
+# The certificate presented to an upstream that asks its clients for one
+# (mutual TLS), and its private key: each a PEM file path, base64-encoded
+# PEM or raw PEM. Set both or neither. An https health check presents the
+# certificate too. Default `none`
+# client_cert = "/opt/pingap/conf/upstream-client.pem"
+# client_key = "/opt/pingap/conf/upstream-client.key"
 #
 # HTTP/2 flow-control window advertised per stream to this upstream, between
 # 1 and 2GiB - 1 (RFC 9113). Larger windows help big responses on

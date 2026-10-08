@@ -42,7 +42,7 @@ use pingap_discovery::{
     is_static_discovery, new_dns_discover_backends,
     new_docker_discover_backends, new_static_discovery,
 };
-use pingap_health::new_health_check;
+use pingap_health::new_health_check_with_client_cert;
 use pingora::lb::Backend;
 use pingora::lb::UpdateTimings;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
@@ -59,6 +59,7 @@ use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{
     H1UpgradePolicy, HttpPeer, HttpUpstreamRequestPolicy, Tracer,
 };
+use pingora::utils::tls::CertKey;
 #[cfg(feature = "tls-rustls")]
 use pingora::utils::tls::{WrappedX509, parse_x509};
 #[cfg(feature = "tls-rustls")]
@@ -229,6 +230,10 @@ pub struct Upstream {
     /// Connection-pool isolation key derived from `ca`; `0` when no CA is set.
     ca_key: u64,
 
+    /// The certificate presented to a backend that asks its clients for
+    /// one, with its key; `None` presents none.
+    client_cert_key: Option<Arc<CertKey>>,
+
     /// HTTP/2 per-stream flow-control window advertised to this upstream;
     /// `None` keeps pingora's default.
     h2_stream_window_size: Option<u32>,
@@ -302,6 +307,7 @@ fn update_health_check_params<S>(
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
     first_round: &Arc<FirstRound>,
+    client_cert_key: Option<Arc<CertKey>>,
 ) -> Result<LoadBalancer<S>>
 where
     S: BackendSelection + 'static,
@@ -335,10 +341,11 @@ where
     };
 
     // Set up health checking for the backends
-    let (health_check_conf, hc) = new_health_check(
+    let (health_check_conf, hc) = new_health_check_with_client_cert(
         name,
         conf.health_check.as_deref().unwrap_or_default(),
         observe,
+        client_cert_key,
     )
     .map_err(|e| Error::Common {
         message: e.to_string(),
@@ -368,6 +375,7 @@ fn new_load_balancer(
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
     first_round: &Arc<FirstRound>,
+    client_cert_key: Option<Arc<CertKey>>,
 ) -> Result<SelectionLb> {
     // Determine the service discovery method
     let discovery_category = conf.guess_discovery();
@@ -427,6 +435,7 @@ fn new_load_balancer(
                 conf,
                 sender,
                 first_round,
+                client_cert_key,
             )?;
             Ok(SelectionLb::RoundRobin(lb))
         },
@@ -444,6 +453,7 @@ fn new_load_balancer(
                 conf,
                 sender,
                 first_round,
+                client_cert_key,
             )?;
             Ok(SelectionLb::Consistent { lb, hash })
         },
@@ -551,17 +561,163 @@ fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<CaType>>> {
     Ok(Some(Arc::from(certs.into_boxed_slice())))
 }
 
+/// Reads `client_cert` and `client_key` (each a PEM file path,
+/// base64-encoded PEM or raw PEM) into what pingora presents to a backend
+/// that asks for a certificate. The key has to be the certificate's:
+/// found here, when the upstream is made, and not by every connection
+/// that then fails its handshake.
+#[cfg(feature = "openssl")]
+fn new_client_cert(conf: &UpstreamConf) -> Result<Option<Arc<CertKey>>> {
+    let Some((cert, key)) = client_cert_and_key(conf)? else {
+        return Ok(None);
+    };
+    let mut certs = vec![];
+    for pem in cert {
+        let mut parsed = X509::stack_from_pem(&pem)
+            .map_err(|e| client_cert_error(format!("client_cert: {e}")))?;
+        certs.append(&mut parsed);
+    }
+    let Some(leaf) = certs.first() else {
+        return Err(client_cert_error(
+            "no certificate found in client_cert".to_string(),
+        ));
+    };
+    let key = key
+        .iter()
+        .find_map(|pem| {
+            pingora::tls::pkey::PKey::private_key_from_pem(pem).ok()
+        })
+        .ok_or_else(|| {
+            client_cert_error("no private key found in client_key".to_string())
+        })?;
+    if !leaf
+        .public_key()
+        .is_ok_and(|public_key| public_key.public_eq(&key))
+    {
+        return Err(client_cert_error(
+            "client_key is not the key of client_cert".to_string(),
+        ));
+    }
+    Ok(Some(Arc::new(CertKey::new(certs, key))))
+}
+
+/// The same for the rustls backend, which takes both as DER.
+#[cfg(feature = "tls-rustls")]
+fn new_client_cert(conf: &UpstreamConf) -> Result<Option<Arc<CertKey>>> {
+    use pingora::tls::sign::CertifiedKey;
+    use pingora::tls::{CryptoProvider, PrivateKeyDer};
+    use rustls_pki_types::pem::PemObject;
+    let Some((cert, key)) = client_cert_and_key(conf)? else {
+        return Ok(None);
+    };
+    let mut certs = vec![];
+    for pem in cert {
+        for cert in CertificateDer::pem_slice_iter(&pem) {
+            let der = cert
+                .map_err(|e| client_cert_error(format!("client_cert: {e}")))?;
+            // pingora's wrapper parses eagerly and panics on malformed
+            // DER, so check the certificate here first.
+            x509_parser::parse_x509_certificate(&der)
+                .map_err(|e| client_cert_error(format!("client_cert: {e}")))?;
+            certs.push(der);
+        }
+    }
+    if certs.is_empty() {
+        return Err(client_cert_error(
+            "no certificate found in client_cert".to_string(),
+        ));
+    }
+    let key = key
+        .iter()
+        .find_map(|pem| PrivateKeyDer::from_pem_slice(pem).ok())
+        .ok_or_else(|| {
+            client_cert_error("no private key found in client_key".to_string())
+        })?;
+    // Whether the key is the certificate's, the way rustls finds out
+    // when it is handed both.
+    pingora::tls::install_default_crypto_provider();
+    let provider = CryptoProvider::get_default().ok_or_else(|| {
+        client_cert_error("no crypto provider is installed".to_string())
+    })?;
+    CertifiedKey::from_der(certs.clone(), key.clone_key(), provider).map_err(
+        |e| {
+            client_cert_error(format!(
+                "client_key is not the key of client_cert: {e}"
+            ))
+        },
+    )?;
+    Ok(Some(Arc::new(CertKey::new(
+        certs.into_iter().map(|cert| cert.to_vec()).collect(),
+        key.secret_der().to_vec(),
+    ))))
+}
+
+fn client_cert_error(message: String) -> Error {
+    Error::Common {
+        category: "client_cert".to_string(),
+        message,
+    }
+}
+
+/// The PEM blocks of `client_cert` and of `client_key`, `None` when the
+/// upstream presents no certificate.
+#[allow(clippy::type_complexity)]
+fn client_cert_and_key(
+    conf: &UpstreamConf,
+) -> Result<Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>> {
+    let given = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let (cert, key) = match (given(&conf.client_cert), given(&conf.client_key))
+    {
+        (None, None) => return Ok(None),
+        (Some(cert), Some(key)) => (cert, key),
+        _ => {
+            return Err(client_cert_error(
+                "client_cert and client_key are set together".to_string(),
+            ));
+        },
+    };
+    // A certificate is shown in a TLS handshake, and an upstream
+    // without `sni` is spoken to in plain text: it would never be shown,
+    // to a backend that was meant to see it.
+    if conf.sni.as_deref().is_none_or(|sni| sni.trim().is_empty()) {
+        return Err(client_cert_error(
+            "client_cert needs an upstream that uses TLS (set sni)".to_string(),
+        ));
+    }
+    let read = |name: &str, value: &str| {
+        pingap_util::convert_pem(value)
+            .map_err(|e| client_cert_error(format!("{name}: {e}")))
+    };
+    Ok(Some((
+        read("client_cert", &cert)?,
+        read("client_key", &key)?,
+    )))
+}
+
 /// Derives the pool-isolation key for a CA bundle. pingora's connection reuse
 /// key covers the address, SNI and verify flags but not `ca`, so without this
 /// an upstream could ride on a connection that another upstream at the same
 /// address verified against a different CA (or that this upstream itself
 /// could never have verified).
+///
+/// The client certificate goes into it too. pingora has it in the reuse
+/// key, but by the serial number of the certificate alone, and two CAs
+/// that each count from one hand out the same numbers: an upstream could
+/// then be given a connection that was opened as somebody else.
 fn ca_group_key(conf: &UpstreamConf) -> u64 {
-    conf.ca.as_ref().map_or(0, |ca| {
-        let mut hasher = DefaultHasher::new();
-        ca.hash(&mut hasher);
-        hasher.finish()
-    })
+    if conf.ca.is_none() && conf.client_cert.is_none() {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    conf.ca.hash(&mut hasher);
+    conf.client_cert.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Narrows a configured HTTP/2 window to the `u32` pingora takes; the config
@@ -636,7 +792,15 @@ impl Upstream {
         sender: Option<Arc<NotificationSender>>,
     ) -> Result<Self> {
         let first_round = Arc::new(FirstRound::new());
-        let lb = new_load_balancer(name, conf, sender, &first_round)?;
+        // Before the checks are made: an `https` one presents it too.
+        let client_cert_key = new_client_cert(conf)?;
+        let lb = new_load_balancer(
+            name,
+            conf,
+            sender,
+            &first_round,
+            client_cert_key.clone(),
+        )?;
         let key = conf.hash_key();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
@@ -727,6 +891,7 @@ impl Upstream {
             request_policy: new_request_policy(conf),
             ca: new_ca(conf)?,
             ca_key: ca_group_key(conf),
+            client_cert_key,
             h2_stream_window_size: h2_window_size(conf.h2_stream_window_size),
             h2_connection_window_size: h2_window_size(
                 conf.h2_connection_window_size,
@@ -859,6 +1024,12 @@ impl Upstream {
         client_ip: &mut Option<String>,
         count_processing: bool,
     ) -> Option<HttpPeer> {
+        // Before a backend is picked: there is none to pick for a request
+        // that has no name to ask it for.
+        let sni = match &self.lb {
+            SelectionLb::Transparent => String::new(),
+            _ => self.sni_for(session)?,
+        };
         let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
@@ -867,7 +1038,7 @@ impl Upstream {
                 // the following ones, which walk every backend in turn.
                 let backend =
                     self.select_backend(lb, b"", |count| count + 1)?;
-                HttpPeer::new(backend, self.tls, self.sni.clone())
+                HttpPeer::new(backend, self.tls, sni.clone())
             },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
@@ -881,7 +1052,7 @@ impl Upstream {
                         (count * CONSISTENT_SELECT_STEPS_PER_BACKEND)
                             .clamp(64, 1024)
                     })?;
-                HttpPeer::new(backend, self.tls, self.sni.clone())
+                HttpPeer::new(backend, self.tls, sni)
             },
             // In transparent mode, use the request's host header
             SelectionLb::Transparent => {
@@ -911,6 +1082,9 @@ impl Upstream {
         // Private CA bundle for verifying this upstream's certificate
         p.options.ca = self.ca.clone();
         p.group_key = self.ca_key;
+        // What this side shows of itself, where the backend asks. A part
+        // of what pingora keeps connections apart by.
+        p.client_cert_key.clone_from(&self.client_cert_key);
         // HTTP/2 flow-control windows advertised to this upstream
         p.options.h2_stream_window_size = self.h2_stream_window_size;
         p.options.h2_connection_window_size = self.h2_connection_window_size;
@@ -928,6 +1102,37 @@ impl Upstream {
         // Set connection tracing if enabled
         p.options.tracer.clone_from(&self.tracer);
         Some(p)
+    }
+
+    /// The name a connection for this request asks the backend for: the
+    /// configured `sni`, or with `sni = "$host"` the host the client
+    /// asked this proxy for.
+    ///
+    /// `$host` was only read by a transparent upstream. Anywhere else the
+    /// text itself was sent as the name, which no backend has a
+    /// certificate for.
+    ///
+    /// `None` when `$host` has no name to give: a request without a
+    /// `Host`, or with an address for one. pingora takes a peer without
+    /// a name for one whose certificate is not to be checked at all (the
+    /// OpenSSL backend), so such a request is refused, as a transparent
+    /// upstream refuses one, and not sent on over a connection that
+    /// would take any certificate.
+    #[inline]
+    fn sni_for(&self, session: &Session) -> Option<String> {
+        if self.sni != "$host" {
+            return Some(self.sni.clone());
+        }
+        let host = pingap_core::get_host(session.req_header())?;
+        if host.is_empty()
+            || host.starts_with('[')
+            || host.parse::<std::net::IpAddr>().is_ok()
+        {
+            return None;
+        }
+        // In lower case: the name is a part of what connections are kept
+        // apart by, and `Example.com` is `example.com`.
+        Some(host.to_ascii_lowercase())
     }
 
     /// The peer of a transparent upstream: the request's `Host`, resolved
@@ -1307,8 +1512,9 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        Upstream, UpstreamConf, UpstreamProvider, host_name, new_backends,
-        new_load_balancer, resolve_host, split_host_port,
+        Upstream, UpstreamConf, UpstreamProvider, ca_group_key, host_name,
+        new_backends, new_client_cert, new_load_balancer, resolve_host,
+        split_host_port,
     };
     use crate::first_round::FirstRound;
     use crate::new_ahash_upstreams;
@@ -2043,6 +2249,194 @@ mod tests {
         assert_eq!(true, upstreams.contains_key("test1"));
     }
 
+    // A certificate (`O=Pingap Test, CN=test-client`), its key, and a key
+    // that is not its.
+    // spellchecker:off
+    const CLIENT_CERT: &str = "-----BEGIN CERTIFICATE-----\nMIIBiTCCAS+gAwIBAgIUNClp5P/VCqYvyxD/pG2zGGDTQlEwCgYIKoZIzj0EAwIw\nGTEXMBUGA1UEAwwOcGluZ2FwIHRlc3QgY2EwHhcNMjYxMDA3MDk0MzQyWhcNMzYx\nMDA0MDk0MzQyWjAsMRQwEgYDVQQKDAtQaW5nYXAgVGVzdDEUMBIGA1UEAwwLdGVz\ndC1jbGllbnQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQP4q5L3ngZ+aX9Ii7v\nI7ySNugQuzvMBIkx0DvmW9IYtpSKfrRvP10t0xSwQU3Xv4wslFixRT4mTfQNVgJD\n52Ato0IwQDAdBgNVHQ4EFgQU1Z/2+9o7WTm1B5SiK6o3qGsoPgswHwYDVR0jBBgw\nFoAU4inB1pEJmanbIh8o64KLxrKqtdgwCgYIKoZIzj0EAwIDSAAwRQIhAL5oqSvF\n56C0NkEz2nIdK6Ni8UET4SqhR6RzAshJRDNwAiByIrZeLMG/rOHoUs81cXF5u+k/\nxOuznx6ERPEBpBhckQ==\n-----END CERTIFICATE-----";
+    const CLIENT_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQglS0KcPHC4A6RJNrv\nNPChq2wQ+7PN0djBzWtgIPYfNH6hRANCAAQP4q5L3ngZ+aX9Ii7vI7ySNugQuzvM\nBIkx0DvmW9IYtpSKfrRvP10t0xSwQU3Xv4wslFixRT4mTfQNVgJD52At\n-----END PRIVATE KEY-----";
+    const OTHER_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgT8m71ZSr1d7aRQne\nvfBqeCN68I7nyA2UxSfsgUk76puhRANCAARJFiTBKupuS2Xrz5daZAAegLjc/0uc\nDQffoibr1IvEsihSvW74Qh9DMq8qRp3405Yh46Ag4F+Jy6kixZvvJHd5\n-----END PRIVATE KEY-----";
+    // spellchecker:on
+
+    /// `client_cert` and `client_key`: what a backend that asks its
+    /// clients for a certificate is shown.
+    #[test]
+    fn test_new_client_cert() {
+        let conf = |cert: Option<&str>, key: Option<&str>| UpstreamConf {
+            addrs: vec!["127.0.0.1:5001".to_string()],
+            sni: Some("api.example.com".to_string()),
+            client_cert: cert.map(str::to_string),
+            client_key: key.map(str::to_string),
+            ..Default::default()
+        };
+        // Shown in a handshake, which an upstream without `sni` has none
+        // of.
+        assert_eq!(
+            "Common error, category: client_cert, client_cert needs an upstream that uses TLS (set sni)",
+            new_client_cert(&UpstreamConf {
+                sni: None,
+                ..conf(Some(CLIENT_CERT), Some(CLIENT_KEY))
+            })
+            .err()
+            .unwrap()
+            .to_string()
+        );
+        // Two upstreams that show different certificates never share a
+        // connection, also when the certificates have the same serial.
+        let key_of = |cert: Option<&str>| {
+            ca_group_key(&UpstreamConf {
+                client_cert: cert.map(str::to_string),
+                ..Default::default()
+            })
+        };
+        assert_eq!(0, key_of(None));
+        assert_eq!(false, key_of(Some("a")) == key_of(Some("b")));
+        assert_eq!(false, key_of(Some("a")) == 0);
+        assert_eq!(true, new_client_cert(&conf(None, None)).unwrap().is_none());
+        assert_eq!(
+            true,
+            new_client_cert(&conf(Some(" "), Some("")))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            true,
+            new_client_cert(&conf(Some(CLIENT_CERT), Some(CLIENT_KEY)))
+                .unwrap()
+                .is_some()
+        );
+        // As base64, the way the other certificates of a configuration
+        // may be written.
+        let encoded = pingap_util::base64_encode(CLIENT_CERT);
+        assert_eq!(
+            true,
+            new_client_cert(&conf(Some(&encoded), Some(CLIENT_KEY)))
+                .unwrap()
+                .is_some()
+        );
+
+        let error = |cert: Option<&str>, key: Option<&str>| {
+            new_client_cert(&conf(cert, key)).err().unwrap().to_string()
+        };
+        let prefix = "Common error, category: client_cert, ";
+        for (cert, key) in [(Some(CLIENT_CERT), None), (None, Some(CLIENT_KEY))]
+        {
+            assert_eq!(
+                format!("{prefix}client_cert and client_key are set together"),
+                error(cert, key)
+            );
+        }
+        // Found when the upstream is made, not by each connection.
+        assert_eq!(
+            true,
+            error(Some(CLIENT_CERT), Some(OTHER_KEY)).starts_with(&format!(
+                "{prefix}client_key is not the key of client_cert"
+            )),
+        );
+        assert_eq!(
+            format!("{prefix}no private key found in client_key"),
+            error(Some(CLIENT_CERT), Some(CLIENT_CERT))
+        );
+        assert_eq!(
+            true,
+            error(Some(CLIENT_KEY), Some(CLIENT_KEY)).starts_with(&format!(
+                "{prefix}no certificate found in client_cert"
+            )),
+        );
+
+        // And it is on the peer of a request.
+        assert_eq!(
+            true,
+            Upstream::new(
+                "mtls",
+                &conf(Some(CLIENT_CERT), Some(OTHER_KEY)),
+                None
+            )
+            .is_err()
+        );
+    }
+
+    /// The peer of a request carries the certificate, and with
+    /// `sni = "$host"` asks the backend for the host the client asked
+    /// for - on any upstream, not only a transparent one.
+    #[tokio::test]
+    async fn test_peer_has_client_cert_and_host_sni() {
+        let upstream = |sni: &str, algo: Option<&str>| {
+            Upstream::new(
+                "mtls",
+                &UpstreamConf {
+                    addrs: vec!["127.0.0.1:5001".to_string()],
+                    sni: Some(sni.to_string()),
+                    algo: algo.map(str::to_string),
+                    client_cert: Some(CLIENT_CERT.to_string()),
+                    client_key: Some(CLIENT_KEY.to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap()
+        };
+        let peer = async |upstream: &Upstream, headers: &str| {
+            let input = format!("GET / HTTP/1.1\r\n{headers}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            upstream
+                .new_http_peer(&session, &mut None, false)
+                .await
+                .unwrap()
+        };
+        let fixed = upstream("backend.internal", None);
+        let p = peer(&fixed, "Host: api.example.com\r\n").await;
+        assert_eq!("backend.internal", p.sni);
+        assert_eq!(true, p.client_cert_key.is_some());
+
+        for algo in [None, Some("hash:ip")] {
+            let by_host = upstream("$host", algo);
+            let p = peer(&by_host, "Host: api.example.com:8443\r\n").await;
+            assert_eq!("api.example.com", p.sni, "{algo:?}");
+            assert_eq!(true, p.is_tls());
+            // One spelling of a name, so one pool of connections.
+            let p = peer(&by_host, "Host: Other.Example.com.\r\n").await;
+            assert_eq!("other.example.com", p.sni, "{algo:?}");
+
+            // Regression: without a name to ask for there was a peer all
+            // the same, with an empty one - which the OpenSSL backend
+            // connects to without looking at the certificate at all.
+            for headers in
+                ["", "Host:\r\n", "Host: 10.1.1.1\r\n", "Host: [::1]:443\r\n"]
+            {
+                let input = format!("GET / HTTP/1.1\r\n{headers}\r\n");
+                let mock_io = Builder::new().read(input.as_bytes()).build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                assert_eq!(
+                    true,
+                    by_host
+                        .new_http_peer(&session, &mut None, false)
+                        .await
+                        .is_none(),
+                    "{algo:?} {headers:?}"
+                );
+            }
+        }
+        // A name that is configured is the name, whatever the request.
+        let p = peer(&fixed, "").await;
+        assert_eq!("backend.internal", p.sni);
+        // Without one nothing is presented.
+        let plain = Upstream::new(
+            "plain",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let p = peer(&plain, "Host: api.example.com\r\n").await;
+        assert_eq!(true, p.client_cert_key.is_none());
+        assert_eq!(false, p.is_tls());
+    }
+
     #[test]
     fn test_selection_load_balancer() {
         let round_robin = new_load_balancer(
@@ -2058,6 +2452,7 @@ mod tests {
             },
             None,
             &Arc::new(FirstRound::new()),
+            None,
         )
         .unwrap();
         let (update_frequency, health_check_frequency) =
@@ -2079,6 +2474,7 @@ mod tests {
             },
             None,
             &Arc::new(FirstRound::new()),
+            None,
         )
         .unwrap();
         let (update_frequency, health_check_frequency) =

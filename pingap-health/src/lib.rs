@@ -17,7 +17,9 @@ use pingora::lb::health_check::{
     HealthCheck, HealthObserveCallback, TcpHealthCheck,
 };
 use pingora::upstreams::peer::PeerOptions;
+use pingora::utils::tls::CertKey;
 use snafu::Snafu;
+use std::sync::Arc;
 use std::time::Duration;
 use strum::EnumString;
 use tracing::info;
@@ -109,6 +111,27 @@ pub fn new_health_check(
     HealthCheckConf,
     Box<dyn HealthCheck + Send + Sync + 'static>,
 )> {
+    new_health_check_with_client_cert(
+        name,
+        health_check,
+        health_changed_callback,
+        None,
+    )
+}
+
+/// [`new_health_check`] for an upstream that presents a certificate to
+/// its backends. An `https://` check presents it too: a backend that asks
+/// its clients for one ends the handshake of a check that has none, and
+/// was then never healthy.
+pub fn new_health_check_with_client_cert(
+    name: &str,
+    health_check: &str,
+    health_changed_callback: Option<HealthObserveCallback>,
+    client_cert_key: Option<Arc<CertKey>>,
+) -> Result<(
+    HealthCheckConf,
+    Box<dyn HealthCheck + Send + Sync + 'static>,
+)> {
     let health_check_conf: HealthCheckConf = if health_check.is_empty() {
         // The same check `tcp://` with no parameters gives: the documented
         // defaults. This used to be pingora's bare TCP check, which
@@ -146,11 +169,15 @@ pub fn new_health_check(
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
         match health_check_conf.schema {
             HealthCheckSchema::Http | HealthCheckSchema::Https => {
-                Box::new(http::new_http_health_check(
+                let mut check = http::new_http_health_check(
                     name,
                     &health_check_conf,
                     health_changed_callback,
-                ))
+                );
+                if health_check_conf.schema == HealthCheckSchema::Https {
+                    check.peer_template.client_cert_key = client_cert_key;
+                }
+                Box::new(check)
             },
             HealthCheckSchema::Grpc => Box::new(GrpcHealthCheck::new(
                 name,

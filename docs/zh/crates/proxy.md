@@ -91,9 +91,51 @@ proxy_set_headers = [
 
 这些变量也可以用在请求头、响应头插件里。
 
+### 客户端证书（双向 TLS）
+
+配了 `tls_client_ca` 的 server 会在 TLS 握手时向每个客户端要证书，并用这个 CA 校验：
+
+```toml
+[servers.devices]
+addr = "0.0.0.0:8443"
+global_certificates = true
+tls_client_ca = "/etc/pingap/device-ca.pem"   # 文件路径、base64 或 PEM 本身
+# tls_client_auth = "optional"                # 默认 "require"
+locations = ["devices"]
+
+[locations.devices]
+upstream = "devices"
+proxy_set_headers = [
+    "X-Client-Subject: $tls_client_subject",
+    "X-Client-Fingerprint: $tls_client_fingerprint",
+    "X-Client-Verified: $tls_client_verified",
+]
+```
+
+| `tls_client_auth` | 客户端没有出示证书 | 证书校验不通过 |
+| --- | --- | --- |
+| `require`（默认） | 握手失败 | 握手失败 |
+| `optional` | 放行，`$tls_client_verified` 为 `false` | 握手失败 |
+
+不是这个 CA 签发的、已过期或尚未生效的证书，根本到不了请求这一步。`optional` 下两类客户端由 location 或插件去区分，代理自己不做区分。
+
+| 变量 | 访问日志 | 取值 |
+| --- | --- | --- |
+| `$tls_client_subject` | `{:tls_client_subject}` | 证书的 subject，按证书里的顺序：`O=Example, CN=device-42`。值里的 `,`、`+`、`"`、`` \ ``、`<`、`>`、`;`、`=` 前面会加上 `` \ ``（RFC 4514 的写法），所以一个值冒充不了名字里的另一段 |
+| `$tls_client_fingerprint` | `{:tls_client_fingerprint}` | 证书的 SHA-256，小写十六进制 |
+| `$tls_client_serial` | `{:tls_client_serial}` | 证书序列号，小写十六进制：即 `openssl x509 -noout -serial` 输出的小写形式 |
+| `$tls_client_verified` | `{:tls_client_verified}` | 客户端出示了证书时为 `true`，没有出示时为 `false` |
+
+- 作为请求头的值时，客户端没有证书的情况下前三项是**空值**，请求头照样会被设置：客户端自己带来的同名头会被替换掉，不会像是代理担保过一样传给上游。这说的是 `proxy_set_headers` 和 `request_headers` 插件的 `set_headers`，凡是上游会读这些头的 location 都要用它们设置。`proxy_add_headers`、`add_headers`、`set_headers_not_exists` 会保留客户端带来的值，这里不能用。
+- 证书属于连接：同一连接上的每个请求、HTTP/2 连接上的每个流，拿到的是同一张。
+- CA 在 server 启动时读取。修改 `tls_client_ca` 属于 server 的变更，需要重启（`--autorestart`），和它的其他 TLS 设置一样。不检查吊销列表：要在证书过期前把它挡在外面，请在上游或插件里按指纹或序列号拒绝。
+- 两种 TLS 后端都支持。`pingap -t` 会读取 CA，解析不了时报错。
+
 上游的中间响应（如 `103 Early Hints`）会原样转发给客户端。响应阶段的插件、访问日志与指标里的状态码、上游耗时都以最终响应为准；`101` 视为最终响应，因为它结束了 HTTP 交互。
 
 ## 路由
+
+请求按请求目标里的路径来路由。请求目标不是 HTTP 规定的几种形式之一——路径（`/a?b=1`）、URL（`http://host/a`）或 `*`——时，在路由之前就返回 `400`。不带开头斜杠的 `GET robots.txt HTTP/1.1` 以前会被当成 `/` 来路由、执行插件和缓存，发给上游的却是 `robots.txt`：`GET secret/report` 可以绕过 `/secret` 这个 location 上的插件，这类目标得到的 `404` 还可能被缓存成首页。
 
 挂到 server 的 location 按权重降序排序一次，主机、路径与匹配条件全部成立的第一个获胜。权重为 `LocationConf` 中显式 `weight` 或推导值：
 

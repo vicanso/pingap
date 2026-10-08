@@ -17,6 +17,7 @@ use super::file_appender::{
     ACCESS_LOG_PARAMS, LogFiles, new_rolling_file_writer,
     unknown_file_log_params,
 };
+use super::filter::FILTER_PARAMS;
 #[cfg(unix)]
 use super::syslog::{SyslogSender, new_syslog_sender};
 use super::target::{LogTarget, parse_log_target};
@@ -105,10 +106,54 @@ impl AccessLogSink {
 pub struct AsyncLoggerTask {
     files: Option<LogFiles>,
     path: String,
+    /// The destination as it is configured, parameters included: what a
+    /// file log is opened again from.
+    target: String,
     channel_buffer: usize,
     receiver: Mutex<Option<Receiver<BytesMut>>>,
     sink: Mutex<Option<AccessLogSink>>,
     flush_timeout: Duration,
+    /// How long the files a file log rolled are kept, `None` for good.
+    keep: Option<Duration>,
+}
+
+/// How often the rolled files of a log with `keep` are looked through.
+const KEEP_CHECK_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Removes what a log with `keep` has rolled and kept long enough. On a
+/// thread of its own: a directory is read and files are unlinked, and the
+/// task that writes the log does not wait for either.
+fn remove_old_files(files: &LogFiles, keep: Duration) {
+    let files = files.clone();
+    tokio::task::spawn_blocking(move || {
+        let dir = files.dir.as_str();
+        match files.remove_older_than(keep) {
+            Ok((removed, failed)) => {
+                if removed > 0 {
+                    info!(target: LOG_TARGET, dir, removed, "old log files removed");
+                }
+                if let Some(e) = failed {
+                    error!(target: LOG_TARGET, dir, error = %e, "remove old log files fail");
+                }
+            },
+            Err(e) => {
+                error!(target: LOG_TARGET, dir, error = %e, "remove old log files fail");
+            },
+        }
+    });
+}
+
+/// Resolves when the process is told to open its log files again
+/// (`SIGUSR1`), which is what `logrotate` does after it has moved one
+/// away; never where there is no such signal, or nothing to open again.
+#[cfg(unix)]
+async fn reopen_requested(
+    signal: &mut Option<tokio::signal::unix::Signal>,
+) -> Option<()> {
+    match signal {
+        Some(signal) => signal.recv().await,
+        None => std::future::pending().await,
+    }
 }
 impl AsyncLoggerTask {
     /// The files of a file log, for the compression task; `None` for the
@@ -124,6 +169,9 @@ struct AsyncLoggerWriterParams {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     flush_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    keep: Option<Duration>,
 }
 
 fn new_sink(target: &str) -> Result<(AccessLogSink, Option<LogFiles>)> {
@@ -150,7 +198,8 @@ fn new_sink(target: &str) -> Result<(AccessLogSink, Option<LogFiles>)> {
         LogTarget::File(_) => {
             let rolling_file_writer = new_rolling_file_writer(target)
                 .map_err(|e| invalid(e.to_string()))?;
-            for param in unknown_file_log_params(target, ACCESS_LOG_PARAMS) {
+            let known = [ACCESS_LOG_PARAMS, FILTER_PARAMS].concat();
+            for param in unknown_file_log_params(target, &known) {
                 warn!(
                     target: LOG_TARGET,
                     param,
@@ -166,6 +215,52 @@ fn new_sink(target: &str) -> Result<(AccessLogSink, Option<LogFiles>)> {
     }
 }
 
+/// The parameters of an access log's destination that its task reads,
+/// or what is wrong with them.
+fn parse_writer_params(target: &str) -> Result<AsyncLoggerWriterParams> {
+    let (_, query) = target.split_once('?').unwrap_or((target, ""));
+    let params: AsyncLoggerWriterParams =
+        serde_qs::from_str(query).map_err(|e| Error::Invalid {
+            message: format!("access log params {target} is invalid: {e}"),
+        })?;
+    // Kept for no time at all is a slip, not a wish. And the other two
+    // are what tokio makes a timer and a channel of, which panics for
+    // either at zero: the process went down with the first log task.
+    let zero = [
+        ("keep", params.keep.is_some_and(|keep| keep.is_zero())),
+        (
+            "flush_timeout",
+            params.flush_timeout.is_some_and(|value| value.is_zero()),
+        ),
+        ("channel_buffer", params.channel_buffer == Some(0)),
+    ];
+    if let Some((name, _)) = zero.iter().find(|(_, is_zero)| *is_zero) {
+        return Err(Error::Invalid {
+            message: format!(
+                "access log params {target} is invalid: {name} should be more than 0"
+            ),
+        });
+    }
+    Ok(params)
+}
+
+/// Whether the destination of an access log is one its task can be made
+/// for, as far as that can be said without opening it: a `flush_timeout`
+/// or `keep` that is no duration, a `rolling` there is no such thing as.
+/// For a check of the configuration, which opens no log: these used to
+/// pass `pingap -t` and fail the start.
+pub fn check_access_log_target(target: &str) -> Result<()> {
+    parse_writer_params(target)?;
+    if let LogTarget::File(_) = parse_log_target(target) {
+        super::file_appender::check_rolling_file_params(target).map_err(
+            |e| Error::Invalid {
+                message: format!("{target}: {e}"),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// The access log task for `target`: a file path, `stdout`, `stderr` or a
 /// `syslog://` URL, each with its parameters after `?`, plus
 /// `channel_buffer` and `flush_timeout` for all of them.
@@ -173,21 +268,43 @@ pub async fn new_async_logger(
     target: &str,
 ) -> Result<(Sender<BytesMut>, AsyncLoggerTask)> {
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let params: AsyncLoggerWriterParams =
-        serde_qs::from_str(query).map_err(|e| Error::Invalid {
-            message: format!("access log params {target} is invalid: {e}"),
-        })?;
+    let params = parse_writer_params(target)?;
 
+    // The path of a file as it is now, for good: the log is opened again
+    // later from what is kept here, and by then a daemon has moved to
+    // `/`, where a relative path names another file.
+    let resolved;
+    let target = match parse_log_target(target) {
+        LogTarget::File(_) => {
+            resolved = if query.is_empty() {
+                pingap_util::resolve_path(path)
+            } else {
+                format!("{}?{query}", pingap_util::resolve_path(path))
+            };
+            resolved.as_str()
+        },
+        _ => target,
+    };
     let (sink, files) = new_sink(target)?;
     let channel_buffer = params.channel_buffer.unwrap_or(1000);
     let flush_timeout = params.flush_timeout.unwrap_or(Duration::from_secs(10));
+    // Only a file log has files to remove.
+    if params.keep.is_some() && files.is_none() {
+        warn!(
+            target: LOG_TARGET,
+            log = target,
+            "keep is for a log that is written to files and has no effect here"
+        );
+    }
 
     let (tx, rx) = channel::<BytesMut>(channel_buffer);
 
     let task = AsyncLoggerTask {
+        keep: params.keep.filter(|_| files.is_some()),
         files,
         channel_buffer,
         path: path.to_string(),
+        target: target.to_string(),
         receiver: Mutex::new(Some(rx)),
         sink: Mutex::new(Some(sink)),
         flush_timeout,
@@ -217,8 +334,10 @@ pub fn new_application_logger() -> (Sender<BytesMut>, AsyncLoggerTask) {
     let (tx, rx) = channel::<BytesMut>(APPLICATION_CHANNEL_BUFFER);
     let task = AsyncLoggerTask {
         files: None,
+        keep: None,
         channel_buffer: APPLICATION_CHANNEL_BUFFER,
         path: "application log".to_string(),
+        target: String::new(),
         receiver: Mutex::new(Some(rx)),
         sink: Mutex::new(Some(AccessLogSink::Application)),
         // Nothing of its own to flush.
@@ -245,6 +364,32 @@ impl BackgroundService for AsyncLoggerTask {
         );
         const MAX_BATCH_SIZE: usize = 128;
         let mut interval = tokio::time::interval(self.flush_timeout);
+        // What the log rolled and has kept long enough is removed when
+        // the task starts and then every hour.
+        let retention = self.files.as_ref().zip(self.keep);
+        let mut keep_check = tokio::time::interval(KEEP_CHECK_INTERVAL);
+        // A file log is opened again when asked to. Only a file log: the
+        // signal has no handler until someone listens for it, and what a
+        // process does with it then is exit.
+        #[cfg(unix)]
+        let mut reopen = matches!(sink, AccessLogSink::File(_))
+            .then(|| {
+                tokio::signal::unix::signal(
+                    tokio::signal::unix::SignalKind::user_defined1(),
+                )
+                // Said, because of what it leaves behind: without a
+                // listener the signal ends the process.
+                .inspect_err(|e| {
+                    warn!(
+                        target: LOG_TARGET,
+                        path = self.path,
+                        error = %e,
+                        "the access log will not be opened again on SIGUSR1"
+                    );
+                })
+                .ok()
+            })
+            .flatten();
 
         // The shutdown signal must NOT end this task: requests keep completing
         // (and logging) through the whole grace period, and the senders live
@@ -310,6 +455,38 @@ impl BackgroundService for AsyncLoggerTask {
                 }
                 _ = interval.tick() => {
                     flush(&mut sink);
+                }
+                _ = keep_check.tick(), if retention.is_some() => {
+                    if let Some((files, keep)) = retention {
+                        remove_old_files(files, keep);
+                    }
+                }
+                Some(()) = async {
+                    #[cfg(unix)]
+                    { reopen_requested(&mut reopen).await }
+                    #[cfg(not(unix))]
+                    { std::future::pending::<Option<()>>().await }
+                } => {
+                    // What is buffered belongs to the file that was
+                    // moved away; the next line goes to a new one under
+                    // the old name.
+                    flush(&mut sink);
+                    match new_sink(&self.target) {
+                        Ok((opened, _)) => {
+                            sink = opened;
+                            info!(
+                                target: LOG_TARGET,
+                                path = self.path,
+                                "access log is opened again"
+                            );
+                        },
+                        Err(e) => error!(
+                            target: LOG_TARGET,
+                            path = self.path,
+                            error = %e,
+                            "open the access log again fail"
+                        ),
+                    }
                 }
             }
         }
@@ -465,6 +642,35 @@ mod tests {
         .expect("error")
         .to_string();
         assert_eq!(true, err.contains("access log params"), "{err}");
+
+        // Regression: these passed the check of the configuration, and
+        // tokio panics for a timer of no time and a channel of no size -
+        // with the first log task the process was gone.
+        for (params, name) in [
+            ("flush_timeout=0s", "flush_timeout"),
+            ("channel_buffer=0", "channel_buffer"),
+            ("keep=0s", "keep"),
+        ] {
+            for target in [
+                format!("/tmp/access.log?{params}"),
+                format!("stdout?{params}"),
+            ] {
+                let err = super::check_access_log_target(&target)
+                    .expect_err("error")
+                    .to_string();
+                assert_eq!(
+                    true,
+                    err.contains(&format!("{name} should be more than 0")),
+                    "{err}"
+                );
+            }
+        }
+        for target in [
+            "/tmp/access.log?flush_timeout=1s&channel_buffer=1&keep=1d",
+            "stdout",
+        ] {
+            assert_eq!(true, super::check_access_log_target(target).is_ok());
+        }
     }
 
     /// An access log without a destination is written by the task, as
