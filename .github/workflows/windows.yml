@@ -29,9 +29,9 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: setup node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       - name: build-web
         run: make build-web
 
@@ -52,7 +52,7 @@ jobs:
         shell: bash
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
 
       - name: Set Perl environment variables
         if: runner.os == 'Windows'
