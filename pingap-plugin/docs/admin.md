@@ -40,6 +40,27 @@ environment is not. A graceful restart keeps it that way - what came from the
 environment (these three, and `PINGAP_CONF`) is inherited by the replacement
 process and not written out as arguments.
 
+The other accounts go after the address, as parameters, each as often as
+there are accounts of its kind:
+
+```bash
+pingap -c /opt/pingap/conf \
+  --admin="pingap:123123@127.0.0.1:3018?readonly=bob:s3cret&token=ci:5e88...d8&readonly_token=monitor:9c2b...7d"
+```
+
+| Parameter | Is |
+| --- | --- |
+| `readonly` | An account that may look and not change: `user:password`, or the base64 of it. |
+| `token` | An API token that may write: `name:<sha256 of the token>`. |
+| `readonly_token` | An API token that may look. |
+| `max_age` | How long a login holds (default `2d`). |
+
+They are the `readonly_authorizations`, `tokens` and `readonly_tokens` of the
+plugin, described below, and are checked the same way. `PINGAP_ADMIN_ADDR`
+takes them as well. In a password written here `&`, `#` and `%` are
+percent-encoded (`%26`, `%23`, `%25`); everything else, a `+` included, is
+taken as it is written.
+
 The credentials are `user:password`, or the base64 of `user:password` in place
 of the user. A user without a password that is not such a base64 value
 (`--admin=root@127.0.0.1:3018`) is an error and the process does not start.
@@ -117,8 +138,11 @@ readonly_tokens = ["monitor:9c2b...7d"]
   included) and `POST /restart` are answered `403 Forbidden, this account is
   read-only`. What they can read is everything the admin shows, the
   credentials inside the configuration included: it is a role that can not
-  break anything, not one that is kept from secrets. The pages show their
-  buttons to such an account all the same, and say so when one is used.
+  break anything, not one that is kept from secrets. The pages leave out what
+  such an account can not do - saving, removing, creating, importing,
+  restoring a version, restarting - and say that the account is read-only.
+  That is for the reader's sake: what such an account may do is decided by
+  the API, whatever a page shows.
 - A user name is in one of the two lists, and the name of a token is there
   once. With read-only accounts or tokens and none that may write, the
   plugin is refused: nobody could change anything.
@@ -156,12 +180,17 @@ readonly_tokens = ["monitor:9c2b...7d"]
   `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. An
   error that is answered by the server's own error page - a request to
   `/api/aes` or `/api/config-history` that does not parse - has them not.
-- The `--admin` flag makes an admin with one account that may write. The
-  other three are for an admin that is declared as a plugin.
+- The `--admin` flag takes one account that may write, and the other three
+  kinds as parameters after the address (see above).
+- **History.** With `enable_history=true` on the configuration (see
+  [pingap-config](../../pingap-config/README.md)) the page of an entry shows
+  its earlier versions, the newest first with the time each was replaced, and
+  a button that saves the entry as it was then. That works for every layout
+  of a file configuration and for etcd. Up to twenty versions of an entry are
+  shown; one that is the same as the version after it is left out.
 
-What is not there: a history that covers every storage layout and can be
-rolled back from the pages, and a content security policy for the pages
-themselves beyond the one above.
+What is not there: a content security policy for the pages themselves beyond
+the one above.
 
 ## Without credentials
 

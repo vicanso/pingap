@@ -50,7 +50,7 @@ webhook_notifications = [
 | `parse_certificate_fail` | A configured certificate cannot be parsed |
 | `lets_encrypt` | An ACME order succeeds or fails |
 | `diff_config` | A configuration change is detected |
-| `reload_config` / `reload_config_fail` | Hot reload outcome |
+| `reload_config` / `reload_config_fail` | Hot reload outcome. `reload_config_fail` is also sent when the stored configuration does not validate, and when the storage can not be read at all (an etcd that is away, a file that lost its permissions): once when it starts, not at every pass |
 | `restart` / `restart_fail` | Graceful restart outcome |
 
 Each notification carries a category, a level (`Info`, `Warn`, `Error`), a title

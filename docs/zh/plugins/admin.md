@@ -31,6 +31,22 @@ pingap -c /opt/pingap/conf --admin=pingap:123123@0.0.0.0:80/pingap
 
 等价环境变量：`PINGAP_ADMIN_ADDR`、`PINGAP_ADMIN_USER`、`PINGAP_ADMIN_PASSWORD`。机器上的其他用户能看到进程列表时，建议用环境变量：进程的命令行是公开的，环境变量不是。优雅重启时同样如此——来自环境变量的设置（这三个，以及 `PINGAP_CONF`）由新进程继承，不会被写成命令行参数。
 
+其他账号写在地址后面的参数里，每种有几个就写几次：
+
+```bash
+pingap -c /opt/pingap/conf \
+  --admin="pingap:123123@127.0.0.1:3018?readonly=bob:s3cret&token=ci:5e88...d8&readonly_token=monitor:9c2b...7d"
+```
+
+| 参数 | 含义 |
+| --- | --- |
+| `readonly` | 只能看、不能改的账号：`user:password`，或者它的 Base64。 |
+| `token` | 可写的 API token：`名称:<token 的 sha256>`。 |
+| `readonly_token` | 只读的 API token。 |
+| `max_age` | 一次登录的有效期（默认 `2d`）。 |
+
+它们就是插件的 `readonly_authorizations`、`tokens`、`readonly_tokens`（见下文），校验规则也相同。`PINGAP_ADMIN_ADDR` 同样可以带这些参数。写在这里的密码中，`&`、`#`、`%` 要用百分号编码（`%26`、`%23`、`%25`）；其他字符（包括 `+`）按原样读取。
+
 凭证写成 `user:password`，或者在用户名的位置写 `user:password` 的 Base64。只有用户名、没有密码，且用户名又不是这样的 Base64 值时（`--admin=root@127.0.0.1:3018`）是错误，进程不会启动。在 URL 里有特殊含义的字符用百分号编码（`p@ss` 写成 `p%40ss`），密码取解码后的值。
 
 ## 作为插件
@@ -79,7 +95,7 @@ tokens = ["deploy:4f0a...e1"]                    # 名称:sha256(token)
 readonly_tokens = ["monitor:9c2b...7d"]
 ```
 
-- **只读**的账号和 token 可以访问接口的全部 `GET`，不能做任何修改：`/configs` 下的 `POST`、`DELETE`（包括导入）和 `POST /restart` 返回 `403 Forbidden, this account is read-only`。它们能读到 admin 展示的一切，包括配置里的各种凭据：这个角色的意思是“改不坏东西”，不是“看不到密钥”。界面对这类账号照样显示各个按钮，点了之后会提示没有权限。
+- **只读**的账号和 token 可以访问接口的全部 `GET`，不能做任何修改：`/configs` 下的 `POST`、`DELETE`（包括导入）和 `POST /restart` 返回 `403 Forbidden, this account is read-only`。它们能读到 admin 展示的一切，包括配置里的各种凭据：这个角色的意思是“改不坏东西”，不是“看不到密钥”。界面上不再显示这类账号做不了的操作——保存、删除、新建、导入、恢复历史版本、重启——并提示当前账号是只读的。这只是为了看的人方便：这类账号能做什么由接口决定，和页面显示什么无关。
 - 一个用户名只能出现在两个列表之一，token 的名称不能重复。只配了只读的账号或 token、没有任何可写的时，插件会被拒绝：那样谁也改不了任何东西。
 - **API token** 给不经过登录页的调用方用——部署脚本、监控：
 
@@ -99,9 +115,10 @@ readonly_tokens = ["monitor:9c2b...7d"]
 
   `user` 是账号名，token 是 `token:<名称>`，没有配凭据的 admin 是 `anonymous`；`ip` 是统计登录失败时用的那个地址。具体改了什么在重载时的输出里——日志行 `current config diff from hot reload config` 和 webhook 的 `diff_config` 通知——那里有差异内容，凭据已遮蔽。
 - **页面和接口的响应**都带 `X-Frame-Options: DENY` 和 `Content-Security-Policy: frame-ancestors 'none'`（别的网站不能把它们嵌进 frame，再把在那边的点击变成这边的点击），以及 `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。由 server 自己的错误页回答的错误（`/api/aes`、`/api/config-history` 收到解析不了的请求）不带这些头。
-- `--admin` 参数生成的是只有一个可写账号的 admin。另外三项用于以插件方式声明的 admin。
+- `--admin` 参数里写一个可写账号，另外三类写在地址后面的参数里（见上文）。
+- **历史记录。** 配置开启 `enable_history=true`（见 [pingap-config](../crates/config.md)）之后，每个条目的页面上可以看到它之前的版本——最新的在前，带着各自被替换的时间——并可以一键把条目恢复成当时的样子。文件配置的每一种布局和 etcd 都支持。每个条目最多显示 20 个版本；和后一个版本相同的不重复显示。
 
-还没有的：覆盖所有存储布局、可以在界面上回滚的历史记录，以及除上面这条之外针对页面本身的内容安全策略。
+还没有的：除上面这条之外针对页面本身的内容安全策略。
 
 ## 不设凭据时
 

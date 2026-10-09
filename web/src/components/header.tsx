@@ -255,34 +255,36 @@ export function MainHeader({
             <span>EN</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <button
-                type="button"
-                className="flex w-full cursor-pointer items-center text-sm"
-              >
-                <PowerOff className={iconClassName} />
-                <span>{t("restart")}</span>
-              </button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t("restartTitle")}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t("restartDescription")}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
-                <AlertDialogAction onClick={confirmRestart}>
-                  {t("confirm")}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </DropdownMenuItem>
+        {!basicInfo.read_only && <DropdownMenuSeparator />}
+        {!basicInfo.read_only && (
+          <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer items-center text-sm"
+                >
+                  <PowerOff className={iconClassName} />
+                  <span>{t("restart")}</span>
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("restartTitle")}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t("restartDescription")}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+                  <AlertDialogAction onClick={confirmRestart}>
+                    {t("confirm")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

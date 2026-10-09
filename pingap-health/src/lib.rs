@@ -177,7 +177,13 @@ pub fn new_health_check_with_client_cert(
                 if health_check_conf.schema == HealthCheckSchema::Https {
                     check.peer_template.client_cert_key = client_cert_key;
                 }
-                Box::new(check)
+                // The body is something pingora's check does not see.
+                match &health_check_conf.expect_body {
+                    Some(expect_body) => Box::new(
+                        http::HttpBodyHealthCheck::new(check, expect_body),
+                    ),
+                    None => Box::new(check),
+                }
             },
             HealthCheckSchema::Grpc => Box::new(GrpcHealthCheck::new(
                 name,
@@ -227,7 +233,7 @@ mod tests {
                 .try_into()
                 .unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false, parallel_check: false, expect_status: [], check_port: None }"###,
+            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false, parallel_check: false, expect_status: [], check_port: None, expect_body: None }"###,
             format!("{tcp_check:?}")
         );
         let tcp_check = new_tcp_health_check("", &tcp_check, None);

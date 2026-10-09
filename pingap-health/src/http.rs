@@ -18,9 +18,15 @@ use super::{
     DEFAULT_READ_TIMEOUT, Error, HealthCheckSchema, LOG_TARGET,
     update_peer_options,
 };
+use async_trait::async_trait;
 use humantime::parse_duration;
+use pingora::connectors::http::Connector;
 use pingora::http::{RequestHeader, ResponseHeader};
-use pingora::lb::health_check::{HealthObserveCallback, HttpHealthCheck};
+use pingora::lb::Backend;
+use pingora::lb::health_check::{
+    HealthCheck, HealthObserveCallback, HttpHealthCheck,
+};
+use pingora::upstreams::peer::Peer;
 use std::time::Duration;
 use tracing::error;
 use url::Url;
@@ -92,6 +98,116 @@ pub(crate) fn new_http_health_check(
     check
 }
 
+/// How much of a response an HTTP check reads for `expect_body`.
+const MAX_CHECK_BODY: usize = 64 * 1024;
+
+/// An HTTP check that looks at the body of the answer as well as at its
+/// status (`expect_body`).
+///
+/// pingora's check hands the response header to its validator and
+/// nothing else, so this one makes the request itself. It is the same
+/// request to the same place, by the settings of the check it is made
+/// from; that one is kept for those and never run.
+pub(crate) struct HttpBodyHealthCheck {
+    settings: HttpHealthCheck,
+    connector: Connector,
+    expect_body: Vec<u8>,
+}
+
+impl HttpBodyHealthCheck {
+    pub(crate) fn new(settings: HttpHealthCheck, expect_body: &str) -> Self {
+        Self {
+            settings,
+            connector: Connector::new(None),
+            expect_body: expect_body.as_bytes().to_vec(),
+        }
+    }
+}
+
+fn unhealthy<T>(reason: &'static str, status: u16) -> pingora::Result<T> {
+    pingora::Error::e_explain(
+        pingora::ErrorType::CustomCode(reason, status),
+        "during http healthcheck",
+    )
+}
+
+#[async_trait]
+impl HealthCheck for HttpBodyHealthCheck {
+    async fn check(&self, target: &Backend) -> pingora::Result<()> {
+        let settings = &self.settings;
+        let mut peer = settings.peer_template.clone();
+        peer._address = target.addr.clone();
+        if let Some(port) = settings.port_override {
+            peer._address.set_port(port);
+        }
+        let (mut session, _) = self.connector.get_http_session(&peer).await?;
+        session.set_write_timeout(peer.options.write_timeout);
+        session
+            .write_request_header(Box::new(settings.req.clone()))
+            .await?;
+        session.finish_request_body().await?;
+        if let Some(read_timeout) = peer.options.read_timeout {
+            session.set_read_timeout(Some(read_timeout));
+        }
+        session.read_response_header().await?;
+        let Some(resp) = session.response_header() else {
+            return unhealthy("no response", 0);
+        };
+        let status = resp.status.as_u16();
+        match &settings.validator {
+            Some(validator) => validator(resp)?,
+            None if status != 200 => return unhealthy("non 200 code", status),
+            None => {},
+        }
+        // The body, as far as it is looked at: its first `MAX_CHECK_BODY`
+        // bytes and not one more, however they come in - a piece that
+        // goes across the limit is looked at up to it. What comes after
+        // the text was found is read and dropped, for the connection to
+        // be one that can be used again; a body that goes on beyond the
+        // limit is left where it is, and its connection with it.
+        let mut body = Vec::new();
+        let mut read = 0;
+        let mut found = self.expect_body.is_empty();
+        let mut whole = true;
+        while let Some(chunk) = session.read_response_body().await? {
+            read += chunk.len();
+            if !found && body.len() < MAX_CHECK_BODY {
+                let take = chunk.len().min(MAX_CHECK_BODY - body.len());
+                body.extend_from_slice(&chunk[..take]);
+                found = body
+                    .windows(self.expect_body.len())
+                    .any(|window| window == self.expect_body);
+            }
+            if read > MAX_CHECK_BODY {
+                whole = false;
+                break;
+            }
+        }
+        if !found {
+            return unhealthy("unexpected body", status);
+        }
+        if settings.reuse_connection && whole {
+            let idle_timeout = peer.idle_timeout();
+            self.connector
+                .release_http_session(session, &peer, idle_timeout)
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn health_status_change(&self, target: &Backend, healthy: bool) {
+        self.settings.health_status_change(target, healthy).await;
+    }
+
+    fn backend_summary(&self, target: &Backend) -> String {
+        self.settings.backend_summary(target)
+    }
+
+    fn health_threshold(&self, success: bool) -> usize {
+        self.settings.health_threshold(success)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct HealthCheckConf {
     pub schema: HealthCheckSchema,
@@ -111,6 +227,8 @@ pub struct HealthCheckConf {
     pub expect_status: Vec<(u16, u16)>,
     /// The port an HTTP check goes to, where it is not the backend's own.
     pub check_port: Option<u16>,
+    /// What the body of the answer to an HTTP check has to have in it.
+    pub expect_body: Option<String>,
 }
 
 /// `200-399,401` as ranges, both ends included.
@@ -163,6 +281,7 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut service = "".to_string();
         let mut expect_status = vec![];
         let mut check_port = None;
+        let mut expect_body = None;
         // A value that does not parse is an error, not the default: with a
         // silent fallback `failure=three` or `check_frequency=5` (no unit)
         // ran the check with settings the operator never asked for.
@@ -241,6 +360,17 @@ impl TryFrom<&str> for HealthCheckConf {
                             })?,
                     );
                 },
+                "expect_body" => {
+                    if value.is_empty() {
+                        return Err(invalid(
+                            &key,
+                            &value,
+                            "is empty: every body has nothing in it"
+                                .to_string(),
+                        ));
+                    }
+                    expect_body = Some(value.to_string());
+                },
                 _ => {
                     if value.is_empty() {
                         query_list.push(key.to_string());
@@ -266,13 +396,14 @@ impl TryFrom<&str> for HealthCheckConf {
                     message: e.to_string(),
                 }
             })?;
-        // These two are read by the HTTP check alone. On another kind of
+        // These are read by the HTTP check alone. On another kind of
         // check they would be settings that look like they do something.
         if !matches!(schema, HealthCheckSchema::Http | HealthCheckSchema::Https)
         {
             for (key, given) in [
                 ("expect_status", !expect_status.is_empty()),
                 ("check_port", check_port.is_some()),
+                ("expect_body", expect_body.is_some()),
             ] {
                 if given {
                     return Err(invalid(
@@ -298,6 +429,7 @@ impl TryFrom<&str> for HealthCheckConf {
             parallel_check,
             expect_status,
             check_port,
+            expect_body,
         })
     }
 }
@@ -312,7 +444,7 @@ mod tests {
     fn test_http_health_check_conf() {
         let http_check: HealthCheckConf = "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse&tls&service=grpc".try_into().unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false, expect_status: [], check_port: None }"###,
+            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false, expect_status: [], check_port: None, expect_body: None }"###,
             format!("{http_check:?}")
         );
         let http_check = new_http_health_check("", &http_check, None);
@@ -457,6 +589,126 @@ mod tests {
             true,
             healthy(elsewhere, &format!("/200?check_port={port}&")).await
         );
+    }
+
+    /// `expect_body`: a backend that answers `200` and says in the body
+    /// that it is not ready is not healthy.
+    #[tokio::test]
+    async fn test_expect_body() {
+        use pingora::lb::Backend;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        for (url, expect) in [
+            ("http://h/p?expect_body=", "is empty"),
+            ("tcp://h?expect_body=ok", "http and https checks only"),
+            ("ws://h/p?expect_body=ok", "http and https checks only"),
+        ] {
+            let err = HealthCheckConf::try_from(url).unwrap_err();
+            assert_eq!(true, err.to_string().contains(expect), "{url}: {err}");
+        }
+        // Read as it is written in a url, and not sent to the backend.
+        let conf = HealthCheckConf::try_from(
+            "http://h/p?a=1&expect_body=%22status%22%3A%22ok%22",
+        )
+        .unwrap();
+        assert_eq!(Some("\"status\":\"ok\"".to_string()), conf.expect_body);
+        assert_eq!("/p?a=1", conf.path);
+        assert_eq!(
+            None,
+            HealthCheckConf::try_from("http://h/p").unwrap().expect_body
+        );
+
+        // A server whose answer is named by the path: its status, and
+        // what is in the body.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let path = head.split_whitespace().nth(1).unwrap_or("/");
+                    let path = path.split('?').next().unwrap_or("/");
+                    let response = match path {
+                        "/ok" => "HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}".to_string(),
+                        "/degraded" => "HTTP/1.1 200 OK\r\nContent-Length: 21\r\nConnection: close\r\n\r\n{\"status\":\"degraded\"}".to_string(),
+                        "/empty" => "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                        "/down" => "HTTP/1.1 503 Down\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}".to_string(),
+                        // In two pieces, with the text across them.
+                        "/chunked" => "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n9\r\n{\"status\"\r\n6\r\n:\"ok\"}\r\n0\r\n\r\n".to_string(),
+                        // The text - thirteen bytes of it - as the last
+                        // of what is read of a body, and one byte on.
+                        "/last" => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}{}{}",
+                            MAX_CHECK_BODY + 4096,
+                            "x".repeat(MAX_CHECK_BODY - 13),
+                            "\"status\":\"ok\"",
+                            "x".repeat(4096)
+                        ),
+                        "/late" => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}{}",
+                            MAX_CHECK_BODY + 1,
+                            "x".repeat(MAX_CHECK_BODY - 12),
+                            "\"status\":\"ok\""
+                        ),
+                        _ => "HTTP/1.1 404 X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    };
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let backend = Backend::new(&format!("127.0.0.1:{port}")).unwrap();
+        let healthy = async |path: &str, params: &str| {
+            let (_, check) = crate::new_health_check(
+                "http",
+                &format!(
+                    "http://health.test{path}?{params}connection_timeout=1s&read_timeout=1s"
+                ),
+                None,
+            )
+            .unwrap();
+            check.check(&backend).await.is_ok()
+        };
+        let expect = "expect_body=%22status%22%3A%22ok%22&";
+        // Without it the two are as healthy as each other.
+        assert_eq!(true, healthy("/ok", "").await);
+        assert_eq!(true, healthy("/degraded", "").await);
+        // With it, the one that says so.
+        assert_eq!(true, healthy("/ok", expect).await);
+        assert_eq!(false, healthy("/degraded", expect).await);
+        assert_eq!(false, healthy("/empty", expect).await);
+        assert_eq!(true, healthy("/chunked", expect).await);
+        // As far as a body is read and no further, however it comes in:
+        // the text that ends with the last byte that is read is found,
+        // the same text one byte on is not.
+        assert_eq!(true, healthy("/last", expect).await);
+        assert_eq!(false, healthy("/late", expect).await);
+        // The status counts as before: `200` alone, or what is listed.
+        assert_eq!(false, healthy("/down", expect).await);
+        assert_eq!(
+            true,
+            healthy("/down", &format!("expect_status=503&{expect}")).await
+        );
+        assert_eq!(
+            false,
+            healthy("/degraded", &format!("expect_status=200-299&{expect}"))
+                .await
+        );
+        // To the port it is told, as the check without a body.
+        let elsewhere = Backend::new("127.0.0.1:1").unwrap();
+        let (_, check) = crate::new_health_check(
+            "http",
+            &format!(
+                "http://health.test/ok?check_port={port}&{expect}connection_timeout=1s&read_timeout=1s"
+            ),
+            None,
+        )
+        .unwrap();
+        assert_eq!(true, check.check(&elsewhere).await.is_ok());
+        assert_eq!(1, check.health_threshold(true));
+        assert_eq!(2, check.health_threshold(false));
     }
 
     /// With `reuse` the second check rides the first one's connection;

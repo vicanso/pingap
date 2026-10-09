@@ -76,6 +76,9 @@ const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 const PAGE_SIZE: i64 = 64;
 /// How many earlier versions of one key are kept.
 const HISTORY_KEEP: usize = 100;
+/// How many versions of a key are read for whoever asks for its history:
+/// as many as the admin shows of an entry.
+const HISTORY_SHOWN: i64 = 20;
 /// How many of the versions over that are removed by one save: an old
 /// history is brought down over a number of saves, not by one that takes
 /// a minute.
@@ -526,7 +529,7 @@ impl Storage for EtcdStorage {
         let opts = GetOptions::new()
             .with_prefix()
             .with_sort(SortTarget::Create, SortOrder::Descend)
-            .with_limit(10);
+            .with_limit(HISTORY_SHOWN);
 
         let mut resp = self
             .with_kv(|mut kv| {

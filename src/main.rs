@@ -721,8 +721,7 @@ fn parse_arguments() -> Args {
         let user = get_from_env("admin_user");
         let password = get_from_env("admin_password");
         if !user.is_empty() && !password.is_empty() {
-            let data = format!("{user}:{password}");
-            addr = format!("{}@{addr}", pingap_util::base64_encode(&data));
+            addr = plugin::admin_addr_with_credentials(&addr, &user, &password);
         }
         args.admin = Some(addr);
         args.admin_from_env = true;

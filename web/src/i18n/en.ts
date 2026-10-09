@@ -8,6 +8,7 @@ export default {
     "The service will be restarted, please confirm whether to continue",
   restartSuccess: "Restart Success, the program will be restarted in 1 minute",
   save: "Save",
+  readOnlyTips: "This account is read-only: nothing here can be changed.",
   remove: "Remove",
   removeConfirm: "Are you sure to remove the config?",
   removeTips: "The config can't be recovered",

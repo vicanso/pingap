@@ -7,6 +7,7 @@ export default {
   restartDescription: "重启后服务将重新启动，请确认是否继续",
   restartSuccess: "重启成功，程序会在1分钟内成功重启",
   save: "保存",
+  readOnlyTips: "当前账号是只读的：这里的内容不能修改。",
   remove: "删除",
   removeConfirm: "确定删除当前配置吗？",
   removeTips: "配置删除后无法恢复",

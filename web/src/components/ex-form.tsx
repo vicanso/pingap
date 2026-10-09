@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/popover";
 import { InputSelect } from "./input_select";
 import { useIsMobile } from "@/hooks/use-mobile";
+import useBasicState from "@/states/basic";
 import {
   Tooltip,
   TooltipContent,
@@ -170,6 +171,9 @@ export function ExForm({
 }: ExFormProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  // An account that may not change anything has no use for the buttons
+  // that do.
+  const readOnly = useBasicState((state) => state.data.read_only);
   // One column on phones so span-3/6 fields don't squeeze into unreadably
   // narrow halves of a still-six-column grid.
   const effectiveCols = isMobile ? 1 : cols;
@@ -716,7 +720,12 @@ export function ExForm({
               updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
             )}
           >
-            {onSave && (
+            {readOnly && (onSave || onRemove) && (
+              <span className="text-sm text-muted-foreground">
+                {t("readOnlyTips")}
+              </span>
+            )}
+            {onSave && !readOnly && (
               <Button
                 className="min-w-[120px] cursor-pointer"
                 type="submit"
@@ -733,7 +742,7 @@ export function ExForm({
                 )}
               </Button>
             )}
-            {onRemove && (
+            {onRemove && !readOnly && (
               <Popover>
                 <PopoverTrigger asChild>
                   <Button

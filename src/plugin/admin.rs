@@ -324,6 +324,11 @@ struct BasicInfo {
     supported_plugins: Vec<String>,
     upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
     support_history: bool,
+    /// Whether who is asking may look and not change: for the page, which
+    /// leaves out what such an account can not do. What it can not do is
+    /// settled where a request that changes something is refused, not by
+    /// what the page shows.
+    read_only: bool,
     git_hash: String,
     now: u64,
 }
@@ -600,6 +605,9 @@ impl<'a> From<&'a pingap_certificate::Certificate> for CertificateInfo<'a> {
         }
     }
 }
+
+/// How many versions of an entry the history shows.
+const MAX_HISTORY_VERSIONS: usize = 20;
 
 /// What `/certificates` answers with: the loaded certificates by name.
 fn certificate_infos(
@@ -1288,28 +1296,45 @@ async fn handle_request_admin(
             pingap_core::new_internal_error(400, e)
         })?.unwrap_or_default();
 
+        let key = format_category(&category);
+        // The entry in a document: its own file, the file of its
+        // category, or the one of the whole configuration.
+        let entry_of = |text: &str| -> Option<toml::Value> {
+            let data: toml::Table = toml::from_str(text).ok()?;
+            let data = data.get(key)?;
+            if name.is_empty() {
+                Some(data.clone())
+            } else {
+                data.get(&name).cloned()
+            }
+        };
+        // The versions of the entry, the newest first, each with the time
+        // it was replaced at. A version is kept for every save of the
+        // file, and where that file is more than this entry most of them
+        // are changes to something else: what is the same as the version
+        // after it - or as the entry is now - is nothing to go back to.
+        let mut last = plugin
+            .manager
+            .fetch_raw(category.clone(), &name)
+            .await
+            .ok()
+            .and_then(|text| entry_of(&text));
         let mut history = vec![];
         for item in arr {
-            let data:toml::Table = toml::from_str(&item.data).map_err(|e| {
-                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
-                pingap_core::new_internal_error(400, e)
-            })?;
-            let key = format_category(&category);
-            let Some(data) = data.get(key).cloned() else {
+            let Some(data) = entry_of(&item.data) else {
                 continue;
             };
-            let data = if name.is_empty() {
-                data
-            } else {
-                let Some(data) = data.get(&name).cloned() else {
-                    continue;
-                };
-                data
-            };
+            if last.as_ref() == Some(&data) {
+                continue;
+            }
             history.push(json!({
                 "created_at": item.created_at,
                 "data": data,
             }));
+            if history.len() >= MAX_HISTORY_VERSIONS {
+                break;
+            }
+            last = Some(data);
         }
         HttpResponse::try_from_json(&json!({
             "history": history,
@@ -1366,6 +1391,7 @@ async fn handle_request_admin(
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
+            read_only: identity.read_only,
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
         };
@@ -2101,6 +2127,13 @@ mod tests {
             let (code, _) =
                 status("GET", "/api/configs/upstream", &authorization).await;
             assert_eq!(200, code, "{who}");
+            // And is told which kind of account it is, for the page to
+            // leave out what it can not do.
+            let (code, body) =
+                status("GET", "/api/basic", &authorization).await;
+            assert_eq!(200, code, "{who}");
+            let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(Some(!may_write), info["read_only"].as_bool(), "{who}");
             for (method, path) in writes {
                 // The restart itself is not tried in a test.
                 if may_write && path == "/api/restart" {
@@ -2775,5 +2808,74 @@ path = "/api"
             err.to_string().contains("Url is invalid(no name)"),
             "unexpected error: {err}"
         );
+    }
+
+    /// The history of an entry where the configuration is one file: the
+    /// versions of the entry, each once. A version of the file is kept
+    /// for every change to anything in it, and most of them are changes
+    /// to something else.
+    #[tokio::test]
+    async fn test_config_history_of_a_single_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        let document = |api: u8, web: u8| {
+            format!(
+                "[upstreams.api]\naddrs = [\"10.0.0.{api}:80\"]\n\n[upstreams.web]\naddrs = [\"10.0.1.{web}:80\"]\n"
+            )
+        };
+        std::fs::write(&file, document(3, 2)).unwrap();
+        let url = format!("{}?enable_history=true", file.to_string_lossy());
+        let (admin, manager) = new_admin_on(std::path::Path::new(&url), "");
+        assert_eq!(true, manager.support_history());
+        // What the file was before each of four saves: `web` changed,
+        // then `api` twice, then something that is neither.
+        let history = dir.path().join("pingap.toml-history");
+        for (at, api, web) in
+            [(100, 1, 1), (200, 1, 2), (300, 2, 2), (400, 3, 2)]
+        {
+            std::fs::write(
+                history.join(format!("pingap.toml-{at}")),
+                document(api, web),
+            )
+            .unwrap();
+        }
+        let versions = async |name: &str| {
+            let (code, body) = answer(
+                &admin,
+                "127.0.0.1:3018",
+                &format!(
+                    "GET /api/config-history/upstream/{name} HTTP/1.1\r\n\r\n"
+                ),
+            )
+            .await;
+            assert_eq!(200, code, "{body}");
+            let data: serde_json::Value = serde_json::from_str(&body).unwrap();
+            data["history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| {
+                    (
+                        item["created_at"].as_u64().unwrap(),
+                        item["data"]["addrs"][0].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        // The newest first, with the time each was replaced at; what the
+        // entry is now is not among them.
+        assert_eq!(
+            vec![
+                (300, "10.0.0.2:80".to_string()),
+                (200, "10.0.0.1:80".to_string())
+            ],
+            versions("api").await
+        );
+        assert_eq!(
+            vec![(100, "10.0.1.1:80".to_string())],
+            versions("web").await
+        );
+        // An entry the file never had.
+        assert_eq!(true, versions("none").await.is_empty());
     }
 }

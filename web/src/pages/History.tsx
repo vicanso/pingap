@@ -79,18 +79,20 @@ export default function HistoryPage(props: {
             {JSON.stringify(item.data, null, 2)}
           </pre>
         </ItemContent>
-        <ItemFooter>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full cursor-pointer"
-            onClick={() => {
-              handleRestore(item.data);
-            }}
-          >
-            {historyI18n("restore")}
-          </Button>
-        </ItemFooter>
+        {!basicInfo.read_only && (
+          <ItemFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full cursor-pointer"
+              onClick={() => {
+                handleRestore(item.data);
+              }}
+            >
+              {historyI18n("restore")}
+            </Button>
+          </ItemFooter>
+        )}
       </Item>
     );
   });

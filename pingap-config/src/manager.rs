@@ -307,23 +307,45 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
     let (file, query) = path.split_once('?').unwrap_or((path, ""));
     let file = resolve_path(file);
     let filepath = Path::new(&file);
+    // The history is for every layout. It used to be for a directory with
+    // a file to each entry alone: with one file for a category, or one for
+    // everything, `enable_history=true` was read and nothing was kept.
     let (mode, enable_history) = if is_config_dir(filepath) {
         let params: ConfigManagerParams =
             serde_qs::from_str(query).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
-        if params.separation {
-            (ConfigMode::MultiByItem, params.enable_history)
+        let mode = if params.separation {
+            ConfigMode::MultiByItem
         } else {
-            (ConfigMode::MultiByType, false)
-        }
+            ConfigMode::MultiByType
+        };
+        (mode, params.enable_history)
     } else {
-        (ConfigMode::Single, false)
+        // What follows the name of a single file was never looked at, and
+        // what is wrong with it is still no reason not to start.
+        let params: ConfigManagerParams =
+            serde_qs::from_str(query).unwrap_or_default();
+        (ConfigMode::Single, params.enable_history)
     };
 
     let mut storage = FileStorage::new(&file)?;
-    if enable_history {
-        storage.with_history_path(&format!("{file}-history"))?;
+    if enable_history
+        && let Err(e) = storage.with_history_path(&format!("{file}-history"))
+    {
+        // With a file to each entry this was always an error. In the
+        // other layouts the parameter did nothing until now, and a
+        // configuration that carries it started wherever it is - on a
+        // mount that can not be written to, for one. It still does, and
+        // says that it keeps no history.
+        if mode == ConfigMode::MultiByItem {
+            return Err(e);
+        }
+        tracing::warn!(
+            error = %e,
+            file,
+            "the history of the configuration is not kept"
+        );
     }
     Ok(ConfigManager::new(Arc::new(storage), mode))
 }
@@ -831,6 +853,18 @@ impl ConfigManager {
     }
     pub fn support_history(&self) -> bool {
         self.storage.support_history()
+    }
+    /// What the storage holds under the key of an entry, as it is: the
+    /// entry itself, or the file it is one part of - of its category, or
+    /// of the whole configuration. That is also what a version of its
+    /// history is.
+    pub async fn fetch_raw(
+        &self,
+        category: Category,
+        name: &str,
+    ) -> Result<String> {
+        let key = self.get_key(&category, name)?;
+        self.storage.fetch(&key).await
     }
     pub async fn history(
         &self,
@@ -2112,5 +2146,104 @@ addrs = ["127.0.0.1:7080"]
                 "upstream up{i} was lost to a concurrent write"
             );
         }
+    }
+
+    /// `enable_history=true` keeps the versions of every layout. It used
+    /// to be read and to do nothing where the configuration is one file,
+    /// or one file to a category.
+    #[tokio::test]
+    async fn test_history_in_every_layout() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // One file for everything.
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, "[upstreams.api]\naddrs = [\"127.0.0.1:1\"]\n")
+            .unwrap();
+        // A directory with a file to each category.
+        let by_type = dir.path().join("by-type");
+        std::fs::create_dir(&by_type).unwrap();
+        std::fs::write(
+            by_type.join("upstreams.toml"),
+            "[upstreams.api]\naddrs = [\"127.0.0.1:1\"]\n",
+        )
+        .unwrap();
+        // And one with a file to each entry.
+        let by_item = dir.path().join("by-item");
+        std::fs::create_dir_all(by_item.join("upstreams")).unwrap();
+        std::fs::write(
+            by_item.join("upstreams/api.toml"),
+            "[upstreams.api]\naddrs = [\"127.0.0.1:1\"]\n",
+        )
+        .unwrap();
+
+        for (path, params) in [
+            (&file, "?enable_history=true"),
+            (&by_type, "?enable_history=true"),
+            (&by_item, "?separation=true&enable_history=true"),
+        ] {
+            let url = format!("{}{params}", path.to_string_lossy());
+            let manager = new_file_config_manager(&url).unwrap();
+            assert_eq!(true, manager.support_history(), "{url}");
+            let conf = crate::UpstreamConf {
+                addrs: vec!["127.0.0.1:2".to_string()],
+                ..Default::default()
+            };
+            manager
+                .update(Category::Upstream, "api", &conf)
+                .await
+                .unwrap();
+            let history = manager
+                .history(Category::Upstream, "api")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(1, history.len(), "{url}");
+            // The version from before the change, in a document that has
+            // the entry under its category and name.
+            assert_eq!(
+                true,
+                history[0].data.contains("127.0.0.1:1")
+                    && history[0].data.contains("[upstreams.api]"),
+                "{url}: {}",
+                history[0].data
+            );
+            let now =
+                manager.fetch_raw(Category::Upstream, "api").await.unwrap();
+            assert_eq!(true, now.contains("127.0.0.1:2"), "{url}: {now}");
+        }
+        // Not asked for, there is none - in any layout.
+        for path in [&file, &by_type] {
+            let manager =
+                new_file_config_manager(&path.to_string_lossy()).unwrap();
+            assert_eq!(false, manager.support_history());
+        }
+        // What follows the name of a single file and is not understood is
+        // no reason not to start, as before.
+        let url = format!("{}?separation=maybe", file.to_string_lossy());
+        assert_eq!(true, new_file_config_manager(&url).is_ok());
+
+        // A history that can not be set up - a file is where its
+        // directory would be. In the layouts where the parameter did
+        // nothing until now the configuration is used without one, as it
+        // was; with a file to each entry it is an error, as it was.
+        let other = dir.path().join("other.toml");
+        std::fs::write(&other, "[basic]\n").unwrap();
+        std::fs::write(dir.path().join("other.toml-history"), "taken").unwrap();
+        let manager = new_file_config_manager(&format!(
+            "{}?enable_history=true",
+            other.to_string_lossy()
+        ))
+        .unwrap();
+        assert_eq!(false, manager.support_history());
+        let items = dir.path().join("items");
+        std::fs::create_dir(&items).unwrap();
+        std::fs::write(dir.path().join("items-history"), "taken").unwrap();
+        assert_eq!(
+            true,
+            new_file_config_manager(&format!(
+                "{}?separation=true&enable_history=true",
+                items.to_string_lossy()
+            ))
+            .is_err()
+        );
     }
 }

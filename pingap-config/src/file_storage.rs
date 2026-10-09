@@ -171,6 +171,9 @@ async fn write_new(
 /// allows, less the right to execute. A directory only its owner can enter
 /// gets files only its owner can read. Private when the directory cannot be
 /// looked at.
+/// How many versions of a key the history keeps: the same as in etcd.
+const HISTORY_KEEP: usize = 100;
+
 fn mode_of_new_file(dir: Option<&std::fs::Metadata>) -> u32 {
     #[cfg(unix)]
     {
@@ -318,20 +321,44 @@ impl FileStorage {
         let filepath = resolve_path(history_path);
         let path = Path::new(&filepath);
         // It holds copies of the config and stands beside it, not inside:
-        // it is made no more open than the config directory is.
+        // it is made no more open than the config is, and belongs to who
+        // the config belongs to. For a directory that is the directory.
+        // For a single file it is the file, not the directory the file is
+        // in: `/etc/pingap` is root's, the file may be the service
+        // user's, and a history only root can write to made every save
+        // fail once the process had given up being root.
         let like = if self.is_dir {
-            Some(self.path.as_path())
+            std::fs::metadata(&self.path).ok()
         } else {
-            self.path.parent()
+            std::fs::metadata(&self.path)
+                .ok()
+                .filter(|meta| meta.is_file())
+                .or_else(|| {
+                    self.path
+                        .parent()
+                        .and_then(|dir| std::fs::metadata(dir).ok())
+                })
         };
-        let like = like.and_then(|dir| std::fs::metadata(dir).ok());
+        if path.exists() && !path.is_dir() {
+            return Err(Error::Invalid {
+                message: format!(
+                    "{filepath} is not a directory: the history of the configuration is kept in one"
+                ),
+            });
+        }
         if !path.exists() {
             let mut builder = std::fs::DirBuilder::new();
             builder.recursive(true);
             #[cfg(unix)]
             if let Some(meta) = &like {
                 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-                builder.mode(meta.permissions().mode() & 0o777);
+                let mut mode = meta.permissions().mode() & 0o777;
+                // Who may read a file may enter the directory of its
+                // copies.
+                if meta.is_file() {
+                    mode |= (mode & 0o444) >> 2;
+                }
+                builder.mode(mode);
             }
             builder.create(path).map_err(|e| Error::Io {
                 source: e,
@@ -387,6 +414,46 @@ impl FileStorage {
     fn convert_history_key(&self, key: &str) -> String {
         key.replace("/", "-")
     }
+    /// The versions that are kept of `key`, the newest first: the time
+    /// each was replaced at and its file.
+    ///
+    /// Those of this key and of no other: `upstreams-api.toml` is also
+    /// what the versions of `upstreams-api.toml2` begin with, and by a
+    /// pattern for everything that begins so they were shown as its own.
+    async fn history_files(&self, key: &str) -> Result<Vec<(u64, PathBuf)>> {
+        let Some(history_path) = &self.history_path else {
+            return Ok(vec![]);
+        };
+        let prefix = format!("{}-", self.convert_history_key(key));
+        let io_error = |e: std::io::Error| Error::Io {
+            source: e,
+            file: history_path.to_string_lossy().to_string(),
+        };
+        let mut dir = match fs::read_dir(history_path).await {
+            Ok(dir) => dir,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(vec![]);
+            },
+            Err(e) => return Err(io_error(e)),
+        };
+        let mut files = vec![];
+        while let Some(entry) = dir.next_entry().await.map_err(io_error)? {
+            let name = entry.file_name();
+            let created_at = name
+                .to_string_lossy()
+                .strip_prefix(&prefix)
+                .filter(|rest| {
+                    !rest.is_empty()
+                        && rest.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|rest| rest.parse::<u64>().ok());
+            if let Some(created_at) = created_at {
+                files.push((created_at, entry.path()));
+            }
+        }
+        files.sort_by_key(|file| std::cmp::Reverse(file.0));
+        Ok(files)
+    }
     /// Copies the current value of `key` into the history directory.
     ///
     /// Returns whether the value is recoverable afterwards: `false` only when
@@ -394,6 +461,10 @@ impl FileStorage {
     /// destroy the value uses this to decide whether it still needs a backup
     /// of its own.
     async fn save_history(&self, key: &str) -> Result<bool> {
+        self.save_history_at(key, now_sec()).await
+    }
+    /// [`Self::save_history`] at the time `now`, in unix seconds.
+    async fn save_history_at(&self, key: &str, now: u64) -> Result<bool> {
         let Some(history_path) = &self.history_path else {
             return Ok(false);
         };
@@ -401,7 +472,23 @@ impl FileStorage {
         if value.is_empty() {
             return Ok(true);
         }
-        let name = format!("{}-{}", self.convert_history_key(key), now_sec());
+        let versions = self.history_files(key).await?;
+        let stamp = match versions.first().map(|(at, _)| *at) {
+            // A second save within the same second. What is kept for that
+            // second is what was there before the first of them: written
+            // again, it would be the state of a moment in between, and
+            // the one from before both would be gone. With one file for
+            // the whole configuration every entry that is saved is a save
+            // of that file, and an import is many of them at once.
+            Some(newest) if newest == now => return Ok(true),
+            // A clock that was put back: the version is the newest there
+            // is and is kept as that, after the ones from before. Under
+            // an earlier time it would stand among them in the wrong
+            // place, and be the first one cleared away.
+            Some(newest) if newest > now => newest + 1,
+            _ => now,
+        };
+        let name = format!("{}-{stamp}", self.convert_history_key(key));
         let file = history_path.join(name).clone();
         // A copy of the config is as private as the config - it has the
         // same keys in it - and no more open than the history directory.
@@ -424,6 +511,19 @@ impl FileStorage {
             source: e,
             file: file.to_string_lossy().to_string(),
         })?;
+        // The versions beyond the newest `HISTORY_KEEP`, this one
+        // included: every save added one and nothing ever took one away.
+        // What is written is written: versions that could not be cleared
+        // away are no reason to refuse the save they belong to.
+        for (_, old) in versions.into_iter().skip(HISTORY_KEEP - 1) {
+            if let Err(e) = fs::remove_file(&old).await {
+                tracing::warn!(
+                    error = %e,
+                    file = %old.display(),
+                    "remove config history failed"
+                );
+            }
+        }
         Ok(true)
     }
 }
@@ -574,49 +674,38 @@ impl Storage for FileStorage {
         ))
     }
     async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
-        let Some(history_path) = &self.history_path else {
+        if self.history_path.is_none() {
             return Ok(None);
-        };
-
-        let file = history_path
-            .join(self.convert_history_key(key))
-            .to_string_lossy()
-            .to_string();
-
+        }
+        // All that is kept, the newest first. A key that is the file of
+        // the whole configuration, or of a category, has a version for
+        // every change to anything in it: whoever asks for one entry has
+        // to look through more than the last few to find its own.
         let mut history = vec![];
-
-        for entry in glob(&format!("{file}*")).map_err(|e| Error::Pattern {
-            source: e,
-            path: file,
-        })? {
-            let f = entry.map_err(|e| Error::Glob { source: e })?;
-            let Some(filename) = f.file_name() else {
-                continue;
-            };
-            let Some(created_at) = filename
-                .to_string_lossy()
-                .split('-')
-                .next_back()
-                .and_then(|s| s.parse::<u64>().ok())
-            else {
-                continue;
+        // No more than is kept: a directory from before versions were
+        // cleared away may have thousands of them.
+        for (created_at, file) in self
+            .history_files(key)
+            .await?
+            .into_iter()
+            .take(HISTORY_KEEP)
+        {
+            let data = match fs::read(&file).await {
+                Ok(data) => data,
+                // Cleared away by a save since the directory was read.
+                Err(e) if e.kind() == ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(Error::Io {
+                        source: e,
+                        file: file.to_string_lossy().to_string(),
+                    });
+                },
             };
             history.push(History {
                 created_at,
-                data: f.to_path_buf().to_string_lossy().to_string(),
+                data: String::from_utf8_lossy(&data).trim().to_string(),
             });
         }
-        history.sort_by_key(|h| h.created_at);
-        history.reverse();
-        history.truncate(10);
-        for item in history.iter_mut() {
-            let data = fs::read(&item.data).await.map_err(|e| Error::Io {
-                source: e,
-                file: item.data.clone(),
-            })?;
-            item.data = String::from_utf8_lossy(&data).trim().to_string();
-        }
-
         Ok(Some(history))
     }
 }
@@ -1035,5 +1124,175 @@ addrs = ["127.0.0.1:5000"]
             .unwrap();
         assert_eq!(true, has_config_file(&root, "toml").unwrap());
         assert_eq!(false, has_config_file(&root, "hcl").unwrap());
+    }
+
+    /// The versions of a key: its own and no other key's, the newest
+    /// first, not written over within a second, and not without end.
+    #[tokio::test]
+    async fn test_history_of_a_key() {
+        let dir = tempdir().unwrap();
+        let conf = dir.path().join("conf");
+        std::fs::create_dir(&conf).unwrap();
+        let history = dir.path().join("history");
+        let mut storage = FileStorage::new(&conf.to_string_lossy()).unwrap();
+        storage
+            .with_history_path(&history.to_string_lossy())
+            .unwrap();
+        let versions = |key: &'static str| {
+            let storage = &storage;
+            async move {
+                storage
+                    .fetch_history(key)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_iter()
+                    .map(|item| (item.created_at, item.data))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let key = "upstreams/api.toml";
+        // What a save does to the history, at a time that is given: the
+        // value that is there is copied, then the file is written.
+        let save = |value: &'static str, at: u64| {
+            let (storage, conf) = (&storage, &conf);
+            async move {
+                storage.save_history_at(key, at).await.unwrap();
+                std::fs::create_dir_all(conf.join("upstreams")).unwrap();
+                std::fs::write(conf.join(key), value).unwrap();
+            }
+        };
+
+        // Nothing is kept of what was not there before.
+        save("v = 1", 1000).await;
+        assert_eq!(true, versions(key).await.is_empty());
+        // Saved again: the one from before is kept, under the time it
+        // was replaced at.
+        save("v = 2", 1010).await;
+        assert_eq!(vec![(1010, "v = 1".to_string())], versions(key).await);
+        // And again within the second: what is kept for that second is
+        // still the one from before the first of the two saves.
+        save("v = 3", 1010).await;
+        assert_eq!(vec![(1010, "v = 1".to_string())], versions(key).await);
+        // Later: the newest first.
+        save("v = 4", 1020).await;
+        assert_eq!(
+            vec![(1020, "v = 3".to_string()), (1010, "v = 1".to_string())],
+            versions(key).await
+        );
+        // A clock that was put back: the version is still the newest,
+        // after the ones there are, and so is the one after it.
+        save("v = 5", 900).await;
+        save("v = 6", 901).await;
+        assert_eq!(
+            vec![
+                (1022, "v = 5".to_string()),
+                (1021, "v = 4".to_string()),
+                (1020, "v = 3".to_string()),
+                (1010, "v = 1".to_string())
+            ],
+            versions(key).await
+        );
+        // Through `save` itself, whatever the time is: the value from
+        // before is kept.
+        storage.save(key, "v = 7").await.unwrap();
+        assert_eq!("v = 6", versions(key).await[0].1);
+        assert_eq!("v = 7", storage.fetch(key).await.unwrap());
+
+        // A key that begins like another one has versions of its own.
+        std::fs::write(history.join("upstreams-api.toml2-950"), "another")
+            .unwrap();
+        std::fs::write(history.join("upstreams-api.toml-old"), "no version")
+            .unwrap();
+        assert_eq!(5, versions(key).await.len());
+
+        // The hundred newest only: what a save leaves behind beyond that
+        // is cleared away by it. More than that from before - a history
+        // nothing ever cleared - is not read either.
+        std::fs::write(conf.join("basic.toml"), "[basic]").unwrap();
+        for at in 1..=120u64 {
+            std::fs::write(
+                history.join(format!("basic.toml-{at}")),
+                format!("at = {at}"),
+            )
+            .unwrap();
+        }
+        let kept = versions("basic.toml").await;
+        assert_eq!(super::HISTORY_KEEP, kept.len());
+        assert_eq!((120, "at = 120".to_string()), kept[0]);
+        storage.save_history_at("basic.toml", 2000).await.unwrap();
+        let kept = versions("basic.toml").await;
+        assert_eq!(super::HISTORY_KEEP, kept.len());
+        assert_eq!((2000, "[basic]".to_string()), kept[0]);
+        assert_eq!((22, "at = 22".to_string()), kept[99]);
+        let left = std::fs::read_dir(&history)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("basic.toml-")
+            })
+            .count();
+        assert_eq!(super::HISTORY_KEEP, left);
+        // The versions of the other keys are where they were.
+        assert_eq!(5, versions(key).await.len());
+        assert_eq!(true, history.join("upstreams-api.toml2-950").exists());
+    }
+
+    /// The history of a single file belongs to who the file belongs to
+    /// and is as closed as the file, not as the directory the file is in;
+    /// and what is in its place and is no directory is refused.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_history_of_a_single_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &std::path::Path| {
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+        };
+        let dir = tempdir().unwrap();
+        std::fs::set_permissions(
+            dir.path(),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, "[basic]").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        let history = dir.path().join("pingap.toml-history");
+        let mut storage = FileStorage::new(&file.to_string_lossy()).unwrap();
+        storage
+            .with_history_path(&history.to_string_lossy())
+            .unwrap();
+        // The file is its owner's alone, in a directory everybody may
+        // read: so are the copies of it.
+        assert_eq!(0o700, mode(&history));
+        storage
+            .save("pingap.toml", "[basic]\nname = \"x\"")
+            .await
+            .unwrap();
+        let copies: Vec<_> = std::fs::read_dir(&history)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(1, copies.len());
+        assert_eq!(0o600, mode(&copies[0]));
+
+        // A file where the directory is to be.
+        let taken = dir.path().join("taken-history");
+        std::fs::write(&taken, "something else").unwrap();
+        let mut storage = FileStorage::new(&file.to_string_lossy()).unwrap();
+        let err = storage
+            .with_history_path(&taken.to_string_lossy())
+            .unwrap_err();
+        assert_eq!(
+            true,
+            err.to_string().contains("is not a directory"),
+            "{err}"
+        );
+        assert_eq!(false, storage.support_history());
     }
 }

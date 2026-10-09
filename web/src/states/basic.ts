@@ -32,6 +32,9 @@ interface Basic {
   tcp6_count: number;
   supported_plugins: string[];
   support_history: boolean;
+  // The account may look and not change: the page leaves out what it can
+  // not do. The server refuses those requests whatever the page shows.
+  read_only: boolean;
   upstream_healthy_status: Record<string, UpstreamHealthyStatus>;
 }
 
@@ -69,6 +72,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     supported_plugins: [],
     upstream_healthy_status: {},
     support_history: false,
+    read_only: false,
   },
   initialized: false,
   fetch: async () => {

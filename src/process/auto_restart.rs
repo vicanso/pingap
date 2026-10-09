@@ -69,6 +69,23 @@ struct LastFailed {
 
 static LAST_FAILED: ArcSwapOption<LastFailed> = ArcSwapOption::const_empty();
 
+/// Whether the configuration could not be read from its storage the last
+/// time it was tried.
+static LOAD_FAILING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Notes that the storage could not be read, and says whether that is
+/// news: it could be read the time before. The poll and the watch of a
+/// storage both come through here, and one of them is told so.
+fn load_failure_is_news() -> bool {
+    !LOAD_FAILING.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Notes that the storage could be read.
+fn load_succeeded() {
+    LOAD_FAILING.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// How long a document that could not be applied is left alone before it
 /// is tried again as it is.
 ///
@@ -168,7 +185,37 @@ async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
 ) -> Result<Option<PingapConfig>, Box<dyn std::error::Error>> {
-    let raw = config_manager.load_all_raw().await?;
+    let raw = match config_manager.load_all_raw().await {
+        Ok(raw) => {
+            load_succeeded();
+            raw
+        },
+        Err(e) => {
+            // A storage that can not be read - an etcd that is away, a
+            // file whose permissions were changed - was a line in the log
+            // at every pass and nothing else. It is said once, there and
+            // to the webhook, when it starts: what is running goes on as
+            // it is, and no change to the configuration is seen until
+            // this is over.
+            let message = format!("load config fail: {e}");
+            if !load_failure_is_news() {
+                debug!(
+                    target: LOG_TARGET,
+                    error = message,
+                    "load config still fails"
+                );
+                return Ok(None);
+            }
+            send_notification(NotificationData {
+                category: "reload_config_fail".to_string(),
+                level: NotificationLevel::Error,
+                message: message.clone(),
+                ..Default::default()
+            })
+            .await;
+            return Err(message.into());
+        },
+    };
     let mut hash = raw_hash(&raw);
     // A value that is read from a file changes without the document
     // changing: a secret rotated in place. What those files hold is a
@@ -1273,5 +1320,21 @@ mod tests {
         };
         assert_eq!(true, should_skip(Some(&settled), 1, true));
         assert_eq!(true, should_skip(Some(&settled), 1, false));
+    }
+
+    /// A storage that can not be read is said when that starts, not at
+    /// every pass it lasts; and again the next time, after it could be.
+    #[test]
+    fn test_load_failure_is_news() {
+        use super::{load_failure_is_news, load_succeeded};
+        load_succeeded();
+        assert_eq!(true, load_failure_is_news());
+        assert_eq!(false, load_failure_is_news());
+        assert_eq!(false, load_failure_is_news());
+        load_succeeded();
+        load_succeeded();
+        assert_eq!(true, load_failure_is_news());
+        assert_eq!(false, load_failure_is_news());
+        load_succeeded();
     }
 }

@@ -158,8 +158,9 @@ for it is `0700`. That is a ceiling, asked for when the file is created, so
 the umask of the process still narrows it. The file is given to the owner of
 the directory where the process may do that (it was started as root and the
 directory belongs to the user it runs as). The history directory is created
-like the config directory, and a copy kept there is no more open than the
-file it copies. The temporary file a save goes through is private from the
+like the config directory - or, for a single file, like the file: as closed as
+it and its owner's - and a copy kept there is no more open than the file it
+copies. The temporary file a save goes through is private from the
 moment it exists.
 
 Importing a configuration (`POST /api/configs/import`, `--sync`) replaces what is
@@ -169,12 +170,29 @@ layout.
 Sizes are written back exactly: `10MB` is saved as `10 MB`, in the largest unit
 that divides it.
 
-Query parameters for the file backend (directories only):
+Query parameters for the file backend (`separation` is for directories):
 
 | Parameter | Meaning |
 | --- | --- |
 | `separation=true` | Write each item to its own file. Anything other than the literal `false` counts as true. |
-| `enable_history=true` | Keep previous versions next to the config (`<dir>-history`) so the admin UI can restore them. Requires `separation`. |
+| `enable_history=true` | Keep previous versions next to the config so the admin UI can show and restore them: in `<dir>-history` for a directory, in `<file>-history` for a single file. For every layout. |
+
+With `enable_history=true` the value a save replaces is copied to the history
+directory first, under the name of its file and the time (for a single file
+that is always `pingap.toml-<time>`). A copy is in TOML, also where the
+configuration is kept in hcl or kdl. What a version is
+depends on the layout: with `separation` it is one entry; with a file to each
+category it is the file of that category, and with a single file it is the
+whole configuration - a version for every change to anything in it. The admin
+picks the entry out of each and shows its distinct versions. The hundred
+newest versions of each file are kept, and older ones are removed as new ones
+are written. Two saves of one file within a second keep one version, the one
+from before the first of them. The history directory is as private as the
+configuration it stands beside: it holds copies of it, secrets included.
+Where the directory can not be made - the configuration is on a mount that
+can not be written to, or a file has its name - a single file and a directory
+with a file to each category are used without a history, with a warning in
+the log; with `separation` it is an error, as it always was.
 
 ### Layout normalization
 

@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageShell } from "@/components/page-shell";
 import { goToHome } from "@/routers";
 import React from "react";
+import useBasicState from "@/states/basic";
 
 /**
  * Module scope, not inside Config: a component created during render is a new
@@ -54,6 +55,9 @@ export default function Config() {
   const { t } = useTranslation();
   const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
+  // An import replaces the configuration: not for an account that may
+  // only look.
+  const readOnly = useBasicState((state) => state.data.read_only);
   const [
     fetchFullConfig,
     fetchConfig,
@@ -132,10 +136,15 @@ export default function Config() {
   };
 
   const different = fullToml != originalToml;
-  let tabClass = "grid-cols-3";
-  if (different) {
-    tabClass = "grid-cols-4";
-  }
+  // The original and HCL, the full one when it differs, and the import for
+  // an account that may change something.
+  const tabCount = 2 + (different ? 1 : 0) + (readOnly ? 0 : 1);
+  const tabClass =
+    tabCount === 4
+      ? "grid-cols-4"
+      : tabCount === 3
+        ? "grid-cols-3"
+        : "grid-cols-2";
   let importText = t("import");
   if (importing) {
     importText += "...";
@@ -173,9 +182,11 @@ export default function Config() {
           <TabsTrigger value="hcl" className="cursor-pointer">
             HCL
           </TabsTrigger>
-          <TabsTrigger value="import" className="cursor-pointer">
-            {t("import")}
-          </TabsTrigger>
+          {!readOnly && (
+            <TabsTrigger value="import" className="cursor-pointer">
+              {t("import")}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Fill remaining height under tabs; only the panel body scrolls */}

@@ -106,6 +106,44 @@ pub fn parse_admin_plugin(
         serde_qs::from_str(info.query().unwrap_or_default())
             .unwrap_or_default();
     let max_age = params.max_age.unwrap_or("2d".to_string());
+    // The other accounts of the admin, which had no place in the address
+    // and took a plugin of the configuration to declare: accounts that
+    // look and do not change, and tokens of either kind. Each may be
+    // given more than once.
+    let mut readonly_authorizations = vec![];
+    let mut tokens = vec![];
+    let mut readonly_tokens = vec![];
+    for pair in info.query().unwrap_or_default().split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        // What is percent-encoded is decoded and nothing else is touched,
+        // as before the `@`: read as a form, a `+` in a password was a
+        // space, and the account could not log in with the password it
+        // was given.
+        let value = decode(value);
+        match key {
+            // `user:password` as it is typed, or the base64 of it.
+            "readonly" => {
+                let authorization = if is_base64_credential(&value) {
+                    value.clone()
+                } else if value.contains(':') {
+                    base64_encode(&value)
+                } else {
+                    return Err(Error::Invalid {
+                        category: "admin".to_string(),
+                        message: "readonly: expect user:password, or the base64 of it".to_string(),
+                    });
+                };
+                readonly_authorizations.push(authorization);
+            },
+            // `name:<sha256 of the token>`, checked where the plugin is
+            // built.
+            "token" => tokens.push(value),
+            "readonly_token" => readonly_tokens.push(value),
+            _ => {},
+        }
+    }
 
     // Built as a table, not as formatted text: a `"` in the path or the
     // user info broke the toml, and the fallback was an empty plugin config.
@@ -114,6 +152,15 @@ pub fn parse_admin_plugin(
     conf.insert("path".to_string(), path.into());
     conf.insert("authorizations".to_string(), vec![authorization].into());
     conf.insert("max_age".to_string(), max_age.into());
+    for (key, values) in [
+        ("readonly_authorizations", readonly_authorizations),
+        ("tokens", tokens),
+        ("readonly_tokens", readonly_tokens),
+    ] {
+        if !values.is_empty() {
+            conf.insert(key.to_string(), values.into());
+        }
+    }
     conf.insert("remark".to_string(), "Admin serve".into());
     Ok((
         ServerConf {
@@ -127,19 +174,45 @@ pub fn parse_admin_plugin(
     ))
 }
 
+/// The address of `--admin` for an account that is given apart from it,
+/// as `PINGAP_ADMIN_USER` and `PINGAP_ADMIN_PASSWORD` give it.
+///
+/// The account goes in as the base64 of `user:password`, percent-encoded:
+/// base64 has `/` in it for some passwords and `+` for others, and put
+/// before the `@` as it is, a `/` ended the host there - the admin was
+/// then at an address made of the first half of the credentials.
+pub fn admin_addr_with_credentials(
+    addr: &str,
+    user: &str,
+    password: &str,
+) -> String {
+    let credentials = base64_encode(format!("{user}:{password}"));
+    format!("{}@{addr}", urlencoding::encode(&credentials))
+}
+
 /// Says so, once at startup, when the admin of `--admin` has no
 /// credentials. It is a common way to run it on a machine of one's own,
 /// and it is as open as it sounds: nothing but the address stands between
 /// a request and the configuration, private keys included.
 pub fn warn_if_admin_has_no_credentials(conf: &PluginConf, addr: &str) {
-    let has_credentials = conf
-        .get("authorizations")
-        .and_then(|value| value.as_array())
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| item.as_str().is_some_and(|item| !item.is_empty()))
-        });
+    // Any of the four kinds: an admin that takes a token and nothing else
+    // is not open.
+    let has_credentials = [
+        "authorizations",
+        "readonly_authorizations",
+        "tokens",
+        "readonly_tokens",
+    ]
+    .iter()
+    .any(|key| {
+        conf.get(*key)
+            .and_then(|value| value.as_array())
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.as_str().is_some_and(|item| !item.is_empty())
+                })
+            })
+    });
     if !has_credentials {
         warn!(
             target: LOG_TARGET,
@@ -724,6 +797,125 @@ mod tests {
 
     fn authorizations(conf: &PluginConf) -> Vec<String> {
         get_str_slice_conf(conf, "authorizations")
+    }
+
+    /// The accounts that had no place in the address of `--admin`: the
+    /// ones that look and do not change, and the tokens.
+    #[test]
+    fn test_parse_admin_plugin_with_more_accounts() {
+        let digest = "a".repeat(64);
+        let ops = base64_encode("ops:x y");
+        let addr = format!(
+            "admin:secret@127.0.0.1:3018/?max_age=1h&readonly=viewer:p%40ss&readonly={ops}&token=ci:{digest}&readonly_token=mon:{digest}&unknown=1"
+        );
+        let (server, _, conf) = parse_admin_plugin(&addr).unwrap();
+        assert_eq!("127.0.0.1:3018", server.addr);
+        assert_eq!("1h", get_str_conf(&conf, "max_age"));
+        assert_eq!(vec![base64_encode("admin:secret")], authorizations(&conf));
+        // As it is typed, or as the base64 of it.
+        assert_eq!(
+            vec![base64_encode("viewer:p@ss"), ops],
+            get_str_slice_conf(&conf, "readonly_authorizations")
+        );
+        assert_eq!(
+            vec![format!("ci:{digest}")],
+            get_str_slice_conf(&conf, "tokens")
+        );
+        assert_eq!(
+            vec![format!("mon:{digest}")],
+            get_str_slice_conf(&conf, "readonly_tokens")
+        );
+        // It is a configuration the admin takes. The admin is built on
+        // the configuration of the process, which a test has to give it.
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        crate::config_manager::try_init_config_manager(
+            &file.path().to_string_lossy(),
+        )
+        .unwrap();
+        assert_eq!(
+            None,
+            admin::AdminServe::new(&conf).err().map(|e| e.to_string())
+        );
+
+        // A `+` is a plus, in a password after the address as in the one
+        // before it; what stands for something else in an address is
+        // written percent-encoded.
+        let (_, _, conf) = parse_admin_plugin(
+            "admin:a+b@127.0.0.1:3018?readonly=viewer:a+b&readonly=ops:x%26y%23z",
+        )
+        .unwrap();
+        assert_eq!(vec![base64_encode("admin:a+b")], authorizations(&conf));
+        assert_eq!(
+            vec![base64_encode("viewer:a+b"), base64_encode("ops:x&y#z")],
+            get_str_slice_conf(&conf, "readonly_authorizations")
+        );
+        // The base64 of an account, which may have a `+` or a `/` in it.
+        let odd = base64_encode("viewer:~~~?>");
+        assert_eq!(true, odd.contains('+') || odd.contains('/'), "{odd}");
+        let (_, _, conf) = parse_admin_plugin(&format!(
+            "a:b@127.0.0.1:3018?readonly={}",
+            urlencoding::encode(&odd)
+        ))
+        .unwrap();
+        assert_eq!(
+            vec![odd],
+            get_str_slice_conf(&conf, "readonly_authorizations")
+        );
+
+        // None of them given: none of the keys.
+        let (_, _, conf) = parse_admin_plugin("a:b@127.0.0.1:3018").unwrap();
+        for key in ["readonly_authorizations", "tokens", "readonly_tokens"] {
+            assert_eq!(false, conf.contains_key(key), "{key}");
+        }
+        // What is no account is refused here, and what is no token where
+        // the admin is built - without the token in the message.
+        assert_eq!(
+            true,
+            parse_admin_plugin("a:b@127.0.0.1:3018?readonly=viewer")
+                .unwrap_err()
+                .to_string()
+                .contains("readonly: expect user:password")
+        );
+        let (_, _, conf) =
+            parse_admin_plugin("a:b@127.0.0.1:3018?token=ci:plain-token")
+                .unwrap();
+        let error = admin::AdminServe::new(&conf)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert_eq!(false, error.is_empty());
+        assert_eq!(false, error.contains("plain-token"), "{error}");
+    }
+
+    /// Regression: `PINGAP_ADMIN_USER` and `PINGAP_ADMIN_PASSWORD` were
+    /// put before the address as the base64 of the two. For a password
+    /// whose base64 has a `/` in it that was an address with another host
+    /// and no account.
+    #[test]
+    fn test_admin_addr_with_credentials() {
+        for password in ["123123", "pa?s", "a/b", "p@ss:word", "~~~?>", "a+b c"]
+        {
+            let addr = admin_addr_with_credentials(
+                "127.0.0.1:3018",
+                "admin",
+                password,
+            );
+            let (server, _, conf) = parse_admin_plugin(&addr).unwrap();
+            assert_eq!("127.0.0.1:3018", server.addr, "{password}");
+            assert_eq!(
+                vec![base64_encode(format!("admin:{password}"))],
+                authorizations(&conf),
+                "{password}"
+            );
+        }
+        // As it was put together before, for one of them.
+        let before = format!("{}@127.0.0.1:3018", base64_encode("admin:pa?s"));
+        assert_eq!(true, before.contains('/'), "{before}");
+        let parsed = parse_admin_plugin(&before);
+        assert_eq!(
+            false,
+            parsed.is_ok_and(|(server, _, _)| server.addr == "127.0.0.1:3018")
+        );
     }
 
     #[test]

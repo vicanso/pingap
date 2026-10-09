@@ -14,6 +14,7 @@ import { PageShell } from "@/components/page-shell";
 import { cn } from "@/lib/utils";
 import { useMemo, useState, type ReactNode } from "react";
 import { useI18n } from "@/i18n";
+import useBasicState from "@/states/basic";
 
 export interface ConfigEntityColumn<T> {
   /** Unique per column; also the react key. */
@@ -65,6 +66,8 @@ export function ConfigEntityList<T>({
 }: ConfigEntityListProps<T>) {
   const navigate = useNavigate();
   const i18n = useI18n();
+  // Nothing to create with an account that may only look.
+  const readOnly = useBasicState((state) => state.data.read_only);
   const [filter, setFilter] = useState("");
   const keyword = filter.trim().toLowerCase();
   const filteredNames = useMemo(() => {
@@ -87,7 +90,7 @@ export function ConfigEntityList<T>({
       // One create CTA only: empty state owns it when the list is empty;
       // the header button appears once there is already something to browse.
       actions={
-        names.length > 0 ? (
+        names.length > 0 && !readOnly ? (
           <Button asChild className="cursor-pointer">
             <Link to={entityUrl(newValue)}>
               <Plus className="size-4" />
@@ -103,12 +106,14 @@ export function ConfigEntityList<T>({
             <Inbox className="size-5" strokeWidth={1.8} />
           </div>
           <p className="max-w-xs text-sm text-muted-foreground">{emptyText}</p>
-          <Button asChild className="mt-4 cursor-pointer">
-            <Link to={entityUrl(newValue)}>
-              <Plus className="size-4" />
-              {addLabel}
-            </Link>
-          </Button>
+          {!readOnly && (
+            <Button asChild className="mt-4 cursor-pointer">
+              <Link to={entityUrl(newValue)}>
+                <Plus className="size-4" />
+                {addLabel}
+              </Link>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
