@@ -67,11 +67,59 @@ buffer_days = 30
 | `dns_provider` | string | `ali`、`cf`、`huawei`、`tencent`、`manual` |
 | `dns_service_url` | string | 提供商端点与凭据 |
 | `buffer_days` | int | 过期前多少天续期。默认 `14`，证书有效期的三分之一比它短时取后者 |
+| `acme_directory` | string | CA 的 directory 地址。默认 Let's Encrypt 的生产环境 |
+| `acme_ca` | string | 用来校验 CA 自身证书的根证书（PEM 文件），用于自建 CA。默认使用系统的根证书 |
+| `acme_eab_kid`、`acme_eab_hmac` | string | 外部账号绑定：CA 给出的 key id 和对应的 HMAC key |
+| `acme_contact` | string | 账号的联系邮箱，逗号分隔 |
+| `acme_key_type` | string | 证书的密钥：`ecdsa`（P-256，默认）或 `rsa`（2048 位） |
 | `is_default` | bool | SNI 无匹配时使用该证书 |
 
 `buffer_days` 是续期余量：`30` 时，90 天的 Let's Encrypt 证书在第 60 天续期。不设置时余量是 14 天（以前是 2 天，订单一直失败时几乎没有发现和处理的时间），并且不超过证书有效期的三分之一：有效期 6 天的证书在到期前 2 天续期。
 
 设置了 `acme` 的证书由本任务续期，所以在续期还没有逾期之前，每天的过期告警（`tls_validity`，给需要人工更换的证书用的）不会提到它。续期余量过半仍未续上时同样会告警，最晚在到期前一周：这时续期已经失败了一段时间，或者根本不会发生（设置了 `PINGAP_DISABLE_ACME`，或者用的是手工 DNS 验证，它只在进程启动时执行一次）。续期出问题时会即时通知，见[订单没有成功时](#订单没有成功时)。
+
+## 使用其他 CA
+
+证书默认向 Let's Encrypt 申请，条目里指定了别的 ACME 服务时向它申请：
+
+```toml
+# Let's Encrypt 的 staging 环境：试验用，不占正式环境的配额。它签的证书不被信任。
+[certificates.trial]
+domains = "example.com"
+acme = "lets_encrypt"
+acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+# 要求账号绑定的 CA（ZeroSSL、Google Trust Services）：key id 和 key 在它的控制台里取。
+[certificates.site]
+domains = "example.com,*.example.com"
+acme = "lets_encrypt"
+acme_directory = "https://acme.zerossl.com/v2/DV90"
+acme_eab_kid = "$ENV:EAB_KID"
+acme_eab_hmac = "$ENV:EAB_HMAC"
+acme_contact = "ops@example.com"
+dns_challenge = true
+dns_provider = "cf"
+dns_service_url = "https://api.cloudflare.com?token=$ENV:CF_TOKEN"
+
+# 自建的 CA（step-ca）：它的 directory，以及签发它自身证书的根证书。
+[certificates.internal]
+domains = "app.internal.example"
+acme = "lets_encrypt"
+acme_directory = "https://ca.internal.example/acme/acme/directory"
+acme_ca = "/etc/pingap/internal-root.pem"
+```
+
+- `acme` 仍然写 `lets_encrypt`：它的作用是给这个条目开启 ACME，不论 CA 是谁。
+- **`acme_directory`** 必须是 `https` 地址。订单的其余部分和 Let's Encrypt 一样：验证方式、续期余量、证书存放的位置。
+- **`acme_ca`** 是文件路径，每次下单时读取。不配时 CA 的证书必须是系统信任的，公共 CA 都满足。
+- **外部账号绑定**：`acme_eab_kid` 和 `acme_eab_hmac` 要同时配置。key 按 CA 展示的 base64 原样填写（规范里是 URL 字母表、不带填充；带填充的和标准字母表的也接受）。它是凭据：配置变更的日志里会被遮蔽，也可以写成 `$ENV:NAME` 或 `$FILE:/path`。
+- **`acme_contact`** 在创建账号时写入。已经存在的账号保留它原有的联系方式。
+- **`acme_key_type = "rsa"`** 申请 2048 位 RSA 密钥的证书，给不支持 ECDSA 的客户端用。默认的 `ecdsa` 是 P-256 密钥。
+- **每个 CA 一个账号。** 账号凭据保存在配置存储里：Let's Encrypt 的两个环境是 `lets_encrypt_account` 和 `lets_encrypt_staging_account`，其他 directory（以及要求绑定的 CA 上的每个绑定）是 `acme_account_<hash>`，所以同一个 CA 的证书共用一个账号。directory 或绑定改了就是另一个账号，下一次下单时创建。
+- 已有且未到续期时间的证书不会被动：改了 `acme_directory` 或 `acme_key_type` 的条目，要到下一次续期才会从新的 CA、用新的密钥类型签发。
+- `acme_directory`、`acme_ca`、绑定和密钥类型随配置一起校验（`pingap -t`）：不是 `https` 的地址、只配了一半的绑定、不是 base64 的 key、不存在的密钥类型，都在这时报错，而不是几周后下单时才发现。
+
+还没有的：TLS-ALPN-01 验证、按 CA 建议的时间续期（ARI）、内置四家之外的 DNS 服务商。
 
 ## 证书存哪里
 

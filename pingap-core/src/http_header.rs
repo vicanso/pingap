@@ -712,6 +712,19 @@ pub fn has_trusted_proxies() -> bool {
     TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed)
 }
 
+/// Whether `ip` is one of `basic.trusted_proxies`: an address whose word
+/// about a client is taken, before there is a request to ask it of (the
+/// PROXY protocol header of a connection). Never without a list.
+pub fn is_trusted_proxy(ip: IpAddr) -> bool {
+    if !has_trusted_proxies() {
+        return false;
+    }
+    TRUSTED_PROXIES
+        .load()
+        .as_ref()
+        .is_some_and(|trusted| trusted.contains(ip.to_canonical()))
+}
+
 /// The address to check a request by when the check grants something to the
 /// few, such as the allow list of the cache's `PURGE`.
 ///

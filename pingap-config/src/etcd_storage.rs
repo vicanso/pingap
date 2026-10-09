@@ -16,8 +16,8 @@ use crate::storage::{History, Storage};
 use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{
-    Client, ConnectOptions, GetOptions, KeyValue, KvClient, SortOrder,
-    SortTarget, WatchOptions,
+    Certificate, Client, ConnectOptions, GetOptions, Identity, KeyValue,
+    KvClient, SortOrder, SortTarget, TlsOptions, WatchOptions,
 };
 use pingap_core::now_sec;
 use pingap_util::path_join;
@@ -128,6 +128,94 @@ struct EtcdStorageParams {
     connect_timeout: Option<Duration>,
     #[serde(default)]
     enable_history: bool,
+    /// Speak TLS to etcd, verifying its certificate with the roots of
+    /// the system. Implied by any of the four below.
+    #[serde(default)]
+    tls: bool,
+    /// A PEM file with the CA etcd's certificate is verified with, in
+    /// place of the roots of the system.
+    #[serde(default)]
+    ca: String,
+    /// PEM files with the certificate and the key this side shows to an
+    /// etcd that asks its clients for one (`--client-cert-auth`).
+    #[serde(default)]
+    cert: String,
+    #[serde(default)]
+    key: String,
+    /// The name etcd's certificate is verified for, where that is not
+    /// the host of the url (an address, a name behind a balancer).
+    #[serde(default)]
+    server_name: String,
+}
+
+impl EtcdStorageParams {
+    /// How the connection is secured, as far as the url says; `None`
+    /// for a plain one. The files are read here, once: a process is
+    /// started again to take a certificate that was replaced.
+    fn tls_options(&self) -> Result<Option<TlsOptions>> {
+        let wanted = self.tls
+            || [&self.ca, &self.cert, &self.key, &self.server_name]
+                .iter()
+                .any(|value| !value.is_empty());
+        if !wanted {
+            return Ok(None);
+        }
+        if self.cert.is_empty() != self.key.is_empty() {
+            return Err(Error::Invalid {
+                message: "etcd: cert and key should be set together"
+                    .to_string(),
+            });
+        }
+        // What a file holds is said here: the client would only say so
+        // with the first connection, as a handshake that failed.
+        let read = |name: &str, path: &str| {
+            use rustls_pki_types::pem::PemObject;
+            let pem = std::fs::read(pingap_util::resolve_path(path)).map_err(
+                |e| Error::Invalid {
+                    message: format!(
+                        "etcd: {name}({path}) can not be read: {e}"
+                    ),
+                },
+            )?;
+            let holds = if name == "key" {
+                rustls_pki_types::PrivateKeyDer::from_pem_slice(&pem).is_ok()
+            } else {
+                rustls_pki_types::CertificateDer::pem_slice_iter(&pem)
+                    .next()
+                    .is_some_and(|cert| cert.is_ok())
+            };
+            if !holds {
+                let what = if name == "key" { "key" } else { "certificate" };
+                return Err(Error::Invalid {
+                    message: format!("etcd: {name}({path}) holds no {what}"),
+                });
+            }
+            Ok(pem)
+        };
+        // rustls wants to be told whose cryptography to use where more
+        // than one is built in, and nothing else has said so by the time
+        // the configuration is loaded.
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            let _ =
+                rustls::crypto::aws_lc_rs::default_provider().install_default();
+        }
+        let mut tls = TlsOptions::new();
+        tls = if self.ca.is_empty() {
+            tls.with_native_roots()
+        } else {
+            tls.ca_certificate(Certificate::from_pem(read("ca", &self.ca)?))
+        };
+        if !self.cert.is_empty() {
+            tls = tls.identity(Identity::from_pem(
+                read("cert", &self.cert)?,
+                read("key", &self.key)?,
+            ));
+        }
+        if !self.server_name.is_empty() {
+            tls = tls.domain_name(self.server_name.clone());
+        }
+        Ok(Some(tls))
+    }
 }
 
 impl TryFrom<&str> for EtcdStorageParams {
@@ -143,6 +231,10 @@ impl TryFrom<&str> for EtcdStorageParams {
 impl EtcdStorage {
     /// Create a new etcd storage for config.
     /// Connection url format: etcd://host1:port1,host2:port2/pingap?timeout=10s&connect_timeout=5s&user=**&password=**
+    /// Over TLS: `&tls=true`, or `&ca=/path/ca.pem`, with
+    /// `&cert=/path/client.pem&key=/path/client.key` for an etcd that asks
+    /// for a client certificate and `&server_name=etcd.internal` where the
+    /// certificate is not for the host of the url.
     pub fn new(value: &str) -> Result<Self> {
         let rest = value.strip_prefix(ETCD_PROTOCOL).unwrap_or(value);
         // `hosts/path?query`; a missing path is the root.
@@ -160,6 +252,9 @@ impl EtcdStorage {
             hosts.split(',').map(|item| item.to_string()).collect();
         let params = EtcdStorageParams::try_from(query)?;
         let mut options = ConnectOptions::default();
+        if let Some(tls) = params.tls_options()? {
+            options = options.with_tls(tls);
+        }
 
         if !params.user.is_empty() && !params.password.is_empty() {
             options = options.with_user(params.user, params.password);
@@ -510,6 +605,90 @@ mod tests {
         assert_eq!(params.connect_timeout, Some(Duration::from_secs(5)));
         assert_eq!(params.user, "abc");
         assert_eq!(params.password, "pwd");
+    }
+
+    /// What the url says of TLS: nothing is a plain connection, and what
+    /// it names has to be there.
+    #[test]
+    fn test_tls_params() {
+        let params = |query: &str| EtcdStorageParams::try_from(query).unwrap();
+        let error = |query: &str| {
+            params(query).tls_options().err().map(|e| e.to_string())
+        };
+        assert_eq!(
+            true,
+            params("timeout=10s").tls_options().unwrap().is_none()
+        );
+        assert_eq!(true, params("tls=false").tls_options().unwrap().is_none());
+        // by the roots of the system
+        assert_eq!(true, params("tls=true").tls_options().unwrap().is_some());
+        assert_eq!(
+            true,
+            params("server_name=etcd.internal")
+                .tls_options()
+                .unwrap()
+                .is_some()
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, content: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            path.to_string_lossy().to_string()
+        };
+        // spellchecker:off
+        let ca = file(
+            "ca.pem",
+            "-----BEGIN CERTIFICATE-----\nMIIBeDCCAR+gAwIBAgIUNClp5P/VCqYvyxD/pG2zGGDTQlEwCgYIKoZIzj0EAwIw\n-----END CERTIFICATE-----\n",
+        );
+        let cert = ca.clone();
+        let key = file(
+            "c.key",
+            "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg\n-----END PRIVATE KEY-----\n",
+        );
+        // spellchecker:on
+        assert_eq!(None, error(&format!("ca={ca}")));
+        assert_eq!(None, error(&format!("ca={ca}&cert={cert}&key={key}")));
+        assert_eq!(
+            Some(
+                "Invalid error etcd: cert and key should be set together"
+                    .to_string()
+            ),
+            error(&format!("ca={ca}&cert={cert}"))
+        );
+        let missing = error("ca=/nowhere/ca.pem").unwrap();
+        assert_eq!(
+            true,
+            missing.starts_with(
+                "Invalid error etcd: ca(/nowhere/ca.pem) can not be read"
+            ),
+            "{missing}"
+        );
+        // a file that is there and is not what it is given as
+        assert_eq!(
+            Some(format!(
+                "Invalid error etcd: ca({key}) holds no certificate"
+            )),
+            error(&format!("ca={key}"))
+        );
+        assert_eq!(
+            Some(format!("Invalid error etcd: key({cert}) holds no key")),
+            error(&format!("ca={ca}&cert={cert}&key={cert}"))
+        );
+        // And the url as a whole: an error of the storage, not of the
+        // first request.
+        assert_eq!(
+            true,
+            EtcdStorage::new("etcd://127.0.0.1:2379/pingap?ca=/nowhere/ca.pem")
+                .is_err()
+        );
+        assert_eq!(
+            true,
+            EtcdStorage::new(&format!(
+                "etcd://127.0.0.1:2379/pingap?ca={ca}&server_name=etcd"
+            ))
+            .is_ok()
+        );
     }
 
     #[test]

@@ -32,6 +32,7 @@ use pingora_limits::inflight::Guard;
 use std::borrow::Cow;
 use std::fmt::Write;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use strum::EnumString;
 
@@ -298,6 +299,32 @@ pub struct UpstreamInfo {
     ///
     /// If set to `None`, there is no time limit for the retry process.
     pub max_retry_window: Option<Duration>,
+    /// The backends this request was sent to and that failed it in a way
+    /// that is retried. The next attempt goes to another one, where there
+    /// is one.
+    pub failed_addresses: Vec<String>,
+    /// The request as one in flight on its backend, for an upstream that
+    /// chooses by that (`least_conn`): counted from the attempt to the
+    /// next one, or to the end of the request.
+    pub backend_inflight: Option<InflightGuard>,
+}
+
+/// One request in flight on a backend, for as long as this is kept: the
+/// count goes up when it is made and down when it is dropped, whichever
+/// way the request ends.
+pub struct InflightGuard(Arc<AtomicU32>);
+
+impl InflightGuard {
+    pub fn new(count: Arc<AtomicU32>) -> Self {
+        count.fetch_add(1, Ordering::Relaxed);
+        Self(count)
+    }
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// What a limit has left for the client of this request, as the

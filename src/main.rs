@@ -654,7 +654,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     // it waits for the inherited sockets instead of binding fresh ones.
     let bootstrap_handle = my_server.bootstrap_as_a_service();
     my_server
-        .add_service(services.lb)
+        .add_boxed_service(services.lb)
         .add_dependency(&bootstrap_handle);
     info!(target: LOG_TARGET, "Admin node server is running");
     let _ = get_start_time();
@@ -1256,7 +1256,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let services = ps.run(my_server.configuration.clone())?;
         my_server
-            .add_service(services.lb)
+            .add_boxed_service(services.lb)
             .add_dependency(&bootstrap_handle);
     }
 

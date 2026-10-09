@@ -78,6 +78,33 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXTS,
     },
+    {
+      name: "readonly_authorizations",
+      label: t("adminReadonlyAuthorization"),
+      placeholder: t("adminAuthorizationPlaceholder"),
+      tips: t("adminReadonlyAuthorizationTips"),
+      defaultValue: (conf.readonly_authorizations || []) as string[],
+      span: 6,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
+      name: "tokens",
+      label: t("adminTokens"),
+      placeholder: t("adminTokensPlaceholder"),
+      tips: t("adminTokensTips"),
+      defaultValue: (conf.tokens || []) as string[],
+      span: 6,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
+      name: "readonly_tokens",
+      label: t("adminReadonlyTokens"),
+      placeholder: t("adminTokensPlaceholder"),
+      tips: t("adminReadonlyTokensTips"),
+      defaultValue: (conf.readonly_tokens || []) as string[],
+      span: 6,
+      category: ExFormItemCategory.TEXTS,
+    },
   ],
   [PluginCategory.DIRECTORY]: (conf, t) => [
     {

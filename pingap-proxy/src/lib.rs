@@ -19,6 +19,7 @@ mod cache;
 mod error_template;
 mod headers;
 mod ja4;
+mod proxy_protocol;
 mod server;
 mod server_conf;
 #[cfg(feature = "tracing")]

@@ -371,6 +371,9 @@ export default {
     downstreamWriteTimeoutPlaceholder:
       "Input the write timeout for downstream(e.g. 10s)",
     reusePort: "Enable SO_REUSEPORT",
+    proxyProtocol: "PROXY Protocol",
+    proxyProtocolTips:
+      "Read the PROXY protocol header (v1 or v2) that a load balancer working on connections puts in front of each one, and take the client address from it. Only from the addresses of Trusted Proxies in the basic settings, which must be set; a header from anyone else is not read.",
     modules: "Http Modules",
     modulesPlaceholder: "Select http modules for server",
     tlsCipherList: "Tls Cipher List",
@@ -511,7 +514,13 @@ export default {
     dnsSearchPlaceholder:
       "Input the dns search for dns discovery, separated by comma",
     algo: "Load Balancer Algorithm",
-    algoPlaceholder: "Input algorithm for load balance(e.g. hash:ip)",
+    algoPlaceholder:
+      "Input algorithm for load balance(e.g. least_conn, hash:ip)",
+    algoTips:
+      "round_robin (default), least_conn (the backend with the fewest requests in flight for its weight), or hash:<ip|url|path|header|cookie|query>[:<key>] for consistent hashing.",
+    failOpen: "Fail Open",
+    failOpenTips:
+      "When no backend is healthy (by the health check, or held back by the circuit breaker), send the request to one of them all the same instead of answering 503.",
     healthCheck: "Health Check",
     healthCheckPlaceholder:
       "Input upstream health check url, supports http(s), tcp, grpc and ws(s)",
@@ -638,6 +647,26 @@ export default {
     isCa: "Certificate Authority",
     bufferDays: "Buffer Days",
     bufferDaysPlaceholder: "Input the buffer days for certificate",
+    acmeDirectory: "ACME Directory",
+    acmeDirectoryPlaceholder:
+      "Input the directory url of the CA, e.g. https://acme.zerossl.com/v2/DV90",
+    acmeDirectoryTips:
+      "The ACME server the certificate is ordered from: another CA, Let's Encrypt's staging environment, or a CA of your own. Let's Encrypt's production directory when empty.",
+    acmeCa: "ACME Server Root",
+    acmeCaPlaceholder: "Input the path of a PEM file, e.g. /etc/pingap/ca.pem",
+    acmeCaTips:
+      "A PEM file with the root certificate the ACME server's own certificate is verified with, for a CA of your own (step-ca). The roots of the system when empty.",
+    acmeEabKid: "EAB Key ID",
+    acmeEabKidPlaceholder: "Input the key id the CA has given",
+    acmeEabTips:
+      "External account binding, for a CA that asks for one (ZeroSSL, Google Trust Services): the key id and its HMAC key, set together.",
+    acmeEabHmac: "EAB HMAC Key",
+    acmeEabHmacPlaceholder: "Input the HMAC key, in base64 as the CA gives it",
+    acmeContact: "ACME Contact",
+    acmeContactPlaceholder: "Input e-mail addresses, comma separated",
+    acmeKeyType: "Key Type",
+    acmeKeyTypeTips:
+      "The key of the certificate: ecdsa (P-256, the default) or rsa (2048 bits), for clients that can not do ECDSA.",
     dnsProviderTips:
       "Unset works the same as Manual: the TXT record is only logged and has to be added by hand.",
     remark: "Remark",
@@ -670,6 +699,16 @@ export default {
     adminAuthorization: "Authorization",
     adminAuthorizationPlaceholder:
       "Base64 value for basic auth(base64(user:pass))",
+    adminReadonlyAuthorization: "Read-only Authorization",
+    adminReadonlyAuthorizationTips:
+      "Accounts that can log in and look at everything, the credentials in the configuration included, and can not change anything or restart.",
+    adminTokens: "API Tokens",
+    adminTokensPlaceholder: "name:<sha256 of the token in hex>",
+    adminTokensTips:
+      "Tokens for scripts, sent as Authorization: Bearer <token>. An entry is a name and the SHA-256 of the token; the token itself is not kept. Taking an entry out revokes its token.",
+    adminReadonlyTokens: "Read-only API Tokens",
+    adminReadonlyTokensTips:
+      "API tokens that can read and can not change anything or restart.",
     dirPath: "Directory",
     dirPathPlaceholder: "Input the path for static serve",
     dirIndex: "Index",

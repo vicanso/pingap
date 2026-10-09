@@ -42,9 +42,11 @@ pub fn is_secret_key(key: &str) -> bool {
                 | "keys"
                 | "authorization"
                 | "authorizations"
+                | "readonly_authorizations"
                 | "private_key"
                 | "tls_key"
                 | "client_key"
+                | "acme_eab_hmac"
                 // As long as `tls_cert`, and as little worth reading.
                 | "client_cert"
                 // Not a secret, but as long as one: its checksum says as

@@ -17,7 +17,10 @@ the admin UI should live on an existing server behind a path prefix.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `admin`. |
 | `path` | string | `""` | URL prefix the admin UI is mounted at. A trailing `/` is stripped. |
-| `authorizations` | string[] | `[]` | Base64 of `user:password`, both non-empty; anything else is rejected. **Empty disables authentication entirely.** |
+| `authorizations` | string[] | `[]` | Base64 of `user:password`, both non-empty; anything else is rejected. **With this, `readonly_authorizations` and both lists of tokens empty, there is no authentication at all.** |
+| `readonly_authorizations` | string[] | `[]` | The same, for accounts that can look and not change anything. |
+| `tokens` | string[] | `[]` | API tokens, each as `name:<sha256 of the token in hex>`. |
+| `readonly_tokens` | string[] | `[]` | The same, for tokens that can read and not change anything. |
 | `max_age` | duration | `2d` | How long a signed token is good for, counted from the time it carries. |
 | `ip_fail_limit` | int | `10` | Failed attempts per IP before that IP is blocked for 5 minutes. |
 
@@ -97,6 +100,68 @@ lock its user out. One refused for the time it carries, too old or ahead of
 the clock, is not counted either. The lock stands in front of the API only: the files of the
 UI still load, and on a server shared with an application the paths outside
 the admin prefix are not affected.
+
+## Roles, API tokens and the audit line
+
+```toml
+[plugins.admin]
+category = "admin"
+authorizations = ["YWxpY2U6czNjcmV0"]            # alice:s3cret - may change things
+readonly_authorizations = ["Ym9iOnMzY3JldA=="]   # bob:s3cret   - may look
+tokens = ["deploy:4f0a...e1"]                    # name:sha256(token)
+readonly_tokens = ["monitor:9c2b...7d"]
+```
+
+- **Read-only** accounts and tokens get every `GET` of the API and none of
+  what changes something: `POST` and `DELETE` under `/configs` (an import
+  included) and `POST /restart` are answered `403 Forbidden, this account is
+  read-only`. What they can read is everything the admin shows, the
+  credentials inside the configuration included: it is a role that can not
+  break anything, not one that is kept from secrets. The pages show their
+  buttons to such an account all the same, and say so when one is used.
+- A user name is in one of the two lists, and the name of a token is there
+  once. With read-only accounts or tokens and none that may write, the
+  plugin is refused: nobody could change anything.
+- **An API token** is for what is no person at the login page - a deploy
+  script, a monitor:
+
+  ```bash
+  token=$(openssl rand -hex 32)                 # give this to the script
+  printf %s "$token" | shasum -a 256            # put this into the configuration
+  curl -H "Authorization: Bearer $token" http://127.0.0.1:3018/api/configs/upstream
+  ```
+
+  The configuration has the digest and not the token, so reading it gives
+  nobody the token; it is as hard to guess as it is long, which is why it is
+  made by a tool and not thought up. Taking its entry out revokes it, with
+  the reload of the plugin and without touching the passwords. A token that
+  is not known is a failed login like a wrong password, counted by
+  `ip_fail_limit`.
+- **Every change leaves a line** in the application log, also one that was
+  refused:
+
+  ```text
+  INFO main::admin: admin audit user="alice" ip="10.0.0.7" method="POST" path="/configs/upstream/api" status=204
+  INFO main::admin: admin audit user="token:monitor" ip="10.0.0.9" method="POST" path="/restart" status=403
+  ```
+
+  `user` is the account, `token:<name>` for a token, and `anonymous` on an
+  admin without credentials; `ip` is the address logins are counted by. What
+  was changed is in what the reload writes - the log line `current config
+  diff from hot reload config` and the `diff_config` notification of the
+  webhook - which has the difference with credentials masked.
+- **The pages and the answers of the API** carry `X-Frame-Options: DENY` and
+  `Content-Security-Policy: frame-ancestors 'none'` (no other site can show
+  them in a frame and turn a click there into one here),
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. An
+  error that is answered by the server's own error page - a request to
+  `/api/aes` or `/api/config-history` that does not parse - has them not.
+- The `--admin` flag makes an admin with one account that may write. The
+  other three are for an admin that is declared as a plugin.
+
+What is not there: a history that covers every storage layout and can be
+rolled back from the pages, and a content security policy for the pages
+themselves beyond the one above.
 
 ## Without credentials
 

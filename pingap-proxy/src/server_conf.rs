@@ -92,6 +92,10 @@ pub struct ServerConf {
     // Compute the JA4 fingerprint of each TLS client (needs TLS)
     pub ja4: bool,
 
+    // Read the PROXY protocol header a trusted proxy puts in front of a
+    // connection, for the address of the client
+    pub proxy_protocol: bool,
+
     // Whether HTTP/2 protocol support is enabled for this server
     // The http protocol is using h2c
     pub enabled_h2: bool,
@@ -231,6 +235,7 @@ impl fmt::Display for ServerConf {
         }
         writeln!(f, "    Fast Open: {}", format_opt_usize(&self.tcp_fastopen))?;
         writeln!(f, "    Reuse Port: {}", self.reuse_port.unwrap_or(false))?;
+        writeln!(f, "    PROXY Protocol: {}", self.proxy_protocol)?;
 
         // --- Observability ---
         writeln!(f, "  - Observability:")?;
@@ -298,6 +303,7 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             threads: item.threads,
             global_certificates: item.global_certificates.unwrap_or_default(),
             ja4: item.ja4.unwrap_or_default(),
+            proxy_protocol: item.proxy_protocol.unwrap_or_default(),
             enabled_h2: item.enabled_h2.unwrap_or_default(),
             h2_max_concurrent_streams: item.h2_max_concurrent_streams,
             // Validated to fit u32 by pingap-config; the fallback only
@@ -385,6 +391,7 @@ mod tests {
     Keepalive: idle=10s, interval=5s, count=10
     Fast Open: 10
     Reuse Port: false
+    PROXY Protocol: false
   - Observability:
     Prometheus Endpoint: disabled
     OTLP Exporter: disabled
@@ -419,6 +426,7 @@ mod tests {
     Keepalive: idle=10s, interval=5s, count=10
     Fast Open: 10
     Reuse Port: false
+    PROXY Protocol: false
   - Observability:
     Prometheus Endpoint: disabled
     OTLP Exporter: disabled

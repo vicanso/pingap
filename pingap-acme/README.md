@@ -1,7 +1,7 @@
 # Pingap ACME
 
 Automatic TLS certificates for [Pingap](https://github.com/vicanso/pingap) from
-Let's Encrypt.
+Let's Encrypt, or from any other CA that speaks ACME.
 
 Pingap can obtain and renew certificates on its own: you declare the domains, and
 a background service orders, validates and installs the certificate, then renews
@@ -93,6 +93,11 @@ a day later.
 | `dns_provider` | string | `ali`, `cf`, `huawei`, `tencent`, `manual` |
 | `dns_service_url` | string | Provider endpoint and credentials |
 | `buffer_days` | int | Renew this many days before expiry. Default: `14`, or a third of the certificate's lifetime when that is less |
+| `acme_directory` | string | The directory url of the CA. Default: Let's Encrypt's production environment |
+| `acme_ca` | string | A PEM file with the root the CA's own certificate is verified with, for a CA of one's own. Default: the roots of the system |
+| `acme_eab_kid`, `acme_eab_hmac` | string | External account binding: the key id and its HMAC key, as the CA gives them |
+| `acme_contact` | string | The e-mail addresses of the account, comma separated |
+| `acme_key_type` | string | The key of the certificate: `ecdsa` (P-256, the default) or `rsa` (2048 bits) |
 | `is_default` | bool | Serve this certificate when SNI matches nothing |
 
 `buffer_days` is the renewal margin: with `30`, a 90-day Let's Encrypt
@@ -110,6 +115,75 @@ happen (`PINGAP_DISABLE_ACME`, or a DNS challenge answered by hand, which is
 only asked for when the process starts). What goes wrong with a renewal is
 reported as it happens, see
 [When an order does not go through](#when-an-order-does-not-go-through).
+
+## Another CA
+
+A certificate is ordered from Let's Encrypt unless its entry names another
+ACME server:
+
+```toml
+# Let's Encrypt's staging environment: for trying things out without
+# touching the limits of the real one. Its certificates are not trusted.
+[certificates.trial]
+domains = "example.com"
+acme = "lets_encrypt"
+acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+# A CA that binds its accounts to one of its own (ZeroSSL, Google Trust
+# Services): the key id and the key from its console.
+[certificates.site]
+domains = "example.com,*.example.com"
+acme = "lets_encrypt"
+acme_directory = "https://acme.zerossl.com/v2/DV90"
+acme_eab_kid = "$ENV:EAB_KID"
+acme_eab_hmac = "$ENV:EAB_HMAC"
+acme_contact = "ops@example.com"
+dns_challenge = true
+dns_provider = "cf"
+dns_service_url = "https://api.cloudflare.com?token=$ENV:CF_TOKEN"
+
+# A CA of one's own (step-ca): its directory, and the root its own
+# certificate is signed by.
+[certificates.internal]
+domains = "app.internal.example"
+acme = "lets_encrypt"
+acme_directory = "https://ca.internal.example/acme/acme/directory"
+acme_ca = "/etc/pingap/internal-root.pem"
+```
+
+- `acme` stays `lets_encrypt`: it is what turns ACME on for the entry, whoever
+  the CA is.
+- **`acme_directory`** has to be an `https` url. Everything else of an order is
+  as with Let's Encrypt: the challenges, the renewal margin, where the
+  certificate is stored.
+- **`acme_ca`** is a file, read each time an order is made. Without it the CA's
+  certificate has to be one the system trusts, which that of a public CA is.
+- **External account binding**: `acme_eab_kid` and `acme_eab_hmac` are set
+  together. The key is base64 as the CA shows it (the url alphabet without
+  padding by the specification; padding and the standard alphabet are taken
+  as well). It is a credential: it is masked in what is logged of a change of
+  the configuration, and can be written `$ENV:NAME` or `$FILE:/path`.
+- **`acme_contact`** goes into the account when it is made. An account that
+  exists keeps the contacts it has.
+- **`acme_key_type = "rsa"`** orders a certificate with an RSA key of 2048
+  bits, for clients that can not do ECDSA. The default, `ecdsa`, is a P-256
+  key.
+- **One account per CA.** The credentials of an account are kept in the
+  configuration storage: `lets_encrypt_account` and
+  `lets_encrypt_staging_account` for Let's Encrypt's two environments, and
+  `acme_account_<hash>` for every other directory - and for every binding at a
+  CA that binds accounts - so certificates of the same CA share an account. A
+  changed directory or binding is another account, made with the next order.
+- A certificate that is there and not due is left alone: an entry whose
+  `acme_directory` or `acme_key_type` is changed gets its certificate from the
+  new CA, or with the new kind of key, at its next renewal.
+- `acme_directory`, `acme_ca`, the binding and the key type are checked with
+  the configuration (`pingap -t`): a url that is not `https`, a binding with
+  one half missing, a key that is not base64 and a key type there is none of
+  are errors there, not weeks later when the order is made.
+
+What is not there: the TLS-ALPN-01 challenge, renewal by the CA's suggestion
+(ARI), and DNS providers other than the four built in.
 
 ## Where certificates are stored
 

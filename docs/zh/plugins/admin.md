@@ -13,7 +13,10 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `admin`。 |
 | `path` | string | `""` | 管理 UI 挂载的 URL 前缀。尾部 `/` 会去掉。 |
-| `authorizations` | string[] | `[]` | `user:password` 的 Base64，用户名和密码都不能为空，其他内容会被拒绝。**为空则完全禁用认证。** |
+| `authorizations` | string[] | `[]` | `user:password` 的 Base64，用户名和密码都不能为空，其他内容会被拒绝。**它和 `readonly_authorizations`、两个 token 列表都为空时，完全没有认证。** |
+| `readonly_authorizations` | string[] | `[]` | 格式相同，只能查看、不能修改的账号。 |
+| `tokens` | string[] | `[]` | API token，每项是 `名称:<token 的 sha256 十六进制>`。 |
+| `readonly_tokens` | string[] | `[]` | 格式相同，只能读取、不能修改的 token。 |
 | `max_age` | duration | `2d` | 签名令牌的有效期，从令牌里带的时间算起。 |
 | `ip_fail_limit` | int | `10` | 每 IP 失败次数上限，之后封锁 5 分钟。 |
 
@@ -64,6 +67,41 @@ token = hex(sha256("<user>:<password>:<unix-seconds>"))
 admin 前缀下的路径分两类。`/api` 及其下的路径是接口，一律需要令牌。其余路径都是内嵌界面的文件，无需认证即可访问（登录页要靠它们加载），没有对应文件时返回 `404`。接口只能通过 `/api` 访问：不带该前缀的 `/configs/...` 不会被当成接口处理。
 
 登录失败达到 `ip_fail_limit` 次后，该 IP 会收到 `403 Forbidden, too many failures` 并封锁 5 分钟。只有带了 `Authorization` 但校验不通过的 API 请求才算一次登录失败；不带凭据的请求返回 `401`，不计数，所以页面在令牌过期后继续轮询不会把用户锁在外面。因为所带的时间太旧或超前而被拒绝的请求同样不计。封锁只作用于 API：UI 的静态文件照常加载，admin 与业务共用一个 server 时，admin 前缀之外的路径不受影响。
+
+## 角色、API token 与审计日志
+
+```toml
+[plugins.admin]
+category = "admin"
+authorizations = ["YWxpY2U6czNjcmV0"]            # alice:s3cret —— 可以修改
+readonly_authorizations = ["Ym9iOnMzY3JldA=="]   # bob:s3cret   —— 只能查看
+tokens = ["deploy:4f0a...e1"]                    # 名称:sha256(token)
+readonly_tokens = ["monitor:9c2b...7d"]
+```
+
+- **只读**的账号和 token 可以访问接口的全部 `GET`，不能做任何修改：`/configs` 下的 `POST`、`DELETE`（包括导入）和 `POST /restart` 返回 `403 Forbidden, this account is read-only`。它们能读到 admin 展示的一切，包括配置里的各种凭据：这个角色的意思是“改不坏东西”，不是“看不到密钥”。界面对这类账号照样显示各个按钮，点了之后会提示没有权限。
+- 一个用户名只能出现在两个列表之一，token 的名称不能重复。只配了只读的账号或 token、没有任何可写的时，插件会被拒绝：那样谁也改不了任何东西。
+- **API token** 给不经过登录页的调用方用——部署脚本、监控：
+
+  ```bash
+  token=$(openssl rand -hex 32)                 # 把它交给脚本
+  printf %s "$token" | shasum -a 256            # 把它写进配置
+  curl -H "Authorization: Bearer $token" http://127.0.0.1:3018/api/configs/upstream
+  ```
+
+  配置里存的是摘要而不是 token 本身，所以读到配置的人拿不到 token；它有多长就有多难猜，所以应该用工具生成而不是自己想一个。删掉对应的那一项就是吊销，随插件重载生效，不用动密码。不认识的 token 和错误的密码一样算一次登录失败，计入 `ip_fail_limit`。
+- **每次修改都会留下一行**应用日志，被拒绝的也算：
+
+  ```text
+  INFO main::admin: admin audit user="alice" ip="10.0.0.7" method="POST" path="/configs/upstream/api" status=204
+  INFO main::admin: admin audit user="token:monitor" ip="10.0.0.9" method="POST" path="/restart" status=403
+  ```
+
+  `user` 是账号名，token 是 `token:<名称>`，没有配凭据的 admin 是 `anonymous`；`ip` 是统计登录失败时用的那个地址。具体改了什么在重载时的输出里——日志行 `current config diff from hot reload config` 和 webhook 的 `diff_config` 通知——那里有差异内容，凭据已遮蔽。
+- **页面和接口的响应**都带 `X-Frame-Options: DENY` 和 `Content-Security-Policy: frame-ancestors 'none'`（别的网站不能把它们嵌进 frame，再把在那边的点击变成这边的点击），以及 `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`。由 server 自己的错误页回答的错误（`/api/aes`、`/api/config-history` 收到解析不了的请求）不带这些头。
+- `--admin` 参数生成的是只有一个可写账号的 admin。另外三项用于以插件方式声明的 admin。
+
+还没有的：覆盖所有存储布局、可以在界面上回滚的历史记录，以及除上面这条之外针对页面本身的内容安全策略。
 
 ## 不设凭据时
 

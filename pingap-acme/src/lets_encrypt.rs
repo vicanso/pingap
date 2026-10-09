@@ -25,8 +25,9 @@ use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RecordType;
 use hickory_resolver::system_conf::read_system_conf;
 use instant_acme::{
-    Account, AccountCredentials, ChallengeType, Identifier, LetsEncrypt,
-    NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    Account, AccountBuilder, AccountCredentials, ChallengeType,
+    ExternalAccountKey, Identifier, LetsEncrypt, NewAccount, NewOrder,
+    OrderStatus, RetryPolicy,
 };
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
@@ -34,7 +35,8 @@ use pingap_certificate::{
 };
 use pingap_config::{
     Category, CertificateConf, ConfigManager, DNS_PROVIDER_MANUAL,
-    PingapConfig, StorageConf, normalize_dns_provider,
+    PingapConfig, StorageConf, acme_contacts, decode_eab_hmac,
+    normalize_dns_provider,
 };
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
@@ -45,6 +47,7 @@ use pingap_core::{
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use scopeguard::defer;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -124,7 +127,7 @@ async fn update_certificate_lets_encrypt(
 
     // get new certificate from lets encrypt
     let (pem, key) =
-        new_lets_encrypt(config_manager.clone(), true, params.clone()).await?;
+        new_lets_encrypt(config_manager.clone(), params.clone()).await?;
 
     cert.tls_cert = Some(pem);
     cert.tls_key = Some(key);
@@ -138,6 +141,118 @@ async fn update_certificate_lets_encrypt(
     Ok(())
 }
 
+/// Where a certificate is ordered, and as whom: Let's Encrypt, as an
+/// account that says nothing of itself, unless the certificate's entry
+/// says otherwise.
+#[derive(Clone, Default, PartialEq)]
+struct AcmeServer {
+    /// The directory url of the CA; Let's Encrypt's production
+    /// environment when `None`.
+    directory: Option<String>,
+    /// A PEM file with the root the CA's own certificate is verified
+    /// with; the roots of the system when `None`.
+    ca: Option<String>,
+    /// External account binding: the key id and its key.
+    eab: Option<(String, Vec<u8>)>,
+    /// The contacts of the account, as `mailto:` urls.
+    contact: Vec<String>,
+    /// An RSA key for the certificate, and not the ECDSA one that is
+    /// made otherwise.
+    rsa: bool,
+}
+
+// Without the key of the binding: the parameters of an order are logged.
+impl std::fmt::Debug for AcmeServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AcmeServer")
+            .field("directory", &self.url())
+            .field("ca", &self.ca)
+            .field("eab", &self.eab.as_ref().map(|(kid, _)| kid))
+            .field("contact", &self.contact)
+            .field("rsa", &self.rsa)
+            .finish()
+    }
+}
+
+impl AcmeServer {
+    fn new(certificate: &CertificateConf) -> Self {
+        let text = |value: &Option<String>| {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Self {
+            directory: text(&certificate.acme_directory),
+            ca: text(&certificate.acme_ca),
+            // Validated with the entry: a key that does not decode is no
+            // binding, and the CA says so.
+            eab: text(&certificate.acme_eab_kid).zip(
+                certificate
+                    .acme_eab_hmac
+                    .as_deref()
+                    .and_then(decode_eab_hmac),
+            ),
+            contact: certificate
+                .acme_contact
+                .as_deref()
+                .map(|contact| {
+                    acme_contacts(contact)
+                        .map(|address| format!("mailto:{address}"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            rsa: certificate.acme_key_type.as_deref() == Some("rsa"),
+        }
+    }
+
+    fn url(&self) -> &str {
+        self.directory
+            .as_deref()
+            .unwrap_or(LetsEncrypt::Production.url())
+    }
+
+    /// The storage entry the credentials of the account live in: one per
+    /// CA, and per binding at a CA that binds accounts. Let's Encrypt's
+    /// two keep the names they had.
+    fn account_storage_name(&self) -> String {
+        let url = self.url();
+        let kid = self.eab.as_ref().map(|(kid, _)| kid.as_str());
+        match (url, kid) {
+            (url, None) if url == LetsEncrypt::Production.url() => {
+                account_storage_name(true).to_string()
+            },
+            (url, None) if url == LetsEncrypt::Staging.url() => {
+                account_storage_name(false).to_string()
+            },
+            _ => {
+                let mut hasher = Sha256::new();
+                hasher.update(url.as_bytes());
+                hasher.update([0]);
+                hasher.update(kid.unwrap_or_default().as_bytes());
+                let digest = hex::encode(hasher.finalize());
+                format!("acme_account_{}", &digest[..16])
+            },
+        }
+    }
+
+    /// What an account is made or loaded with: the roots of the system,
+    /// or the one root of a CA of one's own.
+    fn account_builder(&self) -> Result<AccountBuilder> {
+        match &self.ca {
+            Some(path) => {
+                Account::builder_with_root(pingap_util::resolve_path(path))
+            },
+            None => Account::builder(),
+        }
+        .map_err(|e| Error::Instant {
+            category: "create_account".to_string(),
+            source: e,
+        })
+    }
+}
+
 /// File cache parameters
 #[derive(Debug, Clone)]
 struct UpdateCertificateParams {
@@ -147,6 +262,7 @@ struct UpdateCertificateParams {
     dns_challenge: bool,
     dns_provider: String,
     dns_service_url: String,
+    server: AcmeServer,
 }
 
 /// The orders of one certificate that failed in a row, and when the next
@@ -576,6 +692,7 @@ impl BackgroundTask for LetsEncryptTask {
                 .unwrap_or(DNS_PROVIDER_MANUAL)
                 .to_string(),
                 dns_service_url,
+                server: AcmeServer::new(certificate),
             });
         }
         self.update_certificates(count, &params).await?;
@@ -991,10 +1108,10 @@ fn account_storage_name(production: bool) -> &'static str {
 /// left a trail of one-shot accounts behind.
 async fn load_or_create_account(
     config_manager: &Arc<ConfigManager>,
-    url: &str,
-    production: bool,
+    server: &AcmeServer,
 ) -> Result<Account> {
-    let name = account_storage_name(production);
+    let name = server.account_storage_name();
+    let name = name.as_str();
     let stored: Option<StorageConf> = config_manager
         .get(Category::Storage, name)
         .await
@@ -1011,12 +1128,10 @@ async fn load_or_create_account(
             &stored.value,
         ) {
             Ok(credentials) => {
-                let builder =
-                    Account::builder().map_err(|e| Error::Instant {
-                        category: "create_account".to_string(),
-                        source: e,
-                    })?;
-                builder.from_credentials(credentials).await
+                server
+                    .account_builder()?
+                    .from_credentials(credentials)
+                    .await
             },
             Err(e) => {
                 warn!(
@@ -1024,7 +1139,7 @@ async fn load_or_create_account(
                     error = %e,
                     "stored let's encrypt account is invalid, create a new one"
                 );
-                return create_account(config_manager, url, name).await;
+                return create_account(config_manager, server, name).await;
             },
         };
         match account {
@@ -1036,27 +1151,30 @@ async fn load_or_create_account(
             ),
         }
     }
-    create_account(config_manager, url, name).await
+    create_account(config_manager, server, name).await
 }
 
 async fn create_account(
     config_manager: &Arc<ConfigManager>,
-    url: &str,
+    server: &AcmeServer,
     name: &str,
 ) -> Result<Account> {
-    let (account, credentials) = Account::builder()
-        .map_err(|e| Error::Instant {
-            category: "create_account".to_string(),
-            source: e,
-        })?
+    let contact: Vec<&str> =
+        server.contact.iter().map(String::as_str).collect();
+    let external_account = server
+        .eab
+        .as_ref()
+        .map(|(kid, key)| ExternalAccountKey::new(kid.clone(), key));
+    let (account, credentials) = server
+        .account_builder()?
         .create(
             &NewAccount {
-                contact: &[],
+                contact: &contact,
                 terms_of_service_agreed: true,
                 only_return_existing: false,
             },
-            url.to_string(),
-            None,
+            server.url().to_string(),
+            external_account.as_ref(),
         )
         .await
         .map_err(|e| Error::Instant {
@@ -1161,6 +1279,25 @@ async fn bounded<T>(
         })
 }
 
+/// A certificate request for `names` with a new RSA key of 2048 bits: the
+/// request in DER, the key in PEM.
+fn rsa_request(names: Vec<String>) -> Result<(Vec<u8>, String)> {
+    use pingap_certificate::rcgen;
+    let fail = |e: rcgen::Error| Error::Fail {
+        category: "finalize".to_string(),
+        message: e.to_string(),
+    };
+    let key = rcgen::KeyPair::generate_rsa_for(
+        &rcgen::PKCS_RSA_SHA256,
+        rcgen::RsaKeySize::_2048,
+    )
+    .map_err(fail)?;
+    let mut params = rcgen::CertificateParams::new(names).map_err(fail)?;
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    let request = params.serialize_request(&key).map_err(fail)?;
+    Ok((request.der().to_vec(), key.serialize_pem()))
+}
+
 /// Generates a new certificate from Let's Encrypt for the given domains.
 /// The ACME protocol flow:
 /// 1. Creates/retrieves an ACME account with Let's Encrypt
@@ -1176,7 +1313,6 @@ async fn bounded<T>(
 /// Returns a tuple of (certificate_chain_pem, private_key_pem)
 async fn new_lets_encrypt(
     config_manager: Arc<ConfigManager>,
-    production: bool,
     params: UpdateCertificateParams,
 ) -> Result<(String, String)> {
     let mut domains: Vec<String> = params.domains.to_vec();
@@ -1185,19 +1321,15 @@ async fn new_lets_encrypt(
     info!(
         target: LOG_TARGET,
         domains = domains.join(","),
-        "acme from let's encrypt"
+        directory = params.server.url(),
+        "order a certificate by acme"
     );
-    let url = if production {
-        LetsEncrypt::Production.url()
-    } else {
-        LetsEncrypt::Staging.url()
-    };
     ensure_crypto_provider();
 
     let account = bounded(
         "create_account",
         ACME_REQUEST_TIMEOUT,
-        load_or_create_account(&config_manager, url, production),
+        load_or_create_account(&config_manager, &params.server),
     )
     .await??;
 
@@ -1467,13 +1599,33 @@ async fn new_lets_encrypt(
     }
     result?;
 
-    let private_key_pem =
-        bounded("finalize", ACME_REQUEST_TIMEOUT, order.finalize())
+    let private_key_pem = if params.server.rsa {
+        // The order makes an ECDSA key itself and nothing else: for an
+        // RSA one the request is made here. Off the threads that serve
+        // requests, a key of this kind takes its time.
+        let names = domains.clone();
+        let (csr, key) =
+            tokio::task::spawn_blocking(move || rsa_request(names))
+                .await
+                .map_err(|e| Error::Fail {
+                    category: "finalize".to_string(),
+                    message: e.to_string(),
+                })??;
+        bounded("finalize", ACME_REQUEST_TIMEOUT, order.finalize_csr(&csr))
             .await?
             .map_err(|e| Error::Instant {
                 category: "finalize".to_string(),
                 source: e,
             })?;
+        key
+    } else {
+        bounded("finalize", ACME_REQUEST_TIMEOUT, order.finalize())
+            .await?
+            .map_err(|e| Error::Instant {
+                category: "finalize".to_string(),
+                source: e,
+            })?
+    };
     let cert_chain_pem = bounded(
         "poll_certificate",
         ACME_REQUEST_TIMEOUT * 2,
@@ -1555,6 +1707,7 @@ mod tests {
             dns_challenge: false,
             dns_provider: "".to_string(),
             dns_service_url: "".to_string(),
+            server: Default::default(),
         }
     }
 
@@ -2089,6 +2242,7 @@ mod tests {
                 dns_challenge: false,
                 dns_provider: "".to_string(),
                 dns_service_url: "".to_string(),
+                server: Default::default(),
             },
         )
         .await
@@ -2121,6 +2275,7 @@ mod tests {
                 dns_challenge: false,
                 dns_provider: "".to_string(),
                 dns_service_url: "".to_string(),
+                server: Default::default(),
             },
         )
         .await
@@ -2281,6 +2436,96 @@ mod tests {
         use super::account_storage_name;
         assert_eq!("lets_encrypt_account", account_storage_name(true));
         assert_eq!("lets_encrypt_staging_account", account_storage_name(false));
+    }
+
+    /// What a certificate's entry says of the CA, as an order uses it.
+    #[test]
+    fn test_acme_server() {
+        use super::AcmeServer;
+        use instant_acme::LetsEncrypt;
+        use pingap_config::CertificateConf;
+        let server = |conf: &str| {
+            AcmeServer::new(&toml::from_str::<CertificateConf>(conf).unwrap())
+        };
+
+        // Nothing said: Let's Encrypt, under the name the account has
+        // always been stored by.
+        let default = server("domains = \"example.com\"");
+        assert_eq!(AcmeServer::default(), default);
+        assert_eq!(LetsEncrypt::Production.url(), default.url());
+        assert_eq!("lets_encrypt_account", default.account_storage_name());
+        assert_eq!(
+            "lets_encrypt_staging_account",
+            server(&format!(
+                "acme_directory = \"{}\"",
+                LetsEncrypt::Staging.url()
+            ))
+            .account_storage_name()
+        );
+
+        let zero = server(
+            "acme_directory = \"https://acme.zerossl.com/v2/DV90\"\nacme_eab_kid = \"kid-1\"\nacme_eab_hmac = \"c2VjcmV0LWtleQ\"\nacme_contact = \"ops@example.com, mailto:sec@example.com\"\nacme_key_type = \"rsa\"\nacme_ca = \" /etc/ssl/ca.pem \"",
+        );
+        assert_eq!("https://acme.zerossl.com/v2/DV90", zero.url());
+        assert_eq!(
+            Some(("kid-1".to_string(), b"secret-key".to_vec())),
+            zero.eab
+        );
+        assert_eq!(
+            vec!["mailto:ops@example.com", "mailto:sec@example.com"],
+            zero.contact
+        );
+        assert_eq!(true, zero.rsa);
+        assert_eq!(Some("/etc/ssl/ca.pem".to_string()), zero.ca);
+        // The key of the binding is not in what gets logged.
+        let debug = format!("{zero:?}");
+        assert_eq!(true, debug.contains("kid-1"), "{debug}");
+        assert_eq!(false, debug.contains("115, 101"), "{debug}");
+
+        // One account per CA, and per binding at one CA.
+        let name = zero.account_storage_name();
+        assert_eq!(true, name.starts_with("acme_account_"), "{name}");
+        assert_eq!(29, name.len());
+        let other_kid = server(
+            "acme_directory = \"https://acme.zerossl.com/v2/DV90\"\nacme_eab_kid = \"kid-2\"\nacme_eab_hmac = \"c2VjcmV0LWtleQ\"",
+        );
+        let other_ca = server("acme_directory = \"https://ca.internal/acme\"");
+        assert_eq!(true, name != other_kid.account_storage_name());
+        assert_eq!(true, name != other_ca.account_storage_name());
+        assert_eq!(
+            true,
+            other_kid.account_storage_name() != other_ca.account_storage_name()
+        );
+        // Let's Encrypt with a binding is not the account without one.
+        let bound = server(
+            "acme_eab_kid = \"kid-1\"\nacme_eab_hmac = \"c2VjcmV0LWtleQ\"",
+        );
+        assert_eq!(true, bound.account_storage_name().starts_with("acme_"));
+    }
+
+    /// An RSA key and a request for it that names the domains.
+    #[test]
+    fn test_rsa_request() {
+        use pingap_certificate::rcgen;
+        let (csr, key) = super::rsa_request(vec![
+            "example.com".to_string(),
+            "*.example.com".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(true, key.starts_with("-----BEGIN PRIVATE KEY-----"));
+        let key = rcgen::KeyPair::from_pem(&key).unwrap();
+        assert_eq!(true, key.is_compatible(&rcgen::PKCS_RSA_SHA256));
+        let request = rcgen::CertificateSigningRequestParams::from_der(
+            &csr.as_slice().into(),
+        )
+        .unwrap();
+        assert_eq!(
+            vec![
+                rcgen::SanType::DnsName("example.com".try_into().unwrap()),
+                rcgen::SanType::DnsName("*.example.com".try_into().unwrap()),
+            ],
+            request.params.subject_alt_names
+        );
     }
 
     #[test]

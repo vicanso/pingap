@@ -28,6 +28,7 @@ pingap-core = { workspace = true }
 pingap-discovery = { workspace = true }
 pingap-util = { workspace = true }
 regex = { workspace = true }
+rustls = { workspace = true }
 rustls-pki-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

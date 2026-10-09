@@ -10,7 +10,10 @@
 
 -   **Multiple Load Balancing Strategies**: Choose the best algorithm for your needs.
     -   **Round Robin**: Distributes requests evenly across all healthy backends.
+    -   **Least Connections** (`algo = "least_conn"`): the backend with the fewest requests in flight for its weight - a backend of weight 2 is given twice as many as one of weight 1 before it counts as busier. Backends that are level are given requests by the weighted round robin, so an upstream that is not busy behaves as with `round_robin`, weights included. `least_conn` takes no parameter. A request is counted from the moment it is given a backend until it ends, whichever way; the counts are this process's own and start at zero after a reload of the upstream. Use it where requests differ much in how long they take (long polls, uploads, slow queries): round robin hands a backend that is stuck with slow ones as many new requests as the others.
     -   A backend that is unhealthy or held back by its circuit breaker is passed over, and the selection goes on until every backend has been looked at: a request gets `503` only when none of them can take it.
+    -   **Retries go elsewhere**: an attempt that the backend failed and that is tried again (a connection that could not be made, with the location's `max_retries`) goes to another backend than the ones that have just failed this request, with every algorithm. It used to be chosen like a first attempt: by a hash that is the backend that has just refused the connection, every time. When there is no other backend that can take it, it goes to one of those again, so an upstream of a single backend is still retried. A retry that only replaces a connection - a kept one the backend had closed in the meantime, an HTTP/2 one it is retiring - stays with the backend: nothing is wrong with it, and by a hash it is where the client belongs.
+    -   **`fail_open`**: with `fail_open = true`, a request for which no backend is left - all of them unhealthy by the health check, or held back by their circuit breakers - is sent to one all the same instead of being answered with `503`. For health checks that can fail for every backend at once without the backends being down (a dependency of the check, a slip in its configuration): serving through a backend that may work is then better than serving nothing. Off by default.
     -   **Consistent Hashing**: Provides sticky sessions by hashing request attributes to a specific backend.
     -   **Transparent**: Acts as a direct passthrough proxy without load balancing, forwarding requests to the original host.
 
@@ -44,7 +47,7 @@
 -   **Runtime Management**:
     -   Upstreams can be dynamically added, updated, or removed at runtime without service interruption.
     -   Exposes health and connection metrics for monitoring and observability.
-    -   `algo` (`round_robin`, or `hash`, `hash:<ip|url|path|header|cookie|query>[:<key>]`) and `alpn` (`h1`, `h2`, `h2h1`) are validated when the upstream is built; an unknown value is an error instead of silently the default.
+    -   `algo` (`round_robin`, `least_conn`, or `hash`, `hash:<ip|url|path|header|cookie|query>[:<key>]`) and `alpn` (`h1`, `h2`, `h2h1`) are validated when the upstream is built; an unknown value is an error instead of silently the default.
 
 ## Core Concepts
 

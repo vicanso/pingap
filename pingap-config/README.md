@@ -97,7 +97,7 @@ pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 An etcd URL is `etcd://host:2379[,host2:2379]/prefix[?params]`; the prefix
 defaults to `/` when omitted, and a URL without a host is rejected. Parameters
 are `timeout` (default `10s`), `connect_timeout` (default `5s`), `user`,
-`password` and `enable_history`. The storage opens one client and reuses it
+`password`, `enable_history` and those of TLS below. The storage opens one client and reuses it
 for every request; a request that fails is retried once on a fresh connection.
 
 - A request and a connection attempt are bounded also when the URL gives no
@@ -111,7 +111,25 @@ for every request; a request that fails is retried once on a fresh connection.
 - With `enable_history=true` the hundred newest versions of each key are kept
   under `<prefix>-history`; older ones are removed as new ones are written.
   A deleted key leaves no version behind.
-- TLS to etcd is not supported.
+- **TLS**: `tls=true` speaks TLS to etcd and verifies its certificate with
+  the roots of the system. `ca=/path/ca.pem` verifies it with that CA
+  instead, `cert=/path/client.pem&key=/path/client.key` show a certificate to
+  an etcd that asks its clients for one (`--client-cert-auth`), and
+  `server_name=etcd.internal` is the name the certificate is verified for
+  where that is not the host of the url (an address, a name behind a
+  balancer). Any of the four turns TLS on, for every host of the url.
+
+  ```bash
+  pingap -c "etcd://10.0.0.5:2379,10.0.0.6:2379/pingap?ca=/etc/pingap/etcd-ca.pem&cert=/etc/pingap/etcd-client.pem&key=/etc/pingap/etcd-client.key&server_name=etcd.internal&user=pingap&password=..." --autoreload
+  ```
+
+  The files are read when the process starts, and so is what is wrong with
+  them: a file that is not there, one that holds no certificate or no key,
+  `cert` without `key`. A certificate that was replaced is taken with the
+  next start. `user` and `password` are sent over this connection as over a
+  plain one; without TLS they cross the network as they are.
+- Each entry is written by itself. A change of several entries (an import, a
+  `--sync`) is seen by the other nodes one key at a time.
 
 A directory is loaded by reading every `*.toml` file in it (or, when there is
 none, every `*.hcl`, then every `*.kdl`). Each file is parsed on its own and

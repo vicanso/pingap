@@ -63,7 +63,7 @@ use std::sync::Arc;
 use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 use substring::Substring;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -185,11 +185,111 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 pub struct AdminServe {
     pub path: String,
     pub authorizations: Vec<(String, String)>,
+    /// Accounts that may look and not change: `readonly_authorizations`.
+    readonly_authorizations: Vec<(String, String)>,
+    /// Tokens for what is not a person at the login page: `tokens` and
+    /// `readonly_tokens`.
+    tokens: Vec<ApiToken>,
     pub plugin_step: PluginStep,
     manager: Arc<ConfigManager>,
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
+}
+
+/// A token of the API, as the configuration keeps it: by a name to tell
+/// it by, and the SHA-256 of the token itself. Whoever reads the
+/// configuration can not use it, and it is revoked by taking its line
+/// out.
+struct ApiToken {
+    name: String,
+    hash: [u8; 32],
+    read_only: bool,
+}
+
+/// Who a request to the API comes from.
+#[derive(Debug, Clone, PartialEq)]
+struct Identity {
+    /// The user of an account, `token:<name>` for a token, and
+    /// `anonymous` on an admin that has no credentials at all.
+    name: String,
+    /// May look and not change.
+    read_only: bool,
+}
+
+/// `user:password` in base64, as `authorizations` has its entries.
+fn parse_accounts(
+    value: &PluginConf,
+    key: &str,
+) -> Result<Vec<(String, String)>> {
+    let mut accounts = vec![];
+    for item in get_str_slice_conf(value, key).iter() {
+        if item.is_empty() {
+            continue;
+        }
+        let data = base64_decode(item).map_err(|e| Error::Base64Decode {
+            category: PluginCategory::BasicAuth.to_string(),
+            source: e,
+        })?;
+        // An entry that is not `user:password` used to be dropped, and
+        // an empty list means no authentication at all: a typo in the
+        // only entry silently opened the admin to everyone.
+        let text = std::string::String::from_utf8_lossy(&data);
+        let Some((user, pass)) = text.split_once(':') else {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message: "authorization should be base64 of user:password"
+                    .to_string(),
+            });
+        };
+        if user.is_empty() || pass.is_empty() {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message: "authorization user and password can not be empty"
+                    .to_string(),
+            });
+        }
+        accounts.push((user.to_string(), pass.to_string()));
+    }
+    Ok(accounts)
+}
+
+/// `name:<sha256 of the token, in hex>`, as `tokens` has its entries.
+fn parse_tokens(
+    value: &PluginConf,
+    key: &str,
+    read_only: bool,
+) -> Result<Vec<ApiToken>> {
+    let invalid = |message: String| Error::Invalid {
+        category: "admin".to_string(),
+        message,
+    };
+    let mut tokens = vec![];
+    for item in get_str_slice_conf(value, key).iter() {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let parsed = item.split_once(':').and_then(|(name, digest)| {
+            let name = name.trim();
+            let mut hash = [0u8; 32];
+            hex::decode_to_slice(digest.trim(), &mut hash).ok()?;
+            (!name.is_empty()).then(|| (name.to_string(), hash))
+        });
+        // Not the entry itself in the message: a token put there in
+        // place of its digest would be written to the log.
+        let Some((name, hash)) = parsed else {
+            return Err(invalid(format!(
+                "{key}: an entry should be name:<sha256 of the token in hex>"
+            )));
+        };
+        tokens.push(ApiToken {
+            name,
+            hash,
+            read_only,
+        });
+    }
+    Ok(tokens)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -240,35 +340,47 @@ impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let mut authorizations = vec![];
-        for item in get_str_slice_conf(value, "authorizations").iter() {
-            if item.is_empty() {
-                continue;
-            }
-            let data =
-                base64_decode(item).map_err(|e| Error::Base64Decode {
-                    category: PluginCategory::BasicAuth.to_string(),
-                    source: e,
-                })?;
-            // An entry that is not `user:password` used to be dropped, and
-            // an empty list means no authentication at all: a typo in the
-            // only entry silently opened the admin to everyone.
-            let text = std::string::String::from_utf8_lossy(&data);
-            let Some((user, pass)) = text.split_once(':') else {
-                return Err(Error::Invalid {
-                    category: "admin".to_string(),
-                    message: "authorization should be base64 of user:password"
-                        .to_string(),
-                });
-            };
-            if user.is_empty() || pass.is_empty() {
-                return Err(Error::Invalid {
-                    category: "admin".to_string(),
-                    message: "authorization user and password can not be empty"
-                        .to_string(),
-                });
-            }
-            authorizations.push((user.to_string(), pass.to_string()));
+        let authorizations = parse_accounts(value, "authorizations")?;
+        let readonly_authorizations =
+            parse_accounts(value, "readonly_authorizations")?;
+        let mut tokens = parse_tokens(value, "tokens", false)?;
+        tokens.extend(parse_tokens(value, "readonly_tokens", true)?);
+        // A user that may write by one list and not by the other is
+        // neither. Twice in one list is as it has always been taken: two
+        // passwords for one account, while one of them is being replaced.
+        if let Some((user, _)) =
+            readonly_authorizations.iter().find(|(user, _)| {
+                authorizations.iter().any(|(writer, _)| writer == user)
+            })
+        {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message: format!(
+                    "user {user} is in authorizations and in readonly_authorizations"
+                ),
+            });
+        }
+        // The name of a token is what the audit log has of it.
+        let mut names: Vec<&str> =
+            tokens.iter().map(|token| token.name.as_str()).collect();
+        names.sort_unstable();
+        if let Some(pair) = names.windows(2).find(|pair| pair[0] == pair[1]) {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message: format!("token {} is there more than once", pair[0]),
+            });
+        }
+        // Who may only look is told from who may not get in at all by a
+        // login: with no account that may write, nobody could change
+        // anything, and an admin of that kind is a slip.
+        if authorizations.is_empty()
+            && tokens.iter().all(|token| token.read_only)
+            && (!readonly_authorizations.is_empty() || !tokens.is_empty())
+        {
+            return Err(Error::Invalid {
+                category: "admin".to_string(),
+                message: "there are read-only accounts or tokens and none that may write: add one to authorizations or tokens".to_string(),
+            });
         }
         let mut ip_fail_limit = get_int_conf(value, "ip_fail_limit");
         if ip_fail_limit <= 0 {
@@ -304,6 +416,8 @@ impl TryFrom<&PluginConf> for AdminServe {
                 message: e.to_string(),
             })?,
             authorizations,
+            readonly_authorizations,
+            tokens,
         };
 
         Ok(params)
@@ -574,12 +688,22 @@ impl AdminServe {
     /// Checks the signed token of an API request. Only API routes come
     /// here: what is served without a token is decided by [`api_route`], in
     /// one place, so the exemption and the router cannot drift apart.
+    /// Whether the admin asks who is there at all.
+    fn has_credentials(&self) -> bool {
+        !self.authorizations.is_empty()
+            || !self.readonly_authorizations.is_empty()
+            || !self.tokens.is_empty()
+    }
+
     fn auth_validate(
         &self,
         req_header: &RequestHeader,
-    ) -> std::result::Result<(), TokenRejection> {
-        if self.authorizations.is_empty() {
-            return Ok(());
+    ) -> std::result::Result<Identity, TokenRejection> {
+        if !self.has_credentials() {
+            return Ok(Identity {
+                name: "anonymous".to_string(),
+                read_only: false,
+            });
         }
         let path = req_header.uri.path();
         let value =
@@ -588,6 +712,33 @@ impl AdminServe {
         if value.is_empty() {
             error!(target: LOG_TARGET, path, "auth validate fail: missing authorization header");
             return Err(TokenRejection::Missing);
+        }
+        // A token of the API: what a script sends, which has no login
+        // page to make the signed kind with. Compared by its digest,
+        // which is all the configuration has of it.
+        if let Some(token) = value
+            .strip_prefix("Bearer ")
+            .or_else(|| value.strip_prefix("bearer "))
+        {
+            let digest = Sha256::digest(token.trim().as_bytes());
+            // Every one of them is looked at: how long it takes does
+            // not say which was the one.
+            let mut found = None;
+            for item in self.tokens.iter() {
+                if pingap_core::constant_time_eq(&item.hash, &digest) {
+                    found = Some(item);
+                }
+            }
+            return match found {
+                Some(item) => Ok(Identity {
+                    name: format!("token:{}", item.name),
+                    read_only: item.read_only,
+                }),
+                None => {
+                    error!(target: LOG_TARGET, path, "auth validate fail: unknown api token");
+                    Err(TokenRejection::Mismatch)
+                },
+            };
         }
         let Some((token, ts)) = value.split_once(':') else {
             error!(target: LOG_TARGET, path, "auth validate fail: malformed authorization, expect token:ts");
@@ -607,7 +758,16 @@ impl AdminServe {
             return Err(TokenRejection::Time);
         }
 
-        for (user, pass) in self.authorizations.iter() {
+        let accounts = self
+            .authorizations
+            .iter()
+            .map(|account| (account, false))
+            .chain(
+                self.readonly_authorizations
+                    .iter()
+                    .map(|account| (account, true)),
+            );
+        for ((user, pass), read_only) in accounts {
             let mut hasher = Sha256::new();
             hasher.update(format!("{user}:{pass}:{ts}").as_bytes());
             let hash256 = hasher.finalize();
@@ -615,14 +775,18 @@ impl AdminServe {
                 hash256.encode_hex::<String>().as_bytes(),
                 token.as_bytes(),
             ) {
-                return Ok(());
+                return Ok(Identity {
+                    name: user.clone(),
+                    read_only,
+                });
             }
         }
         error!(
             target: LOG_TARGET,
             path,
             ts,
-            authorizations = self.authorizations.len(),
+            authorizations =
+                self.authorizations.len() + self.readonly_authorizations.len(),
             "auth validate fail: token hash mismatch"
         );
         Err(TokenRejection::Mismatch)
@@ -1000,7 +1164,7 @@ async fn handle_request_admin(
             });
         return Ok(Some(static_file(&path, gzip)));
     };
-    if plugin.authorizations.is_empty()
+    if !plugin.has_credentials()
         && let Some(reason) = refuse_without_credentials(
             session.req_header(),
             &authority,
@@ -1032,7 +1196,8 @@ async fn handle_request_admin(
     // The lock stands in front of the API only. Checked ahead of the
     // routing it also took the pages of the UI away, and on a server
     // shared with an application the paths that are not the admin's.
-    let ip = pingap_core::ensure_verified_client_ip(session, ctx);
+    let ip = pingap_core::ensure_verified_client_ip(session, ctx).to_string();
+    let ip = ip.as_str();
     if !plugin.ip_fail_limit.validate(ip) {
         return Ok(Some(HttpResponse {
             status: StatusCode::FORBIDDEN,
@@ -1040,22 +1205,36 @@ async fn handle_request_admin(
             ..Default::default()
         }));
     }
-    if let Err(rejection) = plugin.auth_validate(session.req_header()) {
-        // A failed login is one that was tried. A request without
-        // credentials - the page polling before the login, or after its
-        // token ran out - is turned away and not counted: ten of those
-        // locked the administrator out, and anyone who could make their
-        // browser send ten requests could do it for them.
-        if rejection.counts_as_a_failed_login() {
-            plugin.ip_fail_limit.inc(ip);
-        }
+    let identity = match plugin.auth_validate(session.req_header()) {
+        Ok(identity) => identity,
+        Err(rejection) => {
+            // A failed login is one that was tried. A request without
+            // credentials - the page polling before the login, or after
+            // its token ran out - is turned away and not counted: ten of
+            // those locked the administrator out, and anyone who could
+            // make their browser send ten requests could do it for them.
+            if rejection.counts_as_a_failed_login() {
+                plugin.ip_fail_limit.inc(ip);
+            }
+            return Ok(Some(HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(rejection.message()),
+                ..Default::default()
+            }));
+        },
+    };
+    let path = route.to_string();
+    // What changes something: the configuration, or the process. Each of
+    // these leaves a line in the log that says who it was.
+    let is_write = is_write_request(&method, &path);
+    if is_write && identity.read_only {
+        audit(&identity, ip, &method, &path, StatusCode::FORBIDDEN);
         return Ok(Some(HttpResponse {
-            status: StatusCode::UNAUTHORIZED,
-            body: Bytes::from_static(rejection.message()),
+            status: StatusCode::FORBIDDEN,
+            body: Bytes::from_static(b"Forbidden, this account is read-only"),
             ..Default::default()
         }));
     }
-    let path = route.to_string();
     let params: Vec<String> = path
         .split('/')
         .map(|item| decode(item).unwrap_or_default().to_string())
@@ -1241,7 +1420,61 @@ async fn handle_request_admin(
     } else {
         HttpResponse::not_found("Not Found")
     };
+    if is_write {
+        audit(&identity, ip, &method, &path, resp.status);
+    }
     Ok(Some(resp))
+}
+
+/// Whether a request to the API changes something: an entry of the
+/// configuration, all of it (an import), or the process (a restart).
+/// `/aes` is a `POST` that only computes.
+fn is_write_request(method: &Method, route: &str) -> bool {
+    !matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+        && (route.starts_with("/configs") || route == "/restart")
+}
+
+/// One line for one change through the admin: who, from where, what, and
+/// how it ended. A change that was refused is one too.
+fn audit(
+    identity: &Identity,
+    ip: &str,
+    method: &Method,
+    route: &str,
+    status: StatusCode,
+) {
+    info!(
+        target: LOG_TARGET,
+        user = identity.name,
+        ip,
+        method = method.as_str(),
+        path = route,
+        status = status.as_u16(),
+        "admin audit"
+    );
+}
+
+/// What goes with every answer of the admin, pages and API alike. None
+/// of it is for another site to show in a frame, where a click on that
+/// site's page can be made a click on a button here; a file is what its
+/// type says and nothing a browser guesses; and the address of a page,
+/// which names entries of the configuration, is not told to the sites it
+/// links to.
+fn security_headers() -> Vec<pingap_core::HttpHeader> {
+    [
+        ("x-frame-options", "DENY"),
+        ("content-security-policy", "frame-ancestors 'none'"),
+        ("x-content-type-options", "nosniff"),
+        ("referrer-policy", "no-referrer"),
+    ]
+    .into_iter()
+    .map(|(name, value)| {
+        (
+            http::HeaderName::from_static(name),
+            http::HeaderValue::from_static(value),
+        )
+    })
+    .collect()
 }
 
 #[async_trait]
@@ -1263,7 +1496,10 @@ impl Plugin for AdminServe {
             return Ok(RequestPluginResult::Skipped);
         }
         let resp = handle_request_admin(self, session, _ctx).await?;
-        if let Some(resp) = resp {
+        if let Some(mut resp) = resp {
+            resp.headers
+                .get_or_insert_default()
+                .extend(security_headers());
             return Ok(RequestPluginResult::Respond(resp));
         }
         Ok(RequestPluginResult::Continue)
@@ -1798,6 +2034,273 @@ mod tests {
             resp.status.as_u16(),
             String::from_utf8_lossy(&resp.body).into_owned(),
         )
+    }
+
+    /// The `Authorization` of a login as `user` with `password`, as the
+    /// page makes it.
+    fn signed(user: &str, password: &str) -> String {
+        let ts = pingap_core::now_sec();
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{user}:{password}:{ts}").as_bytes());
+        format!("{}:{ts}", hasher.finalize().encode_hex::<String>())
+    }
+
+    fn token_entry(name: &str, token: &str) -> String {
+        format!(
+            "{name}:{}",
+            Sha256::digest(token.as_bytes()).encode_hex::<String>()
+        )
+    }
+
+    /// Who may change something and who may only look: accounts of two
+    /// kinds, and tokens of two kinds for what is no person at a page.
+    #[tokio::test]
+    async fn test_admin_roles_and_tokens() {
+        use pingap_core::{Plugin, PluginStep, RequestPluginResult};
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        let b64 = pingap_util::base64_encode;
+        let (admin, _manager) = new_admin_on(
+            file.path(),
+            &format!(
+                "authorizations = [\"{}\"]\nreadonly_authorizations = [\"{}\"]\ntokens = [\"{}\"]\nreadonly_tokens = [\"{}\"]",
+                b64("alice:pw-a"),
+                b64("bob:pw-b"),
+                token_entry("ci", "tok-ci"),
+                token_entry("monitor", "tok-monitor"),
+            ),
+        );
+        let request = |method: &str, path: &str, authorization: &str| {
+            let body = "addrs = [\"127.0.0.1:8001\"]";
+            format!(
+                "{method} {path} HTTP/1.1\r\nAuthorization: {authorization}\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let status = async |method: &str, path: &str, authorization: &str| {
+            answer(
+                &admin,
+                "127.0.0.1:3018",
+                &request(method, path, authorization),
+            )
+            .await
+        };
+        let read_only = "Forbidden, this account is read-only";
+        let writes = [
+            ("POST", "/api/configs/upstream/charts"),
+            ("DELETE", "/api/configs/upstream/charts"),
+            ("POST", "/api/configs/import"),
+            ("POST", "/api/restart"),
+        ];
+        for (who, authorization, may_write) in [
+            ("alice", signed("alice", "pw-a"), true),
+            ("bob", signed("bob", "pw-b"), false),
+            ("ci", "Bearer tok-ci".to_string(), true),
+            ("monitor", "Bearer tok-monitor".to_string(), false),
+        ] {
+            // Everyone who gets in may look.
+            let (code, _) =
+                status("GET", "/api/configs/upstream", &authorization).await;
+            assert_eq!(200, code, "{who}");
+            for (method, path) in writes {
+                // The restart itself is not tried in a test.
+                if may_write && path == "/api/restart" {
+                    continue;
+                }
+                let (code, body) = status(method, path, &authorization).await;
+                assert_eq!(
+                    may_write,
+                    !(code == 403 && body == read_only),
+                    "{who} {method} {path}: {code} {body}"
+                );
+            }
+        }
+
+        // A token nobody was given, a password that is not the account's.
+        for authorization in [
+            "Bearer tok-none".to_string(),
+            "Bearer ".to_string(),
+            signed("alice", "pw-b"),
+            signed("bob", "pw-a"),
+            // the digest is what the configuration has, not what gets in
+            format!(
+                "Bearer {}",
+                Sha256::digest(b"tok-ci").encode_hex::<String>()
+            ),
+        ] {
+            let (code, _) = status("GET", "/api/basic", &authorization).await;
+            assert_eq!(401, code, "{authorization}");
+        }
+
+        // Who it was, for the line a change leaves in the log.
+        let identity = |authorization: &str| {
+            let mut header =
+                pingora::http::RequestHeader::build("GET", b"/api/basic", None)
+                    .unwrap();
+            header
+                .insert_header("Authorization", authorization)
+                .unwrap();
+            admin
+                .auth_validate(&header)
+                .map(|who| (who.name, who.read_only))
+        };
+        assert_eq!(
+            Ok(("alice".to_string(), false)),
+            identity(&signed("alice", "pw-a"))
+        );
+        assert_eq!(
+            Ok(("bob".to_string(), true)),
+            identity(&signed("bob", "pw-b"))
+        );
+        assert_eq!(
+            Ok(("token:ci".to_string(), false)),
+            identity("Bearer tok-ci")
+        );
+        assert_eq!(
+            Ok(("token:monitor".to_string(), true)),
+            identity("bearer tok-monitor")
+        );
+
+        // Every answer says that it is not to be shown in a frame.
+        for request in [
+            "GET / HTTP/1.1\r\n\r\n".to_string(),
+            request("GET", "/api/basic", "Bearer tok-ci"),
+            request("GET", "/api/basic", "Bearer tok-none"),
+        ] {
+            let mut session = new_admin_session(&request).await;
+            let result = admin
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!("no response to {request}");
+            };
+            let header = |name: &str| {
+                resp.headers
+                    .iter()
+                    .flatten()
+                    .find(|(key, _)| key.as_str() == name)
+                    .map(|(_, value)| value.to_str().unwrap().to_string())
+            };
+            assert_eq!(Some("DENY".to_string()), header("x-frame-options"));
+            assert_eq!(
+                Some("frame-ancestors 'none'".to_string()),
+                header("content-security-policy")
+            );
+            assert_eq!(
+                Some("nosniff".to_string()),
+                header("x-content-type-options")
+            );
+            assert_eq!(
+                Some("no-referrer".to_string()),
+                header("referrer-policy")
+            );
+        }
+    }
+
+    #[test]
+    fn test_admin_roles_and_tokens_params() {
+        use super::is_write_request;
+        use http::Method;
+        let new = |conf: &str| {
+            AdminServe::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "category = \"admin\"\n{conf}"
+                ))
+                .unwrap(),
+            )
+            .map(|admin| admin.has_credentials())
+            .map_err(|e| e.to_string())
+        };
+        let b64 = pingap_util::base64_encode;
+        let token = token_entry("ci", "tok-ci");
+        assert_eq!(Ok(false), new(""));
+        assert_eq!(Ok(true), new(&format!("tokens = [\"{token}\"]")));
+        assert_eq!(
+            Ok(true),
+            new(&format!(
+                "authorizations = [\"{}\"]\nreadonly_authorizations = [\"{}\"]\nreadonly_tokens = [\" {token} \"]",
+                b64("alice:pw"),
+                b64("bob:pw")
+            ))
+        );
+        let error = |conf: &str| new(conf).unwrap_err();
+        // Only who may look: nobody could change a thing.
+        for conf in [
+            format!("readonly_authorizations = [\"{}\"]", b64("bob:pw")),
+            format!("readonly_tokens = [\"{token}\"]"),
+        ] {
+            assert_eq!(
+                true,
+                error(&conf).contains("none that may write"),
+                "{conf}"
+            );
+        }
+        // One user, two answers to what it may do.
+        assert_eq!(
+            true,
+            error(&format!(
+                "authorizations = [\"{}\"]\nreadonly_authorizations = [\"{}\"]",
+                b64("alice:pw"),
+                b64("alice:other")
+            ))
+            .contains(
+                "user alice is in authorizations and in readonly_authorizations"
+            )
+        );
+        // Regression: twice in the one list is two passwords for one
+        // account, which is how a password is replaced without a moment
+        // in which neither works. The check for the above refused it.
+        assert_eq!(
+            Ok(true),
+            new(&format!(
+                "authorizations = [\"{}\", \"{}\"]",
+                b64("alice:old"),
+                b64("alice:new")
+            ))
+        );
+        // A token is told by its name in the audit log.
+        assert_eq!(
+            true,
+            error(&format!(
+                "tokens = [\"{token}\"]\nreadonly_tokens = [\"{}\"]",
+                token_entry("ci", "another")
+            ))
+            .contains("token ci is there more than once")
+        );
+        // An entry that is no digest - the token itself, say - is not
+        // repeated in what is said of it.
+        for entry in ["ci:tok-ci-secret", "ci", ":abcd", "ci:abcd"] {
+            let message = error(&format!("tokens = [\"{entry}\"]"));
+            assert_eq!(
+                true,
+                message.contains(
+                    "tokens: an entry should be name:<sha256 of the token in hex>"
+                ),
+                "{message}"
+            );
+            assert_eq!(false, message.contains("secret"), "{message}");
+        }
+
+        for (method, route, expected) in [
+            (Method::GET, "/configs/upstream", false),
+            (Method::POST, "/configs/upstream/a", true),
+            (Method::DELETE, "/configs/upstream/a", true),
+            (Method::POST, "/configs/import", true),
+            (Method::POST, "/restart", true),
+            (Method::GET, "/restart", false),
+            (Method::POST, "/aes", false),
+            (Method::GET, "/basic", false),
+        ] {
+            assert_eq!(
+                expected,
+                is_write_request(&method, route),
+                "{method} {route}"
+            );
+        }
     }
 
     /// Regression: an admin without credentials took a write from any page

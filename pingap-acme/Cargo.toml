@@ -26,6 +26,7 @@ nanoid = { workspace = true }
 pingap-certificate = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }
@@ -52,6 +53,7 @@ tls-rustls = ["pingora/rustls", "pingap-certificate/tls-rustls"]
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
+toml = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

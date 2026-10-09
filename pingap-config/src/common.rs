@@ -173,6 +173,26 @@ pub struct CertificateConf {
     pub dns_service_url: Option<String>,
     /// Buffer days for certificate renewal
     pub buffer_days: Option<u16>,
+    /// The directory url of the ACME server the certificate is ordered
+    /// from: another CA (ZeroSSL, Google Trust Services), Let's Encrypt's
+    /// staging environment, a CA of one's own (step-ca). Let's Encrypt's
+    /// production directory when unset.
+    pub acme_directory: Option<String>,
+    /// A PEM file with the root certificate the ACME server's own
+    /// certificate is verified with, for a CA of one's own. The roots of
+    /// the system when unset.
+    pub acme_ca: Option<String>,
+    /// External account binding, for a CA that asks for one: the key id
+    /// it has given out.
+    pub acme_eab_kid: Option<String>,
+    /// External account binding: the HMAC key that goes with the key id,
+    /// in base64 as the CA gives it.
+    pub acme_eab_hmac: Option<String>,
+    /// The e-mail addresses of the ACME account, comma separated.
+    pub acme_contact: Option<String>,
+    /// The key of the certificate: `ecdsa` (P-256, the default) or `rsa`
+    /// (2048 bits).
+    pub acme_key_type: Option<String>,
     /// Optional description/notes about this certificate
     pub remark: Option<String>,
 }
@@ -317,8 +337,127 @@ impl Validate for CertificateConf {
             });
         }
 
+        self.validate_acme_server()
+    }
+}
+
+impl CertificateConf {
+    /// What says where a certificate is ordered and how: each of them is
+    /// read when an order is made, which is weeks after the entry was
+    /// written, so a slip is reported here.
+    fn validate_acme_server(&self) -> Result<()> {
+        let invalid = |message: String| Err(Error::Invalid { message });
+        let set = |value: &Option<String>| {
+            value
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+        };
+        if let Some(directory) = self
+            .acme_directory
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            // ACME is spoken over https, to a host.
+            let valid = url::Url::parse(directory).is_ok_and(|url| {
+                url.scheme() == "https" && url.host_str().is_some()
+            });
+            if !valid {
+                return invalid(format!(
+                    "acme_directory({directory}) should be an https url"
+                ));
+            }
+        }
+        // A file, which is what the ACME client takes it as: the root in
+        // the entry itself would be read as the name of one.
+        if let Some(ca) = self
+            .acme_ca
+            .as_deref()
+            .map(str::trim)
+            .filter(|ca| !ca.is_empty())
+        {
+            let path = pingap_util::resolve_path(ca);
+            if pingap_util::is_pem(ca) || !std::path::Path::new(&path).is_file()
+            {
+                return invalid(format!(
+                    "acme_ca({ca}) should be the path of a PEM file"
+                ));
+            }
+            validate_cert(&path).map_err(|e| Error::Invalid {
+                message: format!("acme_ca({ca}): {e}"),
+            })?;
+        }
+        if set(&self.acme_eab_kid) != set(&self.acme_eab_hmac) {
+            return invalid(
+                "acme_eab_kid and acme_eab_hmac should be set together"
+                    .to_string(),
+            );
+        }
+        if let Some(hmac) = self
+            .acme_eab_hmac
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            && decode_eab_hmac(hmac).is_none()
+        {
+            return invalid("acme_eab_hmac is not base64".to_string());
+        }
+        if let Some(contact) = &self.acme_contact
+            && let Some(address) =
+                acme_contacts(contact).find(|address| !is_mail_address(address))
+        {
+            return invalid(format!(
+                "acme_contact({address}) is not an e-mail address"
+            ));
+        }
+        if let Some(key_type) = self
+            .acme_key_type
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            && !matches!(key_type, "ecdsa" | "rsa")
+        {
+            return invalid(format!(
+                "acme_key_type({key_type}) should be ecdsa or rsa"
+            ));
+        }
         Ok(())
     }
+}
+
+/// The key of an external account binding, from the text a CA gives it
+/// as: base64 with the url alphabet and no padding by the specification,
+/// and with padding or the standard alphabet from some.
+pub fn decode_eab_hmac(value: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    use base64::engine::general_purpose::{
+        STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD,
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .or_else(|_| URL_SAFE.decode(value))
+        .or_else(|_| STANDARD_NO_PAD.decode(value))
+        .or_else(|_| STANDARD.decode(value))
+        .ok()
+        .filter(|key| !key.is_empty())
+}
+
+/// The addresses of `acme_contact`, without a `mailto:` in front.
+pub fn acme_contacts(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(',')
+        .map(|address| address.trim())
+        .map(|address| address.strip_prefix("mailto:").unwrap_or(address))
+        .filter(|address| !address.is_empty())
+}
+
+fn is_mail_address(address: &str) -> bool {
+    address.split_once('@').is_some_and(|(user, host)| {
+        !user.is_empty()
+            && host.contains('.')
+            && !address.contains(char::is_whitespace)
+    })
 }
 
 /// Accepted values of `UpstreamConf::discovery`, as `guess_discovery`
@@ -360,8 +499,15 @@ pub struct UpstreamConf {
     #[serde(with = "humantime_serde")]
     pub update_frequency: Option<Duration>,
 
-    /// Load balancing algorithm (e.g. "round_robin", "hash:cookie")
+    /// Load balancing algorithm: "round_robin", "least_conn" (the
+    /// backend with the fewest requests in flight for its weight), or
+    /// "hash:<type>[:<key>]" such as "hash:cookie:session_id"
     pub algo: Option<String>,
+
+    /// Send a request to a backend all the same when none of them is
+    /// healthy (by the health check, or held back by the circuit
+    /// breaker), instead of answering 503.
+    pub fail_open: Option<bool>,
 
     /// Server Name Indication for TLS connections
     pub sni: Option<String>,
@@ -1133,6 +1279,12 @@ pub struct ServerConf {
     /// ClientHello, for `$ja4` in headers and `{:ja4}` in the access log.
     /// Needs a TLS listener (`global_certificates`).
     pub ja4: Option<bool>,
+
+    /// Read the PROXY protocol header (version 1 or 2) a load balancer
+    /// puts in front of a connection, and take the client's address
+    /// from it. Only from the addresses of `basic.trusted_proxies`,
+    /// which this needs: a header from anyone else is not read.
+    pub proxy_protocol: Option<bool>,
 
     /// Whether to enable HTTP/2 protocol support
     pub enabled_h2: Option<bool>,
@@ -2112,7 +2264,23 @@ impl PingapConfig {
             location.validate_with_upstream(Some(&upstream_names))?;
         }
         let mut listen_addr_list = vec![];
-        for server in self.servers.values() {
+        for (name, server) in self.servers.iter() {
+            // Whoever may send the header says who the client is. With
+            // nobody named, the choice was between everybody and nobody,
+            // and either is a server that does not do what it was told.
+            if server.proxy_protocol.unwrap_or_default()
+                && self
+                    .basic
+                    .trusted_proxies
+                    .as_ref()
+                    .is_none_or(|proxies| proxies.is_empty())
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "server({name}): proxy_protocol needs basic.trusted_proxies, the addresses the header is taken from"
+                    ),
+                });
+            }
             if entry_has_reference(server) {
                 continue;
             }
@@ -2603,6 +2771,19 @@ tag = "header"
 key = "X-Client"
 max = 10
 
+[plugins.console]
+category = "admin"
+authorizations = ["{secret}"]
+readonly_authorizations = ["{secret}"]
+tokens = ["deploy:{secret}"]
+readonly_tokens = ["monitor:{secret}"]
+
+[certificates.site]
+domains = "example.com"
+acme = "lets_encrypt"
+acme_eab_kid = "kid"
+acme_eab_hmac = "{secret}"
+
 [locations.app]
 proxy_set_headers = ["Authorization: Bearer {secret}", "X-Mode: {secret}"]
 
@@ -2627,11 +2808,27 @@ value = 'proxy_add_headers = ["X-Api-Key: {secret}"]'
         categories.sort();
         // Every one of them is still seen to have changed.
         assert_eq!(
-            vec!["basic", "location", "plugin", "server", "storage"],
+            vec![
+                "basic",
+                "certificate",
+                "location",
+                "plugin",
+                "server",
+                "storage"
+            ],
             categories
         );
         let text = detail.join("\n");
-        for name in ["plugin:auth", "plugin:token", "plugin:api", "basic"] {
+        // `plugin:console`: regression, the accounts that may only look
+        // were written out where the others were masked.
+        for name in [
+            "plugin:auth",
+            "plugin:token",
+            "plugin:api",
+            "plugin:console",
+            "certificate:site",
+            "basic",
+        ] {
             assert_eq!(
                 true,
                 text.contains(&format!("[MODIFIED] {name}")),
@@ -3375,6 +3572,115 @@ write_timeout = "1m"
     /// Regression: the upstream a `traffic_splitting` plugin names was not
     /// checked, and could be removed while the plugin still used it.
     /// `tls_client_ca` and `tls_client_auth` of a server.
+    /// A PROXY protocol header says who the client is: it is read from
+    /// the proxies that are trusted, and there have to be some.
+    #[test]
+    fn test_proxy_protocol_needs_trusted_proxies() {
+        let config = |basic: &str, server: &str| {
+            let mut conf = PingapConfig {
+                basic: toml::from_str(basic).unwrap(),
+                ..Default::default()
+            };
+            conf.servers.insert(
+                "web".to_string(),
+                toml::from_str(&format!("addr = \"127.0.0.1:80\"\n{server}"))
+                    .unwrap(),
+            );
+            conf.validate().err().map(|e| e.to_string())
+        };
+        let trusted = "trusted_proxies = [\"10.0.0.0/8\"]";
+        assert_eq!(None, config("", ""));
+        assert_eq!(None, config("", "proxy_protocol = false"));
+        assert_eq!(None, config(trusted, "proxy_protocol = true"));
+        for basic in ["", "trusted_proxies = []"] {
+            assert_eq!(
+                Some(
+                    "Invalid error server(web): proxy_protocol needs basic.trusted_proxies, the addresses the header is taken from"
+                        .to_string()
+                ),
+                config(basic, "proxy_protocol = true"),
+                "{basic}"
+            );
+        }
+    }
+
+    /// The CA a certificate is ordered from, and how: read when an order
+    /// is made, so what is wrong with it is said when it is written.
+    #[test]
+    fn test_certificate_acme_server_is_validated() {
+        let error = |conf: &str| {
+            toml::from_str::<CertificateConf>(conf)
+                .unwrap()
+                .validate()
+                .err()
+                .map(|e| e.to_string())
+        };
+        assert_eq!(
+            None,
+            error("domains = \"example.com\"\nacme = \"lets_encrypt\"")
+        );
+        assert_eq!(
+            None,
+            error(
+                "acme_directory = \"https://acme.zerossl.com/v2/DV90\"\nacme_eab_kid = \"kid\"\nacme_eab_hmac = \"c2VjcmV0LWtleQ\"\nacme_contact = \"ops@example.com, mailto:sec@example.com\"\nacme_key_type = \"rsa\""
+            )
+        );
+        // the forms of base64 a CA may give the key in
+        for hmac in ["c2VjcmV0LWtleQ", "c2VjcmV0LWtleQ==", "-_-_", "+/+/"] {
+            assert_eq!(
+                None,
+                error(&format!(
+                    "acme_eab_kid = \"kid\"\nacme_eab_hmac = \"{hmac}\""
+                )),
+                "{hmac}"
+            );
+        }
+        for (conf, message) in [
+            (
+                "acme_directory = \"http://ca.internal/acme\"",
+                "acme_directory(http://ca.internal/acme) should be an https url",
+            ),
+            (
+                "acme_directory = \"ca.internal\"",
+                "acme_directory(ca.internal) should be an https url",
+            ),
+            (
+                "acme_eab_kid = \"kid\"",
+                "acme_eab_kid and acme_eab_hmac should be set together",
+            ),
+            (
+                "acme_eab_hmac = \"c2VjcmV0LWtleQ\"",
+                "acme_eab_kid and acme_eab_hmac should be set together",
+            ),
+            (
+                "acme_eab_kid = \"kid\"\nacme_eab_hmac = \"not base64!\"",
+                "acme_eab_hmac is not base64",
+            ),
+            (
+                "acme_contact = \"ops@example.com, nobody\"",
+                "acme_contact(nobody) is not an e-mail address",
+            ),
+            (
+                "acme_key_type = \"ed25519\"",
+                "acme_key_type(ed25519) should be ecdsa or rsa",
+            ),
+            (
+                "acme_ca = \"/nowhere/root.pem\"",
+                "acme_ca(/nowhere/root.pem) should be the path of a PEM file",
+            ),
+            (
+                "acme_ca = \"-----BEGIN CERTIFICATE-----\"",
+                "acme_ca(-----BEGIN CERTIFICATE-----) should be the path of a PEM file",
+            ),
+        ] {
+            assert_eq!(
+                Some(format!("Invalid error {message}")),
+                error(conf),
+                "{conf}"
+            );
+        }
+    }
+
     #[test]
     fn test_server_client_auth_is_validated() {
         let server = |extra: &str| -> ServerConf {
@@ -3898,7 +4204,7 @@ ai02RHnemmqJaNepfmCdyec=
         assert_eq!(true, result.is_ok());
 
         // spellchecker:off
-        assert_eq!("15ba921aee80abc3", conf.hash_key());
+        assert_eq!("dc2eecb60f4da729", conf.hash_key());
         // spellchecker:on
     }
     #[test]

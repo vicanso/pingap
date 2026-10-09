@@ -282,7 +282,8 @@ derive_more = { version = "2.1.1", default-features = false, features = [
 ] }
 diff = "0.1.13"
 dirs = "7.0.0"
-etcd-client = "0.20.0"
+# TLS by rustls with aws-lc-rs, the provider the rest of the process uses
+etcd-client = { version = "0.20.0", features = ["tls-aws-lc", "tls-roots"] }
 fancy-regex = "0.19.1"
 flate2 = "1.1.10"
 futures = "0.3.34"
@@ -359,7 +360,8 @@ pem = "4.0.0"
 psl = "2.1.232"
 prometheus = { version = "0.14.0", default-features = false }
 rand = "0.10.2"
-rcgen = { version = "0.14.10", features = ["pem", "x509-parser"] }
+# aws_lc_rs: the backend that can make RSA keys (ACME, `acme_key_type`)
+rcgen = { version = "0.14.10", features = ["pem", "x509-parser", "aws_lc_rs"] }
 regex = { version = "1.13.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = [
     "query",

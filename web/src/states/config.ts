@@ -15,6 +15,7 @@ export interface Upstream {
   dns_domain?: string;
   dns_search?: string;
   algo?: string;
+  fail_open?: boolean;
   sni?: string;
   alpn?: string;
   max_h2_streams?: number;
@@ -130,6 +131,7 @@ export interface Server {
   enable_server_timing?: boolean;
   global_certificates?: boolean;
   ja4?: boolean;
+  proxy_protocol?: boolean;
   downstream_read_timeout?: string;
   downstream_write_timeout?: string;
   reuse_port?: boolean;
@@ -163,6 +165,12 @@ export interface Certificate {
   dns_service_url?: string;
   is_ca?: boolean;
   buffer_days?: number;
+  acme_directory?: string;
+  acme_ca?: string;
+  acme_eab_kid?: string;
+  acme_eab_hmac?: string;
+  acme_contact?: string;
+  acme_key_type?: string;
   remark?: string;
 }
 

@@ -20,6 +20,7 @@ use super::tracing::{
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
 use crate::ja4::{Ja4Collector, Ja4Store};
+use crate::proxy_protocol::{PreTls, ProxyProtocolApp};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -53,7 +54,7 @@ use pingap_performance::{
     Prometheus, new_prometheus, new_prometheus_push_service,
 };
 use pingap_performance::{accept_request, end_request};
-use pingap_upstream::{Upstream, UpstreamProvider};
+use pingap_upstream::{PeerAttempt, Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
@@ -75,9 +76,10 @@ use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::protocols::Digest;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::http::v2::server::{H2Options, default_h2_options};
-use pingora::proxy::{FailToProxy, HttpProxy, ProxyServiceBuilder};
+use pingora::proxy::{FailToProxy, ProxyServiceBuilder, http_proxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
+use pingora::services::ServiceWithDependents;
 use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use scopeguard::defer;
@@ -208,6 +210,10 @@ pub struct Server {
     /// before each handshake; `None` unless `ja4` is enabled.
     ja4: Option<Arc<Ja4Store>>,
 
+    /// Whether the listeners read the PROXY protocol header of a
+    /// trusted proxy for the address of the client.
+    proxy_protocol: bool,
+
     /// TCP socket configuration options (keepalive, TCP fastopen etc)
     tcp_socket_options: Option<TcpSocketOptions>,
 
@@ -262,7 +268,87 @@ pub struct Server {
 }
 
 pub struct ServerServices {
-    pub lb: Service<HttpProxy<Server>>,
+    /// The listening service of the server, for
+    /// `pingora::server::Server::add_boxed_service`. Boxed because it is
+    /// one of two kinds: the HTTP application as pingora makes it, or,
+    /// for a listener without TLS that reads the PROXY protocol, that
+    /// application behind the reader of the header.
+    pub lb: Box<dyn ServiceWithDependents>,
+}
+
+/// What the listeners of a server are made of.
+struct ListenerParams {
+    name: String,
+    addr: String,
+    threads: Option<usize>,
+    tcp_socket_options: Option<TcpSocketOptions>,
+    dynamic_cert: Option<GlobalCertificate>,
+    tls: TlsSettingParams,
+    ja4: Option<Arc<Ja4Store>>,
+    proxy_protocol: bool,
+}
+
+impl ListenerParams {
+    /// Gives `lb` its threads, what it does with a connection before
+    /// the TLS handshake, and an endpoint for each address.
+    fn add_to<A>(
+        self,
+        lb: &mut Service<A>,
+        conf: &Arc<configuration::ServerConf>,
+    ) -> Result<()> {
+        let is_tls = self.dynamic_cert.is_some();
+        lb.threads = self.threads;
+        // pingora has one hook ahead of the handshake, in code its TLS
+        // backends share, and it only ever runs on TLS listeners: the
+        // PROXY protocol header of a listener without TLS is read by
+        // `ProxyProtocolApp`, and config validation rejects `ja4` without
+        // TLS.
+        if self.ja4.is_some() && !is_tls {
+            warn!(
+                target: LOG_TARGET,
+                name = self.name,
+                "ja4 needs a TLS listener, not collecting it"
+            );
+        }
+        if is_tls && (self.ja4.is_some() || self.proxy_protocol) {
+            lb.endpoints().set_pre_tls_callback(Arc::new(PreTls {
+                proxy_protocol: self.proxy_protocol,
+                ja4: self.ja4.map(Ja4Collector::new),
+            }));
+        }
+        // support listen multi address
+        for addr in self
+            .addr
+            .split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
+            // tls
+            if let Some(dynamic_cert) = &self.dynamic_cert {
+                let mut tls_settings = dynamic_cert
+                    .new_tls_settings(&self.tls)
+                    .map_err(|e| Error::Common {
+                        category: "tls".to_string(),
+                        message: e.to_string(),
+                    })?;
+                // Handshakes move to the dedicated pools when
+                // `basic.downstream_tls_offload_*` asks for them. pingora
+                // applies this per listener because every listener owns its
+                // TlsSettings, and leaves it off while the pair is unset.
+                tls_settings.set_offload_threadpool_from_server_conf(conf);
+                lb.add_tls_with_settings(
+                    addr,
+                    self.tcp_socket_options.clone(),
+                    tls_settings,
+                );
+            } else if let Some(opt) = &self.tcp_socket_options {
+                lb.add_tcp_with_settings(addr, opt.clone());
+            } else {
+                lb.add_tcp(addr);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// How long a response that names no lifetime of its own stays fresh: one
@@ -505,6 +591,7 @@ impl Server {
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
             ja4: conf.ja4.then(|| Arc::new(Ja4Store::default())),
+            proxy_protocol: conf.proxy_protocol,
             enabled_h2: conf.enabled_h2,
             h2_max_concurrent_streams: conf.h2_max_concurrent_streams,
             h2_max_header_list_size: conf.h2_max_header_list_size,
@@ -666,19 +753,51 @@ impl Server {
                 "server is listening"
             );
         }
-        let cipher_list = self.tls_cipher_list.clone();
-        let cipher_suites = self.tls_ciphersuites.clone();
-        let tls_min_version = self.tls_min_version.clone();
-        let tls_max_version = self.tls_max_version.clone();
-        let tls_client_ca = self.tls_client_ca.clone();
-        let tls_client_auth_optional = self.tls_client_auth_optional;
         let h2_options = self.new_h2_options();
-        let h2_idle_timeout = self.h2_idle_timeout;
-        let ja4_store = self.ja4.clone();
+        let mut http_server_options = HttpServerOptions::default();
+        // use h2c if not tls and enable http2
+        http_server_options.h2c = !is_tls && enabled_h2;
+        http_server_options.h2_idle_timeout = self.h2_idle_timeout;
+        let listeners = ListenerParams {
+            name: name.clone(),
+            addr,
+            threads,
+            tcp_socket_options,
+            dynamic_cert,
+            tls: TlsSettingParams {
+                server_name: name,
+                enabled_h2,
+                cipher_list: self.tls_cipher_list.clone(),
+                cipher_suites: self.tls_ciphersuites.clone(),
+                tls_min_version: self.tls_min_version.clone(),
+                tls_max_version: self.tls_max_version.clone(),
+                client_ca: self.tls_client_ca.clone(),
+                client_auth_optional: self.tls_client_auth_optional,
+            },
+            ja4: self.ja4.clone(),
+            proxy_protocol: self.proxy_protocol,
+        };
+        const SERVICE_NAME: &str = "Pingora HTTP Proxy Service";
+        // A listener without TLS that reads the PROXY protocol: pingora
+        // has no place for that ahead of its HTTP application, so the
+        // application is made here and put behind the reader of the
+        // header. What its builder would add is not there this way, which
+        // is the report of how long evicted upstream connections had been
+        // idle (see below).
+        if self.proxy_protocol && !is_tls {
+            let mut http_logic = http_proxy(&conf, self);
+            http_logic.server_options = Some(http_server_options);
+            http_logic.h2_options = h2_options;
+            let mut lb = Service::new(
+                SERVICE_NAME.to_string(),
+                ProxyProtocolApp::new(http_logic),
+            );
+            listeners.add_to(&mut lb, &conf)?;
+            return Ok(ServerServices { lb: Box::new(lb) });
+        }
         #[cfg(feature = "tracing")]
         let pool_observer = self.prometheus.clone();
-        let builder = ProxyServiceBuilder::new(&conf, self)
-            .name("Pingora HTTP Proxy Service");
+        let builder = ProxyServiceBuilder::new(&conf, self).name(SERVICE_NAME);
         // With metrics enabled, pingora reports every keep-alive pool
         // eviction together with how long the evicted upstream connection
         // had been idle; feed that into this server's registry.
@@ -695,66 +814,13 @@ impl Server {
         };
         let mut lb = builder.build();
         if let Some(http_logic) = lb.app_logic_mut() {
-            let mut http_server_options = HttpServerOptions::default();
-            // use h2c if not tls and enable http2
-            http_server_options.h2c = !is_tls && enabled_h2;
-            http_server_options.h2_idle_timeout = h2_idle_timeout;
             http_logic.server_options = Some(http_server_options);
             // Applies to every h2 handshake this listener performs, TLS/ALPN
             // and h2c alike. None keeps pingora's bounded defaults.
             http_logic.h2_options = h2_options;
         }
-        lb.threads = threads;
-        // The collector reads each ClientHello before the handshake, in
-        // code pingora shares between its TLS backends. It only ever runs
-        // on TLS listeners; config validation rejects `ja4` without one.
-        if let Some(store) = ja4_store {
-            if is_tls {
-                lb.endpoints()
-                    .set_pre_tls_callback(Arc::new(Ja4Collector::new(store)));
-            } else {
-                warn!(
-                    target: LOG_TARGET,
-                    name, "ja4 needs a TLS listener, not collecting it"
-                );
-            }
-        }
-        // support listen multi address
-        for addr in addr.split(',').map(str::trim).filter(|a| !a.is_empty()) {
-            // tls
-            if let Some(dynamic_cert) = &dynamic_cert {
-                let mut tls_settings = dynamic_cert
-                    .new_tls_settings(&TlsSettingParams {
-                        server_name: name.clone(),
-                        enabled_h2,
-                        cipher_list: cipher_list.clone(),
-                        cipher_suites: cipher_suites.clone(),
-                        tls_min_version: tls_min_version.clone(),
-                        tls_max_version: tls_max_version.clone(),
-                        client_ca: tls_client_ca.clone(),
-                        client_auth_optional: tls_client_auth_optional,
-                    })
-                    .map_err(|e| Error::Common {
-                        category: "tls".to_string(),
-                        message: e.to_string(),
-                    })?;
-                // Handshakes move to the dedicated pools when
-                // `basic.downstream_tls_offload_*` asks for them. pingora
-                // applies this per listener because every listener owns its
-                // TlsSettings, and leaves it off while the pair is unset.
-                tls_settings.set_offload_threadpool_from_server_conf(&conf);
-                lb.add_tls_with_settings(
-                    addr,
-                    tcp_socket_options.clone(),
-                    tls_settings,
-                );
-            } else if let Some(opt) = &tcp_socket_options {
-                lb.add_tcp_with_settings(addr, opt.clone());
-            } else {
-                lb.add_tcp(addr);
-            }
-        }
-        Ok(ServerServices { lb })
+        listeners.add_to(&mut lb, &conf)?;
+        Ok(ServerServices { lb: Box::new(lb) })
     }
     /// Handles requests to the admin interface.
     /// Processes admin-specific plugins and returns response if handled.
@@ -1396,6 +1462,21 @@ fn get_upstream_with_variables(
     upstreams.get(key)
 }
 
+/// Notes the backend of the attempt that has just failed, for the next
+/// one to go to another.
+fn remember_failed_backend(ctx: &mut Ctx) {
+    let address = &ctx.upstream.address;
+    if !address.is_empty()
+        && !ctx
+            .upstream
+            .failed_addresses
+            .iter()
+            .any(|item| item == address)
+    {
+        ctx.upstream.failed_addresses.push(address.clone());
+    }
+}
+
 /// Whether the target of the request is one of the forms a request has
 /// (RFC 9112 §3.2): a path (`/a?b=1`), a url (`http://host/a`) or `*`.
 ///
@@ -1622,8 +1703,18 @@ impl ProxyHttp for Server {
             ctx.state.payload_size = 0;
         }
         // Async: a transparent upstream resolves the request's host here.
+        // A retry goes to another backend than the ones that have just
+        // failed this request, where there is one.
         let Some(mut peer) = upstream
-            .new_http_peer(session, &mut ctx.conn.client_ip, first_attempt)
+            .new_http_peer_for(
+                session,
+                PeerAttempt {
+                    client_ip: &mut ctx.conn.client_ip,
+                    count_processing: first_attempt,
+                    failed: &ctx.upstream.failed_addresses,
+                    inflight: Some(&mut ctx.upstream.backend_inflight),
+                },
+            )
             .await
         else {
             return Err(no_available_upstream(ctx));
@@ -1739,6 +1830,21 @@ impl ProxyHttp for Server {
         {
             upstream_instance.on_transport_failure(&ctx.upstream.address);
         }
+        // The retry goes elsewhere, unless what failed was only the
+        // connection: one that had been kept too long, or an HTTP/2 one
+        // that the backend is retiring (`GOAWAY`, a stream it refuses)
+        // or that has to be HTTP/1.1 after all. The backend is as good
+        // as it was, and by a hash it is where the request belongs.
+        let connection_only = stale_connection
+            || matches!(
+                e.etype(),
+                pingora::ErrorType::H2Error
+                    | pingora::ErrorType::H2Downgrade
+                    | pingora::ErrorType::InvalidH2
+            );
+        if e.retry() && !connection_only {
+            remember_failed_backend(ctx);
+        }
         e
     }
     fn fail_to_connect(
@@ -1765,6 +1871,7 @@ impl ProxyHttp for Server {
             return e;
         }
         ctx.upstream.retries += 1;
+        remember_failed_backend(ctx);
         e.set_retry(true);
         e
     }
@@ -2514,7 +2621,6 @@ mod tests {
     use pingora::protocols::{Digest, TimingDigest};
     use pingora::proxy::{ProxyHttp, Session};
     use pingora::server::configuration;
-    use pingora::services::Service;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -3726,6 +3832,78 @@ value = 'proxy_set_headers = ["name:value"]'
         }
         // Still counted, for the access log and the metrics.
         assert_eq!(5 * 800, ctx.state.payload_size);
+    }
+
+    /// Which failures send the retry of a request to another backend:
+    /// those of the backend, not those of one connection to it.
+    #[tokio::test]
+    async fn test_failed_backend_is_remembered_for_the_retry() {
+        use pingora::upstreams::peer::HttpPeer;
+        use pingora::{Error, ErrorType, RetryType};
+        let server = new_server();
+        let peer = HttpPeer::new("127.0.0.1:9", false, String::new());
+        let failed_after =
+            async |etype: ErrorType, retry: RetryType, reused: bool| {
+                let mock_io = Builder::new()
+                    .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+                    .build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                let mut ctx = Ctx::default();
+                ctx.upstream.address = "127.0.0.1:9".to_string();
+                let mut e = Error::new_up(etype);
+                e.retry = retry;
+                let e = server.error_while_proxy(
+                    &peer,
+                    &mut session,
+                    e,
+                    &mut ctx,
+                    reused,
+                );
+                (e.retry(), ctx.upstream.failed_addresses)
+            };
+        let remembered = vec!["127.0.0.1:9".to_string()];
+        let none: Vec<String> = vec![];
+
+        // A connection that is retried because the backend failed it.
+        assert_eq!(
+            (true, remembered.clone()),
+            failed_after(ErrorType::ReadError, RetryType::Decided(true), false)
+                .await
+        );
+        // A connection that had been kept and was closed in the meantime:
+        // the backend is as good as it was.
+        assert_eq!(
+            (true, none.clone()),
+            failed_after(ErrorType::ReadError, RetryType::ReusedOnly, true)
+                .await
+        );
+        // Regression: so is one whose HTTP/2 connection is being retired
+        // (GOAWAY, a refused stream), or that is to be asked by HTTP/1.1.
+        // The retry was sent elsewhere, off the backend a hash keeps the
+        // client on.
+        for etype in [
+            ErrorType::H2Error,
+            ErrorType::H2Downgrade,
+            ErrorType::InvalidH2,
+        ] {
+            assert_eq!(
+                (true, none.clone()),
+                failed_after(etype.clone(), RetryType::Decided(true), true)
+                    .await,
+                "{etype:?}"
+            );
+        }
+        // What is not tried again leaves nothing to remember.
+        assert_eq!(
+            (false, none.clone()),
+            failed_after(
+                ErrorType::ReadError,
+                RetryType::Decided(false),
+                false
+            )
+            .await
+        );
     }
 
     /// Regression: a target without a slash in front was routed and

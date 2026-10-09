@@ -25,12 +25,13 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
 use derive_more::Debug;
 use futures_util::FutureExt;
 use http::StatusCode;
 use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
+use pingap_core::InflightGuard;
 use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -52,6 +53,7 @@ use pingora::lb::selection::{
 use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::ALPN;
 use pingora::protocols::l4::ext::TcpKeepalive;
+use pingora::protocols::l4::socket::SocketAddr as BackendAddr;
 use pingora::protocols::tls::CaType;
 use pingora::proxy::Session;
 #[cfg(feature = "openssl")]
@@ -65,11 +67,11 @@ use pingora::utils::tls::{WrappedX509, parse_x509};
 #[cfg(feature = "tls-rustls")]
 use rustls_pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, error};
 
@@ -117,6 +119,54 @@ impl HealthObserve for BackendObserveNotification {
 const FAST_SELECT_STEPS: usize = 4;
 /// Candidates per backend that a consistent-hash selection may look at.
 const CONSISTENT_SELECT_STEPS_PER_BACKEND: usize = 16;
+
+/// The requests in flight on each backend of an upstream that chooses
+/// by them (`algo = "least_conn"`).
+#[derive(Default)]
+struct InflightCounts {
+    counts: DashMap<BackendAddr, Arc<AtomicU32>>,
+}
+
+impl InflightCounts {
+    fn load(&self, backend: &Backend) -> u32 {
+        self.counts
+            .get(&backend.addr)
+            .map_or(0, |count| count.load(Ordering::Relaxed))
+    }
+
+    /// The count of `backend`, to count a request in. What is kept of
+    /// backends that are gone is dropped when it has become most of what
+    /// is kept.
+    fn of(&self, backend: &Backend, set: &BTreeSet<Backend>) -> Arc<AtomicU32> {
+        if let Some(count) = self.counts.get(&backend.addr) {
+            return count.clone();
+        }
+        if self.counts.len() > set.len() * 2 + 16 {
+            self.counts.retain(|addr, _| {
+                set.iter().any(|backend| &backend.addr == addr)
+            });
+        }
+        self.counts.entry(backend.addr.clone()).or_default().clone()
+    }
+}
+
+/// What a request has been through before it asks for a backend, and
+/// where what the upstream gives it for this attempt is put.
+pub struct PeerAttempt<'a> {
+    /// The request's client ip, resolved and written back when the hash
+    /// strategy needs it.
+    pub client_ip: &'a mut Option<String>,
+    /// Whether the request is counted as one the upstream is processing:
+    /// `true` on its first attempt only, see [`Upstream::new_http_peer`].
+    pub count_processing: bool,
+    /// The backends that have failed this request already: another one
+    /// is chosen where there is one.
+    pub failed: &'a [String],
+    /// Takes the request as one in flight on the backend that is chosen,
+    /// for an upstream that chooses by that. What was there, of the
+    /// attempt before, is released.
+    pub inflight: Option<&'a mut Option<InflightGuard>>,
+}
 
 enum SelectionLb {
     RoundRobin(LoadBalancer<RoundRobin>),
@@ -197,6 +247,18 @@ pub struct Upstream {
     /// - Transparent: Direct passthrough
     #[debug("lb")]
     lb: SelectionLb,
+
+    /// The requests in flight per backend, with `algo = "least_conn"`.
+    #[debug(skip)]
+    least_conn: Option<InflightCounts>,
+
+    /// Whether a request goes to a backend all the same when none of
+    /// them is healthy.
+    fail_open: bool,
+
+    /// Whose turn it is among backends that are taken unhealthy.
+    #[debug(skip)]
+    fail_open_next: AtomicUsize,
 
     /// Maximum time to wait for establishing a connection
     connection_timeout: Option<Duration>,
@@ -428,7 +490,19 @@ fn new_load_balancer(
     };
     let mut parts = algo.splitn(3, ':');
     match parts.next().unwrap_or_default().trim() {
-        "" | "round_robin" => {
+        // `least_conn` walks the same set of backends and chooses among
+        // them itself, see `Upstream::select_least_conn`.
+        name @ ("" | "round_robin" | "least_conn") => {
+            // `least_conn:<anything>` was built as plain round robin: by
+            // its name here, and by the whole text where the counting is
+            // switched on.
+            if name == "least_conn"
+                && parts.next().is_some_and(|rest| !rest.trim().is_empty())
+            {
+                return Err(invalid(format!(
+                    "algo {algo:?} is invalid, least_conn takes no parameter"
+                )));
+            }
             let lb = update_health_check_params(
                 LoadBalancer::<RoundRobin>::from_backends(backends),
                 name,
@@ -458,7 +532,7 @@ fn new_load_balancer(
             Ok(SelectionLb::Consistent { lb, hash })
         },
         _ => Err(invalid(format!(
-            "algo {algo:?} is invalid, expected round_robin or hash:<type>[:<key>]"
+            "algo {algo:?} is invalid, expected round_robin, least_conn or hash:<type>[:<key>]"
         ))),
     }
 }
@@ -746,6 +820,16 @@ fn split_host_port(host: &str, default_port: u16) -> (&str, u16) {
     (name, port)
 }
 
+/// Whether `backend` is one of the addresses in `failed`, which are
+/// written as a peer shows its address.
+fn has_failed(backend: &Backend, failed: &[String]) -> bool {
+    if failed.is_empty() {
+        return false;
+    }
+    let addr = backend.addr.to_string();
+    failed.contains(&addr)
+}
+
 /// The host name part of a `Host` value, without a port or brackets.
 fn host_name(host: &str) -> &str {
     split_host_port(host, 0).0
@@ -887,6 +971,14 @@ impl Upstream {
             tls,
             sni,
             lb,
+            least_conn: conf
+                .algo
+                .as_deref()
+                .and_then(|algo| algo.split(':').next())
+                .is_some_and(|name| name.trim() == "least_conn")
+                .then(InflightCounts::default),
+            fail_open: conf.fail_open.unwrap_or_default(),
+            fail_open_next: AtomicUsize::new(0),
             alpn,
             request_policy: new_request_policy(conf),
             ca: new_ca(conf)?,
@@ -944,7 +1036,7 @@ impl Upstream {
     }
 
     /// Picks a backend that is healthy and not held back by its circuit
-    /// breaker.
+    /// breaker, and that has not failed this request already.
     ///
     /// The first few candidates settle nearly every request. When all of
     /// them are refused the selection runs again with `max_steps(number of
@@ -957,19 +1049,88 @@ impl Upstream {
     /// matter of chance: a refused selection moved the shared counter on by
     /// five, so the next request looked at the same four backends and
     /// skipped the same fifth one, every time.
+    ///
+    /// `failed` are the backends that have just failed this request. A
+    /// retry used to be chosen like a first attempt: by a hash it went to
+    /// the very backend that had refused the connection, every time, and
+    /// by round robin it did so whenever the count came round to it. They
+    /// are passed over while there is another backend to take, and taken
+    /// again when there is none: a single backend is still tried twice.
+    ///
+    /// With `fail_open`, a request for which no backend is left goes to
+    /// one all the same, healthy or not.
     #[inline]
     fn select_backend<S>(
         &self,
         lb: &LoadBalancer<S>,
         key: &[u8],
         max_steps: impl Fn(usize) -> usize,
+        failed: &[String],
+        by_key: bool,
     ) -> Option<Backend>
     where
         S: BackendSelection + 'static,
         S::Iter: BackendIter,
     {
+        if !failed.is_empty()
+            && let Some(backend) =
+                self.select_accepted(lb, key, &max_steps, |backend| {
+                    !has_failed(backend, failed)
+                })
+        {
+            return Some(backend);
+        }
+        if let Some(backend) =
+            self.select_accepted(lb, key, &max_steps, |_| true)
+        {
+            return Some(backend);
+        }
+        if !self.fail_open {
+            return None;
+        }
+        // None that is healthy: one that is not, rather than no answer at
+        // all. Health checks that all fail at once say more of the check
+        // than of the backends.
+        let set = lb.backends().get_backend();
+        if !by_key {
+            // Each in turn, by a count of its own: the round robin of the
+            // load balancer has been moved on by the selections above,
+            // by the same number for every request, and with two
+            // backends that is the same one every time.
+            let start = self.fail_open_next.fetch_add(1, Ordering::Relaxed)
+                % set.len().max(1);
+            let mut turn = set.iter().skip(start).chain(set.iter().take(start));
+            return turn
+                .clone()
+                .find(|backend| !has_failed(backend, failed))
+                .or_else(|| turn.next())
+                .cloned();
+        }
+        // By the hash, as ever: a request still goes where its key goes,
+        // also one whose key is empty (the cookie it is taken from is
+        // not there).
+        let steps = max_steps(set.len());
+        lb.select_with(key, steps, |backend, _| !has_failed(backend, failed))
+            .or_else(|| lb.select_with(key, steps, |_, _| true))
+    }
+
+    /// The selection of [`Self::select_backend`] among the backends that
+    /// `allow` lets through.
+    fn select_accepted<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+        max_steps: &impl Fn(usize) -> usize,
+        allow: impl Fn(&Backend) -> bool,
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
+        // Asked of the circuit breaker last: a breaker that is half open
+        // counts each backend it lets through as a probe.
         let accept = |backend: &Backend, healthy: bool| {
-            self.accept_backend(backend, healthy)
+            allow(backend) && self.accept_backend(backend, healthy)
         };
         if let Some(backend) = lb.select_with(key, FAST_SELECT_STEPS, accept) {
             return Some(backend);
@@ -993,6 +1154,94 @@ impl Upstream {
         set.iter()
             .find(|backend| accept(backend, backends.ready(backend)))
             .cloned()
+    }
+
+    /// The backend with the fewest requests in flight for its weight,
+    /// among those that are healthy, not held back by their circuit
+    /// breaker and have not failed this request (while there is another).
+    /// With `fail_open`, health is left out of it when no backend is
+    /// healthy.
+    ///
+    /// Backends that are level are given requests by the weighted round
+    /// robin of the load balancer: with nothing in flight, which is every
+    /// request of an upstream that is not busy, it is round robin with
+    /// the weights it has. Taken in turn, one each, a backend of weight
+    /// nine got as many as one of weight one.
+    ///
+    /// Every backend is looked at for every request, which is what
+    /// "least" takes; an upstream has few of them.
+    fn select_least_conn(
+        &self,
+        lb: &LoadBalancer<RoundRobin>,
+        counts: &InflightCounts,
+        failed: &[String],
+    ) -> Option<(Backend, Arc<AtomicU32>)> {
+        let backends = lb.backends();
+        let set = backends.get_backend();
+        if set.is_empty() {
+            return None;
+        }
+        // What a backend carries for its weight, as the two numbers of
+        // the fraction: compared without dividing.
+        let load_of = |backend: &Backend| {
+            (
+                u64::from(counts.load(backend)),
+                backend.weight.max(1) as u64,
+            )
+        };
+        let less = |a: (u64, u64), b: (u64, u64)| a.0 * b.1 < b.0 * a.1;
+        // One of those that `allow` lets through and that carry the
+        // least.
+        let pick = |allow: &dyn Fn(&Backend) -> bool| {
+            let least = set
+                .iter()
+                .filter(|backend| allow(backend))
+                .map(load_of)
+                .reduce(
+                    |least, load| if less(load, least) { load } else { least },
+                )?;
+            let level = |backend: &Backend| {
+                allow(backend) && !less(least, load_of(backend))
+            };
+            lb.select_with(b"", set.len() + 1, |backend, _| level(backend))
+                // The counts move while they are read: whoever is level
+                // by now, or whoever is allowed at all.
+                .or_else(|| set.iter().find(|backend| level(backend)).cloned())
+                .or_else(|| set.iter().find(|backend| allow(backend)).cloned())
+        };
+        let healthy = |backend: &Backend| backends.ready(backend);
+        let choose = |allow: &dyn Fn(&Backend) -> bool| {
+            // The circuit breaker is asked of the one that is chosen
+            // only: half open, it counts each backend it lets through
+            // as a probe.
+            let mut refused: Vec<Backend> = vec![];
+            loop {
+                let backend = pick(&|backend| {
+                    allow(backend) && !refused.contains(backend)
+                })?;
+                if self.accept_backend(&backend, true) {
+                    return Some(backend);
+                }
+                refused.push(backend);
+            }
+        };
+        let chosen = (!failed.is_empty())
+            .then(|| {
+                choose(&|backend| {
+                    healthy(backend) && !has_failed(backend, failed)
+                })
+            })
+            .flatten()
+            .or_else(|| choose(&healthy))
+            .or_else(|| {
+                if !self.fail_open {
+                    return None;
+                }
+                pick(&|backend| !has_failed(backend, failed))
+                    .or_else(|| pick(&|_| true))
+            })?;
+        let count = counts.of(&chosen, &set);
+        Some((chosen, count))
     }
 
     /// Creates and configures a new HTTP peer for handling requests
@@ -1024,20 +1273,62 @@ impl Upstream {
         client_ip: &mut Option<String>,
         count_processing: bool,
     ) -> Option<HttpPeer> {
+        self.new_http_peer_for(
+            session,
+            PeerAttempt {
+                client_ip,
+                count_processing,
+                failed: &[],
+                inflight: None,
+            },
+        )
+        .await
+    }
+
+    /// [`Self::new_http_peer`] for a request that says what it has been
+    /// through: the backends that have failed it are passed over while
+    /// there is another, and the request is counted as one in flight on
+    /// the backend it gets, where the upstream chooses by that.
+    #[inline]
+    pub async fn new_http_peer_for(
+        &self,
+        session: &Session,
+        attempt: PeerAttempt<'_>,
+    ) -> Option<HttpPeer> {
+        let PeerAttempt {
+            client_ip,
+            count_processing,
+            failed,
+            inflight,
+        } = attempt;
         // Before a backend is picked: there is none to pick for a request
         // that has no name to ask it for.
         let sni = match &self.lb {
             SelectionLb::Transparent => String::new(),
             _ => self.sni_for(session)?,
         };
+        let mut counted = None;
         let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
-                // One more than there are backends: the first candidate
-                // comes from the weighted list and may show up again among
-                // the following ones, which walk every backend in turn.
-                let backend =
-                    self.select_backend(lb, b"", |count| count + 1)?;
+                let backend = if let Some(counts) = &self.least_conn {
+                    let (backend, count) =
+                        self.select_least_conn(lb, counts, failed)?;
+                    counted = Some(count);
+                    backend
+                } else {
+                    // One more than there are backends: the first
+                    // candidate comes from the weighted list and may show
+                    // up again among the following ones, which walk every
+                    // backend in turn.
+                    self.select_backend(
+                        lb,
+                        b"",
+                        |count| count + 1,
+                        failed,
+                        false,
+                    )?
+                };
                 HttpPeer::new(backend, self.tls, sni.clone())
             },
             // For consistent hashing, generate hash value from request details
@@ -1047,11 +1338,16 @@ impl Upstream {
                 // hash ring, and a backend owns many of them: the same few
                 // backends come up again and again, so it takes far more
                 // steps than backends to have looked at them all.
-                let backend =
-                    self.select_backend(lb, value.as_bytes(), |count| {
+                let backend = self.select_backend(
+                    lb,
+                    value.as_bytes(),
+                    |count| {
                         (count * CONSISTENT_SELECT_STEPS_PER_BACKEND)
                             .clamp(64, 1024)
-                    })?;
+                    },
+                    failed,
+                    true,
+                )?;
                 HttpPeer::new(backend, self.tls, sni)
             },
             // In transparent mode, use the request's host header
@@ -1064,6 +1360,11 @@ impl Upstream {
         // caller says this is the request's first attempt.
         if count_processing {
             self.processing.fetch_add(1, Ordering::Relaxed);
+        }
+        // On its backend the request is counted for each attempt: the
+        // one before is released by what takes its place.
+        if let Some(inflight) = inflight {
+            *inflight = counted.map(InflightGuard::new);
         }
         // Set various timeout values
         p.options.connection_timeout = self.connection_timeout;
@@ -1512,9 +1813,9 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        Upstream, UpstreamConf, UpstreamProvider, ca_group_key, host_name,
-        new_backends, new_client_cert, new_load_balancer, resolve_host,
-        split_host_port,
+        InflightGuard, PeerAttempt, Upstream, UpstreamConf, UpstreamProvider,
+        ca_group_key, host_name, new_backends, new_client_cert,
+        new_load_balancer, resolve_host, split_host_port,
     };
     use crate::first_round::FirstRound;
     use crate::new_ahash_upstreams;
@@ -1957,10 +2258,18 @@ mod tests {
         };
         let addrs = vec!["192.168.1.1:8001".to_string()];
         assert_eq!(
-            "Common error, category: new_upstream, algo \"least_conn\" is invalid, expected round_robin or hash:<type>[:<key>]",
+            "Common error, category: new_upstream, algo \"random\" is invalid, expected round_robin, least_conn or hash:<type>[:<key>]",
             build(UpstreamConf {
                 addrs: addrs.clone(),
-                algo: Some("least_conn".to_string()),
+                algo: Some("random".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            "Common error, category: new_upstream, algo \"least_conn:x\" is invalid, least_conn takes no parameter",
+            build(UpstreamConf {
+                addrs: addrs.clone(),
+                algo: Some("least_conn:x".to_string()),
                 ..Default::default()
             })
         );
@@ -2565,6 +2874,244 @@ mod tests {
                             panic!("no backend, algo {algo:?} at {position}")
                         });
                     assert_eq!(alive, peer.address().to_string());
+                }
+            }
+        }
+    }
+
+    /// Listeners for the health check of a test to find, and their
+    /// addresses.
+    fn listening(count: usize) -> (Vec<std::net::TcpListener>, Vec<String>) {
+        let listeners: Vec<_> = (0..count)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect();
+        let addrs = listeners
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().to_string())
+            .collect();
+        (listeners, addrs)
+    }
+
+    /// A session to ask an upstream for a peer with.
+    async fn request_session() -> Session {
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    /// The peer of an attempt of a request that `failed` backends have
+    /// failed already.
+    async fn peer_after(
+        up: &Upstream,
+        session: &Session,
+        failed: &[String],
+    ) -> Option<String> {
+        up.new_http_peer_for(
+            session,
+            PeerAttempt {
+                client_ip: &mut None,
+                count_processing: false,
+                failed,
+                inflight: None,
+            },
+        )
+        .await
+        .map(|peer| peer.address().to_string())
+    }
+
+    /// Regression: a retry was chosen like a first attempt. By a hash
+    /// that is the backend that has just failed, every time; by round
+    /// robin it is whenever the count comes round to it.
+    #[tokio::test]
+    async fn test_retry_goes_to_another_backend() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(3);
+        for algo in ["round_robin", "hash:url", "least_conn"] {
+            let up = Upstream::new(
+                "retry",
+                &UpstreamConf {
+                    addrs: addrs.clone(),
+                    algo: Some(algo.to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+            up.run_health_check().await.unwrap();
+            let first = peer_after(&up, &session, &[]).await.unwrap();
+            let mut failed = vec![first.clone()];
+            for _ in 0..20 {
+                let second = peer_after(&up, &session, &failed).await.unwrap();
+                assert_eq!(true, second != first, "{algo}: {second}");
+            }
+            // And to the one that is left when two have failed.
+            let second = peer_after(&up, &session, &failed).await.unwrap();
+            failed.push(second);
+            let third = peer_after(&up, &session, &failed).await.unwrap();
+            assert_eq!(false, failed.contains(&third), "{algo}");
+            // With none left it is one of them again, not no backend:
+            // an upstream of one backend is retried on that backend.
+            failed.push(third);
+            let again = peer_after(&up, &session, &failed).await;
+            assert_eq!(true, again.is_some(), "{algo}");
+        }
+    }
+
+    /// `least_conn`: the backend with the fewest requests in flight for
+    /// its weight, and each in turn while they are level.
+    #[tokio::test]
+    async fn test_least_conn() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(3);
+        let up = Upstream::new(
+            "least",
+            &UpstreamConf {
+                addrs: vec![
+                    addrs[0].clone(),
+                    addrs[1].clone(),
+                    format!("{} 2", addrs[2]),
+                ],
+                algo: Some("least_conn".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.run_health_check().await.unwrap();
+        let attempt = async |slot: &mut Option<InflightGuard>| {
+            up.new_http_peer_for(
+                &session,
+                PeerAttempt {
+                    client_ip: &mut None,
+                    count_processing: false,
+                    failed: &[],
+                    inflight: Some(slot),
+                },
+            )
+            .await
+            .map(|peer| peer.address().to_string())
+            .unwrap()
+        };
+
+        // Nothing in flight, one request after another: round robin by
+        // the weights. Regression: each in turn, one each, whatever its
+        // weight - a third of the requests for half of the capacity.
+        let mut seen = vec![];
+        for _ in 0..8 {
+            let mut slot = None;
+            seen.push(attempt(&mut slot).await);
+        }
+        let idle = |addr: &str| {
+            seen.iter().filter(|item| item.as_str() == addr).count()
+        };
+        assert_eq!(
+            (2, 2, 4),
+            (idle(&addrs[0]), idle(&addrs[1]), idle(&addrs[2])),
+            "{seen:?}"
+        );
+
+        // Requests that stay: eight of them are two each on the backends
+        // of weight one and four on the one of weight two.
+        let mut held = vec![];
+        let mut chosen = vec![];
+        for _ in 0..8 {
+            let mut slot = None;
+            chosen.push(attempt(&mut slot).await);
+            held.push(slot);
+        }
+        let count = |addr: &str| {
+            chosen.iter().filter(|item| item.as_str() == addr).count()
+        };
+        assert_eq!(
+            (2, 2, 4),
+            (count(&addrs[0]), count(&addrs[1]), count(&addrs[2])),
+            "{chosen:?}"
+        );
+        // One of them ends: the next request takes its place.
+        let ended = chosen.swap_remove(0);
+        drop(held.swap_remove(0));
+        let mut slot = None;
+        assert_eq!(ended, attempt(&mut slot).await);
+        // A request that is tried again is counted on its new backend
+        // and no longer on the one before.
+        let before = attempt(&mut slot).await;
+        let counts = up.least_conn.as_ref().unwrap();
+        let total = || -> u32 {
+            counts
+                .counts
+                .iter()
+                .map(|item| item.value().load(Ordering::Relaxed))
+                .sum()
+        };
+        assert_eq!(8, total(), "{before}");
+        drop(slot);
+        drop(held);
+        assert_eq!(0, total());
+    }
+
+    /// `fail_open`: with no backend that is healthy, one of them is taken
+    /// all the same.
+    #[tokio::test]
+    async fn test_fail_open() {
+        let session = request_session().await;
+        // Ports with nothing listening on them.
+        let dead: Vec<String> = (0..2)
+            .map(|_| {
+                let listener =
+                    std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.local_addr().unwrap().to_string()
+            })
+            .collect();
+        for algo in ["round_robin", "hash:url", "least_conn"] {
+            for fail_open in [None, Some(true)] {
+                let up = Upstream::new(
+                    "fail-open",
+                    &UpstreamConf {
+                        addrs: dead.clone(),
+                        algo: Some(algo.to_string()),
+                        fail_open,
+                        health_check: Some(
+                            "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+                up.run_health_check().await.unwrap();
+                let peer = peer_after(&up, &session, &[]).await;
+                assert_eq!(
+                    fail_open.is_some(),
+                    peer.is_some(),
+                    "{algo} {fail_open:?}"
+                );
+                // And another one for the retry.
+                if let Some(first) = peer {
+                    let second =
+                        peer_after(&up, &session, std::slice::from_ref(&first))
+                            .await;
+                    assert_eq!(true, second.is_some_and(|addr| addr != first));
+                }
+                // Regression: without a key they take turns. Chosen by
+                // the round robin that the refused selections had moved
+                // on, every request went to the same backend.
+                if fail_open.is_some() && algo == "round_robin" {
+                    let mut seen = vec![];
+                    for _ in 0..10 {
+                        seen.push(
+                            peer_after(&up, &session, &[]).await.unwrap(),
+                        );
+                    }
+                    for addr in dead.iter() {
+                        assert_eq!(
+                            5,
+                            seen.iter().filter(|item| *item == addr).count(),
+                            "{algo}: {seen:?}"
+                        );
+                    }
                 }
             }
         }

@@ -306,6 +306,17 @@ export default function Servers() {
       options: newBooleanOptions(),
     },
     {
+      name: "proxy_protocol",
+      section: sec.connection,
+      label: serverI18n("proxyProtocol"),
+      placeholder: "",
+      tips: serverI18n("proxyProtocolTips"),
+      defaultValue: serverConfig.proxy_protocol,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "modules",
       section: sec.basic,
       label: serverI18n("modules"),

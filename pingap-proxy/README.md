@@ -128,6 +128,52 @@ then only what the request claims.
 
 The variables can be used in the header plugins as well.
 
+### PROXY protocol
+
+A load balancer that works on connections - a cloud NLB, HAProxy in TCP mode -
+writes no `X-Forwarded-For`. It says who the client is in a header of its own
+ahead of everything the client sends, TLS included. A server with
+`proxy_protocol = true` reads it:
+
+```toml
+[basic]
+trusted_proxies = ["10.0.0.0/8"]      # where the load balancer connects from
+
+[servers.web]
+addr = "0.0.0.0:443"
+global_certificates = true
+proxy_protocol = true
+```
+
+- The address in the header becomes the address of the connection:
+  `$remote_addr`, `{remote}` in the access log, `$client_ip`, and what the
+  address checks and limits of the plugins go by. Nothing else has to be
+  configured for it.
+- Versions 1 (text) and 2 (binary) are read, on listeners with and without
+  TLS, for HTTP/1.1 and HTTP/2. A `LOCAL` header of version 2 and `UNKNOWN`
+  of version 1 - the load balancer's own connection, a health check - leave
+  the connection its address.
+- The header is read from the addresses of `basic.trusted_proxies` and from
+  nobody else: whoever may send one is whoever they say. The option without
+  that list is a configuration error. A client that connects directly and
+  sends a header gets what a server that reads none gives it: a `400`, or on
+  a TLS listener a handshake that fails.
+- A trusted proxy that sends no header is served as it is, under its own
+  address, so a health check that does not speak the protocol still passes.
+  A header that starts as one and is none ends the connection.
+- The connection of a trusted proxy is judged by its first bytes, whenever
+  they come: some balancers send the header only together with the first
+  bytes of the client, on a connection the client may have opened well ahead
+  of its request. One on which nothing arrives for a minute is closed.
+- It is read once, at the start of the connection. On a connection that is
+  kept, a second one in front of a later request is not a header but a
+  broken request.
+- The address the client connected to (the destination in the header) is not
+  used: `$server_addr` and `$server_port` are those of this listener.
+- With `proxy_protocol` on a listener **without** TLS, the metric of how long
+  evicted upstream connections had been idle is not reported for that server.
+  The header is not sent on to upstreams.
+
 ### Client certificates (mutual TLS)
 
 A server with `tls_client_ca` asks every client for a certificate and verifies

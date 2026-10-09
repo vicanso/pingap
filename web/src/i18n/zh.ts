@@ -344,6 +344,9 @@ export default {
     downstreamWriteTimeout: "客户端写超时",
     downstreamWriteTimeoutPlaceholder: "输入客户端写超时(如10s)",
     reusePort: "启用SO_REUSEPORT",
+    proxyProtocol: "PROXY protocol",
+    proxyProtocolTips:
+      "读取四层负载均衡器放在每条连接最前面的 PROXY protocol 头（v1 或 v2），用其中的地址作为客户端地址。只接受基础配置中“可信代理”列表里的地址发来的头，该列表必须配置；其他来源的头不会被读取。",
     modules: "Http模块",
     modulesPlaceholder: "选择要使用的http模块",
     tlsCipherList: "tls密码套件列表",
@@ -470,7 +473,12 @@ export default {
     dnsSearch: "Dns搜索",
     dnsSearchPlaceholder: "输入服务发现使用的dns搜索, 多个域名以`,`分隔",
     algo: "负载均衡算法",
-    algoPlaceholder: "输入负载均衡算法(如hash:ip)",
+    algoPlaceholder: "输入负载均衡算法(如 least_conn、hash:ip)",
+    algoTips:
+      "round_robin（默认）、least_conn（按权重折算后在途请求最少的后端），或者一致性哈希 hash:<ip|url|path|header|cookie|query>[:<key>]。",
+    failOpen: "全部不健康时仍转发",
+    failOpenTips:
+      "没有任何后端健康（健康检查不通过，或被熔断器挡住）时，仍然把请求发给其中一个，而不是返回 503。",
     healthCheck: "健康检查",
     healthCheckPlaceholder: "输入健康检查的url，支持http(s)、tcp、grpc与ws(s)",
     connectionTimeout: "连接超时",
@@ -581,6 +589,26 @@ export default {
     isCa: "CA证书",
     bufferDays: "证书有效期校验、更新预留时长",
     bufferDaysPlaceholder: "输入证书有效期校验、更新预留时长",
+    acmeDirectory: "ACME 目录地址",
+    acmeDirectoryPlaceholder:
+      "输入 CA 的 directory 地址，如 https://acme.zerossl.com/v2/DV90",
+    acmeDirectoryTips:
+      "证书向哪个 ACME 服务申请：其他 CA、Let's Encrypt 的 staging 环境，或者自建的 CA。不填时是 Let's Encrypt 的生产环境。",
+    acmeCa: "ACME 服务的根证书",
+    acmeCaPlaceholder: "输入 PEM 文件路径，如 /etc/pingap/ca.pem",
+    acmeCaTips:
+      "用来校验 ACME 服务自身证书的根证书（PEM 文件），用于自建 CA（step-ca）。不填时使用系统的根证书。",
+    acmeEabKid: "EAB Key ID",
+    acmeEabKidPlaceholder: "输入 CA 提供的 key id",
+    acmeEabTips:
+      "外部账号绑定（EAB），用于要求绑定的 CA（ZeroSSL、Google Trust Services）：key id 和对应的 HMAC key 需要同时填写。",
+    acmeEabHmac: "EAB HMAC Key",
+    acmeEabHmacPlaceholder: "输入 HMAC key，按 CA 给出的 base64 原样填写",
+    acmeContact: "ACME 联系邮箱",
+    acmeContactPlaceholder: "输入邮箱地址，多个用逗号分隔",
+    acmeKeyType: "密钥类型",
+    acmeKeyTypeTips:
+      "证书的密钥：ecdsa（P-256，默认）或 rsa（2048 位），用于不支持 ECDSA 的客户端。",
     dnsProviderTips:
       "未设置与 Manual 效果相同：TXT 记录只会打印到日志，需要手动添加。",
     remark: "备注",
@@ -613,6 +641,15 @@ export default {
     adminAuthorization: "认证信息",
     adminAuthorizationPlaceholder:
       "bas64编码的basic认证信息(base64(user:pass))",
+    adminReadonlyAuthorization: "只读账号",
+    adminReadonlyAuthorizationTips:
+      "可以登录并查看全部内容（包括配置里的各种凭据），但不能修改配置、不能重启的账号。",
+    adminTokens: "API Token",
+    adminTokensPlaceholder: "名称:<token 的 sha256 十六进制>",
+    adminTokensTips:
+      "给脚本用的令牌，请求时带 Authorization: Bearer <token>。每项是名称加 token 的 SHA-256，token 本身不保存。删除一项即吊销对应的 token。",
+    adminReadonlyTokens: "只读 API Token",
+    adminReadonlyTokensTips: "只能读取、不能修改配置也不能重启的 API token。",
     dirPath: "目录",
     dirPathPlaceholder: "输入使用静态服务的目录",
     dirIndex: "默认文件",

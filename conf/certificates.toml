@@ -44,5 +44,26 @@
 # Without: warn this many days before it expires (default `7`).
 # buffer_days = 14
 
+# With `acme`: the ACME server the certificate is ordered from, when that is
+# not Let's Encrypt's production environment: another CA, Let's Encrypt's
+# staging environment, a CA of your own.
+# acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+# A PEM file with the root the ACME server's own certificate is verified
+# with, for a CA of your own. Default: the roots of the system.
+# acme_ca = "/etc/pingap/internal-root.pem"
+
+# External account binding, for a CA that asks for one: the key id and its
+# HMAC key (base64, as the CA gives it), set together.
+# acme_eab_kid = "$ENV:EAB_KID"
+# acme_eab_hmac = "$ENV:EAB_HMAC"
+
+# The e-mail addresses of the ACME account, comma separated.
+# acme_contact = "ops@example.com"
+
+# The key of the certificate: "ecdsa" (P-256) or "rsa" (2048 bits).
+# Default `ecdsa`
+# acme_key_type = "rsa"
+
 # Description of this certificate
 # remark = ""

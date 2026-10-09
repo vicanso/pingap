@@ -62,12 +62,19 @@ pingap -c "etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --autore
 pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 ```
 
-etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`（默认 `10s`）、`connect_timeout`（默认 `5s`）、`user`、`password`、`enable_history`。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
+etcd URL 形如 `etcd://host:2379[,host2:2379]/prefix[?params]`；省略 prefix 时默认为 `/`，没有 host 的 URL 会被拒绝。参数有 `timeout`（默认 `10s`）、`connect_timeout`（默认 `5s`）、`user`、`password`、`enable_history`，以及下面 TLS 的几项。存储只打开一个客户端并在所有请求间复用；请求失败时会用新连接重试一次。
 
 - URL 里不写超时也有请求和建连的时限，watch 用的连接每 30 秒发一次 HTTP/2 ping 探活。以前两者都没有，连接被静默丢弃后，等在上面的轮询会一直挂着，排在它后面的保存也跟着挂住。
 - 前缀下的键分页读取（每页 64 个键，值很大时自动减半，减到多少会记住供下次读取使用），各页按同一个 revision 读取，所以配置大小不再受单条 gRPC 消息（4 MiB）的限制。
 - `enable_history=true` 时，每个键在 `<prefix>-history` 下保留最新的 100 个版本，写入新版本时清理更早的。删除键不会留下版本。
-- 不支持通过 TLS 连接 etcd。
+- **TLS**：`tls=true` 用 TLS 连接 etcd，按系统的根证书校验它的证书。`ca=/path/ca.pem` 改用这个 CA 校验；`cert=/path/client.pem&key=/path/client.key` 向要求客户端证书的 etcd（`--client-cert-auth`）出示证书；`server_name=etcd.internal` 是校验证书时用的名字，用于它和 URL 里的 host 不一致的情况（用 IP 连接、域名在负载均衡器后面）。四项中任意一项都会开启 TLS，对 URL 里的所有 host 生效。
+
+  ```bash
+  pingap -c "etcd://10.0.0.5:2379,10.0.0.6:2379/pingap?ca=/etc/pingap/etcd-ca.pem&cert=/etc/pingap/etcd-client.pem&key=/etc/pingap/etcd-client.key&server_name=etcd.internal&user=pingap&password=..." --autoreload
+  ```
+
+  这些文件在进程启动时读取，有问题也在这时报出来：文件不存在、里面没有证书或私钥、只配了 `cert` 没配 `key`。证书更换后需要重启进程才会生效。`user` 和 `password` 在这条连接上发送，和不加密时一样；不开 TLS 时它们在网络上是明文。
+- 每个条目单独写入。一次修改多个条目（导入、`--sync`）时，其他节点是一个键一个键看到的。
 
 目录按其中所有 `*.toml` 文件加载（没有时依次找 `*.hcl`、`*.kdl`）。每个文件单独解析，再把各自的表合并成一份文档，因此语法错误会指出所在文件，文件里也可以使用任意 TOML 写法（顶层的 `upstreams.extra.addrs = [..]` 与 `[upstreams.extra]` 等价）。同一分类可以分散在多个文件里，但一个条目（以及 `[basic]`）只能定义在其中一个文件：同名条目出现在两个文件里会报错，并指出这两个文件。
 
