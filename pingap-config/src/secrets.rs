@@ -47,6 +47,8 @@ pub fn is_secret_key(key: &str) -> bool {
                 | "tls_key"
                 | "client_key"
                 | "acme_eab_hmac"
+                // `Authorization: Bearer ...` for the receiver.
+                | "webhook_headers"
                 // As long as `tls_cert`, and as little worth reading.
                 | "client_cert"
                 // Not a secret, but as long as one: its checksum says as
@@ -342,6 +344,22 @@ ip_list = ["127.0.0.1"]
         assert_eq!(true, text.contains("X-Client"), "{text}");
         let text = mask("category = \"csrf\"\nkey = \"abcd\"");
         assert_eq!(false, text.contains("abcd"), "{text}");
+    }
+
+    /// What a webhook is given to authenticate with is not shown: its
+    /// secret, and its headers, which are a token as often as not.
+    #[test]
+    fn test_mask_webhook_credentials() {
+        let table: Table = toml::from_str(
+            "webhook_secret = \"SECabcdef\"\nwebhook_headers = [\"Authorization: Bearer t0ken-1234\"]\nwebhook_template = \"{{title}}: {{message}}\"\nwebhook_min_level = \"warn\"",
+        )
+        .unwrap();
+        let text = toml::to_string(&mask_secrets(&table)).unwrap();
+        assert_eq!(false, text.contains("SECabcdef"), "{text}");
+        assert_eq!(false, text.contains("t0ken-1234"), "{text}");
+        // the rest of it is as it was written
+        assert_eq!(true, text.contains("{{title}}: {{message}}"), "{text}");
+        assert_eq!(true, text.contains("warn"), "{text}");
     }
 
     #[test]

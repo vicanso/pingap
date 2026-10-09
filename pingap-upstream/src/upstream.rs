@@ -40,8 +40,9 @@ use pingap_core::{
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
     Discovery, TRANSPARENT_DISCOVERY, is_dns_discovery, is_docker_discovery,
-    is_static_discovery, new_dns_discover_backends,
-    new_docker_discover_backends, new_static_discovery,
+    is_srv_discovery, is_static_discovery, new_dns_discover_backends,
+    new_docker_discover_backends, new_srv_discover_backends,
+    new_static_discovery,
 };
 use pingap_health::new_health_check_with_client_cert;
 use pingora::lb::Backend;
@@ -166,6 +167,41 @@ pub struct PeerAttempt<'a> {
     /// for an upstream that chooses by that. What was there, of the
     /// attempt before, is released.
     pub inflight: Option<&'a mut Option<InflightGuard>>,
+    /// Takes the cookie (`name=value`) that keeps the client on the
+    /// backend it is given, for an upstream that does so
+    /// (`sticky:<cookie>`): `None` when the client has it already.
+    pub sticky_cookie: Option<&'a mut Option<String>>,
+}
+
+/// The name of the cookie of `algo = "sticky:<cookie>"`: all that follows
+/// the first colon. `None` for any other algorithm.
+fn sticky_cookie_name(algo: &str) -> Option<&str> {
+    let (name, cookie) = algo.split_once(':')?;
+    (name.trim() == "sticky").then(|| cookie.trim())
+}
+
+/// What a `sticky` upstream tells its backends apart by, in the cookie it
+/// gives the client: a number made of the address, the same in every
+/// process and every version that serves the upstream, and not the
+/// address itself.
+fn backend_id(backend: &Backend) -> u64 {
+    // FNV-1a over the address as it is written, without making a string
+    // of it: this is asked of every backend for every request that has
+    // the cookie.
+    struct Fnv(u64);
+    impl std::fmt::Write for Fnv {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            for byte in text.bytes() {
+                self.0 ^= u64::from(byte);
+                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            Ok(())
+        }
+    }
+    let mut hash = Fnv(0xcbf2_9ce4_8422_2325);
+    let _ =
+        std::fmt::Write::write_fmt(&mut hash, format_args!("{}", backend.addr));
+    hash.0
 }
 
 enum SelectionLb {
@@ -251,6 +287,10 @@ pub struct Upstream {
     /// The requests in flight per backend, with `algo = "least_conn"`.
     #[debug(skip)]
     least_conn: Option<InflightCounts>,
+
+    /// The cookie that keeps a client on its backend, with
+    /// `algo = "sticky:<cookie>"`.
+    sticky: Option<String>,
 
     /// Whether a request goes to a backend all the same when none of
     /// them is healthy.
@@ -351,6 +391,9 @@ fn new_backends(
     let (result, category) = match discovery_category {
         d if is_dns_discovery(d) => {
             (new_dns_discover_backends(discovery), "dns_discovery")
+        },
+        d if is_srv_discovery(d) => {
+            (new_srv_discover_backends(discovery), "srv_discovery")
         },
         d if is_docker_discovery(d) => {
             (new_docker_discover_backends(discovery), "docker_discovery")
@@ -513,6 +556,33 @@ fn new_load_balancer(
             )?;
             Ok(SelectionLb::RoundRobin(lb))
         },
+        // The backend a client was given first is the one it stays on,
+        // told by a cookie of the name that follows. Chosen by round
+        // robin where there is no cookie yet, see `select_sticky`.
+        "sticky" => {
+            // All of what follows the name, as it is taken where the
+            // cookie is read: `sticky:route:a;b` was accepted for its
+            // `route` and then asked for a cookie `route:a;b`.
+            let cookie = sticky_cookie_name(algo).unwrap_or_default();
+            let valid = !cookie.is_empty()
+                && cookie.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || b"-_.".contains(&byte)
+                });
+            if !valid {
+                return Err(invalid(format!(
+                    "algo {algo:?} is invalid, expected sticky:<cookie name>"
+                )));
+            }
+            let lb = update_health_check_params(
+                LoadBalancer::<RoundRobin>::from_backends(backends),
+                name,
+                conf,
+                sender,
+                first_round,
+                client_cert_key,
+            )?;
+            Ok(SelectionLb::RoundRobin(lb))
+        },
         "hash" => {
             let hash_type = parts.next().unwrap_or_default().trim();
             let hash_key = parts.next().unwrap_or_default();
@@ -532,7 +602,7 @@ fn new_load_balancer(
             Ok(SelectionLb::Consistent { lb, hash })
         },
         _ => Err(invalid(format!(
-            "algo {algo:?} is invalid, expected round_robin, least_conn or hash:<type>[:<key>]"
+            "algo {algo:?} is invalid, expected round_robin, least_conn, sticky:<cookie> or hash:<type>[:<key>]"
         ))),
     }
 }
@@ -977,6 +1047,11 @@ impl Upstream {
                 .and_then(|algo| algo.split(':').next())
                 .is_some_and(|name| name.trim() == "least_conn")
                 .then(InflightCounts::default),
+            sticky: conf
+                .algo
+                .as_deref()
+                .and_then(sticky_cookie_name)
+                .map(str::to_string),
             fail_open: conf.fail_open.unwrap_or_default(),
             fail_open_next: AtomicUsize::new(0),
             alpn,
@@ -1072,22 +1147,53 @@ impl Upstream {
         S: BackendSelection + 'static,
         S::Iter: BackendIter,
     {
-        if !failed.is_empty()
-            && let Some(backend) =
-                self.select_accepted(lb, key, &max_steps, |backend| {
-                    !has_failed(backend, failed)
-                })
-        {
-            return Some(backend);
-        }
-        if let Some(backend) =
-            self.select_accepted(lb, key, &max_steps, |_| true)
-        {
+        if let Some(backend) = self.select_able(lb, key, &max_steps, failed) {
             return Some(backend);
         }
         if !self.fail_open {
             return None;
         }
+        self.select_any(lb, key, max_steps, failed, by_key)
+    }
+
+    /// A backend that can take the request: healthy, let through by its
+    /// circuit breaker, and not one that has just failed it while there
+    /// is another.
+    fn select_able<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+        max_steps: &impl Fn(usize) -> usize,
+        failed: &[String],
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
+        if !failed.is_empty()
+            && let Some(backend) =
+                self.select_accepted(lb, key, max_steps, |backend| {
+                    !has_failed(backend, failed)
+                })
+        {
+            return Some(backend);
+        }
+        self.select_accepted(lb, key, max_steps, |_| true)
+    }
+
+    /// What `fail_open` falls back on: a backend whatever its health.
+    fn select_any<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+        max_steps: impl Fn(usize) -> usize,
+        failed: &[String],
+        by_key: bool,
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
         // None that is healthy: one that is not, rather than no answer at
         // all. Health checks that all fail at once say more of the check
         // than of the backends.
@@ -1154,6 +1260,58 @@ impl Upstream {
         set.iter()
             .find(|backend| accept(backend, backends.ready(backend)))
             .cloned()
+    }
+
+    /// The backend the client's cookie names, while that one can take
+    /// the request, and otherwise one chosen as by round robin - together
+    /// with the cookie to give the client for it.
+    ///
+    /// A cookie for a backend that is gone, unhealthy, held back by its
+    /// circuit breaker or has just failed this request is no reason to
+    /// fail: the client is moved, and told so by a new cookie.
+    fn select_sticky(
+        &self,
+        lb: &LoadBalancer<RoundRobin>,
+        cookie: &str,
+        session: &Session,
+        failed: &[String],
+    ) -> Option<(Backend, Option<String>)> {
+        let wanted =
+            pingap_core::get_cookie_value(session.req_header(), cookie)
+                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok());
+        // The backend of the cookie, where it is still there and has not
+        // just failed this request, though it can not take it.
+        let mut named = None;
+        if let Some(wanted) = wanted {
+            let backends = lb.backends();
+            let set = backends.get_backend();
+            if let Some(backend) = set
+                .iter()
+                .find(|backend| backend_id(backend) == wanted)
+                .filter(|backend| !has_failed(backend, failed))
+            {
+                if self.accept_backend(backend, backends.ready(backend)) {
+                    return Some((backend.clone(), None));
+                }
+                named = Some(backend.clone());
+            }
+        }
+        let max_steps = |count: usize| count + 1;
+        let backend = match self.select_able(lb, b"", &max_steps, failed) {
+            Some(backend) => backend,
+            None if !self.fail_open => return None,
+            // `fail_open` and no backend that can take the request: one
+            // is taken all the same, and for this client that is the one
+            // it has been on. Taken in turn like the others, it was
+            // moved with every request, a new cookie each time, for as
+            // long as the health checks failed.
+            None => match named {
+                Some(backend) => return Some((backend, None)),
+                None => self.select_any(lb, b"", max_steps, failed, false)?,
+            },
+        };
+        let value = format!("{cookie}={:016x}", backend_id(&backend));
+        Some((backend, Some(value)))
     }
 
     /// The backend with the fewest requests in flight for its weight,
@@ -1280,6 +1438,7 @@ impl Upstream {
                 count_processing,
                 failed: &[],
                 inflight: None,
+                sticky_cookie: None,
             },
         )
         .await
@@ -1300,6 +1459,7 @@ impl Upstream {
             count_processing,
             failed,
             inflight,
+            sticky_cookie,
         } = attempt;
         // Before a backend is picked: there is none to pick for a request
         // that has no name to ask it for.
@@ -1308,6 +1468,7 @@ impl Upstream {
             _ => self.sni_for(session)?,
         };
         let mut counted = None;
+        let mut cookie = None;
         let mut p = match &self.lb {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => {
@@ -1315,6 +1476,11 @@ impl Upstream {
                     let (backend, count) =
                         self.select_least_conn(lb, counts, failed)?;
                     counted = Some(count);
+                    backend
+                } else if let Some(name) = &self.sticky {
+                    let (backend, set) =
+                        self.select_sticky(lb, name, session, failed)?;
+                    cookie = set;
                     backend
                 } else {
                     // One more than there are backends: the first
@@ -1365,6 +1531,11 @@ impl Upstream {
         // one before is released by what takes its place.
         if let Some(inflight) = inflight {
             *inflight = counted.map(InflightGuard::new);
+        }
+        // And the cookie of this attempt takes the place of the one of
+        // an attempt that failed.
+        if let Some(sticky_cookie) = sticky_cookie {
+            *sticky_cookie = cookie;
         }
         // Set various timeout values
         p.options.connection_timeout = self.connection_timeout;
@@ -2258,7 +2429,7 @@ mod tests {
         };
         let addrs = vec!["192.168.1.1:8001".to_string()];
         assert_eq!(
-            "Common error, category: new_upstream, algo \"random\" is invalid, expected round_robin, least_conn or hash:<type>[:<key>]",
+            "Common error, category: new_upstream, algo \"random\" is invalid, expected round_robin, least_conn, sticky:<cookie> or hash:<type>[:<key>]",
             build(UpstreamConf {
                 addrs: addrs.clone(),
                 algo: Some("random".to_string()),
@@ -2916,6 +3087,7 @@ mod tests {
                 count_processing: false,
                 failed,
                 inflight: None,
+                sticky_cookie: None,
             },
         )
         .await
@@ -2989,6 +3161,7 @@ mod tests {
                     count_processing: false,
                     failed: &[],
                     inflight: Some(slot),
+                    sticky_cookie: None,
                 },
             )
             .await
@@ -3050,6 +3223,136 @@ mod tests {
         drop(slot);
         drop(held);
         assert_eq!(0, total());
+    }
+
+    /// `sticky:<cookie>`: a client stays on the backend it was given
+    /// first, by a cookie the upstream hands out itself.
+    #[tokio::test]
+    async fn test_sticky() {
+        let (_listeners, addrs) = listening(3);
+        let new = || {
+            let up = Upstream::new(
+                "sticky",
+                &UpstreamConf {
+                    addrs: addrs.clone(),
+                    algo: Some("sticky:route".to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+            assert_eq!(Some("route".to_string()), up.sticky);
+            up
+        };
+        let up = new();
+        up.run_health_check().await.unwrap();
+        // The backend of a request with these cookies that `failed` have
+        // failed already, and the cookie to give the client.
+        let attempt = async |up: &Upstream, cookie: &str, failed: &[String]| {
+            let header = if cookie.is_empty() {
+                String::new()
+            } else {
+                format!("Cookie: {cookie}\r\n")
+            };
+            let input =
+                format!("GET / HTTP/1.1\r\nHost: github.com\r\n{header}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut set_cookie = None;
+            let peer = up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed,
+                        inflight: None,
+                        sticky_cookie: Some(&mut set_cookie),
+                    },
+                )
+                .await
+                .unwrap();
+            (peer.address().to_string(), set_cookie)
+        };
+
+        // No cookie yet: a backend by round robin, and its cookie.
+        let (first, cookie) = attempt(&up, "", &[]).await;
+        let cookie = cookie.unwrap();
+        let (name, id) = cookie.split_once('=').unwrap();
+        assert_eq!("route", name);
+        assert_eq!(16, id.len(), "{cookie}");
+        assert_eq!(true, id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        // With it: that backend, every time, and nothing to set.
+        for _ in 0..10 {
+            assert_eq!(
+                (first.clone(), None),
+                attempt(&up, &format!("theme=dark; {cookie}"), &[]).await
+            );
+        }
+        // Without it the others get their turn: it is round robin.
+        let mut seen = vec![];
+        for _ in 0..6 {
+            seen.push(attempt(&up, "", &[]).await.0);
+        }
+        for addr in addrs.iter() {
+            assert_eq!(
+                2,
+                seen.iter().filter(|item| *item == addr).count(),
+                "{seen:?}"
+            );
+        }
+        // The cookie says the same of a backend in every process that
+        // serves the upstream.
+        let other = new();
+        other.run_health_check().await.unwrap();
+        assert_eq!((first.clone(), None), attempt(&other, &cookie, &[]).await);
+
+        // A cookie that names no backend of this upstream - one that is
+        // gone, or nothing at all - is a client without one.
+        for stale in ["route=0000000000000001", "route=not-a-number", "route="]
+        {
+            let (_, set_cookie) = attempt(&up, stale, &[]).await;
+            assert_eq!(true, set_cookie.is_some(), "{stale}");
+        }
+        // The backend it names has just failed this request: another one,
+        // and the cookie that goes with it.
+        let (second, moved) =
+            attempt(&up, &cookie, std::slice::from_ref(&first)).await;
+        assert_eq!(true, second != first);
+        let moved = moved.unwrap();
+        assert_eq!(true, moved != cookie);
+        assert_eq!((second, None), attempt(&up, &moved, &[]).await);
+
+        // The name is all that follows the first colon, here as where
+        // the cookie is read: `sticky:route:a;b` used to pass for its
+        // `route` and then look for a cookie `route:a;b`.
+        for algo in [
+            "sticky",
+            "sticky:",
+            "sticky: ",
+            "sticky:a b",
+            "sticky:a;b",
+            "sticky:route:a;b",
+            "sticky:route:x",
+        ] {
+            let error = Upstream::new(
+                "sticky",
+                &UpstreamConf {
+                    addrs: addrs.clone(),
+                    algo: Some(algo.to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                true,
+                error.contains("expected sticky:<cookie name>"),
+                "{algo}: {error}"
+            );
+        }
     }
 
     /// `fail_open`: with no backend that is healthy, one of them is taken
@@ -3115,6 +3418,88 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `sticky` with `fail_open` and no backend that is healthy: a
+    /// client stays on the backend of its cookie. Taken in turn like a
+    /// client without one, it was moved with every request and given a
+    /// new cookie each time.
+    #[tokio::test]
+    async fn test_sticky_fail_open_keeps_the_backend() {
+        // Ports with nothing listening on them.
+        let dead: Vec<String> = (0..3)
+            .map(|_| {
+                let listener =
+                    std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                listener.local_addr().unwrap().to_string()
+            })
+            .collect();
+        let up = Upstream::new(
+            "sticky-fail-open",
+            &UpstreamConf {
+                addrs: dead.clone(),
+                algo: Some("sticky:route".to_string()),
+                fail_open: Some(true),
+                health_check: Some(
+                    "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.run_health_check().await.unwrap();
+        let attempt = async |cookie: &str, failed: &[String]| {
+            let header = if cookie.is_empty() {
+                String::new()
+            } else {
+                format!("Cookie: {cookie}\r\n")
+            };
+            let input =
+                format!("GET / HTTP/1.1\r\nHost: github.com\r\n{header}\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut set_cookie = None;
+            let peer = up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed,
+                        inflight: None,
+                        sticky_cookie: Some(&mut set_cookie),
+                    },
+                )
+                .await
+                .unwrap();
+            (peer.address().to_string(), set_cookie)
+        };
+        // Without a cookie: one of them, in turn, and its cookie.
+        let (first, cookie) = attempt("", &[]).await;
+        let cookie = cookie.unwrap();
+        let mut seen = vec![];
+        for _ in 0..6 {
+            seen.push(attempt("", &[]).await.0);
+        }
+        for addr in dead.iter() {
+            assert_eq!(
+                2,
+                seen.iter().filter(|item| *item == addr).count(),
+                "{seen:?}"
+            );
+        }
+        // With it: that backend, every time, and nothing to set.
+        for _ in 0..6 {
+            assert_eq!((first.clone(), None), attempt(&cookie, &[]).await);
+        }
+        // Unless it has just failed this request: another, with its
+        // cookie.
+        let (second, moved) =
+            attempt(&cookie, std::slice::from_ref(&first)).await;
+        assert_eq!(true, second != first);
+        assert_eq!(true, moved.is_some_and(|moved| moved != cookie));
     }
 
     /// The round run before a new upstream is switched in keeps a dead

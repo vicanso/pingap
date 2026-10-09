@@ -15,16 +15,20 @@ path = "src/lib.rs"
 
 [dependencies]
 ahash = { workspace = true }
+arc-swap = { workspace = true }
 dashmap = { workspace = true }
+futures = { workspace = true }
 async-trait = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }
 rcgen = { workspace = true }
+reqwest = { workspace = true }
 rustls = { workspace = true, optional = true }
 rustls-pki-types = { workspace = true, optional = true }
 serde = { workspace = true }
+sha1 = { workspace = true }
 snafu = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

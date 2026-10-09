@@ -143,6 +143,17 @@ pub(crate) fn inject_trace_context(
         (None, Some(tracer)) => tracer.http_request_span.span_context(),
         (None, None) => return,
     };
+    // A span the sampler dropped is not exported, and no parent to hang
+    // anything from. A client that sent a trace of its own, in whichever
+    // of the formats, keeps its headers as they came: what the upstream
+    // records hangs from the client's span.
+    if !span_context.is_sampled()
+        && ["traceparent", "uber-trace-id"]
+            .iter()
+            .any(|name| upstream_request.headers.contains_key(*name))
+    {
+        return;
+    }
     // What the client said of its trace, before it is written over.
     let client_traceparent = upstream_request
         .headers

@@ -168,6 +168,25 @@ pub trait Plugin: Sync + Send {
         false
     }
 
+    /// The page this plugin has for an error the proxy answers itself -
+    /// no upstream to be had, a request refused by a limit - in place of
+    /// the one of the server: its content type and its body. `None`
+    /// from a plugin that has none, which is every plugin but
+    /// `error_page`, or none for this status.
+    ///
+    /// Asked of the plugins of the location whichever of them have run:
+    /// the error may be one that stopped the request before this plugin
+    /// had its turn.
+    #[inline]
+    fn error_page(
+        &self,
+        _session: &Session,
+        _status: http::StatusCode,
+        _message: &str,
+    ) -> Option<(http::HeaderValue, bytes::Bytes)> {
+        None
+    }
+
     /// Processes an HTTP response body at a specified lifecycle step.
     ///
     /// # Parameters

@@ -2205,6 +2205,11 @@ mod tests {
     fn test_admin_roles_and_tokens_params() {
         use super::is_write_request;
         use http::Method;
+        // An admin is built over the config manager. The test did not set
+        // one up and passed when another had: run alone, or ahead of the
+        // others, it failed.
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
         let new = |conf: &str| {
             AdminServe::try_from(
                 &toml::from_str::<PluginConf>(&format!(

@@ -3,7 +3,11 @@
 ###
 
 # [certificates.acmeNpmtrend]
-# Domain names this certificate is valid for (comma separated)
+# Domain names this certificate is valid for (comma separated), compared
+# without regard to case. A domain can be named by two entries when their
+# keys are of different kinds, one RSA and one ECDSA: a client is served
+# with the one it can verify. Of two entries with the same kind of key for
+# a domain only one is used (one without `acme` first, then by name).
 # domains = "npmtrend.com,charts.npmtrend.com"
 
 # ACME configuration for automated certificate management
@@ -62,8 +66,15 @@
 # acme_contact = "ops@example.com"
 
 # The key of the certificate: "ecdsa" (P-256) or "rsa" (2048 bits).
-# Default `ecdsa`
+# Default `ecdsa`. For both, a second entry with the same `domains` and
+# "rsa": clients that can not verify ECDSA are served with that one.
 # acme_key_type = "rsa"
+
+# Staple the OCSP answer of the CA to the handshakes with this certificate:
+# the responder the certificate names is asked in the background, and its
+# answer is sent to the clients that ask for it. Needs the certificate of
+# the issuer after the leaf in `tls_cert`. Default `false`
+# ocsp_stapling = true
 
 # Description of this certificate
 # remark = ""

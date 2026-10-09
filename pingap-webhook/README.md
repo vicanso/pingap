@@ -33,6 +33,11 @@ webhook_notifications = [
 | `webhook_notifications` | Categories to deliver. **A category not listed here is dropped.** |
 | `webhook_batch_window` | Notifications no more than this far apart are merged into one post (default `10s`, `0s` disables merging). |
 | `webhook_batch_max_events` | Notifications per post at most (default `5`, `1` disables merging). |
+| `webhook_min_level` | Notifications below this level are not sent: `info` (default), `warn` or `error`. |
+| `webhook_headers` | Headers of the request, each `Name: value`: the token a receiver asks for. |
+| `webhook_secret` | What a post is signed with, see [Signing](#signing). |
+| `webhook_template` | The text of the message in place of the built-in one, see [Templates](#templates). |
+| `webhook_retries` | How many times a post that failed is sent again (default `0`, at most `10`). |
 
 ## Categories
 
@@ -95,6 +100,75 @@ every notification immediately. Embedders set the same policy with
 
 `Warn` and `Error` render in warning colour; `Info` renders as a comment.
 
+## Filtering
+
+A notification is posted when its category is in `webhook_notifications`
+**and** its level is at least `webhook_min_level`. Both are applied to each
+notification before it is merged with others, so one that is filtered out
+takes no place in a batch.
+
+```toml
+[basic]
+webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
+webhook_min_level = "warn"      # a backend that is healthy again is `info`
+```
+
+## Templates
+
+`webhook_template` replaces the text that is built in. These are filled in:
+`{{title}}`, `{{message}}`, `{{level}}`, `{{category}}`, `{{hostname}}`,
+`{{ip}}`, `{{name}}` (`pingap`) and `{{count}}` (how many notifications the
+post merges).
+
+- For `wecom` and `dingtalk` the template is the markdown that is shown:
+
+  ```toml
+  webhook_template = "**{{title}}** ({{level}})\n\n{{message}}\n\n{{hostname}}"
+  ```
+
+- For any other type the template is the **whole body** of the post, and what
+  is filled in is escaped as the text of a JSON string - put each placeholder
+  between quotes (a number like `{{count}}` may stand without). This is how
+  the post is given the shape a receiver expects, Slack for one:
+
+  ```toml
+  webhook_template = '{"text":"[{{level}}] {{title}}: {{message}}","username":"{{name}}@{{hostname}}"}'
+  ```
+
+  The body is sent as `application/json` unless `webhook_headers` names
+  another `Content-Type`.
+
+## Signing
+
+- **`dingtalk`**: `webhook_secret` is the secret of a robot that has signing
+  ("加签") switched on. Each post then carries `timestamp` and `sign` in its
+  url, as DingTalk describes it: the HMAC-SHA256 of `<timestamp>\n<secret>`
+  under the secret, in base64.
+- **A receiver of your own** (any type but `wecom` and `dingtalk`): the body
+  is signed, and the post carries `X-Pingap-Signature: sha256=<hex>`, the
+  HMAC-SHA256 of the body under the secret. The receiver computes the same
+  over the bytes it got and compares.
+- **`wecom`** has no signing; the secret is not used there.
+
+## Delivery
+
+- A post that is answered with a status below `400` counts as delivered. For
+  `wecom` and `dingtalk` the answer is read as well: both answer `200`
+  whatever they made of the post and say in the body whether they took it
+  (`{"errcode":310000,"errmsg":"sign not match"}`). An `errcode` other than
+  `0` is logged as a failure, with the code and the message. It used to be
+  logged as a success.
+- With `webhook_retries`, a post that was not answered, or was answered with
+  a `5xx` or a `429`, is sent again that many times: after a second, then
+  two, four... and no longer than five minutes apart. What the receiver
+  refuses - another `4xx`, an `errcode` - is not sent again. That includes
+  an `errcode` that says there were too many messages: the two chats answer
+  `200` for that as well, and the codes are not told apart. The retries are
+  made in the background: what raised the notification does not wait for
+  them, and neither does the next post, so a post that is being retried can
+  arrive after one that was raised later. Each failed post has a task of its
+  own until it is delivered or given up.
+
 ## Usage
 
 ```rust
@@ -111,8 +185,7 @@ let sender = WebhookNotificationSender::new(
 
 - `webhook_notifications` is an allow-list. Leaving it empty silences everything
   even when `webhook` is set — a common cause of "why am I not getting alerts".
-- `webhook`, `webhook_type`, `webhook_notifications`, `webhook_batch_window` and
-  `webhook_batch_max_events` are all hot reloaded under `--autoreload` /
+- Every `webhook*` key is hot reloaded under `--autoreload` /
   `--autorestart`: a change applies without a restart, also to notifications
   from upstreams, discovery and certificate checks that were already running. A
   batch still collecting at that moment goes out with the settings it was
@@ -123,8 +196,16 @@ let sender = WebhookNotificationSender::new(
   the ACME task, and what goes wrong there is a `lets_encrypt` notification;
   it only gets this warning when it is still not renewed a week before its
   end. See [pingap-acme](../pingap-acme/README.md).
-- Delivery is best-effort and failures are logged, not retried. Treat webhooks
-  as a convenience on top of metrics and logs, not as the only alerting path.
+- Delivery is best-effort: failures are logged, and retried only as often as
+  `webhook_retries` says, which is not at all by default. A notification that
+  is still being retried when pingap stops is lost. Treat webhooks as a
+  convenience on top of metrics and logs, not as the only alerting path.
+- `webhook_secret` and `webhook_headers` are shown as checksums in the log
+  and in the configuration differences that are logged and sent to the
+  webhook, like the key in the url of `webhook`. The admin shows them as
+  they are.
+- One webhook is what there is: several targets, each with a type and a
+  filter of its own, are not supported.
 
 ## License
 

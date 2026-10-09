@@ -12,6 +12,8 @@ description = "Webhook for pingap"
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = { workspace = true }
+hmac-sha256 = { workspace = true }
 local-ip-address = { workspace = true }
 pingap-core = { workspace = true }
 reqwest = { workspace = true }

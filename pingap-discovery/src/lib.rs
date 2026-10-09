@@ -134,6 +134,9 @@ pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Result<Vec<Addr>> {
 }
 
 pub const DNS_DISCOVERY: &str = "dns";
+/// DNS too, by the `SRV` records of a name: they say which hosts serve
+/// it, on which port and with which weight.
+pub const SRV_DISCOVERY: &str = "srv";
 pub const DOCKER_DISCOVERY: &str = "docker";
 pub const STATIC_DISCOVERY: &str = "static";
 pub const TRANSPARENT_DISCOVERY: &str = "transparent";
@@ -198,7 +201,10 @@ mod common;
 mod dns;
 mod docker;
 pub use common::{is_static_discovery, new_static_discovery};
-pub use dns::{is_dns_discovery, new_dns_discover_backends};
+pub use dns::{
+    is_dns_discovery, is_srv_discovery, new_dns_discover_backends,
+    new_srv_discover_backends,
+};
 pub use docker::{is_docker_discovery, new_docker_discover_backends};
 
 #[cfg(test)]

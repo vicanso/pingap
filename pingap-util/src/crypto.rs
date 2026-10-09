@@ -88,6 +88,46 @@ pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
     })
 }
 
+/// Encrypts `data` under `key` with a nonce of its own, for what is handed
+/// to somebody who is not to read or change it: a session in a cookie.
+/// `nonce` is to be a new random one for every value. The result is the
+/// nonce and the ciphertext, in the base64 of urls.
+pub fn seal(
+    key: &[u8; KEY_SIZE],
+    nonce: [u8; 12],
+    data: &[u8],
+) -> Result<String> {
+    use base64::Engine;
+    let cipher =
+        Aes256GcmSiv::new_from_slice(key).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+    let cipher_text =
+        cipher
+            .encrypt(&Nonce::from(nonce), data)
+            .map_err(|e| Error::Aes {
+                message: e.to_string(),
+            })?;
+    let mut sealed = nonce.to_vec();
+    sealed.extend_from_slice(&cipher_text);
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sealed))
+}
+
+/// What [`seal`] was given, when `value` is one it made under `key` and
+/// has not been changed since.
+pub fn unseal(key: &[u8; KEY_SIZE], value: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let sealed = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(value)
+        .ok()?;
+    let (nonce, cipher_text) = sealed.split_at_checked(12)?;
+    let nonce: [u8; 12] = nonce.try_into().ok()?;
+    Aes256GcmSiv::new_from_slice(key)
+        .ok()?
+        .decrypt(&Nonce::from(nonce), cipher_text)
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +176,38 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// What is sealed comes back for the key it was sealed under, and
+    /// for nothing that was changed.
+    #[test]
+    fn test_seal() {
+        let key = [7u8; KEY_SIZE];
+        let sealed = seal(&key, [1u8; 12], b"a session").unwrap();
+        assert_eq!(Some(b"a session".to_vec()), unseal(&key, &sealed));
+        // Text for a url or a cookie.
+        assert_eq!(
+            true,
+            sealed
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
+        // Another nonce, another text: what is sealed twice is not seen
+        // to be the same.
+        let again = seal(&key, [2u8; 12], b"a session").unwrap();
+        assert_eq!(true, sealed != again);
+        assert_eq!(Some(b"a session".to_vec()), unseal(&key, &again));
+
+        assert_eq!(None, unseal(&[8u8; KEY_SIZE], &sealed));
+        for end in [0, 5, 16, sealed.len() - 1] {
+            assert_eq!(None, unseal(&key, &sealed[..end]), "{end}");
+        }
+        let mut changed = sealed.into_bytes();
+        changed[20] = if changed[20] == b'A' { b'B' } else { b'A' };
+        assert_eq!(None, unseal(&key, std::str::from_utf8(&changed).unwrap()));
+        assert_eq!(None, unseal(&key, "not base64 !"));
+        // Nothing at all can be sealed too.
+        let empty = seal(&key, [3u8; 12], b"").unwrap();
+        assert_eq!(Some(vec![]), unseal(&key, &empty));
     }
 }

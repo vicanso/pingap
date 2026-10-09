@@ -38,10 +38,12 @@ mod imp {
         ERROR_PRIVATE_KEY, ERROR_X509, Error, Result, empty_certificate,
     };
     use crate::LOG_TARGET;
+    use arc_swap::ArcSwapOption;
     use pingora::tls::ext;
     use pingora::tls::pkey::{PKey, Private};
     use pingora::tls::ssl::SslRef;
-    use pingora::tls::x509::X509;
+    use pingora::tls::x509::{X509, X509Ref};
+    use std::sync::Arc;
     use tracing::error;
 
     /// Leaf certificate, private key and intermediate chain as OpenSSL objects.
@@ -50,6 +52,8 @@ mod imp {
         cert: X509,
         key: PKey<Private>,
         chain: Vec<X509>,
+        /// The OCSP answer to staple, and the unix seconds it holds until.
+        staple: ArcSwapOption<(Vec<u8>, i64)>,
     }
 
     impl LoadedCertificate {
@@ -94,7 +98,31 @@ mod imp {
                 cert,
                 key,
                 chain: certs,
+                staple: ArcSwapOption::empty(),
             })
+        }
+
+        /// Sets the OCSP answer the handshakes with this certificate
+        /// carry and the unix seconds it holds until, or takes it away.
+        pub fn set_staple(&self, staple: Option<(Vec<u8>, i64)>) {
+            self.staple.store(staple.map(Arc::new));
+        }
+
+        /// The OCSP answer to staple at `now`: none once it has run out,
+        /// a client would turn it down.
+        pub fn staple(&self, now: i64) -> Option<Arc<(Vec<u8>, i64)>> {
+            self.staple.load_full().filter(|staple| now < staple.1)
+        }
+
+        /// Whether there is an OCSP answer to staple at `now`.
+        pub fn has_staple(&self, now: i64) -> bool {
+            self.staple(now).is_some()
+        }
+
+        /// Whether `cert` is the certificate of this one: of the two a
+        /// name may have, the one OpenSSL went on with.
+        pub fn is_certificate(&self, cert: &X509Ref) -> bool {
+            *self.cert == *cert
         }
 
         /// Installs the certificate, key and chain on a handshake in progress.
@@ -110,6 +138,14 @@ mod imp {
                     error!(target: LOG_TARGET, error = %e, "ssl add chain cert fail");
                 }
             }
+        }
+
+        /// Whether the key is an RSA one. A domain can have one
+        /// certificate of each kind, and the handshake takes the one the
+        /// client can verify.
+        pub fn is_rsa(&self) -> bool {
+            use pingora::tls::pkey::Id;
+            matches!(self.key.id(), Id::RSA | Id::RSA_PSS)
         }
 
         /// DER encoding of the leaf certificate.
@@ -128,6 +164,7 @@ mod imp {
     use super::{
         ERROR_PRIVATE_KEY, ERROR_X509, Error, Result, empty_certificate,
     };
+    use arc_swap::ArcSwapOption;
     use pingora::tls::sign::CertifiedKey;
     use pingora::tls::{CertificateDer, CryptoProvider, PrivateKeyDer};
     use rustls_pki_types::pem::PemObject;
@@ -137,6 +174,9 @@ mod imp {
     #[derive(Debug)]
     pub struct LoadedCertificate {
         certified_key: Arc<CertifiedKey>,
+        /// The same with an OCSP answer to staple, and the unix seconds
+        /// that answer holds until.
+        stapled: ArcSwapOption<(Arc<CertifiedKey>, i64)>,
     }
 
     /// The process-wide rustls crypto provider, installed on first use.
@@ -184,12 +224,46 @@ mod imp {
                     })?;
             Ok(Self {
                 certified_key: Arc::new(certified_key),
+                stapled: ArcSwapOption::empty(),
             })
         }
 
-        /// The key pingora's certificate resolver hands to the handshake.
+        /// The key pingora's certificate resolver hands to the handshake:
+        /// with the OCSP answer of the certificate, while there is one
+        /// that has not run out. rustls sends it to the clients that ask.
         pub fn certified_key(&self) -> Arc<CertifiedKey> {
+            if let Some(stapled) = self.stapled.load().as_ref()
+                && (pingap_core::now_sec() as i64) < stapled.1
+            {
+                return stapled.0.clone();
+            }
             self.certified_key.clone()
+        }
+
+        /// Sets the OCSP answer the handshakes with this certificate
+        /// carry and the unix seconds it holds until, or takes it away.
+        pub fn set_staple(&self, staple: Option<(Vec<u8>, i64)>) {
+            self.stapled.store(staple.map(|(answer, until)| {
+                let mut certified_key = self.certified_key.as_ref().clone();
+                certified_key.ocsp = Some(answer);
+                Arc::new((Arc::new(certified_key), until))
+            }));
+        }
+
+        /// Whether there is an OCSP answer to staple at `now`.
+        pub fn has_staple(&self, now: i64) -> bool {
+            self.stapled
+                .load()
+                .as_ref()
+                .is_some_and(|stapled| now < stapled.1)
+        }
+
+        /// Whether the key is an RSA one. A domain can have one
+        /// certificate of each kind, and the handshake takes the one the
+        /// client can verify.
+        pub fn is_rsa(&self) -> bool {
+            self.certified_key.key.algorithm()
+                == rustls::SignatureAlgorithm::RSA
         }
 
         /// DER encoding of the leaf certificate.

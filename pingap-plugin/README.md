@@ -95,7 +95,9 @@ Each request-step plugin returns one of three results:
 | `key_auth` | API key in a header or query parameter | [docs/key_auth.md](docs/key_auth.md) |
 | `jwt` | JWT verification (HMAC, public key or remote JWKS) and token minting | [docs/jwt.md](docs/jwt.md) |
 | `combined_auth` | app id + timestamp + HMAC digest, optionally IP bound | [docs/combined_auth.md](docs/combined_auth.md) |
+| `hmac_auth` | Requests signed over method, path, query, headers and body (HTTP Signatures) | [docs/hmac_auth.md](docs/hmac_auth.md) |
 | `forward_auth` | Delegate the decision to an external HTTP service | [docs/forward_auth.md](docs/forward_auth.md) |
+| `oidc` | Login at an OpenID Connect provider, with the session in an encrypted cookie | [docs/oidc.md](docs/oidc.md) |
 | `csrf` | Double-submit-cookie CSRF protection | [docs/csrf.md](docs/csrf.md) |
 
 ### Access control
@@ -105,7 +107,7 @@ Each request-step plugin returns one of three results:
 | `ip_restriction` | Allow/deny by IP or CIDR | [docs/ip_restriction.md](docs/ip_restriction.md) |
 | `referer_restriction` | Allow/deny by `Referer` host | [docs/referer_restriction.md](docs/referer_restriction.md) |
 | `ua_restriction` | Allow/deny by `User-Agent` regex | [docs/ua_restriction.md](docs/ua_restriction.md) |
-| `geo_restriction` | Allow/deny by GeoIP country (feature `geo`) | [docs/geo_restriction.md](docs/geo_restriction.md) |
+| `geo_restriction` | Allow/deny by GeoIP country, embedded data or a `.mmdb` file; country header for the upstream (feature `geo`) | [docs/geo_restriction.md](docs/geo_restriction.md) |
 | `uri_block` | Block requests by path or query pattern, or by method | [docs/uri_block.md](docs/uri_block.md) |
 | `maintenance` | Answer with a maintenance notice, except for allowed addresses or a header | [docs/maintenance.md](docs/maintenance.md) |
 
@@ -115,7 +117,9 @@ Each request-step plugin returns one of three results:
 | --- | --- | --- |
 | `limit` | Rate limiting and concurrency limiting | [docs/limit.md](docs/limit.md) |
 | `traffic_splitting` | Send a share of traffic to a different upstream | [docs/traffic_splitting.md](docs/traffic_splitting.md) |
+| `mirror` | Send a copy of the requests to a second address, and drop its answers | [docs/mirror.md](docs/mirror.md) |
 | `cache` | HTTP caching with `PURGE` support | [docs/cache.md](docs/cache.md) |
+| `bandwidth_limit` | Send response bodies no faster than a rate | [docs/bandwidth_limit.md](docs/bandwidth_limit.md) |
 
 ### Content
 
@@ -129,6 +133,7 @@ Each request-step plugin returns one of three results:
 | `response_headers` | Add / set / remove / rename response headers | [docs/response_headers.md](docs/response_headers.md) |
 | `cors` | CORS preflight and response headers | [docs/cors.md](docs/cors.md) |
 | `redirect` | HTTP↔HTTPS redirects and path prefixing | [docs/redirect.md](docs/redirect.md) |
+| `error_page` | A location's own pages, or JSON, for the errors the proxy answers | [docs/error_page.md](docs/error_page.md) |
 | `image_optim` | Re-encode PNG/JPEG to WebP/AVIF (feature `imageoptim`) | [docs/image_optim.md](docs/image_optim.md) |
 
 ### Operations
@@ -137,7 +142,7 @@ Each request-step plugin returns one of three results:
 | --- | --- | --- |
 | `ping` | Liveness endpoint returning `pong` | [docs/ping.md](docs/ping.md) |
 | `health` | Readiness endpoint: whether the upstreams have enough healthy backends | [docs/health.md](docs/health.md) |
-| `mock` | Return a canned response, optionally delayed | [docs/mock.md](docs/mock.md) |
+| `mock` | Return a canned response, optionally delayed, for all or a share of the requests | [docs/mock.md](docs/mock.md) |
 | `request_id` | Generate or propagate a request id | [docs/request_id.md](docs/request_id.md) |
 | `stats` | JSON process and request statistics | [docs/stats.md](docs/stats.md) |
 | `admin` | Web admin UI and configuration API | [docs/admin.md](docs/admin.md) |
@@ -199,7 +204,7 @@ register_plugin!("my_plugin", MyPlugin);
 
 ## Features
 
-- `geo` — enables the `geo_restriction` plugin (embedded Tor GeoIP database).
+- `geo` — enables the `geo_restriction` plugin (embedded Tor GeoIP database, and the reader for MaxMind DB files).
 
 ## License
 

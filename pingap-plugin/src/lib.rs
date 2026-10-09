@@ -438,6 +438,7 @@ macro_rules! register_plugin {
 }
 
 mod accept_encoding;
+mod bandwidth_limit;
 mod basic_auth;
 mod cache;
 mod combined_auth;
@@ -445,15 +446,19 @@ mod compression;
 mod cors;
 mod csrf;
 mod directory;
+mod error_page;
 mod forward_auth;
 #[cfg(feature = "geo")]
 mod geo_restriction;
+mod hmac_auth;
 mod ip_restriction;
 mod jwt;
 mod key_auth;
 mod limit;
 mod maintenance;
+mod mirror;
 mod mock;
+mod oidc;
 mod ping;
 mod redirect;
 mod referer_restriction;

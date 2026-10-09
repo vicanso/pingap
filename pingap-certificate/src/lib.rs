@@ -21,6 +21,7 @@ use std::sync::Arc;
 mod chain;
 mod dynamic_certificate;
 mod loaded_certificate;
+mod ocsp;
 mod self_signed;
 mod tls_backend;
 mod tls_certificate;
@@ -274,6 +275,7 @@ impl Certificate {
 
 pub use dynamic_certificate::*;
 pub use loaded_certificate::LoadedCertificate;
+pub use ocsp::{Stapling, new_ocsp_stapling_service};
 pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_backend::{
@@ -282,11 +284,137 @@ pub use tls_backend::{
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
 
-// Type alias for storing certificates in a high-performance hash map
+/// The certificates that are served, by the name they are served for:
+/// a domain in lower case, `*.example.com`, or [`DEFAULT_SERVER_NAME`].
+///
+/// A name can have two of them, one with an RSA key and one with a key of
+/// another kind. The second is under the name too, the RSA one under
+/// [`certificate_key`]`(name, true)`: so the store stays one certificate
+/// to a key, and what merges two of them goes on doing it key by key.
+/// Look one up with [`lookup_certificates`], not with `get`.
+///
+/// A certificate that lost every name it is for to another one is kept
+/// under [`unused_certificate_key`].
 pub type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
+
+/// What the key of an RSA certificate has after the name. No server name
+/// a client sends has a zero byte in it: OpenSSL and rustls both turn
+/// such a handshake away.
+const RSA_KEY_SUFFIX: &str = "\0rsa";
+
+/// The key of the store a certificate for `name` is under.
+pub fn certificate_key(name: &str, is_rsa: bool) -> String {
+    if is_rsa {
+        format!("{name}{RSA_KEY_SUFFIX}")
+    } else {
+        name.to_string()
+    }
+}
+
+/// What the key of a certificate that serves no name begins with.
+const UNUSED_KEY_PREFIX: &str = "\0unused\0";
+
+/// The key of the store for the certificate of the entry `name` when it
+/// serves nothing: it names no domain, or every name it is for is served
+/// by another certificate with the same kind of key. No client asks for
+/// such a key. The
+/// certificate is in the store all the same, for what goes through the
+/// certificates that are configured - the check of their validity, the
+/// list of the admin - and for a reload to tell it from one that was
+/// never loaded.
+pub fn unused_certificate_key(name: &str) -> String {
+    format!("{UNUSED_KEY_PREFIX}{name}")
+}
+
+/// Whether `key` is one of [`unused_certificate_key`].
+pub fn is_unused_certificate_key(key: &str) -> bool {
+    key.starts_with(UNUSED_KEY_PREFIX)
+}
+
+/// The name a key of the store is for, and whether it is the key of an
+/// RSA certificate.
+pub fn split_certificate_key(key: &str) -> (&str, bool) {
+    match key.strip_suffix(RSA_KEY_SUFFIX) {
+        Some(name) => (name, true),
+        None => (key, false),
+    }
+}
+
+/// The certificates a name is served with: one, or one of each kind of
+/// key, for the handshake to take the one its client can verify.
+#[derive(Debug, Default, Clone)]
+pub struct CertificatePair {
+    /// The one whose key is not RSA: ECDSA, or Ed25519.
+    pub other: Option<Arc<TlsCertificate>>,
+    /// The one with an RSA key.
+    pub rsa: Option<Arc<TlsCertificate>>,
+}
+
+impl CertificatePair {
+    pub fn is_empty(&self) -> bool {
+        self.other.is_none() && self.rsa.is_none()
+    }
+    /// The one to take where only one is wanted.
+    pub fn first(&self) -> Option<&Arc<TlsCertificate>> {
+        self.other.as_ref().or(self.rsa.as_ref())
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<TlsCertificate>> {
+        self.other.iter().chain(self.rsa.iter())
+    }
+}
+
+/// The certificates of `certificates` for the server name `sni`: those of
+/// the name itself, or else those of its wildcard (`*.example.com`), or
+/// else the default ones. The first of the three that has any is the
+/// answer, whole: a name with only an RSA certificate of its own is not
+/// given the other kind from its wildcard.
+///
+/// Names are compared without regard to case, as DNS compares them.
+/// OpenSSL hands the name over as the client wrote it.
+pub fn lookup_certificates(
+    certificates: &DynamicCertificates,
+    sni: &str,
+) -> CertificatePair {
+    let at = |name: &str| CertificatePair {
+        other: certificates.get(name).cloned(),
+        rsa: certificates.get(&certificate_key(name, true)).cloned(),
+    };
+    let lower;
+    let sni = if sni.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        lower = sni.to_ascii_lowercase();
+        lower.as_str()
+    } else {
+        sni
+    };
+    let pair = at(sni);
+    if !pair.is_empty() {
+        return pair;
+    }
+    if let Some((_, domain)) = sni.split_once('.') {
+        let pair = at(&format!("*.{domain}"));
+        if !pair.is_empty() {
+            return pair;
+        }
+    }
+    at(DEFAULT_SERVER_NAME)
+}
 
 pub trait CertificateProvider: Send + Sync {
     fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>>;
+    /// The certificates to serve `sni` with. A provider that keeps two
+    /// for a name answers with both; this is the one of `get`.
+    fn get_pair(&self, sni: &str) -> CertificatePair {
+        match self.get(sni) {
+            Some(cert) if cert.is_rsa() => CertificatePair {
+                rsa: Some(cert),
+                other: None,
+            },
+            cert => CertificatePair {
+                other: cert,
+                rsa: None,
+            },
+        }
+    }
     fn list(&self) -> Arc<DynamicCertificates>;
     fn store(&self, data: DynamicCertificates);
 }

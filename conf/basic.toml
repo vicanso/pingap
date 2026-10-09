@@ -98,6 +98,25 @@
 # notification on its own. Default `5`
 # webhook_batch_max_events = 5
 
+# Notifications below this level are not sent: "info", "warn" or "error". Default `info`
+# webhook_min_level = "warn"
+
+# Headers of the webhook request, each "Name: value". Default `none`
+# webhook_headers = ["Authorization: Bearer token"]
+
+# What a post is signed with: the secret of a dingtalk robot with signing on, or,
+# for a receiver of your own, the key of the `X-Pingap-Signature` of the body. Default `none`
+# webhook_secret = "SECxxxx"
+
+# The text of the message in place of the built-in one: the markdown of a wecom or
+# dingtalk message, the whole JSON body for any other type. `{{title}}`, `{{message}}`,
+# `{{level}}`, `{{category}}`, `{{hostname}}`, `{{ip}}`, `{{name}}` and `{{count}}` are
+# filled in. Default `none`
+# webhook_template = "**{{title}}**\n\n{{message}}"
+
+# How many times a post that failed is sent again, at most 10. Default `0`
+# webhook_retries = 2
+
 # Set log level for application. 
 # Available levels: "debug", "info", "warn", "error"
 # Default `None`

@@ -69,6 +69,9 @@ unused-features:
 
 test:
 	cargo test --workspace --features=full
+	# `geo` is not part of `full`: without this the tests of the
+	# geo_restriction plugin are compiled by the lint and run by nobody.
+	cargo test -p pingap-plugin --features=geo
 
 # Same suite on the rustls TLS backend
 test-rustls:

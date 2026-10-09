@@ -69,18 +69,22 @@ static TRACER_PROVIDER_MAP: LazyLock<ArcSwap<TracerProviders>> =
 /// * `name` - The unique identifier for the provider
 /// * `provider` - The TracerProvider instance to add
 ///
-/// # Note
-/// This operation creates a new copy of the provider map to ensure thread safety
+/// The servers of a process start their exporters at the same moment,
+/// each from a runtime of its own. The map used to be read, copied and
+/// stored back: two that read it together each stored a map with
+/// themselves and without the other, and of several servers with an
+/// exporter only the last to store was traced - which one, by chance.
+/// The update is now made over whatever map is current when it lands.
 pub fn add_provider(
     name: &str,
     provider: opentelemetry_sdk::trace::SdkTracerProvider,
 ) {
-    let mut m: TracerProviders = AHashMap::new();
-    for (name, provider) in TRACER_PROVIDER_MAP.load().iter() {
-        m.insert(name.to_string(), provider.clone());
-    }
-    m.insert(name.to_string(), InstanceTracerProvider::new(provider));
-    TRACER_PROVIDER_MAP.store(Arc::new(m));
+    let provider = InstanceTracerProvider::new(provider);
+    TRACER_PROVIDER_MAP.rcu(|current| {
+        let mut providers: TracerProviders = current.as_ref().clone();
+        providers.insert(name.to_string(), provider.clone());
+        providers
+    });
 }
 
 /// Retrieves a tracer provider by name from the global provider map.
@@ -93,4 +97,49 @@ pub fn add_provider(
 #[inline]
 pub fn get_provider(name: &str) -> Option<InstanceTracerProvider> {
     TRACER_PROVIDER_MAP.load().get(name).cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: providers that are added at the same moment are all
+    /// there afterwards. Each used to store a copy of the map as it had
+    /// read it, without the ones that were being added beside it.
+    #[test]
+    fn test_providers_added_together_are_all_kept() {
+        let names: Vec<String> =
+            (0..16).map(|index| format!("together-{index}")).collect();
+        for _ in 0..50 {
+            let barrier =
+                std::sync::Arc::new(std::sync::Barrier::new(names.len()));
+            let threads: Vec<_> = names
+                .iter()
+                .cloned()
+                .map(|name| {
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        let provider =
+                            opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                                .build();
+                        barrier.wait();
+                        add_provider(&name, provider);
+                    })
+                })
+                .collect();
+            for thread in threads {
+                thread.join().expect("thread");
+            }
+            for name in names.iter() {
+                assert!(get_provider(name).is_some(), "{name}");
+            }
+            // Start over: without them, for the next round.
+            TRACER_PROVIDER_MAP.rcu(|current| {
+                let mut providers: TracerProviders = current.as_ref().clone();
+                providers.retain(|name, _| !name.starts_with("together-"));
+                providers
+            });
+        }
+        assert!(get_provider("together-0").is_none());
+    }
 }

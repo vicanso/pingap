@@ -338,7 +338,9 @@ fn merge_certificates(
 ///    - Plugin configurations
 ///    - Certificates, entry by entry: all but the ones of ACME
 ///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`,
-///      `webhook_batch_window`, `webhook_batch_max_events`)
+///      `webhook_batch_window`, `webhook_batch_max_events`,
+///      `webhook_min_level`, `webhook_headers`, `webhook_secret`,
+///      `webhook_template`, `webhook_retries`)
 /// 4. Sends notifications for successful updates
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart
@@ -755,8 +757,12 @@ async fn apply_config(
             })
             .await;
             if !reload_fail_message.is_empty() {
+                // An error like the other failures of a reload: sent with
+                // the default level, it was `info`, and a webhook that
+                // only takes warnings and worse never heard of it.
                 send_notification(NotificationData {
                     category: "reload_config_fail".to_string(),
+                    level: NotificationLevel::Error,
                     message: reload_fail_message.clone(),
                     ..Default::default()
                 })
@@ -800,6 +806,7 @@ async fn apply_config(
         if !reload_fail_message.is_empty() {
             send_notification(NotificationData {
                 category: "reload_config_fail".to_string(),
+                level: NotificationLevel::Error,
                 message: reload_fail_message.clone(),
                 ..Default::default()
             })

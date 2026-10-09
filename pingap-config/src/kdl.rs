@@ -33,6 +33,7 @@ fn is_always_list(field: &str) -> bool {
             | "proxy_set_headers"
             | "proxy_add_headers"
             | "webhook_notifications"
+            | "webhook_headers"
             | "match_headers"
             | "match_query"
             | "match_cookies"

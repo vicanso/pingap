@@ -270,7 +270,10 @@ never touches the count.
 ## Error responses
 
 `fail_to_proxy` turns a pingora error into a status and, when there is still
-someone to send it to, a page rendered from the error template:
+someone to send it to, a page: the one an
+[`error_page`](../pingap-plugin/docs/error_page.md) plugin of the location has
+for that status, and otherwise the one rendered from the error template of the
+server:
 
 | Failure | Status | Page written |
 | --- | --- | --- |

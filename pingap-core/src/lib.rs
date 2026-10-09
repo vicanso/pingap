@@ -36,6 +36,33 @@ pub fn new_internal_error(
     )
 }
 
+/// The cause of an error that stands for a response of the upstream, see
+/// [`new_upstream_status_error`].
+const UPSTREAM_STATUS: pingora::ErrorType =
+    pingora::ErrorType::Custom("UpstreamStatus");
+
+/// The error a plugin stops a response of the upstream with, for the
+/// proxy to answer `status` itself - with the error page of the location -
+/// in place of what the upstream sent (`error_page` with `intercept`).
+///
+/// It is the answer of the upstream and no failure of the proxy, which
+/// [`is_upstream_status_error`] tells apart: it is not retried, not
+/// answered with a stale response of the cache, and not logged as an
+/// error.
+pub fn new_upstream_status_error(status: http::StatusCode) -> pingora::BError {
+    pingora::Error::because(
+        pingora::ErrorType::HTTPStatus(status.as_u16()),
+        status.canonical_reason().unwrap_or("Unknown Error"),
+        pingora::Error::new(UPSTREAM_STATUS),
+    )
+}
+
+/// Whether `e` is an error of [`new_upstream_status_error`].
+pub fn is_upstream_status_error(e: &pingora::Error) -> bool {
+    matches!(e.etype(), pingora::ErrorType::HTTPStatus(_))
+        && e.root_etype() == &UPSTREAM_STATUS
+}
+
 /// The names `access_log` accepts in place of a format. Here, and not with
 /// the formats themselves in `pingap-logger`, so that the config validation
 /// knows a preset from a word that is none.
@@ -96,6 +123,30 @@ mod tests {
             err.to_string().trim(),
             "HTTPStatus context: Internal Server Error cause:  InternalError"
         );
+    }
+
+    /// The error that stands for a response of the upstream is told from
+    /// one the proxy raised, also from under what it is wrapped in.
+    #[test]
+    fn test_upstream_status_error() {
+        let err = new_upstream_status_error(http::StatusCode::NOT_FOUND);
+        assert_eq!(&pingora::ErrorType::HTTPStatus(404), err.etype());
+        assert_eq!(
+            err.to_string().trim(),
+            "HTTPStatus context: Not Found cause:  UpstreamStatus"
+        );
+        assert!(is_upstream_status_error(&err));
+        assert!(!err.retry());
+        assert!(is_upstream_status_error(&err.more_context("Peer: a")));
+
+        assert!(!is_upstream_status_error(&new_internal_error(404, "x")));
+        assert!(!is_upstream_status_error(&pingora::Error::new(
+            pingora::ErrorType::ConnectRefused
+        )));
+        // a status that has no name
+        let err =
+            new_upstream_status_error(http::StatusCode::from_u16(499).unwrap());
+        assert!(err.to_string().contains("Unknown Error"));
     }
 
     #[tokio::test]

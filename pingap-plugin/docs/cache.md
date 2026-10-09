@@ -221,8 +221,9 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
     `upstream` mode.
   - One to a request with an `Authorization` header, unless the origin marks
     it as shareable with `public`, `s-maxage` or `must-revalidate`. A
-    [`basic_auth`](basic_auth.md) plugin with `hide_credentials` removes the
-    header before this check, so a site behind it is cached as usual.
+    [`basic_auth`](basic_auth.md) or [`hmac_auth`](hmac_auth.md) plugin with
+    `hide_credentials` removes the header before this check, so a site
+    behind it is cached as usual.
 - The cache key is the `namespace`, the values of the `headers` you listed,
   the method, the host, the path and the query. The host is taken in lower case
   and without its port, and the scheme is not part of the key, so

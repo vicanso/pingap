@@ -21,6 +21,7 @@ humantime = { workspace = true, optional = true }
 itoa = { workspace = true }
 num_cpus = { workspace = true }
 pingap-acme = { workspace = true }
+pingap-cache = { workspace = true }
 pingap-certificate = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }

@@ -19,7 +19,8 @@ use super::{
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::{Bytes, BytesMut};
-use http::header::CONTENT_ENCODING;
+use bytesize::ByteSize;
+use http::header::{CONTENT_ENCODING, CONTENT_LENGTH};
 use http::{Method, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
@@ -31,6 +32,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use regex::bytes::RegexBuilder;
 use std::borrow::Cow;
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
 const PLUGIN_ID: &str = "_sub_filter_";
@@ -63,13 +65,29 @@ pub struct SubFilter {
     /// If Some, the filter will be applied to the specified status codes
     /// The status codes are in the format of "200,201,202,..."
     status_codes: Option<Vec<u16>>,
+
+    /// The content types whose responses are rewritten, as prefixes in
+    /// lower case (`text/html`, `application/json`, `text/`). `None` is
+    /// every response, whatever it is: an image or a download is then
+    /// held in memory to its end and searched like a page.
+    types: Option<Vec<String>>,
+
+    /// The largest body that is rewritten. A larger one is passed on as
+    /// it came: the rules are applied to a whole body, which is held in
+    /// memory until its end. `None` is no limit.
+    max_size: Option<usize>,
 }
 
 // Regular expression for parsing filter rules in the format:
 // subs_filter|sub_filter 'pattern' 'replacement' [flags]
+//
+// Either of the two in single or in double quotes, so that a text with
+// the one kind of quote in it is written in the other, and a replacement
+// may be empty: what is found is taken out. `'[^']+'` twice had no way
+// to say either.
 static SUBS_FILTER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(subs_filter|sub_filter)\s+'([^']+)'\s+'([^']+)'(?:\s+([ig]+))?",
+        r#"(subs_filter|sub_filter)\s+(?:'([^']+)'|"([^"]+)")\s+(?:'([^']*)'|"([^"]*)")(?:\s+([ig]+))?"#,
     )
     .expect("Failed to compile subs filter regex")
 });
@@ -128,12 +146,13 @@ impl SubFilterParams {
 /// * `Option<SubFilterParams>` - Parsed parameters or None if parsing fails
 fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
     let captures = SUBS_FILTER_REGEX.captures(rule)?;
-    let flags = captures.get(4).map(|m| m.as_str()).unwrap_or_default();
-    let pattern = captures.get(2)?.as_str();
+    let flags = captures.get(6).map(|m| m.as_str()).unwrap_or_default();
+    let pattern = captures.get(2).or_else(|| captures.get(3))?.as_str();
+    let replacement = captures.get(4).or_else(|| captures.get(5))?.as_str();
     let mut params = SubFilterParams {
         regex_pattern: None,
         pattern: vec![],
-        replacement: captures.get(3)?.as_str().as_bytes().to_vec(),
+        replacement: replacement.as_bytes().to_vec(),
         global: flags.contains('g'),
     };
     if captures.get(1)?.as_str() == "subs_filter" {
@@ -153,6 +172,11 @@ fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
 struct SubFilterReplacer {
     filters: Arc<[SubFilterParams]>,
     buffer: BytesMut,
+    /// The most that is held, see `SubFilter::max_size`.
+    max_size: Option<usize>,
+    /// The body turned out larger than that: what was held has gone out
+    /// as it came, and the rest follows as it comes.
+    passing: bool,
 }
 
 impl ModifyResponseBody for SubFilterReplacer {
@@ -162,9 +186,19 @@ impl ModifyResponseBody for SubFilterReplacer {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
+        if self.passing {
+            return Ok(());
+        }
         if let Some(data) = body {
             self.buffer.extend_from_slice(data);
             data.clear();
+        }
+        // A body whose length was not known when the response began, and
+        // that is larger than what is rewritten: nothing of it is.
+        if self.max_size.is_some_and(|max| self.buffer.len() > max) {
+            self.passing = true;
+            *body = Some(std::mem::take(&mut self.buffer).freeze());
+            return Ok(());
         }
         if !end_of_stream {
             return Ok(());
@@ -246,6 +280,26 @@ impl TryFrom<&PluginConf> for SubFilter {
         } else {
             None
         };
+        let types: Vec<String> = get_str_slice_conf(value, "types")
+            .iter()
+            .map(|item| item.trim().to_ascii_lowercase())
+            .filter(|item| !item.is_empty())
+            .collect();
+        let max_size = get_str_conf(value, "max_size");
+        let max_size = if max_size.trim().is_empty() {
+            None
+        } else {
+            let size = ByteSize::from_str(max_size.trim()).map_err(|e| {
+                invalid(format!("invalid max_size({max_size}): {e}"))
+            })?;
+            // Nothing would ever be rewritten.
+            if size.as_u64() == 0 {
+                return Err(invalid(
+                    "max_size should be more than 0".to_string(),
+                ));
+            }
+            Some(usize::try_from(size.as_u64()).unwrap_or(usize::MAX))
+        };
         let hash_value = get_hash_key(value);
 
         Ok(Self {
@@ -254,6 +308,8 @@ impl TryFrom<&PluginConf> for SubFilter {
             hash_value,
             handler_id: crate::new_body_handler_id(PLUGIN_ID),
             status_codes,
+            types: (!types.is_empty()).then_some(types),
+            max_size,
         })
     }
 }
@@ -338,6 +394,27 @@ impl Plugin for SubFilter {
         {
             return Ok(ResponsePluginResult::Unchanged);
         }
+        // Only what is of a type the rules are for.
+        if let Some(types) = &self.types
+            && !crate::compression::matches_types(
+                types,
+                &upstream_response.headers,
+            )
+        {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        // A body that says it is larger than what is rewritten goes
+        // through as it is, streamed and with its length.
+        if let Some(max_size) = self.max_size
+            && upstream_response
+                .headers
+                .get(CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .is_some_and(|length| length > max_size as u64)
+        {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
 
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -353,6 +430,8 @@ impl Plugin for SubFilter {
             Box::new(SubFilterReplacer {
                 filters: self.filters.clone(),
                 buffer: BytesMut::new(),
+                max_size: self.max_size,
+                passing: false,
             }),
         );
         Ok(ResponsePluginResult::Modified)
@@ -524,6 +603,132 @@ mod tests {
         .unwrap()
         .to_string();
         assert_eq!(true, err.contains("invalid status code(abc)"), "{err}");
+    }
+
+    /// A rule may take something out, and may have a quote of the one
+    /// kind in a text that is written in the other.
+    #[test]
+    fn test_parse_empty_replacement_and_quotes() {
+        let apply = |rule: &str, data: &str| {
+            let rule = parse_subs_filter(rule).unwrap();
+            String::from_utf8(rule.apply(data.as_bytes().to_vec())).unwrap()
+        };
+        assert_eq!("a  c", apply("sub_filter 'b' ''", "a b c"));
+        assert_eq!("a c", apply("subs_filter 'b ' \"\" g", "a b c"));
+        assert_eq!(
+            "it is here",
+            apply("sub_filter \"it's\" 'it is'", "it's here")
+        );
+        assert_eq!(
+            "say \"hi\"",
+            apply("sub_filter 'hello' '\"hi\"'", "say hello")
+        );
+        assert_eq!("x1y", apply("subs_filter \"a'+\" '1' i", "xA'y"));
+        // As before: nothing to look for is no rule.
+        assert_eq!(true, parse_subs_filter("sub_filter '' 'x'").is_none());
+        assert_eq!(true, parse_subs_filter("sub_filter \"\" 'x'").is_none());
+    }
+
+    /// `types`: only what is of a type the rules are for is held and
+    /// rewritten. `max_size`: nor what is too large to be held.
+    #[tokio::test]
+    async fn test_sub_filter_types_and_max_size() {
+        let handled = async |plugin: &SubFilter, headers: &[(&str, &str)]| {
+            let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+            let mut ctx = Ctx::default();
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            for (name, value) in headers {
+                resp.append_header(name.to_string(), *value).unwrap();
+            }
+            let result = plugin
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap();
+            (result == ResponsePluginResult::Modified, session, ctx, resp)
+        };
+
+        let plugin =
+            new_plugin("types = [\"text/html\", \" Application/JSON \"]");
+        for (content_type, expected) in [
+            (Some("text/html"), true),
+            (Some("text/html; charset=utf-8"), true),
+            (Some("TEXT/HTML"), true),
+            (Some("application/json"), true),
+            (Some("text/css"), false),
+            (Some("image/png"), false),
+            (Some("application/octet-stream"), false),
+            // nothing is known of it
+            (None, false),
+        ] {
+            let headers: Vec<(&str, &str)> = content_type
+                .iter()
+                .map(|value| ("Content-Type", *value))
+                .collect();
+            let (rewritten, _, _, resp) = handled(&plugin, &headers).await;
+            assert_eq!(expected, rewritten, "{content_type:?}");
+            // What is left alone keeps its length and is streamed.
+            if !expected {
+                assert_eq!(
+                    false,
+                    resp.headers.contains_key("Transfer-Encoding")
+                );
+            }
+        }
+        // Without the option every type is, as before.
+        let (rewritten, ..) =
+            handled(&new_plugin(""), &[("Content-Type", "image/png")]).await;
+        assert_eq!(true, rewritten);
+
+        // A length over the limit: not touched at all.
+        let plugin = new_plugin("max_size = \"10b\"");
+        assert_eq!(Some(10), plugin.max_size);
+        let (rewritten, _, _, resp) =
+            handled(&plugin, &[("Content-Length", "11")]).await;
+        assert_eq!(false, rewritten);
+        assert_eq!(true, resp.headers.contains_key("Content-Length"));
+        let (rewritten, ..) =
+            handled(&plugin, &[("Content-Length", "10")]).await;
+        assert_eq!(true, rewritten);
+
+        // No length given, and more than the limit comes: what was held
+        // goes out as it came when the limit is passed, the rest as it
+        // comes, and none of it is rewritten.
+        let (rewritten, mut session, mut ctx, _) = handled(&plugin, &[]).await;
+        assert_eq!(true, rewritten);
+        let mut out = vec![];
+        for (chunk, end) in [
+            ("old old ", false),
+            ("old ", false),
+            ("old", false),
+            ("", true),
+        ] {
+            let mut body = Some(Bytes::copy_from_slice(chunk.as_bytes()));
+            plugin
+                .handle_response_body(&mut session, &mut ctx, &mut body, end)
+                .unwrap();
+            out.push(String::from_utf8(body.unwrap().to_vec()).unwrap());
+        }
+        assert_eq!(vec!["", "old old old ", "old", ""], out);
+        // Within the limit it is rewritten as ever.
+        let (_, mut session, mut ctx, _) = handled(&plugin, &[]).await;
+        let mut body = Some(Bytes::from_static(b"old old"));
+        plugin
+            .handle_response_body(&mut session, &mut ctx, &mut body, true)
+            .unwrap();
+        assert_eq!(b"new new".as_ref(), body.unwrap().as_ref());
+
+        for (conf, message) in [
+            ("max_size = \"lots\"", "invalid max_size(lots)"),
+            ("max_size = \"0\"", "max_size should be more than 0"),
+        ] {
+            let err = SubFilter::try_from(
+                &toml::from_str::<PluginConf>(conf).unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert_eq!(true, err.contains(message), "{err}");
+        }
     }
 
     /// Regression: two sub_filter plugins on one location shared one

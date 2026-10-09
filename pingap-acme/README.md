@@ -167,7 +167,14 @@ acme_ca = "/etc/pingap/internal-root.pem"
   exists keeps the contacts it has.
 - **`acme_key_type = "rsa"`** orders a certificate with an RSA key of 2048
   bits, for clients that can not do ECDSA. The default, `ecdsa`, is a P-256
-  key.
+  key. For both at once, give the domain two entries with the same `domains`,
+  one of them with `acme_key_type = "rsa"`: each is ordered and renewed by
+  itself, and a handshake is signed with the one its client can verify (see
+  the `pingap-certificate` README).
+- **`domains` are ordered in lower case**, whatever case they are written in.
+  Written as `Example.com`, the certificate that came back (for
+  `example.com`) was never for the domains of its entry, and was ordered again
+  at every check.
 - **One account per CA.** The credentials of an account are kept in the
   configuration storage: `lets_encrypt_account` and
   `lets_encrypt_staging_account` for Let's Encrypt's two environments, and

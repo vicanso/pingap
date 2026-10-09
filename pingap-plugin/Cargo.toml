@@ -15,7 +15,7 @@ name = "pingap_plugin"
 path = "src/lib.rs"
 
 [features]
-geo = []
+geo = ["dep:maxminddb"]
 
 [dependencies]
 # 0.46's MSRV is 1.91; pingap's floor is 1.96 so this is fine.
@@ -41,6 +41,7 @@ jsonwebtoken = { workspace = true }
 hmac-sha256 = { workspace = true }
 hmac-sha512 = { workspace = true, default-features = false }
 humantime = { workspace = true }
+maxminddb = { workspace = true, optional = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
 path-absolutize = { workspace = true }

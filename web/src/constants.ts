@@ -42,6 +42,11 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.REQUEST_HEADERS] = [0, 1];
   pluginSupportSteps[PluginCategory.URI_BLOCK] = [0];
   pluginSupportSteps[PluginCategory.MAINTENANCE] = [0];
+  pluginSupportSteps[PluginCategory.BANDWIDTH_LIMIT] = [0];
+  pluginSupportSteps[PluginCategory.ERROR_PAGE] = [0];
+  pluginSupportSteps[PluginCategory.HMAC_AUTH] = [0];
+  pluginSupportSteps[PluginCategory.MIRROR] = [0, 1];
+  pluginSupportSteps[PluginCategory.OIDC] = [0];
   pluginSupportSteps[PluginCategory.HEALTH] = [0];
 
   const steps = pluginSupportSteps[category];
@@ -154,5 +159,10 @@ export enum PluginCategory {
   REQUEST_HEADERS = "request_headers",
   URI_BLOCK = "uri_block",
   MAINTENANCE = "maintenance",
+  BANDWIDTH_LIMIT = "bandwidth_limit",
+  ERROR_PAGE = "error_page",
+  HMAC_AUTH = "hmac_auth",
+  MIRROR = "mirror",
+  OIDC = "oidc",
   HEALTH = "health",
 }

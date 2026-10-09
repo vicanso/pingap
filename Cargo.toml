@@ -309,6 +309,7 @@ itoa = "1.0.18"
 jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
 local-ip-address = "0.6.13"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
+maxminddb = { version = "0.32.0", default-features = false }
 mime_guess = "2.0.5"
 nanoid = "0.5.0"
 num_cpus = "1.17.0"
@@ -319,6 +320,10 @@ opentelemetry-http = { version = "0.32.0", default-features = false }
 opentelemetry-jaeger-propagator = { version = "0.32.0" }
 opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
     "grpc-tonic",
+    "http-proto",
+    # The blocking client: the batch processor exports from a thread of
+    # its own, where there is no tokio reactor for the async one.
+    "reqwest-blocking-client",
     "trace",
 ] }
 opentelemetry_sdk = { version = "0.32.1", features = [
@@ -416,7 +421,9 @@ uuid = { version = "1.26.1", features = [
     "fast-rng",
 ], default-features = false }
 walkdir = "2.5.0"
-x509-parser = "0.18.1"
+# verify-aws: the signature of an OCSP answer, with the aws-lc-rs that is
+# in the tree for both TLS backends
+x509-parser = { version = "0.18.1", features = ["verify-aws"] }
 zstd = "0.14.0"
 
 # Shared by benches / tests across pingap-* crates.

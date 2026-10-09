@@ -66,7 +66,9 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `key_auth` | 请求头或查询参数中的 API Key | [key_auth](./key_auth.md) |
 | `jwt` | JWT 校验（HMAC、公钥或远程 JWKS）与签发 | [jwt](./jwt.md) |
 | `combined_auth` | app id + 时间戳 + HMAC 摘要，可选绑定 IP | [combined_auth](./combined_auth.md) |
+| `hmac_auth` | 对方法、路径、查询串、请求头和正文签名的请求（HTTP Signatures） | [hmac_auth](./hmac_auth.md) |
 | `forward_auth` | 将决策委托给外部 HTTP 服务 | [forward_auth](./forward_auth.md) |
+| `oidc` | 通过 OpenID Connect 身份提供方登录，会话保存在加密的 cookie 里 | [oidc](./oidc.md) |
 | `csrf` | 双提交 Cookie CSRF 防护 | [csrf](./csrf.md) |
 
 ### 访问控制
@@ -76,7 +78,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `ip_restriction` | 按 IP 或 CIDR 允许/拒绝 | [ip_restriction](./ip_restriction.md) |
 | `referer_restriction` | 按 `Referer` 主机允许/拒绝 | [referer_restriction](./referer_restriction.md) |
 | `ua_restriction` | 按 `User-Agent` 正则允许/拒绝 | [ua_restriction](./ua_restriction.md) |
-| `geo_restriction` | 按 GeoIP 国家允许/拒绝（feature `geo`） | [geo_restriction](./geo_restriction.md) |
+| `geo_restriction` | 按 GeoIP 国家允许/拒绝，内嵌数据或 `.mmdb` 文件；可把国家码传给上游（feature `geo`） | [geo_restriction](./geo_restriction.md) |
 | `uri_block` | 按路径、查询串的规则或请求方法拦截请求 | [uri_block](./uri_block.md) |
 | `maintenance` | 返回维护通知，白名单地址或带指定请求头的请求放行 | [maintenance](./maintenance.md) |
 
@@ -86,7 +88,9 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | --- | --- | --- |
 | `limit` | 速率限制与并发限制 | [limit](./limit.md) |
 | `traffic_splitting` | 将部分流量导向另一 upstream | [traffic_splitting](./traffic_splitting.md) |
+| `mirror` | 把请求复制一份发到另一个地址，响应丢弃 | [mirror](./mirror.md) |
 | `cache` | HTTP 缓存，支持 `PURGE` | [cache](./cache.md) |
+| `bandwidth_limit` | 限制响应正文的发送速度 | [bandwidth_limit](./bandwidth_limit.md) |
 
 ### 内容
 
@@ -100,6 +104,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `response_headers` | 添加 / 设置 / 删除 / 重命名响应头 | [response_headers](./response_headers.md) |
 | `cors` | CORS 预检与响应头 | [cors](./cors.md) |
 | `redirect` | HTTP↔HTTPS 重定向与路径前缀 | [redirect](./redirect.md) |
+| `error_page` | 按 location 定制代理应答的错误页，或返回 JSON | [error_page](./error_page.md) |
 | `image_optim` | PNG/JPEG 重编码为 WebP/AVIF（feature `imageoptim`） | [image_optim](./image_optim.md) |
 
 ### 运维
@@ -108,7 +113,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | --- | --- | --- |
 | `ping` | 存活探测，返回 `pong` | [ping](./ping.md) |
 | `health` | 就绪探针：各 upstream 的健康后端数是否足够 | [health](./health.md) |
-| `mock` | 返回固定响应，可选延迟 | [mock](./mock.md) |
+| `mock` | 返回固定响应，可选延迟，可只对一部分请求生效 | [mock](./mock.md) |
 | `request_id` | 生成或透传请求 ID | [request_id](./request_id.md) |
 | `stats` | JSON 进程与请求统计 | [stats](./stats.md) |
 | `admin` | Web 管理界面与配置 API | [admin](./admin.md) |
@@ -157,7 +162,7 @@ register_plugin!("my_plugin", MyPlugin);
 
 ## Features
 
-- `geo` — 启用 `geo_restriction` 插件（内嵌 Tor GeoIP 数据库）。
+- `geo` — 启用 `geo_restriction` 插件（内嵌 Tor GeoIP 数据库，以及 MaxMind DB 文件的读取）。
 
 ## 许可证
 

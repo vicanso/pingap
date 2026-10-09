@@ -113,6 +113,38 @@ pub trait ModifyResponseBody: Sync + Send {
     }
 }
 
+/// What a plugin does with the body of the request as it is passed on to
+/// the upstream: looks at it (a digest to check) or keeps a copy of it (a
+/// mirror). It does not change it.
+///
+/// Set by the plugin at its request step
+/// ([`Ctx::add_request_body_handler`]) and called by the proxy for each
+/// chunk. A request the upstream is never asked for - answered by a later
+/// plugin, or from the cache - has its body passed to nobody, and the
+/// handler is not called.
+pub trait HandleRequestBody: Sync + Send {
+    /// A chunk of the body, `None` where there is none, and whether it is
+    /// the last. An error ends the request, and the upstream is not sent
+    /// this chunk.
+    ///
+    /// The end is not always said. A request that turns out to have no
+    /// body may get one call with `end_of_stream` or none at all (pingora
+    /// sends the header of such a request to an HTTP/2 upstream as its
+    /// end, and passes nothing through the filter). And a body with a
+    /// `Content-Length` is complete for the upstream once that many bytes
+    /// are out, which may be well before a client over HTTP/2 ends its
+    /// stream. Whoever has to act when the body is complete goes by the
+    /// length the request declares, not by this flag alone.
+    fn handle(
+        &mut self,
+        body: Option<&bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()>;
+    /// The upstream is tried again: the body comes from its first byte
+    /// once more, what pingora has kept of it and then the rest.
+    fn restart(&mut self);
+}
+
 /// Information about a single client connection.
 #[derive(Default)]
 pub struct ConnectionInfo {
@@ -307,6 +339,11 @@ pub struct UpstreamInfo {
     /// chooses by that (`least_conn`): counted from the attempt to the
     /// next one, or to the end of the request.
     pub backend_inflight: Option<InflightGuard>,
+    /// The cookie that keeps the client on the backend it was given,
+    /// for an upstream that does so (`sticky:<cookie>`): `name=value`,
+    /// to be set on the response when the client does not have it yet,
+    /// or has it for another backend.
+    pub sticky_cookie: Option<String>,
 }
 
 /// One request in flight on a backend, for as long as this is kept: the
@@ -367,6 +404,14 @@ pub struct RequestState {
     /// the proxy says of it: pingora asks whether it may be kept only for
     /// a request that failed in one of the filters.
     pub proxying: bool,
+    /// A stale response of the cache is being answered for a `5xx` of
+    /// the upstream (`stale-if-error`). The proxy goes by it to tell
+    /// where the body of that answer ends, which pingora does not say on
+    /// this path: see `Server::response_body_filter`.
+    pub stale_for_status: bool,
+    /// The plugins have been told that the body of the response ends:
+    /// they are told once, whoever says it.
+    pub body_end_said: bool,
     /// The budget to report to the client, from the limit that has the
     /// least left of those that were asked to report theirs.
     pub rate_limit: Option<RateLimitQuota>,
@@ -536,6 +581,92 @@ impl CacheInfo {
     }
 }
 
+/// A limit on how fast a response body is sent: so many bytes a second,
+/// once the first `after` of them are out.
+///
+/// It is kept by what has been sent and how long that has taken, not by
+/// a pause per chunk: the time the sending itself takes is part of the
+/// time a body is given, so a client that reads slowly is not slowed
+/// down a second time. Time that was not used is not saved up.
+#[derive(Debug, Clone)]
+pub struct BodyPace {
+    rate: u64,
+    after: u64,
+    sent: u64,
+    /// When the first byte past `after` was about to be sent.
+    limited_since: Option<Instant>,
+}
+
+impl BodyPace {
+    /// `rate` bytes a second, at least one; the first `after` bytes as
+    /// fast as they go.
+    pub fn new(rate: u64, after: u64) -> Self {
+        Self {
+            rate: rate.max(1),
+            after,
+            sent: 0,
+            limited_since: None,
+        }
+    }
+
+    /// How long to wait after a chunk of `len` bytes, for it and what
+    /// went before it to have taken their time at the rate: `None` when
+    /// the body is on time, or not limited yet. For whoever writes the
+    /// chunks itself, and asks between one and the next.
+    pub fn delay(&mut self, len: usize) -> Option<Duration> {
+        self.delay_at(len, Instant::now())
+    }
+
+    /// How long to wait before a chunk of `len` bytes, for what went
+    /// before it to have taken its time: nothing for the first chunk,
+    /// which is how a body that is written in one piece is not held back
+    /// at all. For whoever is asked before a chunk is written, and has
+    /// the wait done for it (the proxy, by pingora).
+    pub fn delay_before(&mut self, len: usize) -> Option<Duration> {
+        self.delay_before_at(len, Instant::now())
+    }
+
+    fn delay_at(&mut self, len: usize, now: Instant) -> Option<Duration> {
+        self.count(len, now);
+        self.owed(now)
+    }
+
+    fn delay_before_at(
+        &mut self,
+        len: usize,
+        now: Instant,
+    ) -> Option<Duration> {
+        let owed = self.owed(now);
+        self.count(len, now);
+        owed
+    }
+
+    fn count(&mut self, len: usize, now: Instant) {
+        self.sent = self.sent.saturating_add(len as u64);
+        if self.sent > self.after {
+            self.limited_since.get_or_insert(now);
+        }
+    }
+
+    /// The time that what has been counted is still to take.
+    fn owed(&mut self, now: Instant) -> Option<Duration> {
+        let limited = self.sent.checked_sub(self.after).filter(|n| *n > 0)?;
+        let since = self.limited_since?;
+        // What the limited part of the body is given, at the rate.
+        let due = Duration::from_secs_f64(limited as f64 / self.rate as f64);
+        let taken = now.saturating_duration_since(since);
+        if taken > due {
+            // Behind, which is the client's doing. The time it did not
+            // use is not kept for it: counted from the start, a body that
+            // stood still for a minute could then go out a minute's worth
+            // at once.
+            self.limited_since = now.checked_sub(due);
+            return None;
+        }
+        Some(due - taken).filter(|delay| !delay.is_zero())
+    }
+}
+
 /// Optional features like tracing, plugins, and response modifications.
 #[derive(Default)]
 pub struct Features {
@@ -557,6 +688,14 @@ pub struct Features {
     /// at a later one, under a name of its own: see
     /// [`Ctx::set_plugin_note`].
     pub plugin_notes: Option<Vec<(String, &'static str)>>,
+    /// What plugins do with the body of the request as it passes, see
+    /// [`HandleRequestBody`].
+    pub request_body_handlers: Option<Vec<Box<dyn HandleRequestBody>>>,
+    /// How fast the body of the response is sent, where a plugin limits
+    /// that (`bandwidth_limit`): gone by wherever a body is written, for
+    /// a response from the upstream or the cache as for a file a plugin
+    /// sends itself.
+    pub body_pace: Option<BodyPace>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).
     #[cfg(feature = "tracing")]
     pub otel_tracer: Option<OtelTracer>,
@@ -918,6 +1057,20 @@ impl Ctx {
             .modify_body_handlers
             .get_or_insert_with(AHashMap::new);
         handlers.insert(name.to_string(), handler);
+    }
+
+    /// Has `handler` see the body of the request as the proxy passes it
+    /// to the upstream.
+    #[inline]
+    pub fn add_request_body_handler(
+        &mut self,
+        handler: Box<dyn HandleRequestBody>,
+    ) {
+        self.features
+            .get_or_insert_default()
+            .request_body_handlers
+            .get_or_insert_default()
+            .push(handler);
     }
 
     /// Returns the modify body handler by name.
@@ -1581,6 +1734,58 @@ mod tests {
     use pingora::protocols::tls::SslDigestExtension;
     use pretty_assertions::assert_eq;
     use std::{sync::Arc, time::Duration};
+
+    /// A body is held to its rate by what has gone out and how long that
+    /// took, once the part that is free of it is past.
+    #[test]
+    fn test_body_pace() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let ms = |delay: Option<Duration>| delay.map(|d| d.as_millis());
+
+        // 1000 bytes a second, from the first byte.
+        let mut pace = BodyPace::new(1000, 0);
+        assert_eq!(Some(500), ms(pace.delay_at(500, at(0))));
+        // On time after the wait: only the new chunk is owed.
+        assert_eq!(Some(500), ms(pace.delay_at(500, at(500))));
+        // A client that took its time has used it up already.
+        assert_eq!(None, ms(pace.delay_at(1000, at(5000))));
+        // And is not let run ahead by that afterwards: three thousand
+        // more bytes are three more seconds.
+        assert_eq!(Some(3000), ms(pace.delay_at(3000, at(5000))));
+
+        // The first 2000 bytes as fast as they go.
+        let mut pace = BodyPace::new(1000, 2000);
+        assert_eq!(None, ms(pace.delay_at(1500, at(0))));
+        // 500 of these are free, 500 are not.
+        assert_eq!(Some(500), ms(pace.delay_at(1000, at(10))));
+        assert_eq!(Some(1000), ms(pace.delay_at(1000, at(510))));
+
+        // No rate at all is the slowest there is, not a division by zero.
+        let mut pace = BodyPace::new(0, 0);
+        assert_eq!(Some(2000), ms(pace.delay_at(2, at(0))));
+        // An empty chunk asks for nothing.
+        let mut pace = BodyPace::new(1000, 0);
+        assert_eq!(None, ms(pace.delay_at(0, at(0))));
+
+        // Asked before a chunk: the wait is for what went before it.
+        let mut pace = BodyPace::new(1000, 0);
+        // nothing went before the first, however large it is
+        assert_eq!(None, ms(pace.delay_before_at(2000, at(0))));
+        assert_eq!(Some(2000), ms(pace.delay_before_at(500, at(0))));
+        // half a second later the 500 are paid for
+        assert_eq!(Some(500), ms(pace.delay_before_at(500, at(2000))));
+        assert_eq!(None, ms(pace.delay_before_at(500, at(3000))));
+        // a client that took its time owes nothing, and is not let run
+        // ahead afterwards
+        assert_eq!(None, ms(pace.delay_before_at(1000, at(9000))));
+        assert_eq!(Some(1000), ms(pace.delay_before_at(1, at(9000))));
+        // with the first bytes free
+        let mut pace = BodyPace::new(1000, 2000);
+        assert_eq!(None, ms(pace.delay_before_at(1500, at(0))));
+        assert_eq!(None, ms(pace.delay_before_at(1000, at(0))));
+        assert_eq!(Some(500), ms(pace.delay_before_at(1000, at(0))));
+    }
 
     /// A `PURGE` names a url and no coding or image format: it has to
     /// find the key of every request that named one.

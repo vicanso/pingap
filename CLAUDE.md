@@ -31,7 +31,7 @@ make lint
 make fmt
 
 # Full test suite (requires the `full` feature set)
-make test                # cargo test --workspace --features=full
+make test                # cargo test --workspace --features=full, then pingap-plugin with --features=geo
 make test-rustls         # same suite built with the rustls TLS backend (also: make lint-rustls)
 
 # One package / one test (use cargo directly, not make)

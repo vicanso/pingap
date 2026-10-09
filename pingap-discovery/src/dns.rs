@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{Addr, Error, Result, format_addrs};
-use super::{DNS_DISCOVERY, Discovery, LOG_TARGET};
+use super::{DNS_DISCOVERY, Discovery, LOG_TARGET, SRV_DISCOVERY};
 use async_trait::async_trait;
 use futures::future::join_all;
 use hickory_resolver::TokioResolver;
@@ -22,7 +22,7 @@ use hickory_resolver::config::{
 };
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
-use hickory_resolver::proto::rr::Name;
+use hickory_resolver::proto::rr::{Name, RData};
 use hickory_resolver::system_conf::read_system_conf;
 use http::Extensions;
 use pingap_core::NotificationSender;
@@ -73,6 +73,9 @@ const KEEP_FAILED_FOR: Duration = Duration::from_secs(600);
 enum Resolved {
     /// Its addresses, and until when they hold.
     Addrs(Vec<std::net::IpAddr>, Instant),
+    /// What its `SRV` records lead to: each an address with the port and
+    /// the weight its record gives it.
+    Targets(Vec<(std::net::IpAddr, u16, usize)>, Instant),
     /// The answer was that there is no such name, or no address for it.
     Gone,
     /// No answer: a timeout, a server that could not be reached.
@@ -106,6 +109,25 @@ fn merge_round(
     {
         let (ips, until) = match lookup {
             Resolved::Addrs(ips, until) => (ips, until),
+            // The port and the weight are the record's, not the entry's.
+            Resolved::Targets(targets, until) => {
+                valid_until = valid_until.min(*until);
+                host_backends.push(HostBackends {
+                    backends: targets
+                        .iter()
+                        .filter(|(ip, _, _)| !ipv4_only || ip.is_ipv4())
+                        .map(|(ip, port, weight)| Backend {
+                            addr: SocketAddr::Inet(StdSocketAddr::new(
+                                *ip, *port,
+                            )),
+                            weight: *weight,
+                            ext: Extensions::new(),
+                        })
+                        .collect(),
+                    resolved_at: Some(now),
+                });
+                continue;
+            },
             Resolved::Gone => {
                 any_failed = true;
                 host_backends.push(HostBackends::default());
@@ -164,8 +186,136 @@ struct Discovered {
     new_failures: bool,
 }
 
+/// The `SRV` records that are gone by, of all a name has: their target,
+/// port and weight.
+///
+/// Those of the lowest priority, which is the one a client is to use
+/// while it can be reached (RFC 2782). The others are for when it can
+/// not, and an upstream has no place for backends that are only spares:
+/// taken along, they would get their share of the requests. A weight of
+/// nothing is the least there is, not none. A target of `.` says the
+/// service is not to be had at this name.
+///
+/// The weights are what they are to one another, see
+/// [`normalize_weights`].
+fn pick_srv_targets(
+    records: &[(u16, u16, u16, String)],
+) -> Vec<(String, u16, usize)> {
+    let Some(lowest) = records
+        .iter()
+        .filter(|(_, _, _, target)| target != ".")
+        .map(|(priority, _, _, _)| *priority)
+        .min()
+    else {
+        return vec![];
+    };
+    let mut targets: Vec<(String, u16, usize)> = records
+        .iter()
+        .filter(|(priority, _, _, target)| *priority == lowest && target != ".")
+        .map(|(_, weight, port, target)| {
+            (target.clone(), *port, (*weight).max(1) as usize)
+        })
+        .collect();
+    let mut weights: Vec<usize> =
+        targets.iter().map(|(_, _, weight)| *weight).collect();
+    normalize_weights(&mut weights);
+    for (target, weight) in targets.iter_mut().zip(weights) {
+        target.2 = weight;
+    }
+    targets
+}
+
+/// The most the weight of an `SRV` record comes to.
+const SRV_WEIGHT_MAX: usize = 256;
+
+/// Brings the weights of a set of `SRV` records down to what they are to
+/// one another: divided by what they have in common, and with the
+/// largest no more than [`SRV_WEIGHT_MAX`].
+///
+/// A weight is part of what a backend is known by, its health included:
+/// one that changes makes a new backend of an address, healthy until it
+/// is checked again. And a registry changes them without anything being
+/// different about the servers - CoreDNS gives each of `n` pods
+/// `100 / n`, so every weight changes when one pod is added. Divided,
+/// equal weights are `1` whatever the registry writes.
+///
+/// The number also comes from outside, and is what the tables of the
+/// load balancer are sized by: 160 points of a hash ring for each unit.
+/// A record with the largest weight there is, 65535, would be 80 MB of
+/// it. With the largest at 256 the shares are right to less than half a
+/// percent.
+fn normalize_weights(weights: &mut [usize]) {
+    fn gcd(a: usize, b: usize) -> usize {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+    let common = weights
+        .iter()
+        .fold(0, |common, weight| gcd(common, *weight));
+    if common > 1 {
+        for weight in weights.iter_mut() {
+            *weight /= common;
+        }
+    }
+    let largest = weights.iter().copied().max().unwrap_or_default();
+    if largest > SRV_WEIGHT_MAX {
+        for weight in weights.iter_mut() {
+            *weight =
+                ((*weight * SRV_WEIGHT_MAX + largest / 2) / largest).max(1);
+        }
+    }
+}
+
+/// What the lookup of one target of an `SRV` record came to: its
+/// addresses with the time they hold until, or, for a lookup that
+/// failed, whether the answer was that there is no such name.
+type TargetLookup = std::result::Result<(Vec<std::net::IpAddr>, Instant), bool>;
+
+/// What the targets of a name's `SRV` records came to, from the port,
+/// the weight and the lookup of each.
+///
+/// A target that does not resolve is left out and the others serve on.
+/// A lookup that got no answer says nothing about the server behind the
+/// name: the round is then good for the shortest time only, and the name
+/// is asked again in a few seconds. It used to be good for as long as the
+/// records of the others, up to five minutes without that backend over
+/// one lost packet. With none of them resolved the name has no answer as
+/// far as its backends go, and keeps for a while the ones it had.
+fn srv_targets(
+    lookups: Vec<(u16, usize, TargetLookup)>,
+    records_valid_until: Instant,
+    now: Instant,
+) -> Resolved {
+    if lookups.is_empty() {
+        return Resolved::Gone;
+    }
+    let mut valid_until = records_valid_until;
+    let mut targets = vec![];
+    let mut resolved = false;
+    let mut unanswered = false;
+    for (port, weight, lookup) in lookups {
+        match lookup {
+            Ok((ips, until)) => {
+                resolved = true;
+                valid_until = valid_until.min(until);
+                targets.extend(ips.into_iter().map(|ip| (ip, port, weight)));
+            },
+            Err(no_such_name) => unanswered |= !no_such_name,
+        }
+    }
+    if !resolved {
+        return Resolved::Failed;
+    }
+    if unanswered {
+        valid_until = valid_until.min(now + DISCOVERY_CACHE_MIN);
+    }
+    Resolved::Targets(targets, valid_until)
+}
+
 /// DNS service discovery implementation
 struct Dns {
+    /// The names are looked up for their `SRV` records, and those for
+    /// the addresses.
+    srv: bool,
     ipv4_only: bool,
     hosts: Vec<Addr>,
     sender: Option<Arc<NotificationSender>>,
@@ -216,6 +366,10 @@ pub fn is_dns_discovery(value: &str) -> bool {
     value == DNS_DISCOVERY
 }
 
+pub fn is_srv_discovery(value: &str) -> bool {
+    value == SRV_DISCOVERY
+}
+
 impl Dns {
     /// Creates a new DNS discovery instance
     ///
@@ -229,6 +383,7 @@ impl Dns {
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
         let hosts = format_addrs(addrs, tls)?;
         Ok(Self {
+            srv: false,
             hosts,
             ipv4_only,
             sender: None,
@@ -420,6 +575,96 @@ impl Dns {
         Ok((lookup_ips, failed_hosts))
     }
 
+    /// What the `SRV` records of each host lead to, index-aligned with
+    /// `self.hosts`, plus the names that failed.
+    async fn lookup_srv(&self) -> Result<(Vec<Resolved>, Vec<String>)> {
+        let resolver = self.get_resolver().await?;
+        let lookups = self.hosts.iter().map(|(host, _, _)| {
+            let resolver = resolver.clone();
+            async move {
+                let lookup = resolver.srv_lookup(host.as_str()).await?;
+                let records: Vec<(u16, u16, u16, String)> = lookup
+                    .answers()
+                    .iter()
+                    .filter_map(|record| match &record.data {
+                        RData::SRV(srv) => Some((
+                            srv.priority,
+                            srv.weight,
+                            srv.port,
+                            srv.target.to_utf8(),
+                        )),
+                        _ => None,
+                    })
+                    .collect();
+                let picked = pick_srv_targets(&records);
+                let mut lookups = Vec::with_capacity(picked.len());
+                for (target, port, weight) in picked {
+                    let addrs = match resolver.lookup_ip(target.as_str()).await
+                    {
+                        Ok(ips) => Ok((
+                            ips.iter().collect::<Vec<_>>(),
+                            ips.valid_until(),
+                        )),
+                        Err(e) => {
+                            warn!(
+                                target: LOG_TARGET,
+                                error = %e,
+                                host,
+                                srv_target = target,
+                                "srv target lookup failed"
+                            );
+                            Err(e.is_no_records_found())
+                        },
+                    };
+                    lookups.push((port, weight, addrs));
+                }
+                Ok::<Resolved, hickory_resolver::net::NetError>(srv_targets(
+                    lookups,
+                    lookup.valid_until(),
+                    Instant::now(),
+                ))
+            }
+        });
+        let mut resolved = Vec::with_capacity(self.hosts.len());
+        let mut failed_hosts = vec![];
+        for (index, result) in join_all(lookups).await.into_iter().enumerate() {
+            let host = self
+                .hosts
+                .get(index)
+                .map(|item| item.0.clone())
+                .unwrap_or_default();
+            let item = match result {
+                Ok(item) => item,
+                Err(e) => {
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        host,
+                        "srv lookup failed"
+                    );
+                    if e.is_no_records_found() {
+                        Resolved::Gone
+                    } else {
+                        Resolved::Failed
+                    }
+                },
+            };
+            if !matches!(item, Resolved::Targets(..)) {
+                failed_hosts.push(host);
+            }
+            resolved.push(item);
+        }
+        if resolved
+            .iter()
+            .all(|item| !matches!(item, Resolved::Targets(..)))
+        {
+            return Err(Error::Invalid {
+                message: "resolve dns srv failed".to_string(),
+            });
+        }
+        Ok((resolved, failed_hosts))
+    }
+
     /// Discovers backend services by resolving DNS
     async fn run_discover(&self) -> Result<Discovered> {
         // Honour DNS TTLs: health-check / update loops may call us more often
@@ -453,18 +698,23 @@ impl Dns {
             "dns discover is running"
         );
 
-        let (lookup_ips, failed_hosts) = self.tokio_lookup_ip().await?;
-        let resolved: Vec<Resolved> = lookup_ips
-            .iter()
-            .map(|lookup| match lookup {
-                Ok(lookup) => Resolved::Addrs(
-                    lookup.iter().collect(),
-                    lookup.valid_until(),
-                ),
-                Err(true) => Resolved::Gone,
-                Err(false) => Resolved::Failed,
-            })
-            .collect();
+        let (resolved, failed_hosts) = if self.srv {
+            self.lookup_srv().await?
+        } else {
+            let (lookup_ips, failed_hosts) = self.tokio_lookup_ip().await?;
+            let resolved: Vec<Resolved> = lookup_ips
+                .iter()
+                .map(|lookup| match lookup {
+                    Ok(lookup) => Resolved::Addrs(
+                        lookup.iter().collect(),
+                        lookup.valid_until(),
+                    ),
+                    Err(true) => Resolved::Gone,
+                    Err(false) => Resolved::Failed,
+                })
+                .collect();
+            (resolved, failed_hosts)
+        };
 
         let (upstreams, changed, new_failures) = {
             let mut cache = self.discovery_cache.lock().await;
@@ -612,8 +862,21 @@ impl ServiceDiscovery for Dns {
 /// # Returns
 /// * `Result<Backends>` - Configured service discovery backend
 pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
+    new_backends(discovery, false)
+}
+
+/// Creates a service discovery backend that goes by the `SRV` records of
+/// the names in `addrs`: `_http._tcp.api.internal`. The records give the
+/// hosts, their ports and their weights; a port or a weight written
+/// after a name is not used.
+pub fn new_srv_discover_backends(discovery: &Discovery) -> Result<Backends> {
+    new_backends(discovery, true)
+}
+
+fn new_backends(discovery: &Discovery, srv: bool) -> Result<Backends> {
     let mut dns =
         Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
+    dns.srv = srv;
     if let Some(dns_server) = &discovery.dns_server {
         // Checked when the upstream is built, so a setting that is no
         // address fails the config check and not the first lookup.
@@ -636,6 +899,183 @@ mod tests {
     use super::*;
     use crate::Discovery;
     use pretty_assertions::assert_eq;
+
+    /// The `SRV` records that are gone by: those of the lowest priority,
+    /// with their ports and weights.
+    #[test]
+    fn test_pick_srv_targets() {
+        let record = |priority: u16, weight: u16, port: u16, target: &str| {
+            (priority, weight, port, target.to_string())
+        };
+        let target = |host: &str, port: u16, weight: usize| {
+            (host.to_string(), port, weight)
+        };
+        // The weights as they are to one another: 10 and 30 are 1 and 3.
+        assert_eq!(
+            vec![
+                target("a.internal.", 8080, 1),
+                target("b.internal.", 8081, 3)
+            ],
+            pick_srv_targets(&[
+                record(20, 5, 9000, "spare.internal."),
+                record(10, 10, 8080, "a.internal."),
+                record(10, 30, 8081, "b.internal."),
+            ])
+        );
+        // What CoreDNS writes for three pods, and for four: the same
+        // backends, with nothing about them changed.
+        for weight in [33, 25] {
+            assert_eq!(
+                vec![
+                    target("a.internal.", 80, 1),
+                    target("b.internal.", 80, 1)
+                ],
+                pick_srv_targets(&[
+                    record(0, weight, 80, "a.internal."),
+                    record(0, weight, 80, "b.internal."),
+                ])
+            );
+        }
+        // a weight of nothing is the least there is
+        assert_eq!(
+            vec![target("a.internal.", 80, 1)],
+            pick_srv_targets(&[record(0, 0, 80, "a.internal.")])
+        );
+        // `.`: the service is not to be had here. With other records
+        // beside it, those are gone by.
+        assert_eq!(true, pick_srv_targets(&[record(0, 0, 0, ".")]).is_empty());
+        assert_eq!(
+            vec![target("a.internal.", 80, 1)],
+            pick_srv_targets(&[
+                record(0, 0, 0, "."),
+                record(5, 1, 80, "a.internal.")
+            ])
+        );
+        assert_eq!(true, pick_srv_targets(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_normalize_weights() {
+        let normalized = |weights: &[usize]| {
+            let mut weights = weights.to_vec();
+            normalize_weights(&mut weights);
+            weights
+        };
+        assert_eq!(vec![1, 3], normalized(&[10, 30]));
+        assert_eq!(vec![1, 1, 1], normalized(&[100, 100, 100]));
+        assert_eq!(vec![1], normalized(&[65535]));
+        assert_eq!(vec![2, 3], normalized(&[2, 3]));
+        // The largest there is beside the least: 256 to 1, not 65535.
+        assert_eq!(vec![256, 1], normalized(&[65535, 1]));
+        assert_eq!(vec![256, 128, 1], normalized(&[1000, 499, 3]));
+        // As good as equal.
+        assert_eq!(vec![256, 256], normalized(&[65535, 65534]));
+        assert_eq!(Vec::<usize>::new(), normalized(&[]));
+    }
+
+    /// What the targets of a name came to: the ones that resolved, and a
+    /// round that is short when one of the others got no answer.
+    #[test]
+    fn test_srv_targets() {
+        let now = Instant::now();
+        let hour = now + Duration::from_secs(3600);
+        let minute = now + Duration::from_secs(60);
+        let ip = |last: u8| IpAddr::from([10, 0, 0, last]);
+        let targets = |resolved: Resolved| match resolved {
+            Resolved::Targets(targets, until) => Some((targets, until)),
+            _ => None,
+        };
+
+        // All of them: good for as long as the shortest of the records.
+        let resolved = srv_targets(
+            vec![
+                (8080, 1, Ok((vec![ip(1), ip(2)], hour))),
+                (8081, 3, Ok((vec![ip(3)], minute))),
+            ],
+            hour,
+            now,
+        );
+        assert_eq!(
+            Some((
+                vec![(ip(1), 8080, 1), (ip(2), 8080, 1), (ip(3), 8081, 3)],
+                minute
+            )),
+            targets(resolved)
+        );
+
+        // One that got no answer is left out, and asked for again soon.
+        let resolved = srv_targets(
+            vec![(8080, 1, Ok((vec![ip(1)], hour))), (8081, 3, Err(false))],
+            hour,
+            now,
+        );
+        assert_eq!(
+            Some((vec![(ip(1), 8080, 1)], now + DISCOVERY_CACHE_MIN)),
+            targets(resolved)
+        );
+        // One that is not there is left out for as long as the records
+        // hold.
+        let resolved = srv_targets(
+            vec![(8080, 1, Ok((vec![ip(1)], hour))), (8081, 3, Err(true))],
+            hour,
+            now,
+        );
+        assert_eq!(Some((vec![(ip(1), 8080, 1)], hour)), targets(resolved));
+
+        // None of them: no answer, the backends the name had stay.
+        for no_such_name in [true, false] {
+            let resolved =
+                srv_targets(vec![(80, 1, Err(no_such_name))], hour, now);
+            assert_eq!(true, matches!(resolved, Resolved::Failed));
+        }
+        // No record at all: the name has no backends.
+        assert_eq!(
+            true,
+            matches!(srv_targets(vec![], hour, now), Resolved::Gone)
+        );
+    }
+
+    /// What `SRV` records lead to is a backend for each address, with the
+    /// port and the weight of its record and not those of the entry.
+    #[test]
+    fn test_merge_round_with_srv_targets() {
+        let now = Instant::now();
+        let hour = now + Duration::from_secs(3600);
+        let ip = |last: u8| IpAddr::from([10, 0, 0, last]);
+        let hosts = vec![
+            ("_http._tcp.api.internal".to_string(), 80, 1),
+            ("web.internal".to_string(), 8000, 2),
+        ];
+        let v6: IpAddr = "fd00::1".parse().unwrap();
+        let resolved = [
+            Resolved::Targets(
+                vec![(ip(1), 8080, 10), (ip(2), 8081, 30), (v6, 8080, 10)],
+                now + Duration::from_secs(30),
+            ),
+            Resolved::Addrs(vec![ip(9)], hour),
+        ];
+        let backends = |ipv4_only: bool| -> Vec<(String, usize)> {
+            let (host_backends, valid_until) =
+                merge_round(&hosts, ipv4_only, &resolved, None, now);
+            // good for as long as the shortest of the records
+            assert_eq!(now + Duration::from_secs(30), valid_until);
+            host_backends
+                .iter()
+                .flat_map(|host| host.backends.iter())
+                .map(|backend| (backend.addr.to_string(), backend.weight))
+                .collect()
+        };
+        assert_eq!(
+            vec![
+                ("10.0.0.1:8080".to_string(), 10),
+                ("10.0.0.2:8081".to_string(), 30),
+                ("[fd00::1]:8080".to_string(), 10),
+                ("10.0.0.9:8000".to_string(), 2),
+            ],
+            backends(false)
+        );
+        assert_eq!(3, backends(true).len());
+    }
 
     /// Regression: an address with a port was dropped, leaving no server.
     #[test]

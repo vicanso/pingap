@@ -492,11 +492,26 @@ fn classify_proxy_error(e: &pingora::Error) -> (u16, bool) {
 /// file path, a pingora error chain - so the page only names the status,
 /// and the error itself stays in the log line `fail_to_proxy` writes.
 fn client_error_message(e: &pingora::Error, code: u16) -> &str {
-    if (400..500).contains(&code)
-        && matches!(e.etype(), pingora::ErrorType::HTTPStatus(_))
-        && let Some(context) = &e.context
-    {
-        return context.as_str();
+    let is_status = |e: &pingora::Error| {
+        matches!(e.etype(), pingora::ErrorType::HTTPStatus(_))
+    };
+    if (400..500).contains(&code) && is_status(e) {
+        // The error as it was raised. One of a request that is being
+        // proxied comes wrapped (`error_while_proxy`) in an error of the
+        // same type whose context names the peer: that one is for the
+        // log, and showed the address of the upstream on the page.
+        let mut raised = e;
+        while let Some(cause) = raised
+            .cause
+            .as_ref()
+            .and_then(|cause| cause.downcast_ref::<pingora::BError>())
+            && is_status(cause)
+        {
+            raised = cause;
+        }
+        if let Some(context) = &raised.context {
+            return context.as_str();
+        }
     }
     StatusCode::from_u16(code)
         .ok()
@@ -979,6 +994,18 @@ impl Server {
             prom.on_location_matched(&ctx.upstream.location);
         }
 
+        // The plugins of the location, ahead of everything that may
+        // refuse the request: the page of an error is asked of them
+        // (`error_page`), and so are the headers the location sets on
+        // every response. Set where they are first run, the `413` and the
+        // `429` below went out with the page of the server and without
+        // the CORS headers of the location.
+        let plugins = location.plugins_for(self.plugin_provider.as_ref());
+        if let Some(plugins) = &plugins {
+            keep_response_plugins(ctx, plugins);
+        }
+        ctx.plugins = plugins;
+
         // Rejected before the location counts the request. `logging` calls
         // `on_response` for whatever `location_instance` holds, so the
         // instance is only recorded once `on_request` is about to run: a
@@ -1014,10 +1041,9 @@ impl Server {
             grpc_web.init();
         }
 
-        // initialize plugins and execute. A plugin answering here is
+        // The first step of the plugins. A plugin answering here is
         // honoured by `request_filter`, which is where pingora first lets
         // the request stop; the flag is the response itself.
-        ctx.plugins = location.plugins_for(self.plugin_provider.as_ref());
         let _ = self
             .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
             .await?;
@@ -1196,6 +1222,53 @@ async fn send_plugin_response(
     Ok(())
 }
 
+/// Whether the response is one from the cache whose body pingora ends
+/// without saying so to `response_body_filter`.
+///
+/// A response found in the cache is read to the client by
+/// `proxy_cache_hit`, which passes the end of the body on like any other
+/// (a last, empty chunk with `end_of_stream`). Not so the stored response
+/// that is sent after the upstream was asked: one it confirmed with a
+/// `304`, and a stale one answered for its `5xx`. Those are fed through
+/// the path of an upstream response (pingora's `ServeFromCache`), chunk
+/// after chunk with `end_of_stream` unset, and ended by a task of their
+/// own (`HttpTask::Done`) that no body filter is called for. A plugin
+/// that holds the body until its end and writes it then - `sub_filter`
+/// has to see all of it - kept waiting, and the client got a `200` with
+/// nothing in it: for every stored page, once each time it expired and
+/// was confirmed. Where the end is not said the proxy asks the storage,
+/// which knows when it has handed out the last piece.
+///
+/// (pingora 0.9: `proxy_cache.rs`, `ServeFromCache::next_http_task`, and
+/// `h1_response_filter` / `h2_response_filter`, which pass `Done` on.)
+fn cached_body_ends_unsaid(
+    phase: pingora::cache::CachePhase,
+    stale_for_status: bool,
+) -> bool {
+    use pingora::cache::CachePhase;
+    match phase {
+        CachePhase::Revalidated | CachePhase::RevalidatedNoCache(_) => true,
+        CachePhase::Stale => stale_for_status,
+        _ => false,
+    }
+}
+
+/// Notes the plugins of the location for the responses that do not pass
+/// the response step - one a plugin writes itself, an error page -, when
+/// one of them sets headers on those too: see `decorate_plugin_response`.
+fn keep_response_plugins(
+    ctx: &mut Ctx,
+    plugins: &Arc<[pingap_core::NamedPlugin]>,
+) {
+    if ctx.response_plugins.is_none()
+        && plugins
+            .iter()
+            .any(|(_, plugin)| plugin.handles_plugin_response())
+    {
+        ctx.response_plugins = Some(plugins.clone());
+    }
+}
+
 impl Server {
     /// Executes request plugins in the configured chain
     /// Returns true if a plugin handled the request completely
@@ -1213,15 +1286,7 @@ impl Server {
         if plugins.is_empty() {
             return Ok(false);
         }
-        // For a plugin that writes its response itself, see
-        // `decorate_plugin_response`.
-        if ctx.response_plugins.is_none()
-            && plugins
-                .iter()
-                .any(|(_, plugin)| plugin.handles_plugin_response())
-        {
-            ctx.response_plugins = Some(plugins.clone());
-        }
+        keep_response_plugins(ctx, &plugins);
 
         let result = async {
             let mut request_done = false;
@@ -1324,12 +1389,18 @@ impl Server {
             return Ok(());
         }
 
-        let result = {
-            for (name, plugin) in plugins.iter() {
-                let now = Instant::now();
-                if let ResponsePluginResult::Modified = plugin
-                    .handle_upstream_response(session, ctx, upstream_response)?
-                {
+        // The plugins are put back whatever one of them says: the error
+        // page that follows an error is asked of them. Left with `?`,
+        // they were gone with it.
+        let mut result = Ok(());
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_upstream_response(
+                session,
+                ctx,
+                upstream_response,
+            ) {
+                Ok(ResponsePluginResult::Modified) => {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         target: LOG_TARGET,
@@ -1338,10 +1409,14 @@ impl Server {
                         "upstream response plugin modify headers"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
-                };
+                },
+                Ok(_) => {},
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                },
             }
-            Ok(())
-        };
+        }
         ctx.plugins = Some(plugins);
         result
     }
@@ -1367,29 +1442,35 @@ impl Server {
             return Ok(());
         }
 
-        let result = {
-            for (name, plugin) in plugins.iter() {
-                let now = Instant::now();
-                match plugin.handle_upstream_response_body(
-                    session,
-                    ctx,
-                    body,
-                    end_of_stream,
-                )? {
+        // Put back also after an error, as in
+        // `handle_upstream_response_plugin`.
+        let mut result = Ok(());
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_upstream_response_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            ) {
+                Ok(
                     ResponseBodyPluginResult::PartialReplaced
-                    | ResponseBodyPluginResult::FullyReplaced => {
-                        let elapsed = now.elapsed().as_millis() as u32;
-                        ctx.add_plugin_processing_time(name, elapsed);
-                        debug!(
-                            target: LOG_TARGET,
-                            name = &**name, elapsed, "response body plugin modify body"
-                        );
-                    },
-                    _ => {},
-                }
+                    | ResponseBodyPluginResult::FullyReplaced,
+                ) => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(name, elapsed);
+                    debug!(
+                        target: LOG_TARGET,
+                        name = &**name, elapsed, "response body plugin modify body"
+                    );
+                },
+                Ok(_) => {},
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                },
             }
-            Ok(())
-        };
+        }
         ctx.plugins = Some(plugins);
         result
     }
@@ -1421,29 +1502,31 @@ impl Server {
         if plugins.is_empty() {
             return Ok(());
         }
-        let result = {
-            for (name, plugin) in plugins.iter() {
-                let now = Instant::now();
-                match plugin.handle_response_body(
-                    session,
-                    ctx,
-                    body,
-                    end_of_stream,
-                )? {
+        // Put back also after an error, as in
+        // `handle_upstream_response_plugin`.
+        let mut result = Ok(());
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_response_body(session, ctx, body, end_of_stream)
+            {
+                Ok(
                     ResponseBodyPluginResult::PartialReplaced
-                    | ResponseBodyPluginResult::FullyReplaced => {
-                        let elapsed = now.elapsed().as_millis() as u32;
-                        ctx.add_plugin_processing_time(name, elapsed);
-                        debug!(
-                            target: LOG_TARGET,
-                            name = &**name, elapsed, "response body plugin modify body"
-                        );
-                    },
-                    _ => {},
-                }
+                    | ResponseBodyPluginResult::FullyReplaced,
+                ) => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(name, elapsed);
+                    debug!(
+                        target: LOG_TARGET,
+                        name = &**name, elapsed, "response body plugin modify body"
+                    );
+                },
+                Ok(_) => {},
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                },
             }
-            Ok(())
-        };
+        }
         ctx.plugins = Some(plugins);
         result
     }
@@ -1701,6 +1784,16 @@ impl ProxyHttp for Server {
             // `request_body_filter` again; counted twice it could pass
             // `client_max_body_size` on its own.
             ctx.state.payload_size = 0;
+            // And whoever follows the body starts over with it.
+            if let Some(handlers) = ctx
+                .features
+                .as_mut()
+                .and_then(|features| features.request_body_handlers.as_mut())
+            {
+                for handler in handlers.iter_mut() {
+                    handler.restart();
+                }
+            }
         }
         // Async: a transparent upstream resolves the request's host here.
         // A retry goes to another backend than the ones that have just
@@ -1713,6 +1806,7 @@ impl ProxyHttp for Server {
                     count_processing: first_attempt,
                     failed: &ctx.upstream.failed_addresses,
                     inflight: Some(&mut ctx.upstream.backend_inflight),
+                    sticky_cookie: Some(&mut ctx.upstream.sticky_cookie),
                 },
             )
             .await
@@ -1809,6 +1903,11 @@ impl ProxyHttp for Server {
         client_reused: bool,
     ) -> Box<pingora::Error> {
         let mut e = e.more_context(format!("Peer: {peer}"));
+        // The cookie of a `sticky` upstream was for the backend of this
+        // attempt. A retry has its own, and a stale response of the
+        // cache that is answered in place of the error is not to keep
+        // the client on the backend that has just failed.
+        ctx.upstream.sticky_cookie = None;
         // A pooled connection the backend had already closed. That says
         // nothing about its health, whether the request is retried (a GET)
         // or not (a POST), so it is read before the retry is decided.
@@ -1859,6 +1958,9 @@ impl ProxyHttp for Server {
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
             upstream_instance.on_transport_failure(&ctx.upstream.address);
         }
+        // As in `error_while_proxy`: no cookie for a backend that could
+        // not be reached.
+        ctx.upstream.sticky_cookie = None;
         let Some(max_retries) = ctx.upstream.max_retries else {
             return e;
         };
@@ -1911,7 +2013,7 @@ impl ProxyHttp for Server {
         &self,
         session: &mut Session,
         body: &mut Option<Bytes>,
-        _end_of_stream: bool,
+        end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
@@ -1937,6 +2039,22 @@ impl ProxyHttp for Server {
                         format!("Request Entity Too Large, max:{size}"),
                     ));
                 }
+            }
+        }
+        // The plugins that follow the body: a digest to check, a copy to
+        // keep. Not what comes after a 101, which is no body.
+        if session.was_upgraded() {
+            return Ok(());
+        }
+        if let Some(handlers) = ctx
+            .features
+            .as_mut()
+            .and_then(|features| features.request_body_handlers.as_mut())
+        {
+            // No chunk is the end as well, as pingora has it.
+            let end_of_stream = end_of_stream || body.is_none();
+            for handler in handlers.iter_mut() {
+                handler.handle(body.as_ref(), end_of_stream)?;
             }
         }
         Ok(())
@@ -1982,11 +2100,29 @@ impl ProxyHttp for Server {
     fn should_serve_stale(
         &self,
         session: &mut Session,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
         error: Option<&pingora::Error>,
     ) -> bool {
         match error {
-            Some(error) => error.esource() == &pingora::ErrorSource::Upstream,
+            Some(error) => {
+                let stale = error.esource() == &pingora::ErrorSource::Upstream;
+                // The stale response goes out in place of what a backend
+                // failed to give: the cookie of a `sticky` upstream is
+                // not to keep the client on that backend. A connection
+                // that failed has dropped it already; a `5xx` comes here
+                // straight from the response header, past every filter.
+                if stale {
+                    ctx.upstream.sticky_cookie = None;
+                    // That `5xx` is the one error pingora itself makes
+                    // of a status, and its stale answer the one whose
+                    // end goes unsaid: see `cached_body_ends_unsaid`.
+                    ctx.state.stale_for_status = matches!(
+                        error.etype(),
+                        pingora::ErrorType::HTTPStatus(_)
+                    );
+                }
+                stale
+            },
             // Pingora 0.9 serializes the background subrequest as HTTP/1
             // text. An HTTP/2 request line cannot be parsed back, which
             // leaves its write lock dangling. Let the HTTP/2 lock holder
@@ -2047,6 +2183,12 @@ impl ProxyHttp for Server {
         // `s-maxage` or `must-revalidate`). Checked here, on what the
         // origin sent: the `max_ttl` cap below adds an `s-maxage` of its
         // own, which must not count as that permission.
+        //
+        // By the request as it is now, which is as the upstream gets it:
+        // a plugin that authenticates it and takes the header off
+        // (`hide_credentials`) leaves a request the upstream can not tell
+        // from anybody's, and its response is stored like any other. The
+        // documentation of the `cache` plugin says so.
         if session
             .req_header()
             .headers
@@ -2172,6 +2314,22 @@ impl ProxyHttp for Server {
         self.handle_response_plugin(session, ctx, upstream_response)
             .await?;
 
+        // The cookie of a `sticky` upstream, for a client that has none
+        // for the backend it was given. Here and not on the upstream's
+        // response as it comes in: that one is what a cache keeps, and
+        // the cookie of one client is not for the next.
+        if let Some(cookie) = ctx.upstream.sticky_cookie.take() {
+            let secure = if ctx.conn.tls_version.is_some() {
+                "; Secure"
+            } else {
+                ""
+            };
+            let _ = upstream_response.append_header(
+                http::header::SET_COOKIE,
+                format!("{cookie}; Path=/; HttpOnly; SameSite=Lax{secure}"),
+            );
+        }
+
         // add server-timing response header
         if self.enable_server_timing {
             let _ = upstream_response
@@ -2191,7 +2349,17 @@ impl ProxyHttp for Server {
         if is_interim_response(upstream_response.status) {
             return Ok(());
         }
-        self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
+        // A plugin may stop the response here, for the proxy to answer
+        // in its place (`error_page` with `intercept`). The upstream has
+        // answered all the same: its status, its timing and the count of
+        // the backend are recorded before that error is passed on. Left
+        // with `?` they were not, and to the circuit breaker a backend
+        // answering nothing but `503` had no result at all.
+        let plugin_result = self.handle_upstream_response_plugin(
+            session,
+            ctx,
+            upstream_response,
+        );
         ctx.upstream.status = Some(upstream_response.status);
 
         if ctx.state.status.is_none() {
@@ -2211,7 +2379,21 @@ impl ProxyHttp for Server {
                 .on_response(&ctx.upstream.address, upstream_response.status);
         }
 
-        Ok(())
+        // A response that is answered by the location's page is not one
+        // the cache will keep, and the requests that wait for it at the
+        // cache lock are told so, as for any response that is not
+        // cacheable: each asks the upstream itself. Left to the error
+        // path, the lock was handed on as after a failure, to one waiter
+        // at a time, and the requests for a url that answers `404` went
+        // to the upstream in single file.
+        if let Err(e) = &plugin_result
+            && pingap_core::is_upstream_status_error(e)
+            && session.cache.enabled()
+        {
+            session.cache.disable(NoCacheReason::OriginNotCache);
+        }
+
+        plugin_result
     }
 
     /// Filters upstream response body chunks.
@@ -2260,8 +2442,56 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> response body filter");
         defer!(debug!(target: LOG_TARGET, "<-- response body filter"););
+        // The plugins are told where the body ends also where pingora
+        // does not say: a plugin that holds the body until then
+        // (`sub_filter`) would not let go of it.
+        let end_of_stream = end_of_stream
+            || (cached_body_ends_unsaid(
+                session.cache.phase(),
+                ctx.state.stale_for_status,
+            ) && !session
+                .req_header()
+                .headers
+                .contains_key(http::header::RANGE)
+                && pingap_cache::is_hit_read_to_the_end(
+                    session.cache.hit_handler().as_any(),
+                ));
+        // Once: a plugin that writes what it has held at the end would
+        // write it again, should the end be said here and by pingora.
+        let end_of_stream = end_of_stream && !ctx.state.body_end_said;
+        ctx.state.body_end_said |= end_of_stream;
         self.handle_response_body_plugin(session, ctx, body, end_of_stream)?;
-        Ok(None)
+        // What a `bandwidth_limit` plugin of the location allows this
+        // response: pingora holds the chunk back for as long as is said
+        // here. By what goes out, after the plugins that change the body.
+        // Not what follows a 101: that is the other protocol's own
+        // traffic, a websocket's frames, and no body to pace. Nor a
+        // subrequest: that is the proxy itself, fetching a cached
+        // response anew in the background while the client has its
+        // answer from the cache (`stale-while-revalidate`). Paced, the
+        // fetch took as long as a download and held the cache lock of the
+        // entry all the while.
+        if session.was_upgraded() || session.subrequest_ctx.is_some() {
+            return Ok(None);
+        }
+        // The wait before a chunk is for what was sent before it: the
+        // first goes out at once. And nothing waits before a byte of
+        // the body is out, which is when the header is. pingora filters
+        // all it has read from the upstream in one go and writes it
+        // afterwards, and the header of a response with a length stays
+        // in the write buffer until a part of the body follows it: a
+        // wait for a chunk held the header back with it, and a client
+        // limited to 100 kB a second saw no status for more than two
+        // seconds. What goes out first is counted, and what follows
+        // waits for it.
+        let delay = match (&mut ctx.features, body.as_ref()) {
+            (Some(features), Some(body)) => features
+                .body_pace
+                .as_mut()
+                .and_then(|pace| pace.delay_before(body.len())),
+            _ => None,
+        };
+        Ok(delay.filter(|_| session.body_bytes_sent() > 0))
     }
 
     /// Handles proxy failures and generates appropriate error responses.
@@ -2336,6 +2566,19 @@ impl ProxyHttp for Server {
                 status = code,
                 "client gone, no response sent"
             );
+        } else if pingap_core::is_upstream_status_error(e) {
+            // The upstream answered, and the location answers that status
+            // with a page of its own (`error_page` with `intercept`).
+            // Nothing failed on this side, and the request is in the
+            // access log with its status like any other.
+            debug!(
+                target: LOG_TARGET,
+                method,
+                host,
+                path,
+                status = code,
+                "upstream status answered with the page of the location"
+            );
         } else if code < 500 {
             // The request's fault, or nothing's: no location for the host,
             // a body over the limit, a location at its `max_processing`.
@@ -2380,18 +2623,35 @@ impl ProxyHttp for Server {
         }
 
         let mut resp = error_response_header(code);
-        let content = self.error_template.render(
-            pingap_util::get_pkg_version(),
-            client_error_message(e, code),
-            error_type,
-        );
-        let buf = Bytes::from(content);
-        let content_type = if self.error_template.is_json() {
-            "application/json; charset=utf-8"
-        } else {
-            "text/html; charset=utf-8"
-        };
-        let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
+        let message = client_error_message(e, code);
+        // The page of the location, where a plugin of it has one for
+        // this status (`error_page`), and the page of the server
+        // otherwise. Asked of every plugin of the location, also those
+        // behind the one that refused the request: the list is there
+        // from the moment the location is found.
+        let own_page = StatusCode::from_u16(code).ok().and_then(|status| {
+            ctx.plugins.as_ref()?.iter().find_map(|(_, plugin)| {
+                plugin.error_page(session, status, message)
+            })
+        });
+        let (content_type, buf) = own_page.unwrap_or_else(|| {
+            let content = self.error_template.render(
+                pingap_util::get_pkg_version(),
+                message,
+                error_type,
+            );
+            let content_type = if self.error_template.is_json() {
+                "application/json; charset=utf-8"
+            } else {
+                "text/html; charset=utf-8"
+            };
+            (
+                http::HeaderValue::from_static(content_type),
+                Bytes::from(content),
+            )
+        });
+        let _ = resp
+            .insert_header(http::header::CONTENT_TYPE, content_type.clone());
         let _ = resp.insert_header("X-Pingap-EType", error_type);
         // The page of a request that had a location is a response of that
         // location: the plugins that set headers on what other plugins
@@ -3832,6 +4092,610 @@ value = 'proxy_set_headers = ["name:value"]'
         }
         // Still counted, for the access log and the metrics.
         assert_eq!(5 * 800, ctx.state.payload_size);
+    }
+
+    /// The plugins of a location are there for every error of it, those
+    /// that refuse a request before a plugin has run included: a `413`
+    /// or a `429` of the location is answered with the page of the
+    /// location (`error_page`) and the headers it sets on every
+    /// response. They used to be set after these checks, so both went out
+    /// as the page of the server, without the CORS headers.
+    #[tokio::test]
+    async fn test_location_limits_are_answered_with_its_plugins() {
+        struct Pages;
+        #[async_trait]
+        impl Plugin for Pages {
+            fn handles_plugin_response(&self) -> bool {
+                true
+            }
+            async fn handle_response(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                upstream_response: &mut ResponseHeader,
+            ) -> pingora::Result<pingap_core::ResponsePluginResult>
+            {
+                upstream_response.insert_header("x-location", "lo")?;
+                Ok(pingap_core::ResponsePluginResult::Modified)
+            }
+            fn error_page(
+                &self,
+                _session: &Session,
+                status: StatusCode,
+                _message: &str,
+            ) -> Option<(http::HeaderValue, Bytes)> {
+                Some((
+                    http::HeaderValue::from_static("text/plain"),
+                    Bytes::from(format!("own page {}", status.as_u16())),
+                ))
+            }
+        }
+        struct Provider;
+        impl PluginProvider for Provider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                Some(Arc::new(Pages))
+            }
+        }
+        let toml = TEST_TOML.replace(
+            "weight = 1024",
+            "weight = 1024\nclient_max_body_size = \"1kb\"\nmax_processing = 1",
+        );
+        let server = new_server_from(&toml, Some(Arc::new(Provider)));
+        let refused = async |request: &str| {
+            let (mut session, client) = new_duplex_session(request).await;
+            let mut ctx = Ctx::default();
+            let error = server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap_err();
+            assert_eq!(true, ctx.plugins.is_some(), "{request}");
+            assert_eq!(true, ctx.response_plugins.is_some(), "{request}");
+            let result =
+                server.fail_to_proxy(&mut session, &error, &mut ctx).await;
+            server.logging(&mut session, None, &mut ctx).await;
+            drop(session);
+            (
+                result.error_code,
+                read_response(client).await.to_lowercase(),
+            )
+        };
+        // Too large a body.
+        let (code, response) = refused(
+            "POST /vicanso/pingap HTTP/1.1\r\nContent-Length: 2048\r\n\r\n",
+        )
+        .await;
+        assert_eq!(413, code);
+        assert_eq!(true, response.contains("own page 413"), "{response}");
+        assert_eq!(true, response.contains("x-location: lo"), "{response}");
+
+        // One request in the location, which is all it takes: the next
+        // is refused.
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut first = Session::new_h1(Box::new(mock_io));
+        first.read_request().await.unwrap();
+        let mut first_ctx = Ctx::default();
+        server
+            .early_request_filter(&mut first, &mut first_ctx)
+            .await
+            .unwrap();
+        let (code, response) =
+            refused("GET /vicanso/pingap HTTP/1.1\r\n\r\n").await;
+        assert_eq!(429, code);
+        assert_eq!(true, response.contains("own page 429"), "{response}");
+        assert_eq!(true, response.contains("x-location: lo"), "{response}");
+    }
+
+    /// A plugin that stops a response of the upstream for the proxy to
+    /// answer its status (`error_page` with `intercept`): what the
+    /// upstream answered is on record all the same, the plugins are still
+    /// there to be asked for the page, and the page is the location's.
+    #[tokio::test]
+    async fn test_upstream_status_answered_by_the_location() {
+        use pingap_core::UpstreamInstance;
+
+        #[derive(Default)]
+        struct Recorder {
+            responses: std::sync::Mutex<Vec<u16>>,
+            failures: AtomicUsize,
+        }
+        impl UpstreamInstance for Recorder {
+            fn on_transport_failure(&self, _address: &str) {
+                self.failures.fetch_add(1, Ordering::Relaxed);
+            }
+            fn on_response(&self, _address: &str, status: StatusCode) {
+                self.responses.lock().unwrap().push(status.as_u16());
+            }
+            fn completed(&self) -> i32 {
+                0
+            }
+        }
+        struct Intercepts;
+        #[async_trait]
+        impl Plugin for Intercepts {
+            fn handle_upstream_response(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                upstream_response: &mut ResponseHeader,
+            ) -> pingora::Result<pingap_core::ResponsePluginResult>
+            {
+                if upstream_response.status.is_success() {
+                    return Ok(pingap_core::ResponsePluginResult::Unchanged);
+                }
+                Err(pingap_core::new_upstream_status_error(
+                    upstream_response.status,
+                ))
+            }
+            fn error_page(
+                &self,
+                _session: &Session,
+                status: StatusCode,
+                message: &str,
+            ) -> Option<(http::HeaderValue, Bytes)> {
+                Some((
+                    http::HeaderValue::from_static("text/plain"),
+                    Bytes::from(format!(
+                        "own page {} [{message}]",
+                        status.as_u16()
+                    )),
+                ))
+            }
+        }
+        let server = new_server();
+        let peer = HttpPeer::new("127.0.0.1:5000", false, String::new());
+        let answered = async |status: u16| {
+            let (mut session, client) = new_duplex_session(
+                "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n",
+            )
+            .await;
+            let recorder = Arc::new(Recorder::default());
+            let mut ctx = Ctx::default();
+            ctx.state.proxying = true;
+            ctx.upstream.upstream_instance = Some(recorder.clone());
+            ctx.upstream.address = "127.0.0.1:5000".to_string();
+            let plugins: Vec<pingap_core::NamedPlugin> =
+                vec![("pages".into(), Arc::new(Intercepts))];
+            ctx.plugins = Some(Arc::from(plugins));
+            let mut resp = ResponseHeader::build(status, None).unwrap();
+            let result = server
+                .upstream_response_filter(&mut session, &mut resp, &mut ctx)
+                .await;
+            // Whatever the plugin said of it, the upstream has answered.
+            let status = StatusCode::from_u16(status).unwrap();
+            assert_eq!(Some(status), ctx.upstream.status);
+            assert_eq!(Some(status), ctx.state.status);
+            assert_eq!(
+                vec![status.as_u16()],
+                *recorder.responses.lock().unwrap()
+            );
+            assert_eq!(true, ctx.plugins.is_some());
+            let Err(error) = result else {
+                return None;
+            };
+            // The way of every error of a request that is being proxied.
+            let error = server.error_while_proxy(
+                &peer,
+                &mut session,
+                error,
+                &mut ctx,
+                false,
+            );
+            assert_eq!(true, pingap_core::is_upstream_status_error(&error));
+            // It is an answer: not tried again, no failure of the
+            // backend, and no reason for a stale response of the cache.
+            assert_eq!(false, error.retry());
+            assert_eq!(0, recorder.failures.load(Ordering::Relaxed));
+            assert_eq!(true, ctx.upstream.failed_addresses.is_empty());
+            assert_eq!(
+                false,
+                server.should_serve_stale(&mut session, &mut ctx, Some(&error))
+            );
+            let result =
+                server.fail_to_proxy(&mut session, &error, &mut ctx).await;
+            drop(session);
+            assert_eq!(false, result.can_reuse_downstream);
+            Some((result.error_code, read_response(client).await))
+        };
+        assert_eq!(None, answered(200).await);
+        let (code, response) = answered(503).await.unwrap();
+        assert_eq!(503, code);
+        assert_eq!(true, response.starts_with("HTTP/1.1 503"), "{response}");
+        assert_eq!(
+            true,
+            response.ends_with("own page 503 [Service Unavailable]"),
+            "{response}"
+        );
+        assert_eq!(
+            true,
+            response.to_lowercase().contains("connection: close"),
+            "{response}"
+        );
+        // A `4xx` has the message that was written for the client, and
+        // that is the reason of the status here: not what the error was
+        // wrapped in on its way, which names the peer.
+        let (code, response) = answered(404).await.unwrap();
+        assert_eq!(404, code);
+        assert_eq!(
+            true,
+            response.ends_with("own page 404 [Not Found]"),
+            "{response}"
+        );
+        assert_eq!(false, response.contains("127.0.0.1:5000"), "{response}");
+    }
+
+    /// The message of a `4xx` is the one the error was raised with. An
+    /// error of a request that is being proxied is wrapped in one that
+    /// names the peer, and that context - the address of the upstream,
+    /// its SNI - was what the page showed.
+    #[tokio::test]
+    async fn test_client_error_message_is_not_the_peer() {
+        let server = new_server();
+        let peer = HttpPeer::new("10.1.2.3:8443", true, "in.test".to_string());
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let raised = new_internal_error(400, "the query can not be sent");
+        assert_eq!(
+            "the query can not be sent",
+            client_error_message(&raised, 400)
+        );
+        let wrapped = server.error_while_proxy(
+            &peer,
+            &mut session,
+            raised,
+            &mut Ctx::default(),
+            false,
+        );
+        assert_eq!(true, wrapped.to_string().contains("10.1.2.3:8443"));
+        assert_eq!(
+            "the query can not be sent",
+            client_error_message(&wrapped, 400)
+        );
+        // An error of the upstream that is no status has no message for
+        // the client, as before.
+        let failed = server.error_while_proxy(
+            &peer,
+            &mut session,
+            pingora::Error::new_up(pingora::ErrorType::ConnectRefused),
+            &mut Ctx::default(),
+            false,
+        );
+        assert_eq!("Bad Gateway", client_error_message(&failed, 502));
+    }
+
+    /// A plugin that fails on a body leaves the plugins of the location
+    /// where they are, for the error page that follows.
+    #[tokio::test]
+    async fn test_plugins_survive_a_failing_body_plugin() {
+        struct Fails;
+        impl Plugin for Fails {
+            fn handle_upstream_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<pingap_core::ResponseBodyPluginResult>
+            {
+                Err(new_internal_error(500, "upstream body"))
+            }
+            fn handle_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<pingap_core::ResponseBodyPluginResult>
+            {
+                Err(new_internal_error(500, "body"))
+            }
+        }
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        let plugins: Vec<pingap_core::NamedPlugin> =
+            vec![("fails".into(), Arc::new(Fails))];
+        ctx.plugins = Some(Arc::from(plugins));
+        let mut body = Some(Bytes::from_static(b"abc"));
+        assert_eq!(
+            true,
+            server
+                .upstream_response_body_filter(
+                    &mut session,
+                    &mut body,
+                    false,
+                    &mut ctx
+                )
+                .is_err()
+        );
+        assert_eq!(true, ctx.plugins.is_some());
+        assert_eq!(
+            true,
+            server
+                .response_body_filter(&mut session, &mut body, false, &mut ctx)
+                .is_err()
+        );
+        assert_eq!(true, ctx.plugins.is_some());
+    }
+
+    /// What a `bandwidth_limit` plugin left in the context is kept by the
+    /// proxy for the bodies it passes on.
+    #[tokio::test]
+    async fn test_body_pace_of_the_proxy() {
+        let server = new_server();
+        let (mut session, _client) = new_duplex_session(
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n",
+        )
+        .await;
+        let chunk = |session: &mut Session, ctx: &mut Ctx, len: usize| {
+            let mut body = Some(Bytes::from(vec![0u8; len]));
+            server
+                .response_body_filter(session, &mut body, false, ctx)
+                .unwrap()
+                .map(|delay| delay.as_millis())
+        };
+        let paced = || {
+            let mut ctx = Ctx::default();
+            ctx.features.get_or_insert_default().body_pace =
+                Some(pingap_core::BodyPace::new(1000, 0));
+            ctx
+        };
+
+        // No limit: nothing is held back.
+        assert_eq!(None, chunk(&mut session, &mut Ctx::default(), 4000));
+
+        // A thousand bytes a second. Nothing waits while no part of the
+        // body is out: what pingora has read by then is filtered before
+        // any of it is written, the header stays in the write buffer
+        // until a part of the body follows, and a wait here held the
+        // status back too.
+        let mut ctx = paced();
+        assert_eq!(None, chunk(&mut session, &mut ctx, 1000));
+        let header = ResponseHeader::build(200, None).unwrap();
+        session
+            .as_mut()
+            .write_response_header(Box::new(header))
+            .await
+            .unwrap();
+        assert_eq!(None, chunk(&mut session, &mut ctx, 1000));
+        session
+            .as_mut()
+            .write_response_body(Bytes::from_static(b"body"), false)
+            .await
+            .unwrap();
+        // It is counted all the same, and what follows waits for it.
+        // (The exact time is `test_body_pace`'s to check, on a clock of
+        // its own: here a stall of the test runner is not to matter.)
+        let delay = chunk(&mut session, &mut ctx, 500).unwrap();
+        assert_eq!(true, (1000..=2000).contains(&delay), "{delay}");
+
+        // Afterwards the first chunk still goes at once: the wait is
+        // for what went before.
+        let mut ctx = paced();
+        assert_eq!(None, chunk(&mut session, &mut ctx, 3000));
+        let delay = chunk(&mut session, &mut ctx, 3000).unwrap();
+        assert_eq!(true, (2000..=3000).contains(&delay), "{delay}");
+        // The end of a body that carries nothing asks for nothing.
+        let mut body = None;
+        assert_eq!(
+            None,
+            server
+                .response_body_filter(&mut session, &mut body, true, &mut ctx)
+                .unwrap()
+        );
+        // Nor is the proxy's own fetch of a cached response held back:
+        // nobody is waiting for those bytes, and the entry is locked for
+        // as long as it takes. The same chunk is late for a client.
+        assert_eq!(true, chunk(&mut session, &mut ctx, 2000).is_some());
+        session.subrequest_ctx =
+            Some(Box::new(pingora::proxy::subrequest::Ctx::builder().build()));
+        assert_eq!(None, chunk(&mut session, &mut ctx, 2000));
+    }
+
+    /// Where the body of a response from the cache ends without
+    /// `response_body_filter` being told: for a stored response that is
+    /// sent after the upstream was asked. Not for one that is read
+    /// straight from the cache, which ends like any other - told twice,
+    /// a plugin would write its last piece twice.
+    #[tokio::test]
+    async fn test_cached_body_ends_unsaid() {
+        use pingora::cache::CachePhase;
+        for (phase, stale_for_status, expected) in [
+            // confirmed by a `304`
+            (CachePhase::Revalidated, false, true),
+            (
+                CachePhase::RevalidatedNoCache(NoCacheReason::OriginNotCache),
+                false,
+                true,
+            ),
+            // stale for a `5xx` of the upstream
+            (CachePhase::Stale, true, true),
+            // stale for an upstream that could not be reached: read as
+            // a hit is
+            (CachePhase::Stale, false, false),
+            (CachePhase::Hit, false, false),
+            (CachePhase::StaleUpdating, false, false),
+            (CachePhase::Miss, false, false),
+            (CachePhase::Expired, false, false),
+            (CachePhase::Bypass, false, false),
+            (
+                CachePhase::Disabled(NoCacheReason::NeverEnabled),
+                false,
+                false,
+            ),
+        ] {
+            assert_eq!(
+                expected,
+                cached_body_ends_unsaid(phase, stale_for_status),
+                "{phase:?} {stale_for_status}"
+            );
+        }
+
+        // A failed connection the stale response is answered for is not
+        // that case: `proxy_cache_hit` reads it, and says where it ends.
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        let refused =
+            pingora::Error::new_up(pingora::ErrorType::ConnectRefused);
+        assert_eq!(
+            true,
+            server.should_serve_stale(&mut session, &mut ctx, Some(&refused))
+        );
+        assert_eq!(false, ctx.state.stale_for_status);
+    }
+
+    /// The plugins are told once that the body ends.
+    #[tokio::test]
+    async fn test_body_end_is_said_once() {
+        #[derive(Default)]
+        struct Ends(AtomicUsize);
+        impl Plugin for Ends {
+            fn handle_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<Bytes>,
+                end_of_stream: bool,
+            ) -> pingora::Result<pingap_core::ResponseBodyPluginResult>
+            {
+                if end_of_stream {
+                    self.0.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(pingap_core::ResponseBodyPluginResult::Unchanged)
+            }
+        }
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let ends = Arc::new(Ends::default());
+        let mut ctx = Ctx::default();
+        let plugins: Vec<pingap_core::NamedPlugin> =
+            vec![("ends".into(), ends.clone())];
+        ctx.plugins = Some(Arc::from(plugins));
+        for (end, expected) in [(false, 0), (true, 1), (true, 1), (false, 1)] {
+            let mut body = Some(Bytes::from_static(b"abc"));
+            server
+                .response_body_filter(&mut session, &mut body, end, &mut ctx)
+                .unwrap();
+            assert_eq!(expected, ends.0.load(Ordering::Relaxed), "{end}");
+        }
+    }
+
+    /// The cookie of a `sticky` upstream goes on the response to the
+    /// client.
+    #[tokio::test]
+    async fn test_sticky_cookie_of_the_response() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // The cookie: next to those of the upstream, once, and marked
+        // for https only where the client came by it.
+        for (tls, expected) in [
+            (
+                None,
+                "route=00000000000000ab; Path=/; HttpOnly; SameSite=Lax",
+            ),
+            (
+                Some("TLSv1.3".to_string()),
+                "route=00000000000000ab; Path=/; HttpOnly; SameSite=Lax; Secure",
+            ),
+        ] {
+            let mut ctx = Ctx::default();
+            ctx.conn.tls_version = tls.map(std::borrow::Cow::Owned);
+            ctx.upstream.sticky_cookie =
+                Some("route=00000000000000ab".to_string());
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            resp.append_header("Set-Cookie", "session=abc").unwrap();
+            server
+                .response_filter(&mut session, &mut resp, &mut ctx)
+                .await
+                .unwrap();
+            let cookies: Vec<&str> = resp
+                .headers
+                .get_all("Set-Cookie")
+                .iter()
+                .map(|value| value.to_str().unwrap())
+                .collect();
+            assert_eq!(vec!["session=abc", expected], cookies);
+            assert_eq!(None, ctx.upstream.sticky_cookie);
+        }
+        // The cookie is that of an attempt. One that failed sets none:
+        // a stale response of the cache that is answered in its place
+        // would keep the client on the backend that has just failed.
+        let peer = HttpPeer::new("127.0.0.1:9", false, String::new());
+        for connected in [false, true] {
+            let mut ctx = Ctx::default();
+            ctx.upstream.sticky_cookie =
+                Some("route=00000000000000ab".to_string());
+            let error =
+                pingora::Error::new_up(pingora::ErrorType::ConnectRefused);
+            if connected {
+                server.error_while_proxy(
+                    &peer,
+                    &mut session,
+                    error,
+                    &mut ctx,
+                    false,
+                );
+            } else {
+                server.fail_to_connect(&mut session, &peer, &mut ctx, error);
+            }
+            assert_eq!(None, ctx.upstream.sticky_cookie, "{connected}");
+        }
+        // Nor does a `5xx` of the backend that a stale response is
+        // answered for: pingora asks about that one straight from the
+        // response header, and neither of the two above is called.
+        let mut ctx = Ctx::default();
+        ctx.upstream.sticky_cookie = Some("route=00000000000000ab".to_string());
+        let status = pingora::Error::create(
+            pingora::ErrorType::HTTPStatus(503),
+            pingora::ErrorSource::Upstream,
+            None,
+            None,
+        );
+        assert_eq!(
+            true,
+            server.should_serve_stale(&mut session, &mut ctx, Some(&status))
+        );
+        assert_eq!(None, ctx.upstream.sticky_cookie);
+        // And that is the stale answer whose end pingora does not say.
+        assert_eq!(true, ctx.state.stale_for_status);
+        // What is no error of the upstream is no reason for a stale
+        // response, and leaves the cookie alone.
+        ctx.upstream.sticky_cookie = Some("route=00000000000000ab".to_string());
+        let refused = new_internal_error(503, "no backend");
+        assert_eq!(
+            false,
+            server.should_serve_stale(&mut session, &mut ctx, Some(&refused))
+        );
+        assert_eq!(true, ctx.upstream.sticky_cookie.is_some());
+        // An upstream that keeps nobody anywhere sets none.
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        server
+            .response_filter(&mut session, &mut resp, &mut Ctx::default())
+            .await
+            .unwrap();
+        assert_eq!(false, resp.headers.contains_key("Set-Cookie"));
     }
 
     /// Which failures send the retry of a request to another backend:

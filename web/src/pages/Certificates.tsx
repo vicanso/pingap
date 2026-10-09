@@ -315,6 +315,17 @@ export default function Certificates() {
       options: newStringOptions(["ecdsa", "rsa"], true, true),
     },
     {
+      name: "ocsp_stapling",
+      section: sec.basic,
+      label: certificateI18n("ocspStapling"),
+      placeholder: "",
+      tips: certificateI18n("ocspStaplingTips"),
+      defaultValue: certificateConfig.ocsp_stapling,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "remark",
       section: sec.basic,
       label: certificateI18n("remark"),

@@ -288,6 +288,19 @@ fn retry_delay(failures: u32) -> u64 {
     (RETRY_FIRST_DELAY << doublings).min(RETRY_MAX_DELAY)
 }
 
+/// The names a certificate is ordered for, from the `domains` of its
+/// entry: in lower case, which is how a CA writes them into the
+/// certificate. Written as `Example.com`, the name was never one the
+/// certificate that came back was for: its domains had "changed" every
+/// time they were looked at, and it was ordered again every time.
+fn ordered_domains(domains: &str) -> Vec<String> {
+    domains
+        .split(',')
+        .map(|item| item.trim().to_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
 /// Whether `conf` holds a certificate that `params` can go on with: one
 /// that parses, is for the same domains, and is not due for renewal.
 fn is_usable(conf: &CertificateConf, params: &UpdateCertificateParams) -> bool {
@@ -575,7 +588,7 @@ impl LetsEncryptTask {
         // The certificate is in use, and the next check would order
         // another all the same: `buffer_days` is not less than what a
         // certificate is good for, or `domains` is not what the CA put
-        // into it (a name twice, or in upper case). That is a failure of
+        // into it (a name twice). That is a failure of
         // this entry, to be told about and to wait after, not an order to
         // repeat every ten minutes.
         if !usable {
@@ -677,11 +690,7 @@ impl BackgroundTask for LetsEncryptTask {
             params.push(UpdateCertificateParams {
                 name: name.to_string(),
                 buffer_days: certificate.buffer_days.unwrap_or_default(),
-                domains: domains
-                    .split(',')
-                    .map(|item| item.trim().to_string())
-                    .filter(|item| !item.is_empty())
-                    .collect(),
+                domains: ordered_domains(&domains),
                 dns_challenge: certificate.dns_challenge.unwrap_or_default(),
                 // Normalized once here so the match below only ever sees a
                 // canonical name. `validate` rejects anything unrecognised, so
@@ -1656,7 +1665,8 @@ mod tests {
         Category, CertificateConf, ConfigManager, new_file_config_manager,
     };
     use pingap_core::{
-        Notification, NotificationData, NotificationLevel, NotificationSender,
+        BackgroundTask, Notification, NotificationData, NotificationLevel,
+        NotificationSender,
     };
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -1884,6 +1894,40 @@ mod tests {
             .update_certificates(0, &[params()])
             .await
             .unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+    }
+
+    /// Regression: `domains = "Example.com"` was never the name of the
+    /// certificate the CA gave for it, which has it in lower case. The
+    /// domains had changed at every check, and every check ordered again.
+    #[tokio::test]
+    async fn test_domains_in_capitals_are_not_ordered_again() {
+        assert_eq!(
+            vec!["example.com".to_string(), "www.example.com".to_string()],
+            super::ordered_domains(" Example.com ,, WWW.Example.COM")
+        );
+
+        let site = SITE.replace("example.com", "Example.com");
+        let fixture = fixture(&site, issuing()).await;
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("example.com").is_some());
+        // The certificate that came back is the entry's: nothing is
+        // reported about it, and no order is put off for later. (That
+        // is what the count of orders alone does not show - an order
+        // that failed this way is not repeated for ten minutes.)
+        assert_eq!(
+            false,
+            fixture
+                .notifications
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|data| data.level != NotificationLevel::Info),
+        );
+        assert_eq!(true, fixture.task.retries.lock().unwrap().is_empty());
+        // The next time the certificates are looked at.
+        fixture.task.execute(10).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
     }
 

@@ -21,8 +21,8 @@ use crate::secrets::{masked_entry, masked_fragment};
 use bytesize::ByteSize;
 use pingap_core::ACCESS_LOG_PRESETS;
 use pingap_discovery::{
-    DNS_DISCOVERY, DOCKER_DISCOVERY, STATIC_DISCOVERY, TRANSPARENT_DISCOVERY,
-    is_static_discovery,
+    DNS_DISCOVERY, DOCKER_DISCOVERY, SRV_DISCOVERY, STATIC_DISCOVERY,
+    TRANSPARENT_DISCOVERY, is_static_discovery,
 };
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
@@ -193,6 +193,10 @@ pub struct CertificateConf {
     /// The key of the certificate: `ecdsa` (P-256, the default) or `rsa`
     /// (2048 bits).
     pub acme_key_type: Option<String>,
+    /// Staple the OCSP answer of the CA to the handshakes with this
+    /// certificate: the responder the certificate names is asked, and
+    /// asked again before its answer runs out. Default `false`.
+    pub ocsp_stapling: Option<bool>,
     /// Optional description/notes about this certificate
     pub remark: Option<String>,
 }
@@ -462,10 +466,11 @@ fn is_mail_address(address: &str) -> bool {
 
 /// Accepted values of `UpstreamConf::discovery`, as `guess_discovery`
 /// gives them: empty for static addresses that name none.
-const KNOWN_DISCOVERIES: [&str; 5] = [
+const KNOWN_DISCOVERIES: [&str; 6] = [
     "",
     STATIC_DISCOVERY,
     DNS_DISCOVERY,
+    SRV_DISCOVERY,
     DOCKER_DISCOVERY,
     TRANSPARENT_DISCOVERY,
 ];
@@ -500,8 +505,10 @@ pub struct UpstreamConf {
     pub update_frequency: Option<Duration>,
 
     /// Load balancing algorithm: "round_robin", "least_conn" (the
-    /// backend with the fewest requests in flight for its weight), or
-    /// "hash:<type>[:<key>]" such as "hash:cookie:session_id"
+    /// backend with the fewest requests in flight for its weight),
+    /// "sticky:<cookie>" (a client stays on its backend, by a cookie the
+    /// proxy sets), or "hash:<type>[:<key>]" such as
+    /// "hash:cookie:session_id"
     pub algo: Option<String>,
 
     /// Send a request to a backend all the same when none of them is
@@ -805,7 +812,10 @@ impl UpstreamConf {
         // The refresh of a discovery runs every `update_frequency`; with
         // zero it never ran after the first lookup.
         if self.update_frequency.is_some_and(|value| value.is_zero())
-            && matches!(discovery.as_str(), DNS_DISCOVERY | DOCKER_DISCOVERY)
+            && matches!(
+                discovery.as_str(),
+                DNS_DISCOVERY | SRV_DISCOVERY | DOCKER_DISCOVERY
+            )
         {
             return Err(Error::Invalid {
                 message: format!(
@@ -1625,6 +1635,22 @@ pub struct BasicConf {
     /// A batch is posted as soon as it holds this many notifications
     /// (default: 5, 1 posts every notification on its own)
     pub webhook_batch_max_events: Option<usize>,
+    /// Notifications below this level are not sent: "info" (default),
+    /// "warn" or "error"
+    pub webhook_min_level: Option<String>,
+    /// Headers of the webhook request, each "Name: value": the token a
+    /// receiver asks for
+    pub webhook_headers: Option<Vec<String>>,
+    /// What a post is signed with: the secret of a dingtalk robot with
+    /// signing on, or, for a receiver of one's own, the key of the
+    /// `X-Pingap-Signature` of the body
+    pub webhook_secret: Option<String>,
+    /// The text of the message in place of the built-in one, with
+    /// `{{title}}`, `{{message}}`, `{{level}}`, `{{category}}`,
+    /// `{{hostname}}`, `{{ip}}`, `{{name}}` and `{{count}}` in it
+    pub webhook_template: Option<String>,
+    /// How many times a post that failed is tried again (default: 0)
+    pub webhook_retries: Option<u32>,
     /// Log level (debug, info, warn, error)
     pub log_level: Option<String>,
     /// Size of log buffer before flushing
@@ -1723,6 +1749,19 @@ impl Validate for BasicConf {
             self.upstream_connect_offload_threadpools,
             self.upstream_connect_offload_thread_per_pool,
         )?;
+        // What the webhook would not take when it is built: there it can
+        // only be reported, and the notifications of a typo are lost.
+        let invalid = |message: String| Error::Invalid { message };
+        pingap_core::parse_notification_level(
+            self.webhook_min_level.as_deref(),
+        )
+        .map_err(invalid)?;
+        pingap_core::parse_notification_headers(
+            self.webhook_headers.as_deref().unwrap_or_default(),
+        )
+        .map_err(invalid)?;
+        pingap_core::parse_notification_retries(self.webhook_retries)
+            .map_err(invalid)?;
         Ok(())
     }
 }
@@ -3034,7 +3073,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
         // A discovery nothing knows was built as static addresses.
         assert_eq!(
-            "Invalid error upstream discovery should be one of static, dns, docker, transparent, got \"dsn\"",
+            "Invalid error upstream discovery should be one of static, dns, srv, docker, transparent, got \"dsn\"",
             error(&conf(Some("dsn"), &["example.com:80"]))
         );
         // Case is not what tells them apart.
@@ -3048,6 +3087,14 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
                 "{discovery}"
             );
         }
+        // By the `SRV` records of a name, which has no port of its own.
+        assert_eq!("", error(&conf(Some("srv"), &["_http._tcp.api.internal"])));
+        let mut srv = conf(Some("srv"), &["_http._tcp.api.internal"]);
+        srv.update_frequency = Some(Duration::ZERO);
+        assert_eq!(
+            "Invalid error upstream update_frequency should be greater than 0 for srv discovery",
+            error(&srv)
+        );
 
         // A refresh interval of zero never refreshed.
         let mut never = conf(Some("dns"), &["example.com:80"]);
@@ -4063,6 +4110,47 @@ restart_ready_timeout = "2m"
         }
     }
 
+    /// What the webhook would not take when it is built is refused with
+    /// the rest of the configuration.
+    #[test]
+    fn test_basic_webhook_options() {
+        let basic = |conf: &str| {
+            toml::from_str::<BasicConf>(conf)
+                .unwrap()
+                .validate()
+                .map_err(|e| e.to_string())
+        };
+        assert_eq!(
+            Ok(()),
+            basic(
+                "webhook_min_level = \"warn\"\nwebhook_headers = [\"Authorization: Bearer t0ken\"]\nwebhook_secret = \"SECabc\"\nwebhook_template = \"{{message}}\"\nwebhook_retries = 3"
+            )
+        );
+        for (conf, message) in [
+            (
+                "webhook_min_level = \"fatal\"",
+                "webhook_min_level(fatal) should be info, warn or error",
+            ),
+            (
+                "webhook_headers = [\"Authorization Bearer t0ken\"]",
+                "should be `Name: value`",
+            ),
+            (
+                "webhook_headers = [\"X Y: t0ken\"]",
+                "webhook_headers: \"X\" should be `Name: value`",
+            ),
+            (
+                "webhook_retries = 11",
+                "webhook_retries(11) should be at most 10",
+            ),
+        ] {
+            let error = basic(conf).unwrap_err();
+            assert_eq!(true, error.contains(message), "{conf}: {error}");
+            // the token of a header is not in what is reported
+            assert_eq!(false, error.contains("t0ken"), "{conf}: {error}");
+        }
+    }
+
     #[test]
     fn test_basic_max_blocking_threads() {
         let conf: BasicConf =
@@ -4204,7 +4292,7 @@ ai02RHnemmqJaNepfmCdyec=
         assert_eq!(true, result.is_ok());
 
         // spellchecker:off
-        assert_eq!("dc2eecb60f4da729", conf.hash_key());
+        assert_eq!("d75bde790f4ea0e7", conf.hash_key());
         // spellchecker:on
     }
     #[test]

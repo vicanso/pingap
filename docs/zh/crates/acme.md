@@ -114,7 +114,8 @@ acme_ca = "/etc/pingap/internal-root.pem"
 - **`acme_ca`** 是文件路径，每次下单时读取。不配时 CA 的证书必须是系统信任的，公共 CA 都满足。
 - **外部账号绑定**：`acme_eab_kid` 和 `acme_eab_hmac` 要同时配置。key 按 CA 展示的 base64 原样填写（规范里是 URL 字母表、不带填充；带填充的和标准字母表的也接受）。它是凭据：配置变更的日志里会被遮蔽，也可以写成 `$ENV:NAME` 或 `$FILE:/path`。
 - **`acme_contact`** 在创建账号时写入。已经存在的账号保留它原有的联系方式。
-- **`acme_key_type = "rsa"`** 申请 2048 位 RSA 密钥的证书，给不支持 ECDSA 的客户端用。默认的 `ecdsa` 是 P-256 密钥。
+- **`acme_key_type = "rsa"`** 申请 2048 位 RSA 密钥的证书，给不支持 ECDSA 的客户端用。默认的 `ecdsa` 是 P-256 密钥。两种都要时，给这个域名写两个 `domains` 相同的条目，其中一个设置 `acme_key_type = "rsa"`：两张证书各自申请、各自续期，握手时用客户端能验证的那一张签名（见 `pingap-certificate` 的说明）。
+- **`domains` 一律按小写申请**，不论配置里怎么写。以前写成 `Example.com` 时，签回来的证书（`example.com`）永远和条目里的域名对不上，每次检查都会重新申请。
 - **每个 CA 一个账号。** 账号凭据保存在配置存储里：Let's Encrypt 的两个环境是 `lets_encrypt_account` 和 `lets_encrypt_staging_account`，其他 directory（以及要求绑定的 CA 上的每个绑定）是 `acme_account_<hash>`，所以同一个 CA 的证书共用一个账号。directory 或绑定改了就是另一个账号，下一次下单时创建。
 - 已有且未到续期时间的证书不会被动：改了 `acme_directory` 或 `acme_key_type` 的条目，要到下一次续期才会从新的 CA、用新的密钥类型签发。
 - `acme_directory`、`acme_ca`、绑定和密钥类型随配置一起校验（`pingap -t`）：不是 `https` 的地址、只配了一半的绑定、不是 base64 的 key、不存在的密钥类型，都在这时报错，而不是几周后下单时才发现。

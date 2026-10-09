@@ -179,7 +179,7 @@ proxy_set_headers = [
 
 ## 错误响应
 
-`fail_to_proxy` 把 pingora 错误转成状态码，并在客户端仍在时用错误模板渲染页面：
+`fail_to_proxy` 把 pingora 错误转成状态码，并在客户端仍在时返回页面：location 上的 [`error_page`](../plugins/error_page.md) 插件为这个状态码配了页面就用它的，否则用 server 的错误模板渲染：
 
 | 失败 | 状态码 | 是否写页面 |
 | --- | --- | --- |

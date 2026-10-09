@@ -300,7 +300,10 @@ fn has_no_transform(headers: &http::HeaderMap) -> bool {
 /// which are in lower case. Parameters (`; charset=utf-8`) are not a part
 /// of it, and a response that names no type matches nothing, `*`
 /// included: neither mode compresses what it knows nothing about.
-fn matches_types(types: &[String], headers: &http::HeaderMap) -> bool {
+pub(crate) fn matches_types(
+    types: &[String],
+    headers: &http::HeaderMap,
+) -> bool {
     let Some(mime) = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())

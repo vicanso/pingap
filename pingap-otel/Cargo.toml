@@ -17,6 +17,7 @@ path = "src/lib.rs"
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
+http = { workspace = true }
 humantime = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-http = { workspace = true }
@@ -26,6 +27,9 @@ opentelemetry_sdk = { workspace = true }
 pingora = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

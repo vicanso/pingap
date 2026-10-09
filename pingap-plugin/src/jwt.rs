@@ -72,7 +72,7 @@ struct NoClaims {}
 
 /// Every claim of a token, for the rules that are about more than its
 /// times.
-type ClaimMap = serde_json::Map<String, serde_json::Value>;
+pub(crate) type ClaimMap = serde_json::Map<String, serde_json::Value>;
 
 /// What the claims of a token are held to once its signature and its times
 /// have checked out, and what is passed on of them to the upstream.
@@ -125,7 +125,9 @@ impl ClaimRejection {
 /// as it is written, a list of those joined by commas. `None` for what has
 /// no such form - an object, a list of objects - and for text a header
 /// cannot carry, a line break in it above all.
-fn claim_header_value(value: &serde_json::Value) -> Option<HeaderValue> {
+pub(crate) fn claim_header_value(
+    value: &serde_json::Value,
+) -> Option<HeaderValue> {
     use serde_json::Value;
     let scalar = |value: &Value| match value {
         Value::String(text) => Some(text.clone()),
@@ -142,6 +144,80 @@ fn claim_header_value(value: &serde_json::Value) -> Option<HeaderValue> {
         other => scalar(other)?,
     };
     HeaderValue::from_bytes(text.as_bytes()).ok()
+}
+
+/// Removes from a request every header that is one of `own` to an
+/// upstream: the names themselves, and what folds to them when `_` is
+/// read as `-` (see `ClaimRules::strip`).
+pub(crate) fn strip_claim_headers(
+    header: &mut RequestHeader,
+    own: &[HeaderName],
+) {
+    if own.is_empty() {
+        return;
+    }
+    let folded = |name: &str| {
+        name.bytes()
+            .map(|byte| if byte == b'_' { b'-' } else { byte })
+            .collect::<Vec<u8>>()
+    };
+    let own: Vec<Vec<u8>> =
+        own.iter().map(|name| folded(name.as_str())).collect();
+    let sent: Vec<HeaderName> = header
+        .headers
+        .keys()
+        .filter(|name| own.contains(&folded(name.as_str())))
+        .cloned()
+        .collect();
+    for name in sent {
+        header.remove_header(&name);
+    }
+}
+
+/// The `claims_to_headers` of a plugin: `claim:Header-Name` entries.
+/// `invalid` makes the error of the plugin out of a message.
+pub(crate) fn parse_claims_to_headers(
+    value: &PluginConf,
+    invalid: &dyn Fn(String) -> Error,
+) -> Result<Vec<(String, HeaderName)>> {
+    get_str_slice_conf(value, "claims_to_headers")
+        .iter()
+        .map(|item| {
+            // At the last colon: a header name has none, and the name of
+            // a claim may - the namespaced ones are urls
+            // (`https://example.com/roles`).
+            let (claim, header) = item
+                .rsplit_once(':')
+                .map(|(claim, header)| (claim.trim(), header.trim()))
+                .filter(|(claim, _)| !claim.is_empty())
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "claims_to_headers: {item:?} should be claim:Header-Name"
+                    ))
+                })?;
+            let name =
+                HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
+                    invalid(format!(
+                        "claims_to_headers: {header:?} is not a header name"
+                    ))
+                })?;
+            // What frames the body or names the upstream is not a place
+            // for something a token says.
+            if [
+                http::header::CONTENT_LENGTH,
+                http::header::TRANSFER_ENCODING,
+                http::header::HOST,
+                http::header::CONNECTION,
+            ]
+            .contains(&name)
+            {
+                return Err(invalid(format!(
+                    "claims_to_headers: {name} is not a header for a claim"
+                )));
+            }
+            Ok((claim.to_string(), name))
+        })
+        .collect()
 }
 
 impl ClaimRules {
@@ -201,28 +277,7 @@ impl ClaimRules {
     /// with an underscore for this reason; here it is the ones that would
     /// pass for a claim.
     fn strip(&self, header: &mut RequestHeader) {
-        if self.own_headers.is_empty() {
-            return;
-        }
-        let folded = |name: &str| {
-            name.bytes()
-                .map(|byte| if byte == b'_' { b'-' } else { byte })
-                .collect::<Vec<u8>>()
-        };
-        let own: Vec<Vec<u8>> = self
-            .own_headers
-            .iter()
-            .map(|name| folded(name.as_str()))
-            .collect();
-        let sent: Vec<HeaderName> = header
-            .headers
-            .keys()
-            .filter(|name| own.contains(&folded(name.as_str())))
-            .cloned()
-            .collect();
-        for name in sent {
-            header.remove_header(&name);
-        }
+        strip_claim_headers(header, &self.own_headers);
     }
 
     /// Puts the claims on the request, each under its header. What the
@@ -628,7 +683,7 @@ fn verify_with_key(
 /// A remote JWKS endpoint with a TTL cache, single-flight refresh and key
 /// rotation. Verification serves cached keys lock-free; only a cache miss /
 /// expiry / unknown `kid` triggers a rate-limited refetch.
-struct JwksSource {
+pub(crate) struct JwksSource {
     url: String,
     ttl: Duration,
     /// Minimum spacing between refetches, to bound refetching on unknown kids.
@@ -644,6 +699,74 @@ struct JwksSource {
 }
 
 impl JwksSource {
+    /// The keys at `url`, kept for an hour: for the `oidc` plugin, which
+    /// learns where the keys of its provider are when it asks the
+    /// provider.
+    pub(crate) fn new(url: String, client: reqwest::Client) -> Self {
+        Self {
+            url,
+            ttl: Duration::from_secs(3600),
+            cooldown: Duration::from_secs(10),
+            client,
+            require_exp: true,
+            leeway: DEFAULT_LEEWAY,
+            cache: ArcSwapOption::empty(),
+            refresh_lock: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// The claims of `token`, when one of the keys verifies it under the
+    /// validation that `validation` gives for its algorithm: the caller
+    /// says what the token is held to beyond its signature.
+    pub(crate) async fn verify_with(
+        &self,
+        token: &str,
+        validation: impl Fn(Algorithm) -> Validation,
+    ) -> Option<ClaimMap> {
+        let header = decode_header(token).ok()?;
+        // As in `verify_claims`: no token signed with a secret.
+        if !is_asymmetric_alg(header.alg) {
+            return None;
+        }
+        let validation = validation(header.alg);
+        let kid = header.kid.as_deref();
+        if let Some(cache) = self.cache.load_full()
+            && cache.fetched_at.elapsed() <= self.ttl
+            && let Some(claims) = cache.verify(token, kid, &validation, true)
+        {
+            return claims;
+        }
+        self.refresh().await;
+        self.cache
+            .load_full()
+            .and_then(|cache| cache.verify(token, kid, &validation, true))
+            .flatten()
+    }
+
+    /// A source that has the EC key of `public_key` already, and no
+    /// address to ask for others.
+    #[cfg(test)]
+    pub(crate) fn with_ec_key(public_key: &str) -> Self {
+        let source = Self::new(
+            "http://127.0.0.1:1/jwks".to_string(),
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(1))
+                .build()
+                .unwrap_or_default(),
+        );
+        let keys = DecodingKey::from_ec_pem(public_key.as_bytes())
+            .ok()
+            .map(|key| JwkEntry { kid: None, key })
+            .into_iter()
+            .collect();
+        source.cache.store(Some(Arc::new(JwksCache {
+            keys,
+            fetched_at: Instant::now(),
+        })));
+        source
+    }
+
     async fn fetch(&self) -> std::result::Result<JwksCache, String> {
         let resp = self
             .client
@@ -682,16 +805,21 @@ impl JwksSource {
         // It used to start at the last success: while the endpoint was down
         // nothing ever opened it, and every request waited its turn at the
         // lock to spend the client's whole timeout on a fetch of its own.
+        //
+        // And it starts when the attempt is over. Counted from its start,
+        // an endpoint that does not answer used up the window with the
+        // attempt itself - the timeout of the client is as long - and
+        // the next request in line made the next attempt at once.
         if last_attempt.is_some_and(|at| at.elapsed() < self.cooldown) {
             return;
         }
-        *last_attempt = Some(Instant::now());
         match self.fetch().await {
             Ok(cache) => self.cache.store(Some(Arc::new(cache))),
             Err(e) => {
                 error!(category = "jwt", error = e, "fetch jwks failed");
             },
         }
+        *last_attempt = Some(Instant::now());
     }
 
     #[cfg(test)]
@@ -829,44 +957,7 @@ fn parse_claim_rules(value: &PluginConf) -> Result<ClaimRules> {
             })
             .collect()
     };
-    let to_headers = get_str_slice_conf(value, "claims_to_headers")
-        .iter()
-        .map(|item| {
-            // At the last colon: a header name has none, and the name of
-            // a claim may - the namespaced ones are urls
-            // (`https://example.com/roles`).
-            let (claim, header) = item
-                .rsplit_once(':')
-                .map(|(claim, header)| (claim.trim(), header.trim()))
-                .filter(|(claim, _)| !claim.is_empty())
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "claims_to_headers: {item:?} should be claim:Header-Name"
-                    ))
-                })?;
-            let name =
-                HeaderName::from_bytes(header.as_bytes()).map_err(|_| {
-                    invalid(format!(
-                        "claims_to_headers: {header:?} is not a header name"
-                    ))
-                })?;
-            // What frames the body or names the upstream is not a place
-            // for something a token says.
-            if [
-                http::header::CONTENT_LENGTH,
-                http::header::TRANSFER_ENCODING,
-                http::header::HOST,
-                http::header::CONNECTION,
-            ]
-            .contains(&name)
-            {
-                return Err(invalid(format!(
-                    "claims_to_headers: {name} is not a header for a claim"
-                )));
-            }
-            Ok((claim.to_string(), name))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let to_headers = parse_claims_to_headers(value, &invalid)?;
     Ok(ClaimRules {
         issuers: names("issuers")?,
         audiences: names("audiences")?,
@@ -2695,5 +2786,51 @@ auth_path = "/login"
             .await
             .unwrap();
         assert_eq!(ResponsePluginResult::Modified, result);
+    }
+
+    /// Regression: the wait after a fetch that failed was counted from
+    /// the start of the fetch. An endpoint that does not answer takes as
+    /// long as the client waits, which is as long as that wait: it was
+    /// over when the fetch was, and every request in line made a fetch
+    /// of its own, each holding its client for the whole timeout.
+    #[tokio::test]
+    async fn test_jwks_cooldown_starts_when_the_attempt_is_over() {
+        // An endpoint that takes the connection and says nothing.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = vec![];
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        });
+        let wait = Duration::from_millis(600);
+        let source = JwksSource {
+            url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(3600),
+            cooldown: wait,
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .timeout(wait)
+                .build()
+                .unwrap(),
+            require_exp: true,
+            leeway: Duration::ZERO,
+            cache: ArcSwapOption::empty(),
+            refresh_lock: tokio::sync::Mutex::new(None),
+        };
+        let started = Instant::now();
+        source.refresh().await;
+        assert_eq!(true, started.elapsed() >= wait);
+        // The next one in line does not ask again.
+        let started = Instant::now();
+        source.refresh().await;
+        assert_eq!(
+            true,
+            started.elapsed() < wait / 2,
+            "{:?}",
+            started.elapsed()
+        );
     }
 }

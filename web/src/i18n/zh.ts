@@ -279,6 +279,23 @@ export default {
     webhookBatchMaxEventsPlaceholder: "输入每条消息最多合并的通知数(如5)",
     webhookBatchMaxEventsTips:
       "一批凑满该数量立即发出。默认 5，1 表示逐条发送。",
+    webhookMinLevel: "Webhook最低级别",
+    webhookMinLevelTips: "低于该级别的通知不发送。默认 info。",
+    webhookRetries: "Webhook重试次数",
+    webhookRetriesPlaceholder: "输入发送失败后的重试次数(如2)",
+    webhookRetriesTips:
+      "没有得到响应，或者响应是 5xx / 429 的请求，会在后台重发这么多次。默认 0，最多 10。",
+    webhookSecret: "Webhook签名密钥",
+    webhookSecretPlaceholder: "输入用于签名的密钥",
+    webhookSecretTips:
+      "dingtalk：开启了加签的机器人的密钥。wecom 之外的其他类型：对正文签名，放在 X-Pingap-Signature 请求头里。",
+    webhookHeaders: "Webhook请求头",
+    webhookHeadersPlaceholder: "Name: value",
+    webhookHeadersTips: "Webhook 请求带的请求头，如 Authorization: Bearer token。",
+    webhookTemplate: "Webhook消息模板",
+    webhookTemplatePlaceholder: "输入消息模板，如 **{{title}}** {{message}}",
+    webhookTemplateTips:
+      "替换内置的文本。wecom 和 dingtalk：消息的 markdown。其他类型：整个 JSON 正文。可用 {{title}}、{{message}}、{{level}}、{{category}}、{{hostname}}、{{ip}}、{{name}}、{{count}}。",
     sentry: "Sentry的连接串",
     sentryPlaceholder: "输入sentry的连接串",
     pyroscope: "Pyroscope的连接串",
@@ -475,7 +492,7 @@ export default {
     algo: "负载均衡算法",
     algoPlaceholder: "输入负载均衡算法(如 least_conn、hash:ip)",
     algoTips:
-      "round_robin（默认）、least_conn（按权重折算后在途请求最少的后端），或者一致性哈希 hash:<ip|url|path|header|cookie|query>[:<key>]。",
+      "round_robin（默认）、least_conn（按权重折算后在途请求最少的后端）、sticky:<cookie>（靠代理下发的 cookie 让客户端留在同一个后端），或者一致性哈希 hash:<ip|url|path|header|cookie|query>[:<key>]。",
     failOpen: "全部不健康时仍转发",
     failOpenTips:
       "没有任何后端健康（健康检查不通过，或被熔断器挡住）时，仍然把请求发给其中一个，而不是返回 503。",
@@ -609,6 +626,9 @@ export default {
     acmeKeyType: "密钥类型",
     acmeKeyTypeTips:
       "证书的密钥：ecdsa（P-256，默认）或 rsa（2048 位），用于不支持 ECDSA 的客户端。",
+    ocspStapling: "OCSP Stapling",
+    ocspStaplingTips:
+      "向证书里写明的 OCSP 响应服务查询，并在握手时把它的应答随证书一起发给客户端，客户端不必再去问 CA。证书链里需要有签发者的证书。默认关闭。",
     dnsProviderTips:
       "未设置与 Manual 效果相同：TXT 记录只会打印到日志，需要手动添加。",
     remark: "备注",
@@ -687,6 +707,13 @@ export default {
     mockResponseDelayPlaceholder: "输入mock响应延时(如5s)",
     mockHeaderName: "响应头",
     mockHeaderNamePlaceholder: "输入响应头名称 : 输入响应头值",
+    mockPercentage: "生效比例",
+    mockPercentagePlaceholder: "0 到 100，默认 100",
+    mockPercentageTips:
+      "匹配的请求里有多大比例得到 mock 的响应，其余请求照常处理。用来观察一部分流量失败或变慢时的表现。",
+    mockDelayOnly: "仅延迟",
+    mockDelayOnlyTips:
+      "等待延迟之后请求继续发往上游，拿到真实的响应。需要同时配置延迟。",
     mockData: "响应数据",
     mockDataPlaceholder: "输入响应数据",
     redirectPrefix: "前缀",
@@ -930,6 +957,85 @@ export default {
     geoRestrictionCountryCodesPlaceholder: "输入国家代码(如CN、US)",
     geoRestrictionMessage: "提示信息",
     geoRestrictionMessagePlaceholder: "请输入限制时的提示信息",
+    geoRestrictionDatabase: "数据库文件",
+    geoRestrictionDatabasePlaceholder:
+      "MaxMind DB 文件路径，如 /var/lib/GeoIP/GeoLite2-Country.mmdb",
+    geoRestrictionDatabaseTips:
+      "用这个文件代替内嵌数据查询国家。文件有变化时会重新读取。",
+    geoRestrictionDatabaseRefresh: "数据库检查间隔",
+    geoRestrictionDatabaseRefreshPlaceholder: "每隔多久检查一次文件，如 1m",
+    geoRestrictionHeader: "国家码请求头",
+    geoRestrictionHeaderPlaceholder: "发给上游的请求头，如 X-Geo-Country",
+    geoRestrictionHeaderTips:
+      "通过这个请求头把国家码告诉上游。客户端自己发来的同名请求头会被去掉。",
+    hmacAuthKeys: "密钥",
+    hmacAuthKeysPlaceholder: "key_id:secret",
+    hmacAuthKeysTips:
+      "每个客户端一项：key id、冒号、给请求签名用的密钥。",
+    hmacAuthSignedHeaders: "必须签名的请求头",
+    hmacAuthSignedHeadersPlaceholder: "请求头名称，如 host",
+    hmacAuthSignedHeadersTips:
+      "签名必须覆盖的请求头，不填时为 host 和 date。方法、路径和查询串总是必须覆盖。date 可以由 x-date 满足。",
+    hmacAuthClockSkew: "时钟偏差",
+    hmacAuthClockSkewPlaceholder: "被签名的时间允许相差多少，如 5m",
+    hmacAuthValidateBody: "校验正文",
+    hmacAuthValidateBodyTips:
+      "带正文的请求必须对 Content-Digest（或 Digest）头签名，并按它校验正文。",
+    hmacAuthHideCredentials: "隐藏凭据",
+    mirrorTarget: "镜像目标",
+    mirrorTargetPlaceholder: "副本发往哪里，如 http://10.0.0.2:8080",
+    mirrorTargetTips:
+      "每个请求复制一份发到这里，响应丢弃。url 里的路径会加在请求路径前面。",
+    mirrorHost: "Host",
+    mirrorHostPlaceholder: "副本的 Host 请求头（默认用请求自己的）",
+    mirrorMethods: "方法",
+    mirrorMethodsPlaceholder: "方法，如 GET",
+    mirrorMethodsTips:
+      "复制哪些方法的请求，不填时为 GET 和 HEAD。被镜像的 POST 会执行两次。",
+    mirrorMaxBodySize: "请求体上限",
+    mirrorMaxBodySizePlaceholder: "复制的请求体大小上限，如 64kb",
+    mirrorMaxBodySizeTips:
+      "请求体更大的请求不镜像。不填或 0 表示带请求体的请求都不镜像。",
+    mirrorPercentage: "比例",
+    mirrorPercentagePlaceholder: "复制的请求比例，0-100",
+    mirrorTimeout: "超时",
+    mirrorTimeoutPlaceholder: "一个副本最多花多长时间，如 5s",
+    mirrorMaxInflight: "在途上限",
+    mirrorMaxInflightPlaceholder: "同时在途的副本数量，如 100",
+    mirrorMaxInflightTips: "在途副本达到这个数量时，新来的请求不镜像。",
+    oidcIssuer: "Issuer",
+    oidcIssuerPlaceholder: "身份提供方的地址，如 https://accounts.example.com",
+    oidcIssuerTips:
+      "从它的 /.well-known/openid-configuration 得到登录地址、换取令牌的地址和公钥地址。",
+    oidcClientId: "Client ID",
+    oidcClientIdPlaceholder: "本站点在身份提供方注册的 id",
+    oidcClientSecret: "Client Secret",
+    oidcClientSecretPlaceholder: "公开客户端留空",
+    oidcCookieSecret: "Cookie 密钥",
+    oidcCookieSecretPlaceholder: "至少 16 个字符，建议 32 个随机字符",
+    oidcCookieSecretTips:
+      "会话用它加密。所有实例必须使用同一个；修改后所有人需要重新登录。",
+    oidcCookieName: "Cookie 名",
+    oidcCookieNamePlaceholder: "默认 pingap_oidc",
+    oidcRedirectPath: "回调路径",
+    oidcRedirectPathPlaceholder: "默认 /oauth2/callback",
+    oidcRedirectPathTips:
+      "身份提供方把浏览器送回来的路径。需要在身份提供方登记，并由带有这个插件的 location 处理。",
+    oidcRedirectUrl: "回调地址",
+    oidcRedirectUrlPlaceholder: "如 https://app.example.com/oauth2/callback",
+    oidcRedirectUrlTips:
+      "浏览器看到的回调路径的完整地址。只有它和请求里的不一致时才需要（前面还有代理或 CDN）。",
+    oidcLogoutPath: "退出路径",
+    oidcLogoutPathPlaceholder: "如 /oauth2/logout（不设置则没有）",
+    oidcSessionTtl: "会话有效期",
+    oidcSessionTtlPlaceholder: "一次登录保持多久（默认 12h）",
+    oidcScopes: "Scopes",
+    oidcScopesPlaceholder: "一个 scope，如 email",
+    oidcScopesTips: "在 openid 之外额外请求的 scope，openid 总是会请求。",
+    oidcClaimsToHeaders: "Claim 转请求头",
+    oidcClaimsToHeadersPlaceholder: "claim:Header-Name，如 email:X-User-Email",
+    oidcClaimsToHeadersTips:
+      "把身份提供方给出的用户信息发给上游。客户端自己写的同名请求头会被去掉。",
     refererRestrictionMode: "限制模式",
     refererList: "referer列表",
     refererListPlaceholder: "输入referer",
@@ -1019,6 +1125,36 @@ export default {
     subFilterFilters: "过滤规则",
     subFilterFiltersPlaceholder:
       "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
+    subFilterTypes: "内容类型",
+    subFilterTypesPlaceholder: "输入内容类型前缀，如 text/html",
+    subFilterTypesTips:
+      "只改写内容类型以其中之一开头的响应，其余响应照常流式转发。留空表示所有响应，不论类型。",
+    subFilterMaxSize: "大小上限",
+    subFilterMaxSizePlaceholder: "改写的正文大小上限，如 1mb",
+    subFilterMaxSizeTips:
+      "更大的正文原样透传。规则作用于整段正文，正文要在内存里缓冲到结束。留空表示不限。",
+    bandwidthLimitRate: "速率",
+    bandwidthLimitRatePlaceholder: "每秒字节数，如 1mb",
+    bandwidthLimitRateTips:
+      "每个响应的正文发送速度不超过这个值。按响应计，不是按客户端。本插件要排在 directory 插件前面。",
+    bandwidthLimitAfter: "起始不限速字节数",
+    bandwidthLimitAfterPlaceholder: "不限速的字节数，如 1mb",
+    bandwidthLimitAfterTips:
+      "每个响应最前面这么多字节不限速，之后的部分按速率发送。",
+    bandwidthLimitPath: "路径",
+    bandwidthLimitPathPlaceholder:
+      "匹配请求路径的正则，如 \\.(mp4|zip)$；留空表示所有请求",
+    errorPageJson: "JSON",
+    errorPageJsonTips:
+      "请求要的是 JSON（Accept 里有 application/json 且没有 text/html）时，错误以 {\"status\":502,\"message\":\"Bad Gateway\"} 返回。",
+    errorPageIntercept: "拦截上游的错误",
+    errorPageInterceptTips:
+      "上游响应的状态码在“页面”里有对应页面时，丢弃上游的响应并用该页面应答（需要配置页面）。上游的响应头一并丢弃，该响应不进缓存，HTTP/1.1 客户端连接在应答后关闭。关闭时上游的响应原样转发。",
+    errorPagePages: "页面",
+    errorPagePagesPlaceholder:
+      "状态码:页面，如 404:/etc/pingap/404.html 或 5xx:<h1>{{status}}</h1>",
+    errorPagePagesTips:
+      "状态码是 400 到 599 中的一个，或者 4xx / 5xx。页面是文件路径（以 /、~/ 或 ./ 开头）或者直接写内容；其中的 {{status}} 和 {{message}} 会被替换。",
     imageOptimOutputTypes: "输出类型",
     imageOptimOutputTypesPlaceholder:
       "输入输出类型(如 avif,webp), png和jpeg总是启用",

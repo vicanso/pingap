@@ -14,7 +14,10 @@
 
 use super::CertificateProvider;
 use super::DynamicCertificates;
-use super::{Error, LOG_TARGET, LoadedCertificate, TlsCertificate};
+use super::{
+    Error, LOG_TARGET, LoadedCertificate, TlsCertificate, certificate_key,
+    split_certificate_key, unused_certificate_key,
+};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
@@ -22,16 +25,14 @@ use pingap_config::Hashable;
 use pingap_core::TlsClientCert;
 use pingora::listeners::tls::TlsSettings;
 #[cfg(feature = "openssl")]
-use pingora::tls::ssl::{NameType, SslRef, SslVersion};
+use pingora::tls::ssl::{NameType, Ssl, SslContextBuilder, SslRef, SslVersion};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 #[cfg(feature = "openssl")]
 use tracing::info;
-#[cfg(feature = "tls-rustls")]
-use tracing::warn;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -40,9 +41,59 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 // - No matching certificate is found for the requested domain
 pub static DEFAULT_SERVER_NAME: &str = "*";
 
+/// Puts `cert` into the store under `key`, unless another certificate has
+/// the key already: one certificate serves a name for each kind of key,
+/// and the one that came first keeps it. Whether `cert` has the key.
+fn claim(
+    certs: &mut DynamicCertificates,
+    key: String,
+    cert: &Arc<TlsCertificate>,
+) -> bool {
+    use std::collections::hash_map::Entry;
+    match certs.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(Arc::clone(cert));
+            true
+        },
+        Entry::Occupied(entry) => {
+            let serving = entry.get();
+            let held = serving.name == cert.name;
+            if !held {
+                let (domain, rsa) = split_certificate_key(entry.key());
+                warn!(
+                    target: LOG_TARGET,
+                    domain,
+                    rsa,
+                    serving = serving.name,
+                    ignored = cert.name,
+                    "two certificates with the same kind of key for one domain, only one of them is served"
+                );
+            }
+            held
+        },
+    }
+}
+
+/// Keeps in the store a certificate that has none of its keys: see
+/// `unused_certificate_key`.
+fn keep_unused(certs: &mut DynamicCertificates, cert: &Arc<TlsCertificate>) {
+    if let Some(name) = &cert.name {
+        certs
+            .entry(unused_certificate_key(name))
+            .or_insert_with(|| Arc::clone(cert));
+    }
+}
+
 /// Builds the certificate store (domain -> certificate) from the
 /// configurations, keeping every entry of `previous` whose configuration
 /// did not change: its PEM, key and chain are not parsed and loaded again.
+///
+/// A domain is served by one certificate, or by two whose keys are of
+/// different kinds: one RSA, one not (see [`DynamicCertificates`]). Of
+/// two entries that name a domain with keys of the same kind only one is
+/// used, and it is the same one every time: an entry of ACME gives way to
+/// one that is not, and among the rest the first by name has it. It used
+/// to be whichever the map gave last, another one in every process.
 ///
 /// Returns the store, `(name, error)` for the entries that failed, and the
 /// names that were built anew. An entry that failed keeps the certificate
@@ -62,7 +113,15 @@ pub fn update_certificates(
     let mut dynamic_certs = AHashMap::new();
     let mut errors = vec![];
     let mut updated = vec![];
-    for (name, conf) in certificate_configs.iter() {
+    // The order a reload puts two stores together in
+    // (`try_update_certificates_except` in the binary), so that a domain
+    // is served by the same certificate either way.
+    let mut entries: Vec<_> = certificate_configs.iter().collect();
+    entries.sort_by_key(|(name, conf)| {
+        let acme = conf.acme.as_deref().is_some_and(|acme| !acme.is_empty());
+        (acme, name.as_str())
+    });
+    for (name, conf) in entries {
         if conf.tls_cert.is_none() || conf.tls_key.is_none() {
             continue;
         }
@@ -89,11 +148,17 @@ pub fn update_certificates(
                 // certificate that is not there.
                 Err(e) => {
                     errors.push((name.clone(), e.to_string()));
-                    for (domain, cert) in previous.iter() {
+                    let mut kept = None;
+                    let mut held = false;
+                    for (key, cert) in previous.iter() {
                         if cert.name.as_deref() == Some(name.as_str()) {
-                            dynamic_certs
-                                .insert(domain.clone(), Arc::clone(cert));
+                            held |=
+                                claim(&mut dynamic_certs, key.clone(), cert);
+                            kept = Some(cert);
                         }
+                    }
+                    if let Some(cert) = kept.filter(|_| !held) {
+                        keep_unused(&mut dynamic_certs, cert);
                     }
                     continue;
                 },
@@ -108,13 +173,25 @@ pub fn update_certificates(
             Cow::Borrowed(&cert_arc.domains)
         };
 
-        for domain in domains_to_serve.iter() {
-            dynamic_certs.insert(domain.to_string(), cert_arc.clone());
+        // Under the name in lower case: a server name is matched without
+        // regard to case, and `Example.com` written here was a name no
+        // handshake ever asked for.
+        let is_rsa = cert_arc.is_rsa();
+        let mut held = false;
+        // `a.example.com,` names one domain, not that and none.
+        for domain in domains_to_serve.iter().filter(|d| !d.is_empty()) {
+            let key = certificate_key(&domain.to_lowercase(), is_rsa);
+            held |= claim(&mut dynamic_certs, key, &cert_arc);
         }
 
         if conf.is_default.unwrap_or_default() {
-            dynamic_certs
-                .insert(DEFAULT_SERVER_NAME.to_string(), cert_arc.clone());
+            let key = certificate_key(DEFAULT_SERVER_NAME, is_rsa);
+            held |= claim(&mut dynamic_certs, key, &cert_arc);
+        }
+        // One that serves nothing - it names no domain, or others have
+        // them all - is in the store all the same.
+        if !held {
+            keep_unused(&mut dynamic_certs, &cert_arc);
         }
     }
     (dynamic_certs, errors, updated)
@@ -276,6 +353,66 @@ fn subject_text(name: &x509_parser::x509::X509Name<'_>) -> String {
         .join(", ")
 }
 
+/// The certificates a handshake was given, kept with it: OpenSSL goes on
+/// with one of them, and the OCSP answer to staple is that one's.
+#[cfg(feature = "openssl")]
+type Applied = [Option<Arc<LoadedCertificate>>; 2];
+
+/// How the certificates of a handshake are put with it and found again.
+///
+/// They are extra data of the `Ssl`, under an index whose type pingora
+/// does not hand on (`openssl::ex_data::Index`): the two closures are made
+/// where the index is, and it is never named.
+#[cfg(feature = "openssl")]
+struct AppliedData {
+    set: SetApplied,
+    get: GetApplied,
+}
+
+#[cfg(feature = "openssl")]
+type SetApplied = Box<dyn Fn(&mut SslRef, Applied) + Send + Sync>;
+
+#[cfg(feature = "openssl")]
+type GetApplied =
+    Box<dyn for<'a> Fn(&'a SslRef) -> Option<&'a Applied> + Send + Sync>;
+
+#[cfg(feature = "openssl")]
+static APPLIED: std::sync::LazyLock<Option<AppliedData>> =
+    std::sync::LazyLock::new(|| {
+        let index = Ssl::new_ex_index::<Applied>().ok()?;
+        Some(AppliedData {
+            set: Box::new(move |ssl, applied| ssl.set_ex_data(index, applied)),
+            get: Box::new(move |ssl| ssl.ex_data(index)),
+        })
+    });
+
+/// OCSP stapling under OpenSSL: a handshake whose client asks for the
+/// status of the certificate is given the answer of the certificate it
+/// goes on with, when there is one that has not run out.
+#[cfg(feature = "openssl")]
+fn set_status_callback(
+    builder: &mut SslContextBuilder,
+) -> std::result::Result<(), pingora::tls::error::ErrorStack> {
+    builder.set_status_callback(|ssl| {
+        let Some(data) = APPLIED.as_ref() else {
+            return Ok(false);
+        };
+        let now = pingap_core::now_sec() as i64;
+        let staple = (data.get)(ssl).and_then(|applied| {
+            let chosen = ssl.certificate()?;
+            applied
+                .iter()
+                .flatten()
+                .find(|certificate| certificate.is_certificate(chosen))
+                .and_then(|certificate| certificate.staple(now))
+        });
+        match staple {
+            Some(staple) => ssl.set_ocsp_status(&staple.0).map(|_| true),
+            None => Ok(false),
+        }
+    })
+}
+
 /// The OpenSSL protocol version named by a `tls_min_version` /
 /// `tls_max_version` value. An unknown name is an error; it used to be
 /// TLS 1.2 without a word.
@@ -322,27 +459,42 @@ impl GlobalCertificate {
         Self { provider }
     }
 
-    /// Picks the certificate to present for `sni`.
-    fn select(&self, sni: &str) -> Option<Arc<LoadedCertificate>> {
+    /// Picks the certificates to present for `sni`: one, or where the
+    /// name has one for each kind of key, the two of them - first the one
+    /// that is not RSA, then the RSA one.
+    fn select(&self, sni: &str) -> [Option<Arc<LoadedCertificate>>; 2] {
         // Certificate selection process:
         // 1. Try exact domain match (example.com)
         // 2. Try wildcard domain match (*.example.com)
         // 3. Fall back to default certificate (DEFAULT_SERVER_NAME)
         // 4. Handle special case for CA certificates (self-signed)
-        let Some(d) = self.provider.get(sni) else {
-            error!(target: LOG_TARGET, sni, "no match certificate");
-            return None;
+        // In lower case, as the store has it: OpenSSL hands the name over
+        // as the client wrote it, and a CA entry would issue - and keep -
+        // a certificate for every way of writing one name.
+        let lower;
+        let sni = if sni.bytes().any(|byte| byte.is_ascii_uppercase()) {
+            lower = sni.to_ascii_lowercase();
+            lower.as_str()
+        } else {
+            sni
         };
-        if d.is_ca {
-            return match d.get_self_signed_certificate(sni) {
-                Ok(cert) => Some(cert.certificate.clone()),
-                Err(err) => {
-                    error!(target: LOG_TARGET, error = %err, "get self signed cert fail");
-                    None
-                },
-            };
+        let pair = self.provider.get_pair(sni);
+        if pair.is_empty() {
+            error!(target: LOG_TARGET, sni, "no match certificate");
         }
-        d.certificate.clone()
+        [pair.other, pair.rsa].map(|d| {
+            let d = d?;
+            if d.is_ca {
+                return match d.get_self_signed_certificate(sni) {
+                    Ok(cert) => Some(cert.certificate.clone()),
+                    Err(err) => {
+                        error!(target: LOG_TARGET, error = %err, "get self signed cert fail");
+                        None
+                    },
+                };
+            }
+            d.certificate.clone()
+        })
     }
 }
 
@@ -432,6 +584,9 @@ impl GlobalCertificate {
                 .set_session_id_context(b"pingap")
                 .map_err(|e| invalid(&e))?;
         }
+
+        set_status_callback(&mut tls_settings)
+            .map_err(|e| invalid("set status callback", &e))?;
 
         if let Some(min_version) = tls_settings.min_proto_version() {
             info!(
@@ -540,8 +695,17 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
             ssl = format!("{ssl:?}"),
             server_name = sni
         );
-        if let Some(certificate) = self.select(sni) {
+        // Both of them where the name has two: OpenSSL keeps one
+        // certificate for each kind of key, each with its own chain, and
+        // signs with the one the client can verify.
+        let certificates = self.select(sni);
+        for certificate in certificates.iter().flatten() {
             certificate.apply(ssl);
+        }
+        // For the status callback, which comes when OpenSSL has settled
+        // on one of them and the client asks for its OCSP answer.
+        if let Some(data) = APPLIED.as_ref() {
+            (data.set)(ssl, certificates);
         }
     }
 
@@ -578,6 +742,33 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
     }
 }
 
+/// Whether the handshake of this client can be signed with `key`: the
+/// client takes one of the key's signature schemes and, for what is below
+/// TLS 1.3, where the cipher suite says what kind of key signs, offers a
+/// suite that goes with it.
+#[cfg(feature = "tls-rustls")]
+fn is_usable_for(
+    key: &pingora::tls::sign::CertifiedKey,
+    client_hello: &pingora::tls::ClientHello<'_>,
+) -> bool {
+    if key
+        .key
+        .choose_scheme(client_hello.signature_schemes())
+        .is_none()
+    {
+        return false;
+    }
+    let Some(provider) = pingora::tls::CryptoProvider::get_default() else {
+        return true;
+    };
+    let algorithm = key.key.algorithm();
+    let offered = client_hello.cipher_suites();
+    provider.cipher_suites.iter().any(|suite| {
+        suite.usable_for_signature_algorithm(algorithm)
+            && offered.contains(&suite.suite())
+    })
+}
+
 #[cfg(feature = "tls-rustls")]
 impl pingora::tls::ResolvesServerCert for GlobalCertificate {
     fn resolve(
@@ -586,16 +777,40 @@ impl pingora::tls::ResolvesServerCert for GlobalCertificate {
     ) -> Option<Arc<pingora::tls::sign::CertifiedKey>> {
         let sni = client_hello.server_name().unwrap_or(DEFAULT_SERVER_NAME);
         debug!(target: LOG_TARGET, server_name = sni);
-        self.select(sni)
-            .map(|certificate| certificate.certified_key())
+        let [other, rsa] = self
+            .select(sni)
+            .map(|certificate| Some(certificate?.certified_key()));
+        // Where the name has one of each kind of key: the one that is not
+        // RSA for every client that can verify it, which is the cheaper
+        // signature, and the RSA one for the rest. A client that can
+        // verify neither is given the first, for the handshake to fail
+        // the way it does with one certificate.
+        match (other, rsa) {
+            (Some(other), Some(rsa)) => {
+                if !is_usable_for(&other, &client_hello)
+                    && is_usable_for(&rsa, &client_hello)
+                {
+                    Some(rsa)
+                } else {
+                    Some(other)
+                }
+            },
+            (other, rsa) => other.or(rsa),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lookup_certificates;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
+
+    /// The certificate `name` is served with, where it has one.
+    fn of(certs: &DynamicCertificates, name: &str) -> Arc<TlsCertificate> {
+        lookup_certificates(certs, name).first().cloned().unwrap()
+    }
 
     fn get_tls_pem() -> (String, String) {
         // spellchecker:off
@@ -777,7 +992,10 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(2, certs.len());
         assert_eq!(
             true,
-            Arc::ptr_eq(&certs["a.example.com"], &certs["b.example.com"])
+            Arc::ptr_eq(
+                &of(&certs, "a.example.com"),
+                &of(&certs, "b.example.com")
+            )
         );
 
         // Same configuration: the same certificate object, nothing updated.
@@ -786,7 +1004,10 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(true, updated.is_empty());
         assert_eq!(
             true,
-            Arc::ptr_eq(&certs["a.example.com"], &again["a.example.com"])
+            Arc::ptr_eq(
+                &of(&certs, "a.example.com"),
+                &of(&again, "a.example.com")
+            )
         );
 
         // A changed configuration is rebuilt; a broken one is reported and
@@ -811,9 +1032,17 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(3, next.len());
         assert_eq!(
             false,
-            Arc::ptr_eq(&again["a.example.com"], &next["a.example.com"])
+            Arc::ptr_eq(
+                &of(&again, "a.example.com"),
+                &of(&next, "a.example.com")
+            )
         );
-        assert_eq!(true, next.contains_key(DEFAULT_SERVER_NAME));
+        // The certificate of the tests has an RSA key.
+        assert_eq!(
+            true,
+            next.contains_key(&certificate_key(DEFAULT_SERVER_NAME, true))
+        );
+        assert_eq!(false, next.contains_key(DEFAULT_SERVER_NAME));
     }
 
     /// Regression: a certificate with the key of another one loaded and
@@ -867,9 +1096,660 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(true, updated.is_empty());
         assert_eq!(
             true,
-            Arc::ptr_eq(&certs["a.example.com"], &next["a.example.com"])
+            Arc::ptr_eq(
+                &of(&certs, "a.example.com"),
+                &of(&next, "a.example.com")
+            )
         );
         assert_eq!(1, next.len());
+    }
+
+    /// A certificate of `domains` signed by itself, with an RSA key or
+    /// with an ECDSA one, as an entry of the configuration.
+    fn new_conf(domains: &str, rsa: bool) -> CertificateConf {
+        let key = if rsa {
+            rcgen::KeyPair::generate_rsa_for(
+                &rcgen::PKCS_RSA_SHA256,
+                rcgen::RsaKeySize::_2048,
+            )
+        } else {
+            rcgen::KeyPair::generate()
+        }
+        .unwrap();
+        let names: Vec<String> =
+            domains.split(',').map(str::to_string).collect();
+        let cert = rcgen::CertificateParams::new(names)
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        CertificateConf {
+            domains: Some(domains.to_string()),
+            tls_cert: Some(cert.pem()),
+            tls_key: Some(key.serialize_pem()),
+            ..Default::default()
+        }
+    }
+
+    fn names(pair: &crate::CertificatePair) -> Vec<&str> {
+        pair.iter()
+            .map(|cert| cert.name.as_deref().unwrap_or_default())
+            .collect()
+    }
+
+    /// A domain is served with two certificates when their keys are of
+    /// different kinds, and each level of the lookup - the name, its
+    /// wildcard, the default - answers with the ones it has.
+    #[test]
+    fn test_two_certificates_for_one_domain() {
+        let default_rsa = CertificateConf {
+            is_default: Some(true),
+            ..new_conf("fallback.test", true)
+        };
+        let default_ecdsa = CertificateConf {
+            is_default: Some(true),
+            ..new_conf("fallback.test", false)
+        };
+        let configs = HashMap::from([
+            ("site-ecdsa".to_string(), new_conf("site.test", false)),
+            ("site-rsa".to_string(), new_conf("site.test", true)),
+            ("wild-ecdsa".to_string(), new_conf("*.site.test", false)),
+            ("wild-rsa".to_string(), new_conf("*.site.test", true)),
+            ("only-rsa".to_string(), new_conf("old.site.test", true)),
+            ("default-rsa".to_string(), default_rsa),
+            ("default-ecdsa".to_string(), default_ecdsa),
+        ]);
+        let (certs, errors, updated) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        assert_eq!(7, updated.len());
+        // site.test, *.site.test, fallback.test and the default twice
+        // each, old.site.test once.
+        assert_eq!(9, certs.len());
+
+        // The one that is not RSA comes first.
+        let pair = lookup_certificates(&certs, "site.test");
+        assert_eq!(vec!["site-ecdsa", "site-rsa"], names(&pair));
+        assert_eq!(false, pair.other.as_ref().unwrap().is_rsa());
+        assert_eq!(true, pair.rsa.as_ref().unwrap().is_rsa());
+        assert_eq!(
+            "site-ecdsa",
+            pair.first().unwrap().name.as_deref().unwrap()
+        );
+
+        // Without regard to the case the client wrote the name in.
+        let pair = lookup_certificates(&certs, "SITE.Test");
+        assert_eq!(vec!["site-ecdsa", "site-rsa"], names(&pair));
+
+        let pair = lookup_certificates(&certs, "www.site.test");
+        assert_eq!(vec!["wild-ecdsa", "wild-rsa"], names(&pair));
+
+        // A name with a certificate of its own is served with that, and
+        // not with the other kind from its wildcard as well.
+        let pair = lookup_certificates(&certs, "old.site.test");
+        assert_eq!(vec!["only-rsa"], names(&pair));
+        assert_eq!(true, pair.other.is_none());
+
+        for name in ["other.test", "*", "a.b.site.test"] {
+            let pair = lookup_certificates(&certs, name);
+            assert_eq!(
+                vec!["default-ecdsa", "default-rsa"],
+                names(&pair),
+                "{name}"
+            );
+        }
+
+        // Nothing for a name: nothing.
+        let (certs, _, _) = update_certificates(
+            &HashMap::from([(
+                "site-rsa".to_string(),
+                new_conf("site.test", true),
+            )]),
+            &AHashMap::new(),
+        );
+        assert_eq!(true, lookup_certificates(&certs, "other.test").is_empty());
+        assert_eq!(
+            vec!["site-rsa"],
+            names(&lookup_certificates(&certs, "site.test"))
+        );
+    }
+
+    /// Regression: of two certificates for one domain the one that served
+    /// was whichever the map gave last, another one in every process. With
+    /// keys of the same kind it is one of them, and the same every time.
+    #[test]
+    fn test_one_certificate_for_each_kind_of_key() {
+        let acme = |conf: CertificateConf| CertificateConf {
+            acme: Some("lets_encrypt".to_string()),
+            ..conf
+        };
+        // Enough entries for the order of a map to differ.
+        let mut configs = HashMap::new();
+        for index in 0..8 {
+            configs
+                .insert(format!("ecdsa-{index}"), new_conf("dup.test", false));
+        }
+        configs.insert("rsa-b".to_string(), new_conf("dup.test", true));
+        configs.insert("rsa-a".to_string(), acme(new_conf("dup.test", true)));
+        configs.insert("rsa-c".to_string(), new_conf("dup.test", true));
+        for _ in 0..4 {
+            // A new map each time, with a new order.
+            let configs: HashMap<_, _> = configs
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let (certs, errors, _) =
+                update_certificates(&configs, &AHashMap::new());
+            assert_eq!(true, errors.is_empty(), "{errors:?}");
+            // Two of them serve the domain. The others are in the store
+            // as well, under keys no client asks for: they are
+            // configured, and are looked after like the rest.
+            let serving = certs
+                .keys()
+                .filter(|key| !crate::is_unused_certificate_key(key))
+                .count();
+            assert_eq!(2, serving);
+            assert_eq!(11, certs.len());
+            let mut entries: Vec<_> = certs
+                .values()
+                .filter_map(|cert| cert.name.clone())
+                .collect();
+            entries.sort();
+            entries.dedup();
+            assert_eq!(11, entries.len());
+            // The first by name, and of the RSA ones the first that is
+            // not of ACME.
+            assert_eq!(
+                vec!["ecdsa-0", "rsa-b"],
+                names(&lookup_certificates(&certs, "dup.test"))
+            );
+        }
+    }
+
+    /// Regression: `domains = "Example.com"` was a name no handshake asked
+    /// for - the name of a client is in lower case, or is put there.
+    #[test]
+    fn test_domains_are_matched_without_regard_to_case() {
+        let configs = HashMap::from([(
+            "site".to_string(),
+            CertificateConf {
+                domains: Some("Case.Test, *.Case.Test,".to_string()),
+                ..new_conf("case.test", false)
+            },
+        )]);
+        let (certs, errors, _) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        // The comma at the end names no third domain.
+        assert_eq!(2, certs.len());
+
+        // An entry that names none at all serves nothing, and is in the
+        // store for whoever goes through the certificates there are.
+        let configs = HashMap::from([(
+            "nothing".to_string(),
+            CertificateConf {
+                domains: Some(" , ".to_string()),
+                ..new_conf("none.test", false)
+            },
+        )]);
+        let (none, errors, _) = update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            vec![crate::unused_certificate_key("nothing")],
+            none.keys().cloned().collect::<Vec<_>>()
+        );
+        assert_eq!(true, lookup_certificates(&none, "none.test").is_empty());
+        // Carried over as it is by the next update.
+        let (again, _, updated) = update_certificates(&configs, &none);
+        assert_eq!(true, updated.is_empty());
+        assert_eq!(1, again.len());
+        for name in ["case.test", "CASE.test", "www.case.test", "WWW.Case.Test"]
+        {
+            assert_eq!(
+                vec!["site"],
+                names(&lookup_certificates(&certs, name)),
+                "{name}"
+            );
+        }
+    }
+
+    /// A store as the binary keeps it: both certificates of a name.
+    struct Store(DynamicCertificates);
+
+    impl CertificateProvider for Store {
+        fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>> {
+            self.get_pair(sni).first().cloned()
+        }
+        fn get_pair(&self, sni: &str) -> crate::CertificatePair {
+            lookup_certificates(&self.0, sni)
+        }
+        fn list(&self) -> Arc<DynamicCertificates> {
+            Arc::new(self.0.clone())
+        }
+        fn store(&self, _data: DynamicCertificates) {}
+    }
+
+    /// The default certificates given, by kind of key.
+    fn default_store(kinds: &[bool]) -> DynamicCertificates {
+        let configs = kinds
+            .iter()
+            .map(|rsa| {
+                let conf = CertificateConf {
+                    is_default: Some(true),
+                    ..new_conf("fallback.test", *rsa)
+                };
+                (format!("default-{rsa}"), conf)
+            })
+            .collect();
+        let (certs, errors, _) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        certs
+    }
+
+    /// A store with the default certificates given, by kind of key.
+    fn default_certificates(kinds: &[bool]) -> GlobalCertificate {
+        GlobalCertificate::new(Arc::new(Store(default_store(kinds))))
+    }
+
+    /// The answer of the responder about the certificate of
+    /// `issued_store` with that kind of key.
+    fn answer(rsa: bool) -> Vec<u8> {
+        use crate::ocsp::tests::{GOOD, GOOD_RSA};
+        pingap_util::base64_decode(if rsa { GOOD_RSA } else { GOOD }).unwrap()
+    }
+
+    /// Two default certificates a CA issued, one for each kind of key,
+    /// with the certificate of the CA after them: the ones the responder
+    /// of the OCSP tests answered about. OpenSSL staples an answer only
+    /// to the certificate it is about, and to none that signed itself.
+    fn issued_store() -> DynamicCertificates {
+        use crate::ocsp::tests::{CA, LEAF, LEAF_KEY, RSA_LEAF, RSA_LEAF_KEY};
+        let conf = |cert: &str, key: &str| CertificateConf {
+            is_default: Some(true),
+            tls_cert: Some(format!("{cert}\n{CA}")),
+            tls_key: Some(key.to_string()),
+            ocsp_stapling: Some(true),
+            ..Default::default()
+        };
+        let configs = HashMap::from([
+            ("ecdsa".to_string(), conf(LEAF, LEAF_KEY)),
+            ("rsa".to_string(), conf(RSA_LEAF, RSA_LEAF_KEY)),
+        ]);
+        let (certs, errors, _) =
+            update_certificates(&configs, &AHashMap::new());
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        certs
+    }
+
+    /// Gives every certificate of `certs` the OCSP answer for its kind of
+    /// key, good for `lasts` seconds from now.
+    fn staple(certs: &DynamicCertificates, lasts: i64) {
+        let until = pingap_core::now_sec() as i64 + lasts;
+        for cert in certs.values() {
+            cert.certificate
+                .as_ref()
+                .unwrap()
+                .set_staple(Some((answer(cert.is_rsa()), until)));
+        }
+    }
+
+    /// OCSP stapling under OpenSSL: a client that asks for the status of
+    /// the certificate gets the answer of the one the handshake went on
+    /// with, of the two a name may have, and none once it has run out.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn test_openssl_staples_the_answer_of_the_certificate() {
+        use pingora::listeners::TlsAccept;
+        use pingora::tls::ssl::{
+            SslAcceptor, SslConnector, SslMethod, SslVerifyMode, StatusType,
+        };
+        use std::net::{TcpListener, TcpStream};
+
+        // What a client that verifies `sigalgs` is stapled.
+        let stapled = |certs: &DynamicCertificates, sigalgs: &str| {
+            let certificates =
+                GlobalCertificate::new(Arc::new(Store(certs.clone())));
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let mut acceptor =
+                SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+            set_status_callback(&mut acceptor).unwrap();
+            let acceptor = acceptor.build();
+            let mut ssl = Ssl::new(acceptor.context()).unwrap();
+            tokio_test::block_on(certificates.certificate_callback(&mut ssl));
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let _ = ssl.accept(stream);
+            });
+            let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+            builder.set_verify(SslVerifyMode::NONE);
+            builder.set_sigalgs_list(sigalgs).unwrap();
+            // The answer is the client's to look at when it comes, in
+            // the callback OpenSSL has for that.
+            let answer = Arc::new(std::sync::Mutex::new(None));
+            let seen = answer.clone();
+            builder
+                .set_status_callback(move |ssl| {
+                    *seen.lock().unwrap() =
+                        ssl.ocsp_status().map(<[u8]>::to_vec);
+                    Ok(true)
+                })
+                .unwrap();
+            let mut client = builder
+                .build()
+                .configure()
+                .unwrap()
+                .into_ssl("fallback.test")
+                .unwrap();
+            client.set_status_type(StatusType::OCSP).unwrap();
+            client.connect(TcpStream::connect(addr).unwrap()).unwrap();
+            server.join().unwrap();
+            let mut seen = answer.lock().unwrap();
+            seen.take()
+        };
+        const RSA_ONLY: &str = "RSA-PSS+SHA256:RSA+SHA256";
+        const ECDSA_ONLY: &str = "ECDSA+SHA256";
+
+        let certs = issued_store();
+        // What to ask the responder is known for both.
+        assert_eq!(true, certs.values().all(|cert| cert.ocsp.is_some()));
+        // Nothing to staple yet.
+        assert_eq!(None, stapled(&certs, ECDSA_ONLY));
+        staple(&certs, 3600);
+        assert_eq!(Some(answer(false)), stapled(&certs, ECDSA_ONLY));
+        assert_eq!(Some(answer(true)), stapled(&certs, RSA_ONLY));
+        // One that has run out is not sent.
+        staple(&certs, -1);
+        assert_eq!(None, stapled(&certs, ECDSA_ONLY));
+        assert_eq!(None, stapled(&certs, RSA_ONLY));
+        // And taken away.
+        staple(&certs, 3600);
+        for cert in certs.values() {
+            cert.certificate.as_ref().unwrap().set_staple(None);
+        }
+        assert_eq!(None, stapled(&certs, RSA_ONLY));
+    }
+
+    /// With OpenSSL both certificates of a name are put on the handshake,
+    /// which signs with the one its client can verify: the ECDSA one for
+    /// a client that takes either, the RSA one for a client that takes
+    /// nothing else.
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn test_openssl_signs_with_what_the_client_verifies() {
+        use pingora::listeners::TlsAccept;
+        use pingora::tls::pkey::Id;
+        use pingora::tls::ssl::{
+            Ssl, SslAcceptor, SslConnector, SslMethod, SslVerifyMode,
+        };
+        use std::net::{TcpListener, TcpStream};
+
+        // The kind of key of the certificate a client is shown: one that
+        // verifies `sigalgs` only, up to TLS 1.2 or 1.3. `None` when the
+        // handshake fails.
+        let handshake = |certificates: &GlobalCertificate,
+                         sigalgs: Option<&str>,
+                         tls12: bool| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            // The settings pingora makes a listener with.
+            let acceptor =
+                SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())
+                    .unwrap()
+                    .build();
+            let mut ssl = Ssl::new(acceptor.context()).unwrap();
+            // No name has been read yet: the default certificates.
+            tokio_test::block_on(certificates.certificate_callback(&mut ssl));
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let _ = ssl.accept(stream);
+            });
+            let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+            builder.set_verify(SslVerifyMode::NONE);
+            if let Some(sigalgs) = sigalgs {
+                builder.set_sigalgs_list(sigalgs).unwrap();
+            }
+            if tls12 {
+                builder
+                    .set_max_proto_version(Some(SslVersion::TLS1_2))
+                    .unwrap();
+            }
+            let id = builder
+                .build()
+                .connect("fallback.test", TcpStream::connect(addr).unwrap())
+                .ok()
+                .and_then(|stream| stream.ssl().peer_certificate())
+                .and_then(|cert| cert.public_key().ok())
+                .map(|key| key.id());
+            server.join().unwrap();
+            id
+        };
+        const RSA_ONLY: &str = "RSA-PSS+SHA256:RSA+SHA256";
+        const ECDSA_ONLY: &str = "ECDSA+SHA256";
+
+        let both = default_certificates(&[false, true]);
+        for tls12 in [false, true] {
+            assert_eq!(Some(Id::EC), handshake(&both, None, tls12), "{tls12}");
+            assert_eq!(
+                Some(Id::EC),
+                handshake(&both, Some(ECDSA_ONLY), tls12),
+                "{tls12}"
+            );
+            assert_eq!(
+                Some(Id::RSA),
+                handshake(&both, Some(RSA_ONLY), tls12),
+                "{tls12}"
+            );
+        }
+
+        // What it is with one certificate: a client that cannot verify it
+        // has no handshake.
+        let ecdsa = default_certificates(&[false]);
+        assert_eq!(Some(Id::EC), handshake(&ecdsa, None, false));
+        assert_eq!(None, handshake(&ecdsa, Some(RSA_ONLY), false));
+        let rsa = default_certificates(&[true]);
+        assert_eq!(Some(Id::RSA), handshake(&rsa, None, false));
+        assert_eq!(None, handshake(&rsa, Some(ECDSA_ONLY), false));
+    }
+
+    /// With rustls the handshake is given one certificate, picked by what
+    /// its client said it verifies: the ECDSA one for a client that takes
+    /// either, the RSA one for a client that takes nothing else.
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_rustls_resolves_what_the_client_verifies() {
+        use pingora::tls::ResolvesServerCert;
+        use rustls::client::danger::{
+            HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier,
+        };
+        use rustls::crypto::CryptoProvider;
+        use rustls::{
+            SignatureAlgorithm, SignatureScheme, SupportedCipherSuite,
+        };
+
+        // A client that says it verifies these schemes.
+        #[derive(Debug)]
+        struct Verifies(Vec<SignatureScheme>);
+        impl ServerCertVerifier for Verifies {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &rustls_pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+                _server_name: &rustls_pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls_pki_types::UnixTime,
+            ) -> Result<ServerCertVerified, rustls::Error> {
+                Ok(ServerCertVerified::assertion())
+            }
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls_pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                Ok(HandshakeSignatureValid::assertion())
+            }
+            fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+                self.0.clone()
+            }
+        }
+
+        crate::install_default_crypto_provider();
+        let provider = CryptoProvider::get_default().unwrap();
+        const RSA: &[SignatureScheme] = &[
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA256,
+        ];
+        const ECDSA: &[SignatureScheme] =
+            &[SignatureScheme::ECDSA_NISTP256_SHA256];
+        let either = [ECDSA, RSA].concat();
+
+        // Whether the certificate for a client is the RSA one: a client
+        // that verifies `schemes` and, with `suites_of`, speaks TLS 1.2
+        // with the cipher suites of that kind of key only.
+        let resolve =
+            |certificates: &GlobalCertificate,
+             schemes: &[SignatureScheme],
+             suites_of: Option<SignatureAlgorithm>| {
+                let verifier = Arc::new(Verifies(schemes.to_vec()));
+                let config = match suites_of {
+                    Some(algorithm) => {
+                        let mut provider = provider.as_ref().clone();
+                        provider.cipher_suites.retain(|suite| {
+                            matches!(suite, SupportedCipherSuite::Tls12(_))
+                                && suite
+                                    .usable_for_signature_algorithm(algorithm)
+                        });
+                        rustls::ClientConfig::builder_with_provider(Arc::new(
+                            provider,
+                        ))
+                        .with_protocol_versions(&[&rustls::version::TLS12])
+                        .unwrap()
+                    },
+                    None => rustls::ClientConfig::builder(),
+                }
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_no_client_auth();
+                let mut client = rustls::ClientConnection::new(
+                    Arc::new(config),
+                    "fallback.test".try_into().unwrap(),
+                )
+                .unwrap();
+                let mut hello = vec![];
+                client.write_tls(&mut hello).unwrap();
+                let mut acceptor = rustls::server::Acceptor::default();
+                acceptor.read_tls(&mut hello.as_slice()).unwrap();
+                let accepted = acceptor.accept().ok().flatten().unwrap();
+                certificates
+                    .resolve(accepted.client_hello())
+                    .map(|key| key.key.algorithm() == SignatureAlgorithm::RSA)
+            };
+
+        let both = default_certificates(&[false, true]);
+        assert_eq!(Some(false), resolve(&both, &either, None));
+        assert_eq!(Some(false), resolve(&both, ECDSA, None));
+        assert_eq!(Some(true), resolve(&both, RSA, None));
+        // Below TLS 1.3 the cipher suite has to go with the key as well:
+        // a client that verifies either but offers the suites of RSA
+        // alone can not be served with the other.
+        assert_eq!(
+            Some(true),
+            resolve(&both, &either, Some(SignatureAlgorithm::RSA))
+        );
+        assert_eq!(
+            Some(false),
+            resolve(&both, &either, Some(SignatureAlgorithm::ECDSA))
+        );
+
+        // One certificate is the answer for every client, as before.
+        let ecdsa = default_certificates(&[false]);
+        assert_eq!(Some(false), resolve(&ecdsa, &either, None));
+        assert_eq!(Some(false), resolve(&ecdsa, RSA, None));
+        let rsa = default_certificates(&[true]);
+        assert_eq!(Some(true), resolve(&rsa, ECDSA, None));
+        // And with both, a client that verifies neither gets the first.
+        assert_eq!(
+            Some(false),
+            resolve(&both, &[SignatureScheme::ED25519], None)
+        );
+    }
+
+    /// OCSP stapling under rustls: the certificate handed to a handshake
+    /// has the answer with it while it holds, and rustls sends it to the
+    /// clients that ask.
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_rustls_staples_the_answer_of_the_certificate() {
+        let certs = issued_store();
+        // The answer that goes with each of the two certificates, the one
+        // that is not RSA first.
+        let answers = |certs: &DynamicCertificates| {
+            lookup_certificates(certs, "ocsp.test")
+                .iter()
+                .map(|cert| {
+                    let key =
+                        cert.certificate.as_ref().unwrap().certified_key();
+                    key.ocsp.clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(vec![None, None], answers(&certs));
+        staple(&certs, 3600);
+        assert_eq!(
+            vec![Some(answer(false)), Some(answer(true))],
+            answers(&certs)
+        );
+        let now = pingap_core::now_sec() as i64;
+        for cert in certs.values() {
+            let certificate = cert.certificate.as_ref().unwrap();
+            assert_eq!(true, certificate.has_staple(now));
+            // The certificate and its key are the ones they were.
+            assert_eq!(
+                certificate.leaf_der().unwrap(),
+                certificate.certified_key().cert[0].to_vec()
+            );
+        }
+        // One that has run out is not sent.
+        staple(&certs, -1);
+        assert_eq!(vec![None, None], answers(&certs));
+        staple(&certs, 3600);
+        for cert in certs.values() {
+            cert.certificate.as_ref().unwrap().set_staple(None);
+        }
+        assert_eq!(vec![None, None], answers(&certs));
+    }
+
+    /// What a CA entry serves is what it issues, an ECDSA certificate,
+    /// whatever the key of the CA is.
+    #[test]
+    fn test_kind_of_key() {
+        let rsa =
+            TlsCertificate::try_from(&new_conf("kind.test", true)).unwrap();
+        assert_eq!(true, rsa.is_rsa());
+        let ecdsa =
+            TlsCertificate::try_from(&new_conf("kind.test", false)).unwrap();
+        assert_eq!(false, ecdsa.is_rsa());
+        let ca = TlsCertificate {
+            is_ca: true,
+            ..rsa.clone()
+        };
+        assert_eq!(false, ca.is_rsa());
+        assert_eq!(false, TlsCertificate::default().is_rsa());
+
+        assert_eq!("a.test", certificate_key("a.test", false));
+        assert_eq!(("a.test", false), split_certificate_key("a.test"));
+        let key = certificate_key("a.test", true);
+        assert_eq!(true, key != "a.test");
+        assert_eq!(("a.test", true), split_certificate_key(&key));
     }
 
     #[test]

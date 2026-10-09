@@ -19,12 +19,13 @@ Selected with `discovery` in `UpstreamConf`:
 | --- | --- |
 | `static` | Resolve `addrs` once at startup and keep the result. The default when every address is an IP address |
 | `dns` | Re-resolve `addrs` periodically, so DNS changes take effect. The default when an address is a host name |
+| `srv` | Look up the `SRV` records of the names in `addrs` periodically: they give the hosts, their ports and their weights |
 | `docker` | Look up containers by label through the Docker API |
 | `transparent` | No discovery — forward to the address from the request itself |
 
-`update_frequency` controls how often `dns` and `docker` refresh (default `1m`). The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s. It has to be greater than zero for these two: `0s` used to mean "look up once and never again" and is now a configuration error.
+`update_frequency` controls how often `dns`, `srv` and `docker` refresh (default `1m`). The refresh runs on the same 10s timer as the health checks, so the value is rounded up to a whole number of its ticks and anything up to `10s` refreshes every 10s. It has to be greater than zero for these: `0s` used to mean "look up once and never again" and is now a configuration error.
 
-`discovery` is one of the four values above, in any case (`DNS` is `dns`). Anything else is a configuration error; it used to be accepted and treated as `static`, so a typo such as `dsn` resolved its hosts once at startup.
+`discovery` is one of the five values above, in any case (`DNS` is `dns`). Anything else is a configuration error; it used to be accepted and treated as `static`, so a typo such as `dsn` resolved its hosts once at startup.
 
 ### Static
 
@@ -74,6 +75,61 @@ the records of the others run out. A name used to lose its backends on a
 single failed lookup, for as long as five minutes. A name that is answered
 "no such name" loses its backends at once. Either way the failure is notified
 when it starts, not at every round it lasts.
+
+### SRV
+
+```toml
+[upstreams.api]
+addrs = ["_http._tcp.api.service.consul"]
+discovery = "srv"
+update_frequency = "30s"
+dns_server = "10.0.0.53:8600"
+```
+
+Each entry of `addrs` is a name whose `SRV` records are asked for. A record
+names a host, a port and a weight, and every address of that host becomes a
+backend with that port and that weight: this is how Consul, Nomad and a
+Kubernetes headless service with named ports publish instances that do not
+share a port. A port or a weight written after the name in `addrs` is not
+used, and neither is the default port.
+
+- **Priority.** Only the records of the lowest priority become backends.
+  RFC 2782 has the others for when those can not be reached; an upstream has
+  no spare backends, and taken along they would get their share of the
+  requests.
+- **Weight.** The weight of the record, with `0` counted as `1`: a backend
+  of weight `0` would never be chosen. The weights of a name are taken as
+  what they are to one another: divided by what they have in common (`10`
+  and `30` are `1` and `3`), and scaled down so that the largest is no more
+  than `256`. A registry that gives every instance the same weight, whatever
+  the number - CoreDNS writes `100 / n` for each of `n` pods - gives backends
+  of weight `1` that stay the same backends when an instance comes or goes.
+  A weight is part of what a backend is known by, so one whose weight changes
+  is a new backend as far as its health goes: it counts as healthy until the
+  next check. With weights that are not equal that also happens to records
+  that did not change, when another one changes what they have in common
+  (`10` and `10` are `1` and `1`; with a third of `15` they are `2`, `2` and
+  `3`).
+- A target of `.` means the service is not offered at that name, and gives
+  no backend.
+- The hosts the records name are resolved with the same `dns_server` and
+  `ipv4_only` as the names of `dns` discovery. `dns_domain` and `dns_search`
+  are for the names in `addrs`: the hosts in the records are full names.
+  One that does not resolve is left out and reported in the log; the others
+  serve on. When it got no answer at all (a timeout), the result is kept for
+  five seconds only rather than until its records run out: the name is asked
+  again at the next `update_frequency` after that.
+- Caching, and what happens when a lookup fails, are as for `dns`: the
+  result holds until the shortest TTL among the `SRV` and address records
+  runs out. With several names in `addrs`, one that gets no answer keeps its
+  backends for up to ten minutes, and one that is answered "no such name" -
+  or has no usable record - loses them at once.
+- With one name in `addrs`, or when all of them fail, the upstream keeps the
+  backends it had for as long as that lasts, whatever the answer was: an
+  upstream is not emptied over its registry. The health check is what takes
+  dead backends out. Each round that fails is logged and notified
+  (`service_discover_fail`), every `update_frequency` - also when the
+  registry only says that no instance is up at the moment.
 
 ### Docker
 

@@ -2645,6 +2645,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipnetwork"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3005,6 +3011,18 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
+
+[[package]]
+name = "maxminddb"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b43d2458d977b610b04a3858e6504f06133663d303a1a0606601b530bfc9bc6"
+dependencies = [
+ "ipnetwork",
+ "memchr",
+ "serde",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "maybe-rayon"
@@ -3708,6 +3726,7 @@ dependencies = [
  "bytes",
  "http",
  "opentelemetry",
+ "reqwest 0.13.5",
 ]
 
 [[package]]
@@ -3727,9 +3746,11 @@ checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
  "http",
  "opentelemetry",
+ "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost",
+ "reqwest 0.13.5",
  "thiserror 2.0.20",
  "tokio",
  "tonic",
@@ -4120,8 +4141,10 @@ name = "pingap-certificate"
 version = "0.15.0"
 dependencies = [
  "ahash",
+ "arc-swap",
  "async-trait",
  "dashmap 6.2.1",
+ "futures",
  "nanoid",
  "pingap-config",
  "pingap-core",
@@ -4129,9 +4152,11 @@ dependencies = [
  "pingora",
  "pretty_assertions",
  "rcgen",
+ "reqwest 0.13.5",
  "rustls",
  "rustls-pki-types",
  "serde",
+ "sha1",
  "snafu",
  "tempfile",
  "time",
@@ -4337,6 +4362,7 @@ dependencies = [
  "ahash",
  "arc-swap",
  "async-trait",
+ "http",
  "humantime",
  "opentelemetry",
  "opentelemetry-http",
@@ -4344,6 +4370,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pingora",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -4405,6 +4432,7 @@ dependencies = [
  "http",
  "humantime",
  "jsonwebtoken",
+ "maxminddb",
  "mime_guess",
  "nanoid",
  "path-absolutize",
@@ -4448,6 +4476,7 @@ dependencies = [
  "itoa",
  "num_cpus",
  "pingap-acme",
+ "pingap-cache",
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
@@ -4545,6 +4574,8 @@ name = "pingap-webhook"
 version = "0.15.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
+ "hmac-sha256",
  "local-ip-address",
  "pingap-core",
  "pretty_assertions",

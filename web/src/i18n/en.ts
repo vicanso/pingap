@@ -298,6 +298,26 @@ export default {
       "Input the max notifications per post(e.g. 5)",
     webhookBatchMaxEventsTips:
       "A batch is posted as soon as it holds this many notifications. Default 5, 1 posts every notification on its own.",
+    webhookMinLevel: "Webhook Min Level",
+    webhookMinLevelTips:
+      "Notifications below this level are not sent. Default info.",
+    webhookRetries: "Webhook Retries",
+    webhookRetriesPlaceholder: "How often a failed post is sent again(e.g. 2)",
+    webhookRetriesTips:
+      "A post that was not answered, or answered with a 5xx or 429, is sent again this many times, in the background. Default 0, at most 10.",
+    webhookSecret: "Webhook Secret",
+    webhookSecretPlaceholder: "Input the secret posts are signed with",
+    webhookSecretTips:
+      "dingtalk: the secret of a robot with signing on. Other types but wecom: the body is signed in the X-Pingap-Signature header.",
+    webhookHeaders: "Webhook Headers",
+    webhookHeadersPlaceholder: "Name: value",
+    webhookHeadersTips:
+      "Headers of the webhook request, e.g. Authorization: Bearer token.",
+    webhookTemplate: "Webhook Template",
+    webhookTemplatePlaceholder:
+      "Input the message template, e.g. **{{title}}** {{message}}",
+    webhookTemplateTips:
+      "Replaces the built-in text. wecom and dingtalk: the markdown of the message. Other types: the whole JSON body. {{title}}, {{message}}, {{level}}, {{category}}, {{hostname}}, {{ip}}, {{name}} and {{count}} are filled in.",
     sentry: "Sentry Connect Url",
     sentryPlaceholder: "Input the connect url of sentry",
     pyroscope: "Pyroscope Connect Url",
@@ -517,7 +537,7 @@ export default {
     algoPlaceholder:
       "Input algorithm for load balance(e.g. least_conn, hash:ip)",
     algoTips:
-      "round_robin (default), least_conn (the backend with the fewest requests in flight for its weight), or hash:<ip|url|path|header|cookie|query>[:<key>] for consistent hashing.",
+      "round_robin (default), least_conn (the backend with the fewest requests in flight for its weight), sticky:<cookie> (a client stays on its backend by a cookie the proxy sets), or hash:<ip|url|path|header|cookie|query>[:<key>] for consistent hashing.",
     failOpen: "Fail Open",
     failOpenTips:
       "When no backend is healthy (by the health check, or held back by the circuit breaker), send the request to one of them all the same instead of answering 503.",
@@ -667,6 +687,9 @@ export default {
     acmeKeyType: "Key Type",
     acmeKeyTypeTips:
       "The key of the certificate: ecdsa (P-256, the default) or rsa (2048 bits), for clients that can not do ECDSA.",
+    ocspStapling: "OCSP Stapling",
+    ocspStaplingTips:
+      "Ask the OCSP responder the certificate names and send its answer along with the certificate, so clients do not have to ask the CA. Needs the issuer's certificate in the chain. Off by default.",
     dnsProviderTips:
       "Unset works the same as Manual: the TXT record is only logged and has to be added by hand.",
     remark: "Remark",
@@ -748,6 +771,13 @@ export default {
     mockResponseDelayPlaceholder: "Input the dalay for mock(e.g. 5s)",
     mockHeaderName: "Headers",
     mockHeaderNamePlaceholder: "Input the header name : Input the header value",
+    mockPercentage: "Percentage",
+    mockPercentagePlaceholder: "0 to 100, default: 100",
+    mockPercentageTips:
+      "The share of the matching requests that get the mock; the others go on as if the plugin were not there. For trying out what a part of the traffic failing or being slow does.",
+    mockDelayOnly: "Delay Only",
+    mockDelayOnlyTips:
+      "After the delay the request goes on to the upstream and gets its real response. Needs a delay.",
     mockData: "Data",
     mockDataPlaceholder: "Input the data for mock response",
     redirectPrefix: "Prefix",
@@ -1002,6 +1032,90 @@ export default {
     geoRestrictionCountryCodesPlaceholder: "Input country codes (e.g. CN, US)",
     geoRestrictionMessage: "Message",
     geoRestrictionMessagePlaceholder: "Input the message for restriction",
+    geoRestrictionDatabase: "Database File",
+    geoRestrictionDatabasePlaceholder:
+      "Path of a MaxMind DB file, e.g. /var/lib/GeoIP/GeoLite2-Country.mmdb",
+    geoRestrictionDatabaseTips:
+      "Countries are looked up in this file in place of the data built into the binary. The file is read again when it changes.",
+    geoRestrictionDatabaseRefresh: "Database Refresh",
+    geoRestrictionDatabaseRefreshPlaceholder:
+      "How often the file is checked, e.g. 1m",
+    geoRestrictionHeader: "Country Header",
+    geoRestrictionHeaderPlaceholder:
+      "Request header for the upstream, e.g. X-Geo-Country",
+    geoRestrictionHeaderTips:
+      "The upstream is told the country in this request header. A header of that name sent by the client is removed.",
+    hmacAuthKeys: "Keys",
+    hmacAuthKeysPlaceholder: "key_id:secret",
+    hmacAuthKeysTips:
+      "One entry for each client: its key id, a colon, and the secret its requests are signed with.",
+    hmacAuthSignedHeaders: "Signed Headers",
+    hmacAuthSignedHeadersPlaceholder: "A header name, e.g. host",
+    hmacAuthSignedHeadersTips:
+      "Headers a signature has to cover; host and date when none are listed. The method, path and query are always covered. date is satisfied by x-date.",
+    hmacAuthClockSkew: "Clock Skew",
+    hmacAuthClockSkewPlaceholder:
+      "How far the signed date may be off, e.g. 5m",
+    hmacAuthValidateBody: "Validate Body",
+    hmacAuthValidateBodyTips:
+      "A request with a body has to sign its Content-Digest (or Digest) header, and the body is checked against it.",
+    hmacAuthHideCredentials: "Hide Credentials",
+    mirrorTarget: "Target",
+    mirrorTargetPlaceholder: "Where the copies go, e.g. http://10.0.0.2:8080",
+    mirrorTargetTips:
+      "A copy of each request is sent here and its answer dropped. A path in the url is put in front of the request's.",
+    mirrorHost: "Host",
+    mirrorHostPlaceholder: "Host header of the copy (default: the request's)",
+    mirrorMethods: "Methods",
+    mirrorMethodsPlaceholder: "A method, e.g. GET",
+    mirrorMethodsTips:
+      "The methods that are copied; GET and HEAD when none are listed. A mirrored POST is carried out twice.",
+    mirrorMaxBodySize: "Max Body Size",
+    mirrorMaxBodySizePlaceholder: "Largest body that is copied, e.g. 64kb",
+    mirrorMaxBodySizeTips:
+      "A request with a larger body is not mirrored. Unset or 0: no request with a body is.",
+    mirrorPercentage: "Percentage",
+    mirrorPercentagePlaceholder: "Share of the requests, 0-100",
+    mirrorTimeout: "Timeout",
+    mirrorTimeoutPlaceholder: "How long a copy may take, e.g. 5s",
+    mirrorMaxInflight: "Max Inflight",
+    mirrorMaxInflightPlaceholder: "Copies under way at one time, e.g. 100",
+    mirrorMaxInflightTips:
+      "A request that comes while this many copies are under way is not mirrored.",
+    oidcIssuer: "Issuer",
+    oidcIssuerPlaceholder:
+      "The url of the provider, e.g. https://accounts.example.com",
+    oidcIssuerTips:
+      "Its /.well-known/openid-configuration says where to log in, where to trade the code and where its keys are.",
+    oidcClientId: "Client ID",
+    oidcClientIdPlaceholder: "The id this site is registered under",
+    oidcClientSecret: "Client Secret",
+    oidcClientSecretPlaceholder: "Empty for a public client",
+    oidcCookieSecret: "Cookie Secret",
+    oidcCookieSecretPlaceholder: "At least 16 characters, e.g. 32 random ones",
+    oidcCookieSecretTips:
+      "Sessions are encrypted with it. Every instance needs the same one; changing it logs everybody out.",
+    oidcCookieName: "Cookie Name",
+    oidcCookieNamePlaceholder: "Default: pingap_oidc",
+    oidcRedirectPath: "Redirect Path",
+    oidcRedirectPathPlaceholder: "Default: /oauth2/callback",
+    oidcRedirectPathTips:
+      "Where the provider sends the browser back. Register it at the provider, and serve it by a location that has this plugin.",
+    oidcRedirectUrl: "Redirect URL",
+    oidcRedirectUrlPlaceholder: "e.g. https://app.example.com/oauth2/callback",
+    oidcRedirectUrlTips:
+      "The full address of the redirect path as browsers see it. Only needed when it is not what the request says, behind another proxy or a CDN.",
+    oidcLogoutPath: "Logout Path",
+    oidcLogoutPathPlaceholder: "e.g. /oauth2/logout (unset: none)",
+    oidcSessionTtl: "Session TTL",
+    oidcSessionTtlPlaceholder: "How long a login lasts (default 12h)",
+    oidcScopes: "Scopes",
+    oidcScopesPlaceholder: "A scope, e.g. email",
+    oidcScopesTips: "Asked for besides openid, which is always asked for.",
+    oidcClaimsToHeaders: "Claims To Headers",
+    oidcClaimsToHeadersPlaceholder: "claim:Header-Name, e.g. email:X-User-Email",
+    oidcClaimsToHeadersTips:
+      "What the provider says of the user, sent to the upstream. A header of that name written by the client is removed.",
     refererRestrictionMode: "Restriction Mode",
     refererList: "Referer List",
     refererListPlaceholder: "Input the referer for restriction",
@@ -1095,6 +1209,36 @@ export default {
     subFilterFilters: "Filters",
     subFilterFiltersPlaceholder:
       "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
+    subFilterTypes: "Content Types",
+    subFilterTypesPlaceholder: "Input a content type prefix, e.g. text/html",
+    subFilterTypesTips:
+      "Only responses whose content type starts with one of these are rewritten; the others are streamed as they come. Empty means every response, whatever its type.",
+    subFilterMaxSize: "Max Size",
+    subFilterMaxSizePlaceholder: "The largest body that is rewritten, e.g. 1mb",
+    subFilterMaxSizeTips:
+      "A larger body is passed on as it came. The rules are applied to a whole body, which is held in memory until its end. Empty means no limit.",
+    bandwidthLimitRate: "Rate",
+    bandwidthLimitRatePlaceholder: "Bytes a second, e.g. 1mb",
+    bandwidthLimitRateTips:
+      "The body of each response is sent no faster than this. Per response, not per client. List this plugin before a directory plugin.",
+    bandwidthLimitAfter: "After",
+    bandwidthLimitAfterPlaceholder: "Bytes that are not limited, e.g. 1mb",
+    bandwidthLimitAfterTips:
+      "So many bytes of each response go out as fast as they can; the limit holds for what follows.",
+    bandwidthLimitPath: "Path",
+    bandwidthLimitPathPlaceholder:
+      "A regex on the request path, e.g. \\.(mp4|zip)$; empty for every request",
+    errorPageJson: "JSON",
+    errorPageJsonTips:
+      "A request that asks for JSON (Accept: application/json, and not text/html) gets the error as {\"status\":502,\"message\":\"Bad Gateway\"}.",
+    errorPageIntercept: "Intercept Upstream Errors",
+    errorPageInterceptTips:
+      "An upstream response with a status listed in Pages is dropped and answered with that page (needs Pages). Its headers go with it, it is not cached, and an HTTP/1.1 client connection is closed after it. Off, a response of the upstream is passed on as it is.",
+    errorPagePages: "Pages",
+    errorPagePagesPlaceholder:
+      "status:page, e.g. 404:/etc/pingap/404.html or 5xx:<h1>{{status}}</h1>",
+    errorPagePagesTips:
+      "The status is one from 400 to 599, or 4xx / 5xx. The page is the path of a file (starting with /, ~/ or ./) or the text itself; {{status}} and {{message}} are replaced in it.",
     imageOptimOutputTypes: "Output Types",
     imageOptimOutputTypesPlaceholder:
       "Input the output types(e.g. avif,webp), png and jpeg are always enabled",

@@ -29,6 +29,11 @@ webhook_notifications = [
 | `webhook_notifications` | 要投递的类别。**未列出的类别会被丢弃。** |
 | `webhook_batch_window` | 间隔不超过该时长的通知合并为一条（默认 `10s`，`0s` 关闭合并）。 |
 | `webhook_batch_max_events` | 一条消息最多合并的通知数（默认 `5`，`1` 关闭合并）。 |
+| `webhook_min_level` | 低于这个级别的通知不发送：`info`（默认）、`warn` 或 `error`。 |
+| `webhook_headers` | 请求头，每项 `Name: value`：接收方要求的 token 等。 |
+| `webhook_secret` | 用来签名的密钥，见[签名](#签名)。 |
+| `webhook_template` | 消息文本模板，替换内置的文本，见[模板](#模板)。 |
+| `webhook_retries` | 发送失败后重试的次数（默认 `0`，最多 `10`）。 |
 
 ## 类别
 
@@ -73,6 +78,45 @@ webhook_notifications = [
 
 `Warn` 与 `Error` 用警告色；`Info` 以评论样式渲染。
 
+## 过滤
+
+通知的类别在 `webhook_notifications` 里，**并且**级别不低于 `webhook_min_level`，才会发送。两个条件都是在合并之前对每条通知单独判断的，被过滤掉的通知不占合并的名额。
+
+```toml
+[basic]
+webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
+webhook_min_level = "warn"      # 后端恢复健康的通知是 `info`
+```
+
+## 模板
+
+`webhook_template` 替换内置的文本。可用的占位符：`{{title}}`、`{{message}}`、`{{level}}`、`{{category}}`、`{{hostname}}`、`{{ip}}`、`{{name}}`（`pingap`）和 `{{count}}`（这条消息合并了几条通知）。
+
+- `wecom` 和 `dingtalk`：模板就是显示出来的 markdown：
+
+  ```toml
+  webhook_template = "**{{title}}** ({{level}})\n\n{{message}}\n\n{{hostname}}"
+  ```
+
+- 其他类型：模板是请求的**整个正文**，填入的内容按 JSON 字符串的文本转义——每个占位符要放在引号里（`{{count}}` 这样的数字可以不加引号）。这样可以把请求做成接收方要求的格式，比如 Slack：
+
+  ```toml
+  webhook_template = '{"text":"[{{level}}] {{title}}: {{message}}","username":"{{name}}@{{hostname}}"}'
+  ```
+
+  正文按 `application/json` 发送，除非 `webhook_headers` 里指定了别的 `Content-Type`。
+
+## 签名
+
+- **`dingtalk`**：`webhook_secret` 是开启了“加签”的机器人的密钥。每次请求的 url 上会带 `timestamp` 和 `sign`，算法和钉钉文档一致：用密钥对 `<timestamp>\n<secret>` 做 HMAC-SHA256，再 base64。
+- **自己的接收服务**（`wecom`、`dingtalk` 之外的类型）：对正文签名，请求带 `X-Pingap-Signature: sha256=<hex>`，值是用密钥对正文做的 HMAC-SHA256。接收方对收到的字节做同样的计算并比较。
+- **`wecom`** 没有签名机制，这个密钥在那里不起作用。
+
+## 投递
+
+- 响应状态码小于 `400` 即算投递成功。`wecom` 和 `dingtalk` 还会读取响应内容：这两者不管怎么处理请求都返回 `200`，在正文里说明是否接受（`{"errcode":310000,"errmsg":"sign not match"}`）。`errcode` 不是 `0` 时按失败记日志，带上错误码和说明。以前这种情况被记成发送成功。
+- 配了 `webhook_retries` 时，没有得到响应、或者响应是 `5xx` / `429` 的请求会重发这么多次：间隔 1 秒、2 秒、4 秒……最长 5 分钟。接收方明确拒绝的（其他 `4xx`、`errcode`）不重发。其中包括表示“消息太多”的 `errcode`：两种聊天机器人对这种情况同样返回 `200`，这里不区分错误码。重试在后台进行：发出通知的一方不等它，下一条消息也不等，所以正在重试的消息可能比后产生的消息晚到。每条失败的消息各有一个任务，直到投递成功或者放弃。
+
 ## 用法
 
 ```rust
@@ -88,9 +132,11 @@ let sender = WebhookNotificationSender::new(
 ## 说明
 
 - `webhook_notifications` 是允许列表。留空会静默一切，即使设了 `webhook`——这是“为什么收不到告警”的常见原因。
-- `webhook`、`webhook_type`、`webhook_notifications`、`webhook_batch_window` 与 `webhook_batch_max_events` 均支持热更新（`--autoreload` / `--autorestart`）：修改后无需重启即生效，已在运行的上游、服务发现与证书检查发出的通知也按新配置投递。此时尚在收集的一批仍按收集时的配置发出。
+- 所有 `webhook*` 键均支持热更新（`--autoreload` / `--autorestart`）：修改后无需重启即生效，已在运行的上游、服务发现与证书检查发出的通知也按新配置投递。此时尚在收集的一批仍按收集时的配置发出。
 - 证书过期警告（`tls_validity`）针对需要人工更换的证书：`certificates.<name>.buffer_days` 是提前多少天开始告警（不设置时为 7 天）。设置了 `acme` 的证书由 ACME 任务续期，出问题时发的是 `lets_encrypt` 通知；只有到期前一周仍未续上时才会收到这项告警。见 [pingap-acme](acme.md)。
-- 投递是尽力而为，失败记日志不重试。把 webhook 当作指标与日志之上的便利，而非唯一告警路径。
+- 投递是尽力而为：失败会记日志，只按 `webhook_retries` 的次数重试，默认不重试。pingap 停止时还在重试中的通知会丢失。把 webhook 当作指标与日志之上的便利，而非唯一告警路径。
+- `webhook_secret` 和 `webhook_headers` 在日志，以及写进日志、发给 webhook 的配置差异里显示为校验和，和 `webhook` 的 url 里的 key 一样。admin 里是原样显示。
+- 只支持一个 webhook：不支持多个目标各自配置类型和过滤条件。
 
 ## 许可证
 

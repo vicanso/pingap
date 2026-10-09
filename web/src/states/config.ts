@@ -171,6 +171,7 @@ export interface Certificate {
   acme_eab_hmac?: string;
   acme_contact?: string;
   acme_key_type?: string;
+  ocsp_stapling?: boolean;
   remark?: string;
 }
 
@@ -219,6 +220,11 @@ interface Basic {
   trusted_proxies?: string[];
   webhook_batch_window?: string;
   webhook_batch_max_events?: number;
+  webhook_min_level?: string;
+  webhook_headers?: string[];
+  webhook_secret?: string;
+  webhook_template?: string;
+  webhook_retries?: number;
 }
 
 interface Config {

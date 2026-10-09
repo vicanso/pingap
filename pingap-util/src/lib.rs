@@ -23,7 +23,7 @@ mod crypto;
 mod format;
 mod ip;
 
-pub use crypto::{aes_decrypt, aes_encrypt};
+pub use crypto::{aes_decrypt, aes_encrypt, seal, unseal};
 pub use format::*;
 pub use ip::IpRules;
 

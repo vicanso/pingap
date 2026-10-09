@@ -39,7 +39,7 @@ use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
     install_default_crypto_provider, new_certificate_validity_service,
-    new_self_signed_certificate_validity_service,
+    new_ocsp_stapling_service, new_self_signed_certificate_validity_service,
     validate_servers_tls_for_backend,
 };
 use pingap_config::PingapConfig;
@@ -1134,6 +1134,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         #[cfg(feature = "tracing")]
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
+            // What `--test` refuses is not started with: read as if it
+            // were not there, a sampler with a typo traces everything.
+            pingap_otel::validate_endpoint(otlp_exporter).map_err(|e| {
+                format!("server \"{}\" is invalid: {e}", serve_conf.name)
+            })?;
             my_server.add_service(background_service(
                 &format!("otlp:{}", serve_conf.name),
                 TracerService::new(&serve_conf.name, otlp_exporter),
@@ -1156,6 +1161,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 "self_signed_certificate_stale".to_string(),
                 new_self_signed_certificate_validity_service(),
+            ),
+            (
+                "ocsp_stapling".to_string(),
+                new_ocsp_stapling_service(certificate_provider.clone()),
             ),
             (
                 "performance_metrics".to_string(),

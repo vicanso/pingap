@@ -165,6 +165,12 @@ pub fn validate_servers(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
         Arc::new(pingap_config::new_memory_config_manager("", None));
     for server_conf in pingap_proxy::parse_from_conf(config.clone()) {
         let name = server_conf.name.clone();
+        // A sampler that is not known would be every request traced.
+        #[cfg(feature = "tracing")]
+        if let Some(otlp_exporter) = &server_conf.otlp_exporter {
+            pingap_otel::validate_endpoint(otlp_exporter)
+                .map_err(|e| format!("server \"{name}\" is invalid: {e}"))?;
+        }
         let ctx = pingap_proxy::AppContext {
             logger: None,
             config_manager: config_manager.clone(),

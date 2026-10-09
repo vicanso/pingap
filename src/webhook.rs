@@ -18,6 +18,7 @@ use pingap_config::BasicConf;
 use pingap_core::{Notification, NotificationData, NotificationSender};
 use pingap_webhook::{
     DEFAULT_BATCH_MAX_EVENTS, DEFAULT_BATCH_WINDOW, WebhookNotificationSender,
+    WebhookOptions,
 };
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
@@ -50,6 +51,21 @@ fn new_sender(basic: &BasicConf) -> WebhookNotificationSender {
             .webhook_batch_max_events
             .unwrap_or(DEFAULT_BATCH_MAX_EVENTS),
     );
+    // The validation of the configuration has taken them, so this does
+    // not fail; should it, the webhook goes on without them.
+    let sender = match WebhookOptions::parse(
+        basic.webhook_min_level.as_deref(),
+        basic.webhook_headers.as_deref().unwrap_or_default(),
+        basic.webhook_secret.as_deref(),
+        basic.webhook_template.as_deref(),
+        basic.webhook_retries,
+    ) {
+        Ok(options) => sender.with_options(options),
+        Err(e) => {
+            tracing::error!(error = e, "webhook options are invalid");
+            sender
+        },
+    };
     // The tests below read the endpoint right after `notify` returns; the
     // batching they would otherwise wait on is covered by pingap-webhook's
     // own tests.
@@ -90,6 +106,11 @@ pub fn reload_webhook_notification_sender(
         && current.webhook_notifications == new.webhook_notifications
         && current.webhook_batch_window == new.webhook_batch_window
         && current.webhook_batch_max_events == new.webhook_batch_max_events
+        && current.webhook_min_level == new.webhook_min_level
+        && current.webhook_headers == new.webhook_headers
+        && current.webhook_secret == new.webhook_secret
+        && current.webhook_template == new.webhook_template
+        && current.webhook_retries == new.webhook_retries
     {
         return false;
     }
@@ -100,6 +121,11 @@ pub fn reload_webhook_notification_sender(
         .clone_from(&new.webhook_notifications);
     current.webhook_batch_window = new.webhook_batch_window;
     current.webhook_batch_max_events = new.webhook_batch_max_events;
+    current.webhook_min_level.clone_from(&new.webhook_min_level);
+    current.webhook_headers.clone_from(&new.webhook_headers);
+    current.webhook_secret.clone_from(&new.webhook_secret);
+    current.webhook_template.clone_from(&new.webhook_template);
+    current.webhook_retries = new.webhook_retries;
     set_webhook_notification_sender(current);
     true
 }
@@ -278,5 +304,38 @@ mod tests {
             new.webhook_batch_max_events,
             current.webhook_batch_max_events
         );
+
+        // And so is each of what a webhook does beyond posting: a change
+        // of one of them alone used to wait for a restart.
+        let changes: [fn(&mut BasicConf); 5] = [
+            |basic| basic.webhook_min_level = Some("error".to_string()),
+            |basic| {
+                basic.webhook_headers = Some(vec!["X-Team: ops".to_string()])
+            },
+            |basic| basic.webhook_secret = Some("s3cret".to_string()),
+            |basic| basic.webhook_template = Some("{{message}}".to_string()),
+            |basic| basic.webhook_retries = Some(2),
+        ];
+        for change in changes {
+            change(&mut new);
+            assert_eq!(
+                true,
+                reload_webhook_notification_sender(&mut current, &new)
+            );
+            assert_eq!(
+                false,
+                reload_webhook_notification_sender(&mut current, &new)
+            );
+        }
+        assert_eq!(new.webhook_min_level, current.webhook_min_level);
+        assert_eq!(new.webhook_headers, current.webhook_headers);
+        assert_eq!(new.webhook_secret, current.webhook_secret);
+        assert_eq!(new.webhook_template, current.webhook_template);
+        assert_eq!(new.webhook_retries, current.webhook_retries);
+
+        // They are in effect: below the level, nothing is posted.
+        while bodies.try_recv().is_ok() {}
+        notify("test_webhook_a").await;
+        assert_eq!(true, bodies.try_recv().is_err());
     }
 }

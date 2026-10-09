@@ -306,6 +306,15 @@ impl HttpCache {
     }
 }
 
+/// The most of a cached body that is handed out at once.
+///
+/// The body is in memory whole, and used to be handed out whole. Whatever
+/// holds a response back by what has gone out - the pace of a
+/// `bandwidth_limit` - then had one piece to hold back: nothing for as
+/// long as all of it takes at the rate, and all of it at once after that.
+/// A piece of this size is what a read from an upstream brings.
+const HIT_CHUNK_SIZE: usize = 64 * 1024;
+
 /// Handles cache hits by managing access to cached content
 pub struct CompleteHit {
     /// The cached content
@@ -318,14 +327,31 @@ pub struct CompleteHit {
     range_end: usize,
 }
 
+/// Whether `hit` - the handler of a response found in a storage of this
+/// crate - has handed out the last piece of the body it was asked for.
+/// `false` for the handler of any other storage.
+///
+/// For the proxy, on the one path where pingora does not say where a body
+/// from the cache ends: see `Server::response_body_filter`.
+pub fn is_hit_read_to_the_end(hit: &(dyn Any + Send + Sync)) -> bool {
+    hit.downcast_ref::<CompleteHit>()
+        .is_some_and(|hit| hit.done)
+}
+
 impl CompleteHit {
+    /// The next piece of what is asked for, `None` once all of it has
+    /// been handed out. A body of nothing is one empty piece.
     fn get(&mut self) -> Option<Bytes> {
         if self.done {
-            None
-        } else {
-            self.done = true;
-            Some(self.body.slice(self.range_start..self.range_end))
+            return None;
         }
+        let end = self
+            .range_end
+            .min(self.range_start.saturating_add(HIT_CHUNK_SIZE));
+        let piece = self.body.slice(self.range_start..end);
+        self.range_start = end;
+        self.done = end >= self.range_end;
+        Some(piece)
     }
 
     fn seek(&mut self, start: usize, end: Option<usize>) -> Result<()> {
@@ -612,6 +638,94 @@ mod tests {
         let body = handle.read_body().await.unwrap();
         assert_eq!(true, body.is_some());
         assert_eq!(b"ello World", body.unwrap().as_ref());
+        assert_eq!(true, handle.read_body().await.unwrap().is_none());
+    }
+
+    /// Regression: a body was handed out in one piece however large it
+    /// was, and a response that is held to a rate went out as nothing
+    /// for a long while and then all at once.
+    #[tokio::test]
+    async fn test_complete_hit_is_read_in_pieces() {
+        let content: Vec<u8> =
+            (0..150_000u32).map(|n| (n % 251) as u8).collect();
+        let body = Bytes::from(content.clone());
+        let mut handle: HitHandler = Box::new(CompleteHit {
+            body: body.clone(),
+            done: false,
+            range_start: 0,
+            range_end: body.len(),
+        });
+        let read = async |handle: &mut HitHandler| {
+            let mut pieces = vec![];
+            while let Some(piece) = handle.read_body().await.unwrap() {
+                pieces.push(piece);
+            }
+            pieces
+        };
+        let pieces = read(&mut handle).await;
+        assert_eq!(
+            vec![HIT_CHUNK_SIZE, HIT_CHUNK_SIZE, 150_000 - 2 * HIT_CHUNK_SIZE],
+            pieces.iter().map(|piece| piece.len()).collect::<Vec<_>>()
+        );
+        assert_eq!(content, pieces.concat());
+
+        // A range of it, the same way, and no more than the range.
+        handle.seek(1000, Some(140_000)).unwrap();
+        let pieces = read(&mut handle).await;
+        assert_eq!(3, pieces.len());
+        assert_eq!(content[1000..140_000].to_vec(), pieces.concat());
+
+        // Nothing at all is one piece of nothing, as it was.
+        let mut empty: HitHandler = Box::new(CompleteHit {
+            body: Bytes::new(),
+            done: false,
+            range_start: 0,
+            range_end: 0,
+        });
+        assert_eq!(
+            Some(0),
+            empty.read_body().await.unwrap().map(|piece| piece.len())
+        );
+        assert_eq!(true, empty.read_body().await.unwrap().is_none());
+    }
+
+    /// The storage says when the piece it has handed out was the last:
+    /// with it, and not after it. The proxy passes that on as the end of
+    /// the body where pingora does not.
+    #[tokio::test]
+    async fn test_hit_says_when_it_is_read_to_the_end() {
+        let body = Bytes::from(vec![7u8; 150_000]);
+        let mut handle: HitHandler = Box::new(CompleteHit {
+            body: body.clone(),
+            done: false,
+            range_start: 0,
+            range_end: body.len(),
+        });
+        let mut ends = vec![];
+        while handle.read_body().await.unwrap().is_some() {
+            ends.push(is_hit_read_to_the_end(handle.as_any()));
+        }
+        assert_eq!(vec![false, false, true], ends);
+        // Asked for another part, it is not at its end again.
+        handle.seek(0, Some(10)).unwrap();
+        assert_eq!(false, is_hit_read_to_the_end(handle.as_any()));
+        assert_eq!(true, handle.read_body().await.unwrap().is_some());
+        assert_eq!(true, is_hit_read_to_the_end(handle.as_any()));
+
+        // A body of nothing ends with its one empty piece.
+        let mut empty: HitHandler = Box::new(CompleteHit {
+            body: Bytes::new(),
+            done: false,
+            range_start: 0,
+            range_end: 0,
+        });
+        assert_eq!(false, is_hit_read_to_the_end(empty.as_any()));
+        assert_eq!(true, empty.read_body().await.unwrap().is_some());
+        assert_eq!(true, is_hit_read_to_the_end(empty.as_any()));
+
+        // What is no handler of this storage is not known to have ended.
+        let other: Box<dyn Any + Send + Sync> = Box::new(0u8);
+        assert_eq!(false, is_hit_read_to_the_end(other.as_ref()));
     }
 
     #[tokio::test]

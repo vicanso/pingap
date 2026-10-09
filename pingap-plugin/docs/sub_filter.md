@@ -15,6 +15,8 @@ injecting a script tag, or patching an upstream you cannot change.
 | `filters` | string[] | `[]` | Substitution rules; see the syntax below. |
 | `path` | string | — | Regex on the request path. Unset means every path. |
 | `status_codes` | string | — | Comma-separated status codes to apply to, e.g. `"200,201"`. Unset means all; an entry that is not a number is a configuration error. |
+| `types` | string[] | — | Content types to rewrite, as prefixes: `["text/html", "application/json"]`, `["text/"]`. Unset means every response, whatever its type. |
+| `max_size` | size | — | The largest body that is rewritten, e.g. `"1mb"`. A larger one is passed on as it came. Unset means no limit. |
 
 ## Rule syntax
 
@@ -22,6 +24,11 @@ injecting a script tag, or patching an upstream you cannot change.
 sub_filter  '<literal>' '<replacement>' [flags]
 subs_filter '<regex>'   '<replacement>' [flags]
 ```
+
+Either of the two texts is in single or in double quotes, so one that has a
+quote of the one kind in it is written in the other (`sub_filter "it's" 'it
+is'`). The replacement may be empty, which takes what is found out
+(`sub_filter '<script src="/old.js"></script>' ''`).
 
 | Flag | Meaning |
 | --- | --- |
@@ -78,14 +85,29 @@ becomes a weak one (`W/"v1"`): both described the body the upstream sent.
 
 - **The entire response body is buffered in memory** before substitution. Scope
   the plugin with `path` and `status_codes` and keep it away from large files or
-  streaming endpoints.
+  streaming endpoints, or say what it is for:
+  - **`types`** leaves every response of another type alone: streamed, with
+    its `Content-Length`, and not held in memory. A response that names no
+    type is left alone as well. Without `types` an image or a download on
+    the same location is buffered to its end and searched like a page.
+  - **`max_size`** leaves a body alone that is larger. One that says so in
+    its `Content-Length` is not touched at all. One that gives no length is
+    held up to the limit and then let go as it came, what was held first:
+    no part of it is rewritten.
+  Both are off unless they are set, as the plugin has always worked. nginx's
+  `sub_filter_types` defaults to `text/html`; `types = ["text/html"]` is that.
+  Neither brings range requests back: `Range` and `If-Range` are taken off
+  every request the plugin applies to by `path`, before the type or the size
+  of the response is known. A download next to the pages, on the same
+  `path`, is passed on untouched but cannot be resumed; give the plugin a
+  `path` that leaves it out.
 - Compressed upstream responses are skipped, not rewritten: if the upstream
   returns gzip, the filters would never match. Either ask the upstream not to
   compress, or compress in Pingap with [`compression`](compression.md) after
   this plugin.
 - A rule that fails to parse is a startup error, so `pingap -t` catches quoting
-  mistakes. Patterns and replacements must be wrapped in single quotes and cannot
-  themselves contain a single quote.
+  mistakes. A text in single quotes can not contain a single quote, and one in
+  double quotes no double quote; there is no escaping.
 - Replacement happens on raw bytes, so a match that straddles a multi-byte UTF-8
   boundary in a regex pattern is handled by the regex engine, but literal
   patterns must be given exactly as they appear in the body.

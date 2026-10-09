@@ -14,6 +14,7 @@
 
 use super::LoadedCertificate;
 use super::chain::get_lets_encrypt_chain_certificate;
+use super::ocsp::Stapling;
 use super::self_signed::{
     SelfSignedCertificate, add_self_signed_certificate,
     get_self_signed_certificate,
@@ -24,7 +25,7 @@ use super::{
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 // Constants for categorizing different types of certificates and errors
 const LETS_ENCRYPT: &str = "lets_encrypt";
@@ -51,6 +52,9 @@ pub struct TlsCertificate {
     pub is_ca: bool,
     // Buffer days for certificate renewal
     pub buffer_days: u16,
+    // What to ask the OCSP responder of the certificate, where its
+    // handshakes are to carry the answer (`ocsp_stapling`)
+    pub ocsp: Option<Arc<Stapling>>,
 }
 
 impl TryFrom<&CertificateConf> for TlsCertificate {
@@ -95,13 +99,34 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         // The chain is kept on its own: a CA entry attaches it to every
         // certificate it issues.
         let chain_certificates = pems.split_off(1);
+        let is_ca = value.is_ca.unwrap_or_default();
+        // A certificate that can not have an answer stapled is served
+        // without, and says why: no responder is named in it, or the
+        // certificate of its issuer did not come with it.
+        let ocsp = if value.ocsp_stapling.unwrap_or_default() && !is_ca {
+            match Stapling::new(&info.pem, &chain_certificates) {
+                Ok(stapling) => Some(Arc::new(stapling)),
+                Err(error) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        domains = info.domains.join(","),
+                        error,
+                        "ocsp stapling is not possible for this certificate"
+                    );
+                    None
+                },
+            }
+        } else {
+            None
+        };
         Ok(TlsCertificate {
             hash_key,
             chain_certificates,
+            ocsp,
             domains: info.domains.clone(),
             certificate: Some(Arc::new(certificate)),
             info: Some(info),
-            is_ca: value.is_ca.unwrap_or_default(),
+            is_ca,
             buffer_days: value.buffer_days.unwrap_or_default(),
             ..Default::default()
         })
@@ -223,6 +248,19 @@ fn new_certificate_with_ca(
 }
 
 impl TlsCertificate {
+    /// Whether what this serves has an RSA key. A domain can have one
+    /// certificate of that kind and one of the other.
+    ///
+    /// Not so for a CA, whatever its own key is: the certificates it
+    /// issues are ECDSA ones.
+    pub fn is_rsa(&self) -> bool {
+        !self.is_ca
+            && self
+                .certificate
+                .as_ref()
+                .is_some_and(|certificate| certificate.is_rsa())
+    }
+
     /// Gets or creates a self-signed certificate for the given server name.
     /// If a cached certificate exists for the server name, returns that.
     /// Otherwise creates a new certificate signed by this CA.

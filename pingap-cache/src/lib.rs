@@ -296,7 +296,9 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     Ok(cache_ref)
 }
 
-pub use http_cache::{CacheObject, HttpCache, new_storage_clear_service};
+pub use http_cache::{
+    CacheObject, HttpCache, is_hit_read_to_the_end, new_storage_clear_service,
+};
 pub use tiny::memory_cache_evictions;
 
 #[cfg(feature = "tracing")]

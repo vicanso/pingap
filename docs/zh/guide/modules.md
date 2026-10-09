@@ -59,6 +59,7 @@ graph TD
     plugin --> util
 
     proxy --> acme
+    proxy --> cache
     proxy --> certificate
     proxy --> config
     proxy --> core

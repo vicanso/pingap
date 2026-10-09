@@ -405,6 +405,8 @@ pub struct HttpChunkResponse<'r, R> {
     pub cache_private: Option<bool>,
     /// Additional headers to include in the response.
     pub headers: Option<Vec<HttpHeader>>,
+    /// How fast the body is sent, where that is limited.
+    pub pace: Option<crate::BodyPace>,
 }
 
 /// The default buffer size (8KB) for chunked responses.
@@ -424,6 +426,7 @@ where
             max_age: None,
             headers: None,
             cache_private: None,
+            pace: None,
         }
     }
 
@@ -502,11 +505,20 @@ where
         // of the stream.
         let mut pending = self.next_chunk(&mut buffer).await?;
         while let Some(chunk) = pending {
-            sent += chunk.len();
+            let len = chunk.len();
+            sent += len;
             pending = self.next_chunk(&mut buffer).await?;
             session
                 .write_response_body(Some(chunk), pending.is_none())
                 .await?;
+            // Not after the last chunk: there is nothing left to hold
+            // back.
+            if pending.is_some()
+                && let Some(delay) =
+                    self.pace.as_mut().and_then(|pace| pace.delay(len))
+            {
+                tokio::time::sleep(delay).await;
+            }
         }
         // Finalize the response stream.
         session.finish_body().await?;
@@ -669,6 +681,41 @@ mod tests {
         assert_eq!(StatusCode::PARTIAL_CONTENT, header.status);
         assert_eq!("10", header.headers.get("content-length").unwrap());
         assert_eq!(false, header.headers.contains_key("transfer-encoding"));
+    }
+
+    /// A chunked response keeps the pace it is given: a wait after each
+    /// chunk for what has gone out, and none after the last, where there
+    /// is nothing left to hold back.
+    #[tokio::test]
+    async fn test_http_chunk_response_keeps_the_pace() {
+        use tokio::io::AsyncWriteExt;
+        // The waits are told on the clock of the runtime, which stands
+        // still but for them.
+        tokio::time::pause();
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        client.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+        let mut session = Session::new_h1(Box::new(server));
+        session.read_request().await.unwrap();
+
+        let send = async |session: &mut Session, pace| {
+            let mut reader = std::io::Cursor::new(vec![b'a'; 3000]);
+            let mut resp = HttpChunkResponse::new(&mut reader);
+            resp.chunk_size = 1000;
+            resp.pace = pace;
+            let start = tokio::time::Instant::now();
+            let sent = resp.send(session).await.unwrap();
+            (sent, start.elapsed().as_millis())
+        };
+        // Ten thousand bytes a second, in chunks of a thousand: a tenth
+        // of a second after the first, two tenths in all after the
+        // second, and the third ends it. A wait after the last as well
+        // would make it six tenths.
+        let (sent, waited) =
+            send(&mut session, Some(crate::BodyPace::new(10_000, 0))).await;
+        assert_eq!(3000, sent);
+        // (A timer of the runtime ends on a whole millisecond, hence the
+        // little that is allowed above three tenths.)
+        assert_eq!(true, (200..=350).contains(&waited), "{waited}");
     }
 
     #[tokio::test]

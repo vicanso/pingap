@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_int_conf_or_default,
+    get_step_conf_in, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use http::StatusCode;
@@ -64,6 +64,16 @@ pub struct MockResponse {
     ///   Format: Standard Duration (e.g., 500ms, 1s, 1m)
     pub delay: Option<Duration>,
 
+    /// The share of the matching requests that get the mock, in percent:
+    /// the others go on as if the plugin were not there. For trying out
+    /// what a part of the traffic failing, or being slow, does to its
+    /// clients.
+    pub percentage: u8,
+
+    /// The requests that are chosen are delayed and then go on to the
+    /// upstream: latency, and no answer in place of the real one.
+    pub delay_only: bool,
+
     /// Unique identifier for this plugin instance.
     /// - Generated from the plugin configuration
     /// - Used internally for plugin management
@@ -106,13 +116,32 @@ impl MockResponse {
         // Parse delay duration if specified
         // Supports human-readable formats like "500ms", "1s", "1m"
         let delay = get_str_conf(params, "delay");
+        // A delay of nothing is no delay: `delay_only` with it would be
+        // a plugin that does nothing at all.
         let delay = if !delay.is_empty() {
             let d =
                 parse_duration(&delay).map_err(|e| invalid(e.to_string()))?;
-            Some(d)
+            Some(d).filter(|d| !d.is_zero())
         } else {
             None
         };
+
+        // Every request unless it says otherwise. A share that is no
+        // share is an error and not everything: a typo in what was to be
+        // a tenth of the traffic is not to be all of it.
+        let percentage = get_int_conf_or_default(params, "percentage", 100);
+        let percentage = u8::try_from(percentage)
+            .ok()
+            .filter(|percentage| *percentage <= 100)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "percentage({percentage}) should be from 0 to 100"
+                ))
+            })?;
+        let delay_only = get_bool_conf(params, "delay_only");
+        if delay_only && delay.is_none() {
+            return Err(invalid("delay_only needs a delay".to_string()));
+        }
 
         // A mock exists to produce exactly what was configured, so a status
         // or header that cannot be is an error rather than a 200 without
@@ -154,7 +183,18 @@ impl MockResponse {
             )?,
             path,
             delay,
+            percentage,
+            delay_only,
         })
+    }
+
+    /// Whether this request is one of the share that is mocked.
+    fn chosen(&self) -> bool {
+        match self.percentage {
+            100 => true,
+            0 => false,
+            percentage => rand::random_range(0..100u8) < percentage,
+        }
     }
 }
 
@@ -194,9 +234,16 @@ impl Plugin for MockResponse {
             return Ok(RequestPluginResult::Skipped);
         }
 
+        if !self.chosen() {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
         // Implement artificial delay if configured
         if let Some(d) = self.delay {
             sleep(d).await;
+        }
+        if self.delay_only {
+            return Ok(RequestPluginResult::Continue);
         }
 
         // Return our pre-configured mock response
@@ -216,6 +263,83 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    /// A share of the requests, and a delay in place of an answer.
+    #[tokio::test]
+    async fn test_mock_percentage_and_delay_only() {
+        let new = |conf: &str| {
+            MockResponse::new(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        let mocked = async |mock: &MockResponse| {
+            let mock_io = Builder::new()
+                .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = mock
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            matches!(result, RequestPluginResult::Respond(_))
+        };
+        let share = async |percentage: i64| {
+            let mock = new(&format!("status = 503\npercentage = {percentage}"))
+                .unwrap();
+            let mut count = 0;
+            for _ in 0..2000 {
+                if mocked(&mock).await {
+                    count += 1;
+                }
+            }
+            count
+        };
+        // As it was without the option, and none at all.
+        assert_eq!(100, new("status = 503").unwrap().percentage);
+        assert_eq!(2000, share(100).await);
+        assert_eq!(0, share(0).await);
+        // About a tenth: 200 of 2000, give or take what chance does.
+        let tenth = share(10).await;
+        assert_eq!(true, (120..=290).contains(&tenth), "{tenth}");
+
+        for (conf, message) in [
+            (
+                "percentage = 101",
+                "percentage(101) should be from 0 to 100",
+            ),
+            ("percentage = -1", "percentage(-1) should be from 0 to 100"),
+            ("delay_only = true", "delay_only needs a delay"),
+            (
+                "delay = \"0s\"\ndelay_only = true",
+                "delay_only needs a delay",
+            ),
+        ] {
+            let error = new(conf).err().unwrap().to_string();
+            assert_eq!(true, error.contains(message), "{error}");
+        }
+
+        // Delayed, and then on to the upstream.
+        let slow = new("delay = \"30ms\"\ndelay_only = true").unwrap();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let started = std::time::Instant::now();
+        let result = slow
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
+        assert_eq!(true, started.elapsed() >= Duration::from_millis(30));
+    }
 
     /// Regression: an interim status was taken for the response to give.
     /// Nothing follows it, and the client waited for a response for good.

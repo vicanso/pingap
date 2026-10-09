@@ -9,13 +9,15 @@
 #          "127.0.0.1:5001 10" has weight 10
 addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 
-# Service discovery, support "dns", "docker", "static", "transparent".
+# Service discovery, support "dns", "srv", "docker", "static", "transparent".
+# With "srv" each of `addrs` is a name whose SRV records give the hosts, their
+# ports and their weights, e.g. "_http._tcp.api.service.consul".
 # Default `none`
 # discovery = ""
 
 # How often to refresh the list of upstream servers when using service discovery.
 # Format: duration string (e.g. "1m", "30s", "1h").
-# Used when discovery is `dns` or `docker`. Default `1m`
+# Used when discovery is `dns`, `srv` or `docker`. Default `1m`
 # update_frequency = "1m"
 
 
@@ -30,6 +32,8 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - "round_robin" - Simple round robin distribution
 # - "least_conn" - The backend with the fewest requests in flight for its
 #   weight; backends that are level take turns
+# - "sticky:cookie_name" - A client stays on the backend it was given first,
+#   by a cookie of this name that the proxy sets itself
 # Default `round_robin`
 # algo = "hash:cookie:sid"
 
@@ -199,15 +203,15 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - Default: none (system default)
 # tcp_fast_open = true
 
-# For `dns` discovery: the resolvers to ask, separated by commas, each an
+# For `dns` and `srv` discovery: the resolvers to ask, separated by commas, each an
 # IP address with an optional port.
 # Default `none` (the resolver of the system)
 # dns_server = "10.0.0.53:53"
 
-# For `dns` discovery: the domain added to a name that is not qualified.
+# For `dns` and `srv` discovery: the domain added to a name that is not qualified.
 # dns_domain = "svc.cluster.local"
 
-# For `dns` discovery: the search list for a name that is not qualified.
+# For `dns` and `srv` discovery: the search list for a name that is not qualified.
 # dns_search = "default.svc.cluster.local"
 
 # TCP_USER_TIMEOUT of the connections to the backends (Linux): how long data

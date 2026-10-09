@@ -842,6 +842,13 @@ impl Directory {
         }
         resp.cache_private = self.cache_private;
         resp.headers = Some(opt.headers);
+        // A `bandwidth_limit` ahead of this plugin says how fast: the
+        // proxy, which keeps the pace of what an upstream sends, never
+        // sees this body.
+        resp.pace = ctx
+            .features
+            .as_mut()
+            .and_then(|features| features.body_pace.take());
 
         ctx.state.status = Some(opt.status);
         // The proxy never sees this response, so the plugins that set

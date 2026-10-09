@@ -1,6 +1,6 @@
 # geo_restriction
 
-按客户端国家做允许/拒绝列表，国家由内嵌 GeoIP 数据库解析。另有仅记录查找结果的上报模式，便于在强制执行前评估影响。
+按客户端国家做允许/拒绝列表，国家由内嵌 GeoIP 数据库或 MaxMind DB 文件解析。另有仅记录查找结果的上报模式，便于在强制执行前评估影响；还可以把国家码通过请求头传给上游。
 
 - **步骤：** `request`（固定）
 - **注册名：** `geo_restriction`
@@ -22,6 +22,9 @@ cargo build --features=geo
 | `type` | string | — | **必填。** 为 `allow`、`deny`、`reporting` 之一。 |
 | `country_codes` | string[] | `[]` | ISO 3166-1 alpha-2 代码。单条字符串内也可用空格/逗号分隔。 |
 | `message` | string | `Access from your country is not allowed` | 403 响应正文。 |
+| `database` | string | — | MaxMind DB 文件（`.mmdb`）的路径，用它代替内嵌数据来查询国家。 |
+| `database_refresh` | duration | `1m` | 每隔多久检查一次文件是否有变化。至少 `1s`。 |
+| `header` | string | — | 用哪个请求头把国家码告诉上游，如 `X-Geo-Country`。 |
 
 代码会转为大写并校验为恰好两个 ASCII 字母，拼写错误在启动时失败，而不是静默永不匹配。
 
@@ -56,6 +59,16 @@ type = "reporting"
 
 上报模式对每个请求打 `info` 日志（含 IP 与解析到的国家），并始终继续。
 
+使用保持更新的数据库，并把国家码传给上游：
+
+```toml
+[plugins.geo]
+category = "geo_restriction"
+type = "reporting"
+database = "/var/lib/GeoIP/GeoLite2-Country.mmdb"
+header = "X-Geo-Country"
+```
+
 ## 行为
 
 | Situation | `allow` | `deny` |
@@ -65,6 +78,19 @@ type = "reporting"
 | 客户端 IP 无法解析 | **403** | 允许 |
 
 不是合法地址的客户端 IP 没有国家归属，和数据库里查不到的地址同样对待。通过双栈监听（`[::]:80`）接入的 IPv4 客户端，地址是 `::ffff:1.2.3.4`，按 `1.2.3.4` 查找。
+
+### `database`
+
+内嵌数据和发布版本一样旧。文件则由提供它的一方保持更新：`geoipupdate`、定时任务、挂载的卷。
+
+- 任何给出国家的 MaxMind DB 格式数据库都可以：GeoLite2 和 GeoIP2 的 Country 或 City、DB-IP 等。国家码从 `country.iso_code` 读取，或者从存放两个字母的 `country_code`、`country` 字段读取。
+- 文件在构建插件时读取：文件不存在或者不是数据库属于配置错误。设置了 `database` 之后完全不使用内嵌数据，文件里查不到的地址就没有国家。
+- 每隔 `database_refresh` 检查一次文件，修改时间变了就重新读取。请求不会因此被阻塞：读取在请求之外进行，新数据库就绪之前请求继续使用已加载的那份。当时读不了的文件（比如还在写入中，或者被删掉了）不会替换已加载的数据库，会在日志里报告，下次检查时再试。替换文件时请把完整的新文件重命名覆盖上去，`geoipupdate` 就是这么做的。
+- 引用同一个文件的多个插件在内存里共用一份。每个插件按自己的 `database_refresh` 检查文件；其中一个发现文件变了并重新读取之后，所有插件都用上新的。
+
+### `header`
+
+设置了 `header` 之后，在任何模式下请求都会带着这个头发往上游：`X-Geo-Country: DE`。客户端自己发来的同名请求头会先被去掉，查不到国家时也一样（这时上游收不到这个头）：上游在这里读到的永远是代理给出的结果。
 
 ## 使用说明
 

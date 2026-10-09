@@ -244,10 +244,15 @@ impl fmt::Display for ServerConf {
             "    Prometheus Endpoint: {}",
             self.prometheus_metrics.as_deref().unwrap_or("disabled")
         )?;
+        // Without its parameters: a `header` among them is the token
+        // of the collector, and this is written to the log.
         writeln!(
             f,
             "    OTLP Exporter: {}",
-            self.otlp_exporter.as_deref().unwrap_or("disabled")
+            self.otlp_exporter
+                .as_deref()
+                .map(|url| url.split(['?', '#']).next().unwrap_or_default())
+                .unwrap_or("disabled")
         )?;
         writeln!(f, "    Server-Timing Header: {}", self.enable_server_timing)?;
 
