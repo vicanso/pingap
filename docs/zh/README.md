@@ -2,7 +2,7 @@
 
 <p class="hero-logo"><img src="../../asset/pingap-logo.png" alt="Pingap" width="96" height="96" /></p>
 
-基于 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 的高性能反向代理，支持配置热更新、Web 管理界面与 20+ 插件（认证、限流、缓存、可观测性等）。
+基于 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 的高性能反向代理，支持配置热更新、Web 管理界面与 30+ 插件（认证、限流、缓存、可观测性等）。
 
 | | |
 | --- | --- |

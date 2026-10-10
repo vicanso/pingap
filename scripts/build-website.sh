@@ -235,7 +235,7 @@ layout: home
 hero:
   name: Pingap
   text: High-performance reverse proxy
-  tagline: Powered by Cloudflare Pingora — hot reload, web admin, and 20+ plugins for auth, traffic control, caching and observability.
+  tagline: Powered by Cloudflare Pingora — hot reload, web admin, and 30+ plugins for auth, traffic control, caching and observability.
   image:
     src: /logo.png
     alt: Pingap
@@ -458,7 +458,7 @@ layout: home
 hero:
   name: Pingap
   text: 高性能反向代理
-  tagline: 基于 Cloudflare Pingora — 配置热更新、Web 管理界面，以及 20+ 认证 / 限流 / 缓存 / 可观测性插件。
+  tagline: 基于 Cloudflare Pingora — 配置热更新、Web 管理界面，以及 30+ 认证 / 限流 / 缓存 / 可观测性插件。
   image:
     src: /logo.png
     alt: Pingap

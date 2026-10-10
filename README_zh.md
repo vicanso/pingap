@@ -1,10 +1,8 @@
 # Pingap
 
-Pingap在发布稳定版本之前，暂时不接受 pull requests，如果有问题可以先提issue，会及时处理。
-
 Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora) 框架驱动的高性能反向代理。它通过简洁的 TOML 文件和直观的 Web 管理界面，实现了动态、零停机的配置热更新，极大地简化了运维管理。
 
-其核心优势在于强大的插件体系，提供了二十多种开箱即用的功能，涵盖认证 (JWT, Key Auth)、安全 (CSRF, IP/Referer/UA 限制)、流量控制 (限流、缓存)、内容修改 (重定向、内容替换) 和可观测性 (请求 ID)。
+其核心优势在于强大的插件体系，提供了三十多种开箱即用的插件，涵盖认证 (JWT, Key Auth, OIDC)、安全 (CSRF, IP/Referer/UA 限制)、流量控制 (限流、缓存)、内容修改 (重定向、内容替换) 和可观测性 (请求 ID)。
 
 这使得 Pingap 不仅仅是一个代理，更是一个灵活且可扩展的应用网关，旨在轻松应对从 API 保护到现代化 Web 应用部署的各类复杂场景。
 
@@ -12,24 +10,18 @@ Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora
 [详细文档](https://pingap.io/zh/) · [English](https://pingap.io/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md)
 
 
-```mermaid
-flowchart LR
-  internet("互联网") -- 客户端请求 --> pingap["Pingap"]
-  pingap -- 转发:pingap.io/api/* --> apiUpstream["10.1.1.1,10.1.1.2"]
-  pingap -- 转发:cdn.pingap.io --> cdnUpstream["10.1.2.1,10.1.2.2"]
-  pingap -- 转发:/* --> upstream["10.1.3.1,10.1.3.2"]
-```
+![来自互联网的请求经 Pingap 按域名和路径转发到各组上游服务](./asset/pingap-flow-zh.svg)
 
 ## 核心特性
 
 - 🚀 高性能与高可靠性
   - 基于 `Rust` 构建，确保内存安全与顶尖性能。
   - 由 `Cloudflare Pingora` 驱动，一个经过实战考验的异步网络库。
-  - 支持 HTTP/1.1、HTTP/2 和 gRPC-web 代理。
+  - 支持 HTTP/1.1、HTTP/2、WebSocket 和 gRPC-web 代理，监听端口支持 PROXY protocol。
 
 - 🔧 动态化与易用性
   - 通过热更新实现零停机的配置变更。
-  - 简单且人类可读的 TOML 配置文件。
+  - 简单且人类可读的 TOML 配置文件（也可以读取 HCL 和 KDL）。
   - 功能齐全的 Web UI，提供直观的实时管理。
   - 同时支持文件和 etcd 作为配置后端。
   - 支持配置变更历史记录功能，可一键恢复到历史版本。
@@ -37,8 +29,9 @@ flowchart LR
 - 🧩 强大的可扩展性
   - 丰富的插件体系，用于处理常见的网关任务。
   - 支持基于主机、路径和正则表达式的高级路由。
-  - 内置通过静态列表、DNS 或 Docker 标签的服务发现机制。
-  - 通过 Let's Encrypt 实现自动化 HTTPS（支持 HTTP-01 和 DNS-01 两种质询方式）。
+  - 内置通过静态列表、DNS（A/AAAA 与 SRV 记录）或 Docker 标签的服务发现机制。
+  - 负载均衡支持轮询、最少连接、一致性哈希和会话保持，并带有主动健康检查、重试和熔断。
+  - 通过 Let's Encrypt 或其他 ACME CA 实现自动化 HTTPS（支持 HTTP-01 和 DNS-01 两种质询方式），可同时提供 RSA 与 ECDSA 证书，支持 OCSP stapling。
 
 - 📊 现代化的可观测性
   - 原生的 Prometheus 指标监控（支持 pull 和 push 模式）。
@@ -55,11 +48,9 @@ flowchart LR
 
 ```yaml
 # docker-compose.yml
-version: '3.8'
-
 services:
   pingap:
-    image: vicanso/pingap:latest # 生产环境建议使用具体的版本号，如 vicanso/pingap:0.12.1-full
+    image: vicanso/pingap:latest # 生产环境建议使用具体的版本号，如 vicanso/pingap:0.15.0-full
     container_name: pingap-instance
     restart: always
     ports:
@@ -84,7 +75,7 @@ services:
 
 ```bash
 mkdir pingap_data
-docker-compose up -d
+docker compose up -d
 ```
 
 3. 访问管理后台：
@@ -120,7 +111,7 @@ sudo systemctl enable --now pingap
 
 支持的平台：`Linux x86_64/arm64`、`Darwin x86_64/arm64`。所有可用的构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。
 
-要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/zh/#/)。
+要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/zh/)。
 
 
 
@@ -146,7 +137,7 @@ pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 
 Pingap 的设计旨在无需停机即可适应配置变更。
 
-热更新 (--autoreload)：对于大多数变更——如更新上游服务、路由或插件——Pingap 会在10秒内应用新配置，无需重启。这是容器化环境的推荐模式。
+热更新 (--autoreload)：对于大多数变更——如更新上游服务、路由、插件或证书——Pingap 无需重启即可应用新配置：文件存储在 10 秒内生效，etcd 在变更写入后立即生效。这是容器化环境的推荐模式。
 
 平滑重启 (-a 或 --autorestart)：对于基础性变更（如修改服务器监听端口），此模式会执行一次完整的、零停机的重启，确保不丢失任何请求。
 
@@ -154,7 +145,7 @@ Pingap 的设计旨在无需停机即可适应配置变更。
 
 检查与预览 (-t、--diff)：`pingap -c conf -t` 会走到启动流程里开始服务之前的那一步，构建每个 upstream、location、插件、证书和 server（包括 TLS 设置），不绑定端口。`pingap -c conf --diff new-conf` 输出用 `new-conf` 替换 `conf` 后会发生的变化，密钥显示为校验值。
 
-从环境变量和文件读取密钥：配置里任何文本值都可以整体写成 `$ENV:NAME` 或 `$FILE:/path`，在加载运行用的配置时被替换；admin、`--to-hcl`、`--sync` 保留原样。详见[配置文档](https://pingap.io/zh/#/crates/config)。
+从环境变量和文件读取密钥：配置里任何文本值都可以整体写成 `$ENV:NAME` 或 `$FILE:/path`，在加载运行用的配置时被替换；admin、`--to-hcl`、`--sync` 保留原样。详见[配置文档](https://pingap.io/zh/crates/config)。
 
 交接以“就绪”而不是计时为准：新进程以 `-d -u` 拉起，一旦准备好接管监听就通过升级 socket 旁边的一个 unix socket 回报，旧进程此时才向自己发送 SIGQUIT。若新进程退出、其守护进程死亡，或先到了 `basic.restart_ready_timeout`（默认 1m），本次重启作废，旧进程继续服务。新进程在最初那个进程的启动目录下拉起，并带上同样的 `--autoreload` / `--autorestart`，所以相对路径（`--log=logs/pingap.log`、配置里的路径）的含义不变。
 
@@ -162,18 +153,24 @@ Pingap 的设计旨在无需停机即可适应配置变更。
 ## 🔧 开发
 
 ```bash
+# 需要 bacon：cargo install bacon
 make dev
 ```
 
-如果需要 Web 管理界面，需要安装 nodejs 并构建 Web 资产。
+`make dev` 以 `full` 特性集构建，用 `~/tmp/pingap` 里的配置并带 `--autoreload` 运行 Pingap，管理界面在 `127.0.0.1:3018`（`pingap` / `123123`），源码有改动时自动重新构建。
 
+管理界面是从 `dist/` 嵌入二进制的。修改 `web/` 下的内容后需要重新构建（需要 Node.js）：
 
 ```bash
-# 生成 Web 管理界面资产
-cd web
-npm i 
-cd ..
 make build-web
+```
+
+提交改动之前：
+
+```bash
+make fmt     # cargo fmt
+make lint    # typos + clippy（警告视为错误）
+make test    # 整个 workspace 的测试
 ```
 
 ### TLS 后端
@@ -203,58 +200,17 @@ addr = "0.0.0.0:6188"
 locations = ["lo"]
 ```
 
-所有的 TOML 配置可以查阅：[https://pingap.io/zh/#/crates/config](https://pingap.io/zh/#/crates/config)。
+所有的 TOML 配置可以查阅：[https://pingap.io/zh/crates/config](https://pingap.io/zh/crates/config)。
 
 
 ## 🔄 请求处理流程
 
-```mermaid
-graph TD;
-    server["HTTP服务"];
-    locationA["Location A"];
-    locationB["Location B"];
-    locationPluginListA["转发插件列表A"];
-    locationPluginListB["转发插件列表B"];
-    upstreamA1["上游服务A1"];
-    upstreamA2["上游服务A2"];
-    upstreamB1["上游服务B1"];
-    upstreamB2["上游服务B2"];
-    locationResponsePluginListA["响应插件列表A"];
-    locationResponsePluginListB["响应插件列表B"];
+![请求依次经过 server、location 及其请求插件到达上游服务；响应经响应插件返回并记录日志](./asset/pingap-steps-zh.svg)
 
-    start("新的请求") --> server
-
-    server -- "host:HostA, Path:/api/*" --> locationA
-
-    server -- "Path:/rest/*"--> locationB
-
-    locationA -- "顺序执行转发插件" --> locationPluginListA
-
-    locationB -- "顺序执行转发插件" --> locationPluginListB
-
-    locationPluginListA -- "转发至: 10.0.0.1:8001" --> upstreamA1
-
-    locationPluginListA -- "转发至: 10.0.0.2:8001" --> upstreamA2
-
-    locationPluginListA -- "处理完成" --> response
-
-    locationPluginListB -- "转发至: 10.0.0.1:8002" --> upstreamB1
-
-    locationPluginListB -- "转发至: 10.0.0.2:8002" --> upstreamB2
-
-    locationPluginListB -- "处理完成" --> response
-
-    upstreamA1 -- "顺序执行响应插件" --> locationResponsePluginListA
-    upstreamA2 -- "顺序执行响应插件" --> locationResponsePluginListA
-
-    upstreamB1 -- "顺序执行响应插件" --> locationResponsePluginListB
-    upstreamB2 -- "顺序执行响应插件" --> locationResponsePluginListB
-
-    locationResponsePluginListA --> response
-    locationResponsePluginListB --> response
-
-    response["HTTP响应"] --> stop("日志记录");
-```
+1. **server** 接受连接（TLS、HTTP/1.1 或 HTTP/2），并选出主机名和路径最匹配的 **location**。没有任何 location 匹配的请求返回 `404`。
+2. location 的**插件**按列出的顺序执行，各自在自己的阶段运行：请求方向是 `early_request`、`request` 或 `proxy_upstream`，响应方向是 `upstream_response` 或 `response`。插件可以直接应答请求——缓存命中、认证失败、重定向、静态文件——这时不会再请求上游。
+3. 否则由 location 的 **upstream** 选出一个健康的后端并转发请求。location 配置了 `max_retries` 时，连接失败的请求会换一个后端重试。
+4. 响应经响应插件返回客户端，随后**记录**这次请求：访问日志、指标和链路追踪。
 
 ## 📊 性能测试
 
@@ -285,7 +241,16 @@ Transfer/sec:     19.24MB
 
 ## 📦 最低支持rust版本
 
-最低支持的rust版本为1.83
+最低支持的rust版本为1.96
+
+## 🤝 参与贡献
+
+欢迎提交 pull request。
+
+- 新功能请先提 issue 讨论，再动手写代码。
+- 请不要只为修正个别错别字或注释格式而提交 pull request，这类问题会集中处理。
+- 提交前请运行 `make fmt`、`make lint` 和 `make test`，CI 会对每个 pull request 执行同样的检查。
+- 贡献以[贡献者许可协议](./CLA.md)为前提，在 pull request 模板里勾选对应选项即表示接受：代码仍归你所有，并按项目的开源协议授权给项目使用。
 
 ## 📄 开源协议
 

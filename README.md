@@ -1,36 +1,28 @@
 # pingap
 
-Before the pingap version is stable, no pull requests will be accepted. If you have any questions, please create a new issue first.
-
 ![Pingap Logo](./asset/pingap-logo.png)
 
 ## Overview
 
 Pingap is a high-performance reverse proxy powered by the [`Cloudflare Pingora`](https://github.com/cloudflare/pingora) . It simplifies operational management by enabling dynamic, zero-downtime configuration hot-reloading through concise TOML files and an intuitive web admin interface.
 
-Its core strength lies in a powerful plugin system, offering over twenty out-of-the-box features for Authentication (JWT, Key Auth), Security (CSRF, IP/Referer/UA Restrictions), Traffic Control (Rate Limiting, Caching), Content Modification (Redirects, Content Substitution), and Observability (Request ID). This makes `Pingap` not just a proxy, but a flexible and extensible application gateway, engineered to effortlessly handle complex scenarios from API protection to modern web application deployments.
+Its core strength lies in a powerful plugin system, offering over thirty out-of-the-box plugins for Authentication (JWT, Key Auth, OIDC), Security (CSRF, IP/Referer/UA Restrictions), Traffic Control (Rate Limiting, Caching), Content Modification (Redirects, Content Substitution), and Observability (Request ID). This makes `Pingap` not just a proxy, but a flexible and extensible application gateway, engineered to effortlessly handle complex scenarios from API protection to modern web application deployments.
 
 
 [中文说明](./README_zh.md) | [Documentation](https://pingap.io/) · [中文文档](https://pingap.io/zh/) | [Examples](./examples/README.md) | [Plugins](./pingap-plugin/README.md) | [Crates](./docs/README.md)
 
-```mermaid
-flowchart LR
-  internet("Internet") -- request --> pingap["Pingap"]
-  pingap -- proxy:pingap.io/api/* --> apiUpstream["10.1.1.1,10.1.1.2"]
-  pingap -- proxy:cdn.pingap.io --> cdnUpstream["10.1.2.1,10.1.2.2"]
-  pingap -- proxy:/* --> upstream["10.1.3.1,10.1.3.2"]
-```
+![Requests from the internet pass through Pingap, which routes them by host and path to groups of upstream servers](./asset/pingap-flow.svg)
 
 ## Key Features
 
 - 🚀 High Performance & Reliability
   - Built with Rust for memory safety and top-tier performance.
   - Powered by Cloudflare Pingora, a battle-tested asynchronous networking library.
-  - Supports HTTP/1.1, HTTP/2, and gRPC-web proxying.
+  - Supports HTTP/1.1, HTTP/2, WebSocket and gRPC-web proxying, and the PROXY protocol on its listeners.
 
 - 🔧 Dynamic & Easy to Use
   - Zero-downtime configuration changes with hot-reloading.
-  - Simple, human-readable TOML configuration files.
+  - Simple, human-readable TOML configuration files (HCL and KDL are read as well).
   - Full-featured Web UI for intuitive, real-time management.
   - Supports both file and etcd as configuration backends.
   - Supports configuration history record, can restore to the history version with one click.
@@ -38,8 +30,9 @@ flowchart LR
 - 🧩 Powerful Extensibility
   - A rich plugin system to handle common gateway tasks.
   - Advanced routing with host, path, and regex matching.
-  - Built-in service discovery via static lists, DNS, or Docker labels.
-  - Automated HTTPS with Let's Encrypt (supporting both HTTP-01 and DNS-01 challenges).
+  - Built-in service discovery via static lists, DNS (A/AAAA and SRV records), or Docker labels.
+  - Load balancing by round robin, least connections, consistent hashing or sticky sessions, with active health checks, retries and a circuit breaker.
+  - Automated HTTPS with Let's Encrypt or any other ACME CA (HTTP-01 and DNS-01 challenges), RSA and ECDSA certificates side by side, and OCSP stapling.
 
 - 📊 Modern Observability
   - Native Prometheus metrics for monitoring (pull & push modes).
@@ -56,11 +49,9 @@ The easiest way to get started with Pingap is by using Docker Compose.
 
 ```yaml
 # docker-compose.yml
-version: '3.8'
-
 services:
   pingap:
-    image: vicanso/pingap:latest # For production, use a specific version like vicanso/pingap:0.12.1-full
+    image: vicanso/pingap:latest # For production, use a specific version like vicanso/pingap:0.15.0-full
     container_name: pingap-instance
     restart: always
     ports:
@@ -85,7 +76,7 @@ services:
 
 ```bash
 mkdir pingap_data
-docker-compose up -d
+docker compose up -d
 ```
 
 3. Access the Admin UI:
@@ -159,7 +150,7 @@ combined with these flags.
 
 Pingap is designed to adapt to configuration changes without downtime.
 
-Hot Reload (--autoreload): For most changes—like updating upstreams, locations, or plugins—Pingap applies the new configuration within 10 seconds without a restart. This is the recommended mode for containerized environments.
+Hot Reload (--autoreload): For most changes—like updating upstreams, locations, plugins, or certificates—Pingap applies the new configuration without a restart: within 10 seconds with a file storage, and as soon as the change is stored with etcd. This is the recommended mode for containerized environments.
 
 Graceful Restart (-a or --autorestart): For fundamental changes (like modifying server listen ports), this mode performs a full, zero-downtime restart, ensuring no requests are dropped.
 
@@ -167,7 +158,7 @@ Strict mode (--strict): A key or section Pingap does not know is normally report
 
 Check and preview (-t, --diff): `pingap -c conf -t` goes as far as a start does without serving - every upstream, location, plugin, certificate and server is built, TLS settings included, and nothing is bound. `pingap -c conf --diff new-conf` prints what would change if `new-conf` replaced `conf`, with credentials shown as checksums.
 
-Secrets from the environment and from files: any text value of the configuration can be written `$ENV:NAME` or `$FILE:/path` as a whole, and is replaced when the configuration is loaded to run. The admin, `--to-hcl` and `--sync` keep it as written. See the [config documentation](https://pingap.io/en/#/crates/config).
+Secrets from the environment and from files: any text value of the configuration can be written `$ENV:NAME` or `$FILE:/path` as a whole, and is replaced when the configuration is loaded to run. The admin, `--to-hcl` and `--sync` keep it as written. See the [config documentation](https://pingap.io/crates/config).
 
 The hand-over is readiness-driven rather than timed: the replacement is started with `-d -u`, reports back over a unix socket next to the upgrade socket the moment it is ready to take over the listeners, and only then does the running process send itself SIGQUIT. If the replacement exits, its daemon dies, or `basic.restart_ready_timeout` (default 1m) passes first, the restart is abandoned and the running process keeps serving. The replacement is started in the directory the first process was started in, with the same `--autoreload` / `--autorestart`, so relative paths (`--log=logs/pingap.log`, paths in the config) keep meaning what they did.
 
@@ -175,17 +166,24 @@ The hand-over is readiness-driven rather than timed: the replacement is started 
 ## 🔧 Development
 
 ```bash
+# needs bacon: cargo install bacon
 make dev
 ```
 
-If you need a web admin, you should install nodejs and build web asssets.
+`make dev` builds with the `full` feature set, runs Pingap on the configuration in `~/tmp/pingap` with `--autoreload`, serves the admin UI on `127.0.0.1:3018` (`pingap` / `123123`), and rebuilds when the sources change.
+
+The admin UI is embedded into the binary from `dist/`. After a change under `web/`, rebuild it (needs Node.js):
 
 ```bash
-# generate admin web asset
-cd web
-npm i 
-cd ..
 make build-web
+```
+
+Before sending a change:
+
+```bash
+make fmt     # cargo fmt
+make lint    # typos + clippy with warnings denied
+make test    # the test suite of the workspace
 ```
 
 ### TLS backend
@@ -255,55 +253,14 @@ locations = ["github-api", "static"]
 
 You can find the relevant instructions here: [https://pingap.io/crates/config](https://pingap.io/crates/config).
 
-## 🔄 Proxy step
+## 🔄 How a request is handled
 
-```mermaid
-graph TD;
-  server["HTTP Server"];
-  locationA["Location A"];
-  locationB["Location B"];
-  locationPluginListA["Proxy Plugin List A"];
-  locationPluginListB["Proxy Plugin List B"];
-  upstreamA1["Upstream A1"];
-  upstreamA2["Upstream A2"];
-  upstreamB1["Upstream B1"];
-  upstreamB2["Upstream B2"];
-  locationResponsePluginListA["Response Plugin List A"];
-  locationResponsePluginListB["Response Plugin List B"];
+![A request passes the server, the location and its request plugins to an upstream; the response comes back through the response plugins and is logged](./asset/pingap-steps.svg)
 
-  start("New Request") --> server
-
-  server -- "host:HostA, Path:/api/*" --> locationA
-
-  server -- "Path:/rest/*"--> locationB
-
-  locationA -- "Exec Proxy Plugins" --> locationPluginListA
-
-  locationB -- "Exec Proxy Plugins" --> locationPluginListB
-
-  locationPluginListA -- "proxy pass: 10.0.0.1:8001" --> upstreamA1
-
-  locationPluginListA -- "proxy pass: 10.0.0.2:8001" --> upstreamA2
-
-  locationPluginListA -- "done" --> response
-
-  locationPluginListB -- "proxy pass: 10.0.0.1:8002" --> upstreamB1
-
-  locationPluginListB -- "proxy pass: 10.0.0.2:8002" --> upstreamB2
-
-  locationPluginListB -- "done" --> response
-
-  upstreamA1 -- "Exec Response Plugins" --> locationResponsePluginListA
-  upstreamA2 -- "Exec Response Plugins" --> locationResponsePluginListA
-
-  upstreamB1 -- "Exec Response Plugins" --> locationResponsePluginListB
-  upstreamB2 -- "Exec Response Plugins" --> locationResponsePluginListB
-
-  locationResponsePluginListA --> response
-  locationResponsePluginListB --> response
-
-  response["HTTP Response"] --> stop("Logging");
-```
+1. The **server** accepts the connection (TLS, HTTP/1.1 or HTTP/2) and picks the **location** whose host and path match best. A request that matches none is answered with `404`.
+2. The location's **plugins** run in the order they are listed, each at its own step: `early_request`, `request` or `proxy_upstream` on the way in, `upstream_response` or `response` on the way back. A plugin can answer the request itself - a cache hit, a failed authentication, a redirect, a static file - and the upstream is then never asked.
+3. Otherwise the **upstream** of the location picks a healthy backend and the request is forwarded. With `max_retries` on the location, a connection that cannot be made is tried on another backend.
+4. The response goes back through the response plugins to the client, and the request is **logged**: access log, metrics and traces.
 
 ## 📊 Performance
 
@@ -333,6 +290,15 @@ Transfer/sec:     19.24MB
 ## 📦 Rust version
 
 Our current MSRV is 1.96
+
+## 🤝 Contributing
+
+Pull requests are welcome.
+
+- For a new feature, please open an issue first, so that it can be discussed before any code is written.
+- Please do not open a pull request only to fix a typo or the formatting of a comment; these are fixed in batches.
+- Run `make fmt`, `make lint` and `make test` before pushing. CI runs the same checks on every pull request.
+- A contribution is made under the [Contributor License Agreement](./CLA.md), which is accepted by ticking its box in the pull request template: the work stays yours, and is licensed to the project under its license.
 
 ## 📄 License
 

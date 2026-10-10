@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 960 372" width="960" height="372" role="img" aria-label="一个请求依次经过 server、location、请求插件到上游服务，响应经响应插件返回并记录日志；请求插件也可以直接应答">
+  <title>一个请求依次经过 server、location、请求插件到上游服务，响应经响应插件返回并记录日志；请求插件也可以直接应答</title>
+  <!-- Shown in the README. Animated with SMIL and CSS only, no script; the colours follow
+       prefers-color-scheme, and prefers-reduced-motion stops the motion. -->
+
+  <style>
+    svg {
+      --bg: #ffffff; --panel: #f6f8fa; --line: #d1d9e0; --text: #1f2328;
+      --muted: #59636e; --hub: #fff4e8; --hub-line: #f97316; --hi: #ffe2c2;
+      --a: #2563eb; --b: #0d9488; --c: #7c3aed; --ok: #22c55e;
+      --req: #2563eb; --res: #16a34a; --alt: #ea580c;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+        "PingFang SC", "Microsoft YaHei", Helvetica, Arial, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3;
+        --muted: #9198a1; --hub: #24180d; --hub-line: #fb923c; --hi: #4a2e12;
+        --a: #60a5fa; --b: #2dd4bf; --c: #a78bfa; --ok: #4ade80;
+        --req: #60a5fa; --res: #4ade80; --alt: #fb923c;
+      }
+    }
+    .bg { fill: var(--bg); stroke: var(--line); }
+    .node { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+    .hub { fill: var(--hub); stroke: var(--hub-line); stroke-width: 1.6; }
+    .row { fill: var(--bg); stroke: var(--line); }
+    .t { fill: var(--text); font-size: 13px; }
+    .title { fill: var(--text); font-size: 15px; font-weight: 600; }
+    .big { fill: var(--text); font-size: 19px; font-weight: 700; }
+    .m { fill: var(--muted); font-size: 12px; }
+    .cap { fill: var(--muted); font-size: 11px; letter-spacing: 1.2px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .wire { fill: none; stroke: var(--line); stroke-width: 1.6; }
+    .flow { fill: none; stroke-width: 1.6; stroke-dasharray: 5 7; animation: dash 1.2s linear infinite; }
+    .sa { stroke: var(--a); } .sb { stroke: var(--b); } .sc { stroke: var(--c); }
+    .fa { fill: var(--a); } .fb { fill: var(--b); } .fc { fill: var(--c); }
+    .ok { fill: var(--ok); animation: beat 2.4s ease-in-out infinite; }
+    .pill { fill: var(--bg); stroke-width: 1.2; }
+    .f-hub { fill: var(--hub-line); }
+    .f-req { fill: var(--req); } .f-res { fill: var(--res); } .f-alt { fill: var(--alt); }
+    .s-req { stroke: var(--req); } .s-res { stroke: var(--res); } .s-alt { stroke: var(--alt); }
+    .s-line { stroke: var(--line); }
+    .seg { fill: none; stroke-width: 1.8; }
+    @keyframes dash { to { stroke-dashoffset: -24; } }
+    @keyframes beat { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+    @keyframes scan { 0%, 60%, 100% { fill: var(--bg); } 20% { fill: var(--hi); } }
+    @keyframes glow-req { 0%, 14%, 100% { stroke: var(--line); stroke-width: 1.2; } 4% { stroke: var(--req); stroke-width: 2.4; } }
+    @keyframes glow-res { 0%, 14%, 100% { stroke: var(--line); stroke-width: 1.2; } 4% { stroke: var(--res); stroke-width: 2.4; } }
+    .scan { animation: scan .75s linear infinite; }
+    .greq { animation: glow-req 6s linear infinite; }
+    .gres { animation: glow-res 6s linear infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      .dot { display: none; }
+      .flow, .ok, .scan, .greq, .gres { animation: none; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow-req" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="f-req" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-res" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="f-res" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-alt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="f-alt" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  <rect class="bg" x="0.5" y="0.5" width="959" height="371" rx="14"/>
+  <path id="p-req" d="M128,112 L772,112" fill="none"/>
+  <path id="p-res" d="M772,252 L128,252" fill="none"/>
+  <path id="p-alt" d="M128,112 L568,112 L568,160 C568,200 530,252 480,252 L128,252" fill="none"/>
+  <path class="seg s-req" d="M128,112 L162,112" marker-end="url(#arrow-req)"/>
+  <path class="seg s-req" d="M320,112 L354,112" marker-end="url(#arrow-req)"/>
+  <path class="seg s-req" d="M512,112 L558,112" marker-end="url(#arrow-req)"/>
+  <path class="seg s-req" d="M732,112 L770,112" marker-end="url(#arrow-req)"/>
+  <path class="seg s-res" d="M772,252 L734,252" marker-end="url(#arrow-res)"/>
+  <path class="seg s-res" d="M560,252 L322,252" marker-end="url(#arrow-res)"/>
+  <path class="seg s-res" d="M164,252 L130,252" marker-end="url(#arrow-res)"/>
+  <path class="seg s-alt" d="M568,160 C568,200 530,252 484,252" stroke-dasharray="5 5" marker-end="url(#arrow-alt)"/>
+  <text class="f-alt" x="440" y="200" text-anchor="middle" font-size="12">插件直接应答</text>
+  <circle class="dot f-req" r="5" opacity="0"><animateMotion dur="6s" begin="0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;1;1" keyTimes="0;0.4;1"><mpath xlink:href="#p-req"/></animateMotion><animate attributeName="opacity" dur="6s" begin="0s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.02;0.38;0.4;1"/></circle>
+  <circle class="dot f-res" r="5" opacity="0"><animateMotion dur="6s" begin="0s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;0.5;0.9;1"><mpath xlink:href="#p-res"/></animateMotion><animate attributeName="opacity" dur="6s" begin="0s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.5;0.52;0.88;0.9;1"/></circle>
+  <circle class="dot f-alt" r="5" opacity="0"><animateMotion dur="6s" begin="3s" repeatCount="indefinite" calcMode="linear" keyPoints="0;1;1" keyTimes="0;0.58;1"><mpath xlink:href="#p-alt"/></animateMotion><animate attributeName="opacity" dur="6s" begin="3s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;0.02;0.56;0.58;1"/></circle>
+  <rect class="node gres" style="animation-delay: 5.2s" x="24" y="64" width="104" height="236" rx="14"/>
+  <text class="title" x="76" y="187" text-anchor="middle">客户端</text>
+  <rect class="node greq" style="animation-delay: 0.23s" x="164" y="64" width="156" height="96" rx="12"/>
+  <text class="title" x="180" y="95">HTTP 服务</text>
+  <text class="m" x="180" y="119">TLS · HTTP/1.1 · HTTP/2</text>
+  <text class="m" x="180" y="139">gRPC-web · WebSocket</text>
+  <rect class="node greq" style="animation-delay: 0.94s" x="356" y="64" width="156" height="96" rx="12"/>
+  <text class="title" x="372" y="95">Location</text>
+  <text class="m" x="372" y="119">host · path · query</text>
+  <text class="m" x="372" y="139">rewrite · 请求头</text>
+  <rect class="node greq" style="animation-delay: 1.73s" x="560" y="64" width="172" height="96" rx="12"/>
+  <text class="title" x="576" y="95">请求插件</text>
+  <text class="m" x="576" y="119">认证 · 限流 · 缓存</text>
+  <text class="m" x="576" y="139">重定向 · 静态文件 · …</text>
+  <rect class="node gres" style="animation-delay: 3.27s" x="560" y="204" width="172" height="96" rx="12"/>
+  <text class="title" x="576" y="235">响应插件</text>
+  <text class="m" x="576" y="259">响应头 · 压缩</text>
+  <text class="m" x="576" y="279">内容替换 · 图片优化</text>
+  <rect class="node gres" style="animation-delay: 4.78s" x="164" y="204" width="156" height="96" rx="12"/>
+  <text class="title" x="180" y="235">日志记录</text>
+  <text class="m" x="180" y="259">访问日志</text>
+  <text class="m" x="180" y="279">指标 · 链路追踪</text>
+  <rect class="node greq" style="animation-delay: 2.3s" x="772" y="64" width="164" height="236" rx="14"/>
+  <text class="title" x="788" y="95">上游服务</text>
+  <text class="m" x="788" y="119">服务发现</text>
+  <text class="m" x="788" y="139">负载均衡</text>
+  <text class="m" x="788" y="159">健康检查 · 重试</text>
+  <path class="s-line" d="M788,184 L920,184" stroke-width="1"/>
+  <circle class="ok" style="animation-delay: 0.0s" cx="794" cy="210" r="3.5"/>
+  <text class="t mono" x="806" y="214">10.0.0.1:8001</text>
+  <circle class="ok" style="animation-delay: 0.5s" cx="794" cy="236" r="3.5"/>
+  <text class="t mono" x="806" y="240">10.0.0.2:8001</text>
+  <circle class="ok" style="animation-delay: 1.0s" cx="794" cy="262" r="3.5"/>
+  <text class="t mono" x="806" y="266">10.0.0.3:8001</text>
+  <circle class="f-req" cx="33" cy="338" r="5"/>
+  <text class="m" x="44" y="342">请求</text>
+  <circle class="f-res" cx="100.0" cy="338" r="5"/>
+  <text class="m" x="111.0" y="342">响应</text>
+  <circle class="f-alt" cx="167.0" cy="338" r="5"/>
+  <text class="m" x="178.0" y="342">由插件直接应答：缓存命中、401、重定向、静态文件 …</text>
+</svg>
