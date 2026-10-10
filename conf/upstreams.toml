@@ -203,6 +203,19 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - Default: none (system default)
 # tcp_fast_open = true
 
+# PROXY protocol towards the backends:
+# - Every connection to a backend starts with a header that says which client it
+#   is made for: where the client comes from and which address of this proxy it
+#   came to. `v1` is a line of text, `v2` the binary form
+# - For backends that read one (`listen 8080 proxy_protocol;` of nginx,
+#   `bind ... accept-proxy` of HAProxy). A backend that does not takes the header
+#   for a broken request, so it is set on both sides or on neither
+# - A connection is then kept for the client connection it was opened for and
+#   not shared with others; the connections of the health check carry a header
+#   of their own, one that names no client
+# - Default: none (no header)
+# send_proxy_protocol = "v2"
+
 # For `dns` and `srv` discovery: the resolvers to ask, separated by commas, each an
 # IP address with an optional port.
 # Default `none` (the resolver of the system)

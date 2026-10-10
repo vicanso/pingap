@@ -46,6 +46,8 @@ A value that does not parse is a configuration error rather than a silent fallba
 
 An upstream without a `health_check` gets `tcp://` with the defaults above: a backend is unhealthy after two failed connects and healthy again after one success.
 
+The checks of an upstream with `send_proxy_protocol` start their connections with a PROXY protocol header as the upstream does, in the same version: its backends wait for one on every connection and take a check without it for a broken client. The header of a check names no client (`LOCAL` in version 2, `UNKNOWN` in version 1). An HTTP/S check with `check_port` sends none, since what answers on another port is not the service; a backend whose check port reads the header as well is checked without `check_port`.
+
 Every backend starts out healthy: pingora sets it that way and gives no means to change it. The first round of checks of an upstream is therefore decisive, so a backend that is down when its upstream is created is taken out by that first check instead of after `failure` rounds.
 
 ### Examples

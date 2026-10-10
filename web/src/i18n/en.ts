@@ -620,6 +620,9 @@ export default {
     circuitBreakOpenDurationPlaceholder:
       "Input the open duration for circuit break",
     tcpFastOpen: "Tcp Fast Open",
+    sendProxyProtocol: "Send PROXY Protocol",
+    sendProxyProtocolTips:
+      "Start every connection to a backend with a PROXY protocol header that says which client it is made for: v1 is a line of text, v2 the binary form. Only for backends that read one (nginx \"listen ... proxy_protocol\", HAProxy \"accept-proxy\"); any other backend takes the header for a broken request. A kept connection is then reused for the same client connection only, and the health check sends a header that names no client.",
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",
     tcpUserTimeout: "Tcp User Timeout",

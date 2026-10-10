@@ -1803,7 +1803,7 @@ impl ProxyHttp for Server {
         // Async: a transparent upstream resolves the request's host here.
         // A retry goes to another backend than the ones that have just
         // failed this request, where there is one.
-        let Some(mut peer) = upstream
+        let Some(peer) = upstream
             .new_http_peer_for(
                 session,
                 PeerAttempt {
@@ -1812,16 +1812,15 @@ impl ProxyHttp for Server {
                     failed: &ctx.upstream.failed_addresses,
                     inflight: Some(&mut ctx.upstream.backend_inflight),
                     sticky_cookie: Some(&mut ctx.upstream.sticky_cookie),
+                    // What this location waits for the upstream, where
+                    // it says so.
+                    location: location.as_deref(),
                 },
             )
             .await
         else {
             return Err(no_available_upstream(ctx));
         };
-        // What this location waits for the upstream, where it says so.
-        if let Some(location) = &location {
-            location.apply_timeouts(&mut peer.options);
-        }
         // Recorded only now that there is a peer: `new_http_peer` counts
         // the request once it has one, and `logging` takes that count back
         // for the instance it finds here. Recorded earlier, a request that
@@ -4856,6 +4855,68 @@ value = 'proxy_set_headers = ["name:value"]'
                 "/list?utm_source=mail&p%61ge=2&a=1",
                 upstream_request.uri.to_string()
             );
+        }
+    }
+
+    /// The timeouts of a location are on the peer its request is served
+    /// through, and with the connector of an upstream that connects in a
+    /// way of its own (`send_proxy_protocol`).
+    ///
+    /// Regression: they were set on the peer after the upstream had made
+    /// it. pingora asks such a connector for a connection and reads no
+    /// time to connect from the peer, so the connector went by the
+    /// upstream's - or by none, and a backend that did not answer was
+    /// waited for as long as the kernel waits.
+    #[tokio::test]
+    async fn test_location_timeouts_reach_the_connection() {
+        for (option, sends) in
+            [("", false), ("send_proxy_protocol = \"v2\"", true)]
+        {
+            let toml_data = format!(
+                r#"
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+connection_timeout = "30s"
+{option}
+
+[locations.lo]
+upstream = "charts"
+path = "/"
+connection_timeout = "2s"
+read_timeout = "7s"
+
+[servers.test]
+addr = "127.0.0.1:6188"
+"#
+            );
+            let server = new_server_from(&toml_data, None);
+            let mock_io = Builder::new()
+                .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a.test\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            let peer =
+                server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+            assert_eq!(
+                Some(Duration::from_secs(2)),
+                peer.options.connection_timeout
+            );
+            assert_eq!(Some(Duration::from_secs(7)), peer.options.read_timeout);
+            assert_eq!(sends, peer.options.custom_l4.is_some(), "{option}");
+            if let Some(connector) = &peer.options.custom_l4 {
+                let connector = format!("{connector:?}");
+                assert_eq!(
+                    true,
+                    connector.contains("connection_timeout: Some(2s)"),
+                    "{connector}"
+                );
+            }
+            server.logging(&mut session, None, &mut ctx).await;
         }
     }
 

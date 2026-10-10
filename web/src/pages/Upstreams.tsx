@@ -655,6 +655,18 @@ export default function Upstreams() {
       category: ExFormItemCategory.NUMBER,
     },
     {
+      name: "send_proxy_protocol",
+      section: sec.tcp,
+      label: upstreamI18n("sendProxyProtocol"),
+      placeholder: "",
+      // "" is the Unset option: a missing key stays missing when saved
+      defaultValue: upstreamConfig.send_proxy_protocol || "",
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["v1", "v2"], false, true),
+      tips: upstreamI18n("sendProxyProtocolTips"),
+    },
+    {
       name: "remark",
       section: sec.backends,
       label: upstreamI18n("remark"),

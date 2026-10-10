@@ -18,7 +18,7 @@ Its core strength lies in a powerful plugin system, offering over thirty out-of-
 - 🚀 High Performance & Reliability
   - Built with Rust for memory safety and top-tier performance.
   - Powered by Cloudflare Pingora, a battle-tested asynchronous networking library.
-  - Supports HTTP/1.1, HTTP/2, WebSocket and gRPC-web proxying, and the PROXY protocol on its listeners.
+  - Supports HTTP/1.1, HTTP/2, WebSocket and gRPC-web proxying, and the PROXY protocol on its listeners and towards upstreams.
 
 - 🔧 Dynamic & Easy to Use
   - Zero-downtime configuration changes with hot-reloading.

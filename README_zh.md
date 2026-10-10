@@ -17,7 +17,7 @@ Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora
 - 🚀 高性能与高可靠性
   - 基于 `Rust` 构建，确保内存安全与顶尖性能。
   - 由 `Cloudflare Pingora` 驱动，一个经过实战考验的异步网络库。
-  - 支持 HTTP/1.1、HTTP/2、WebSocket 和 gRPC-web 代理，监听端口支持 PROXY protocol。
+  - 支持 HTTP/1.1、HTTP/2、WebSocket 和 gRPC-web 代理，监听端口和上游连接都支持 PROXY protocol。
 
 - 🔧 动态化与易用性
   - 通过热更新实现零停机的配置变更。

@@ -186,6 +186,16 @@ impl GrpcHealthCheck {
         }
     }
 
+    /// Opens the connections of the check with `connector`, where there
+    /// is one, in place of pingora's own way.
+    pub fn with_connector(
+        mut self,
+        connector: Option<crate::HealthCheckConnector>,
+    ) -> Self {
+        self.peer_template.options.custom_l4 = connector;
+        self
+    }
+
     fn build_request(
         &self,
         target: &Backend,

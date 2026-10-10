@@ -172,7 +172,10 @@ proxy_protocol = true
   used: `$server_addr` and `$server_port` are those of this listener.
 - With `proxy_protocol` on a listener **without** TLS, the metric of how long
   evicted upstream connections had been idle is not reported for that server.
-  The header is not sent on to upstreams.
+- The header itself is not sent on to upstreams. An upstream with
+  `send_proxy_protocol = "v1"` or `"v2"` writes one of its own for each
+  connection it opens, with the client address this server took from the
+  header: see [pingap-upstream](../pingap-upstream/README.md).
 
 ### Client certificates (mutual TLS)
 

@@ -46,6 +46,8 @@ HTTP/S 检查只认状态码 `200`，除非用 `expect_status` 另行指定：`2
 
 没有配置 `health_check` 的 upstream 等同于不带参数的 `tcp://`，使用上述默认值：连续两次连接失败标记不健康，一次成功即恢复。
 
+配置了 `send_proxy_protocol` 的 upstream，其健康检查的连接和上游自己的连接一样以 PROXY protocol 头开始，版本相同：这类后端在每条连接上都等这个头，没有它的检查会被当成错误的客户端。检查发送的头不带客户端信息（v2 为 `LOCAL`，v1 为 `UNKNOWN`）。带 `check_port` 的 HTTP/S 检查不发送，因为在另一个端口上应答的不是这个服务本身；检查端口同样要读这个头的后端，不要用 `check_port`。
+
 每个后端一开始都是健康的：pingora 固定如此，也没有提供修改的方法。因此 upstream 的第一轮检查是决定性的，创建 upstream 时已经挂掉的后端会在第一次检查就被剔除，而不必等 `failure` 轮。
 
 ### 示例

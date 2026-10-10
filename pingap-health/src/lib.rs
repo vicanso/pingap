@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use humantime::format_duration;
+use pingora::connectors::l4::Connect as L4Connect;
 use pingora::lb::health_check::{
     HealthCheck, HealthObserveCallback, TcpHealthCheck,
 };
@@ -132,6 +133,51 @@ pub fn new_health_check_with_client_cert(
     HealthCheckConf,
     Box<dyn HealthCheck + Send + Sync + 'static>,
 )> {
+    new_health_check_with_peer(
+        name,
+        health_check,
+        health_changed_callback,
+        HealthCheckPeer {
+            client_cert_key,
+            ..Default::default()
+        },
+    )
+}
+
+/// How a connection of a check is opened, where it is not pingora's way.
+pub type HealthCheckConnector = Arc<dyn L4Connect + Send + Sync>;
+
+/// What a check takes over from the upstream whose backends it checks.
+#[derive(Default, Clone)]
+pub struct HealthCheckPeer {
+    /// The certificate the upstream presents to its backends. An
+    /// `https://` check presents it too.
+    pub client_cert_key: Option<Arc<CertKey>>,
+    /// How the upstream opens a connection, where it has a way of its
+    /// own: with a PROXY protocol header in front. A backend that waits
+    /// for that header takes a check without one for a broken client, so
+    /// a check opens its connections the same way.
+    ///
+    /// Not a check with `check_port`: what answers on another port than
+    /// the service is not the service, and is spoken to plainly.
+    pub connector: Option<HealthCheckConnector>,
+}
+
+/// [`new_health_check`] for an upstream that has something to say about
+/// how its backends are spoken to ([`HealthCheckPeer`]).
+pub fn new_health_check_with_peer(
+    name: &str,
+    health_check: &str,
+    health_changed_callback: Option<HealthObserveCallback>,
+    peer: HealthCheckPeer,
+) -> Result<(
+    HealthCheckConf,
+    Box<dyn HealthCheck + Send + Sync + 'static>,
+)> {
+    let HealthCheckPeer {
+        client_cert_key,
+        connector,
+    } = peer;
     let health_check_conf: HealthCheckConf = if health_check.is_empty() {
         // The same check `tcp://` with no parameters gives: the documented
         // defaults. This used to be pingora's bare TCP check, which
@@ -166,6 +212,8 @@ pub fn new_health_check_with_client_cert(
         consecutive_failure = health_check_conf.consecutive_failure,
         "new health check"
     );
+    let connector =
+        connector.filter(|_| health_check_conf.check_port.is_none());
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
         match health_check_conf.schema {
             HealthCheckSchema::Http | HealthCheckSchema::Https => {
@@ -177,6 +225,7 @@ pub fn new_health_check_with_client_cert(
                 if health_check_conf.schema == HealthCheckSchema::Https {
                     check.peer_template.client_cert_key = client_cert_key;
                 }
+                check.peer_template.options.custom_l4 = connector;
                 // The body is something pingora's check does not see.
                 match &health_check_conf.expect_body {
                     Some(expect_body) => Box::new(
@@ -185,23 +234,31 @@ pub fn new_health_check_with_client_cert(
                     None => Box::new(check),
                 }
             },
-            HealthCheckSchema::Grpc => Box::new(GrpcHealthCheck::new(
-                name,
-                &health_check_conf,
-                health_changed_callback,
-            )),
-            HealthCheckSchema::Ws | HealthCheckSchema::Wss => {
-                Box::new(WebSocketHealthCheck::new(
+            HealthCheckSchema::Grpc => Box::new(
+                GrpcHealthCheck::new(
                     name,
                     &health_check_conf,
                     health_changed_callback,
-                ))
+                )
+                .with_connector(connector),
+            ),
+            HealthCheckSchema::Ws | HealthCheckSchema::Wss => Box::new(
+                WebSocketHealthCheck::new(
+                    name,
+                    &health_check_conf,
+                    health_changed_callback,
+                )
+                .with_connector(connector),
+            ),
+            HealthCheckSchema::Tcp => {
+                let mut check = new_tcp_health_check(
+                    name,
+                    &health_check_conf,
+                    health_changed_callback,
+                );
+                check.peer_template.options.custom_l4 = connector;
+                Box::new(check)
             },
-            HealthCheckSchema::Tcp => Box::new(new_tcp_health_check(
-                name,
-                &health_check_conf,
-                health_changed_callback,
-            )),
         };
     Ok((health_check_conf, hc))
 }
@@ -272,6 +329,119 @@ mod tests {
         assert_eq!(DEFAULT_CONSECUTIVE_FAILURE, conf.consecutive_failure);
         let tcp_check = new_tcp_health_check("", &conf, None);
         assert_eq!(DEFAULT_CONSECUTIVE_FAILURE, tcp_check.consecutive_failure);
+    }
+
+    /// Writes `HELLO\n` ahead of everything, as an upstream's own way of
+    /// opening a connection writes its header.
+    #[derive(Debug)]
+    struct Greeting;
+
+    #[async_trait::async_trait]
+    impl L4Connect for Greeting {
+        async fn connect(
+            &self,
+            addr: &pingora::protocols::l4::socket::SocketAddr,
+        ) -> pingora::Result<pingora::protocols::l4::stream::Stream> {
+            use pingora::OrErr;
+            use tokio::io::AsyncWriteExt;
+            let addr = addr.as_inet().expect("an address of a TCP backend");
+            let mut stream = tokio::net::TcpStream::connect(addr)
+                .await
+                .or_err(pingora::ErrorType::ConnectError, "connect")?;
+            stream
+                .write_all(b"HELLO\n")
+                .await
+                .or_err(pingora::ErrorType::ConnectError, "greeting")?;
+            Ok(stream.into())
+        }
+    }
+
+    /// A check opens its connections the way the upstream does: the
+    /// backend of an upstream that sends a PROXY protocol header waits
+    /// for one on every connection, and a check that came without was a
+    /// broken client to it - the backend was never healthy.
+    #[tokio::test]
+    async fn test_health_check_connects_as_the_upstream_does() {
+        use pingora::lb::Backend;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // A backend that says how each connection started, and answers
+        // `200` to whatever follows a greeting.
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = listener.local_addr().unwrap().to_string();
+        let (tx, mut started) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 6];
+                    let greeted = stream.read_exact(&mut buf).await.is_ok()
+                        && &buf == b"HELLO\n";
+                    let _ = tx.send(greeted);
+                    if greeted {
+                        let mut rest = [0u8; 2048];
+                        let _ = stream.read(&mut rest).await;
+                    }
+                    let _ = stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                        )
+                        .await;
+                });
+            }
+        });
+
+        let peer = HealthCheckPeer {
+            connector: Some(Arc::new(Greeting)),
+            ..Default::default()
+        };
+        let params = "connection_timeout=1s&read_timeout=1s";
+        for (check, healthy) in [
+            (format!("tcp://health.test?{params}"), Some(true)),
+            (String::new(), Some(true)),
+            (format!("http://health.test/ping?{params}"), Some(true)),
+            (
+                format!("http://health.test/ping?expect_body=ok&{params}"),
+                Some(true),
+            ),
+            // What answers is no gRPC or WebSocket server: the check is
+            // not asked about, only how its connection started.
+            (format!("grpc://health.test?{params}"), None),
+            (format!("ws://health.test/ws?{params}"), None),
+        ] {
+            let (_, hc) =
+                new_health_check_with_peer("test", &check, None, peer.clone())
+                    .unwrap();
+            let result = hc.check(&Backend::new(&backend).unwrap()).await;
+            assert_eq!(Some(true), started.recv().await, "{check}");
+            if let Some(healthy) = healthy {
+                assert_eq!(healthy, result.is_ok(), "{check}: {result:?}");
+            }
+        }
+
+        // Without a way of the upstream's own: pingora's, as before.
+        let (_, hc) = new_health_check(
+            "test",
+            &format!("http://health.test/ping?{params}"),
+            None,
+        )
+        .unwrap();
+        let _ = hc.check(&Backend::new(&backend).unwrap()).await;
+        assert_eq!(Some(false), started.recv().await);
+
+        // A check that is answered on another port than the service asks
+        // something that is not the service, and asks it plainly.
+        let port = backend.rsplit(':').next().unwrap();
+        let (_, hc) = new_health_check_with_peer(
+            "test",
+            &format!("http://health.test/ping?check_port={port}&{params}"),
+            None,
+            peer,
+        )
+        .unwrap();
+        let _ = hc.check(&Backend::new("127.0.0.1:1").unwrap()).await;
+        assert_eq!(Some(false), started.recv().await);
     }
 
     #[test]

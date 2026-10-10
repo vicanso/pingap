@@ -42,6 +42,14 @@
   - **连接超时**：连接、读、写与空闲超时的细粒度控制。
   - **TCP 控制**：TCP keepalive、缓冲区大小与 TCP Fast Open 等高级选项。`tcp_idle`、`tcp_interval`、`tcp_probe_count`、`tcp_user_timeout`（仅 Linux）只要配置了其中一项就开启 keepalive，没有配置的项取内核默认值（7200s、75s、探测 9 次），所以 `tcp_user_timeout` 可以单独使用。空闲时间和间隔至少 `1s`，探测次数在 1 到 16 之间。
   - **请求头策略**：默认按 RFC 9110 的要求，在请求到达后端前剥离 hop-by-hop 头与 `Connection` 提名的头，且只转发 WebSocket 升级。每条规则都可按上游单独放宽（`strip_hop_by_hop`、`strip_connection_nominated`、`reject_malformed_connection_nominations`、`h1_upgrade`），供仍依赖旧透传行为的后端使用，例如 Docker `attach`/`exec` 或 h2c 升级。
+  - **向后端发送 PROXY protocol**：`send_proxy_protocol = "v1"`（一行文本）或 `"v2"`（二进制）让发往后端的每条连接都以 PROXY protocol 头开始，说明这条连接是替哪个客户端建立的：客户端从哪里来，连到了本代理的哪个地址。用于会读这个头的后端（nginx 的 `listen 8080 proxy_protocol;`、HAProxy 的 `bind ... accept-proxy`、另一个开了 `proxy_protocol = true` 的 pingap），它们从连接本身得到客户端地址，不需要信任 `X-Forwarded-For`。不读这个头的后端会把它当成格式错误的请求，所以两边要么都开，要么都不开。不配置则不发送。
+    - 头在连接上所有内容之前，包括配了 `sni` 的上游的 TLS 握手；HTTP/1.1 和 HTTP/2 的后端都会发送。
+    - 源地址是请求所在连接的对端地址，也就是 `$remote_addr`，不会取 `X-Forwarded-For` 或 `X-Real-IP` 里的地址：前面有 CDN 时，后端得到的是 CDN 的地址。在开了 `proxy_protocol = true` 的 server 上，它是负载均衡器在头里给出的地址，所以客户端地址可以经过两层一路传下去。目的地址是连接到达的本代理地址，不是 server 读到的头里的目的地址。
+    - 一个 pingap 接在另一个后面时：接收的一方（`proxy_protocol = true`）要把发送方的地址写进自己的 `basic.trusted_proxies`，否则它会把这个头当成格式错误的请求：返回 `400`，在 TLS 监听上则是握手失败。
+    - 一条连接只在开头说明一次它属于谁。因此保持的连接只会复用给同一条客户端连接上的请求，不会交给别的客户端；到后端的 HTTP/2 连接上的各个流也都属于同一条客户端连接。客户端断开之后，它还会在连接池里停留 `idle_timeout`（默认 60s），期间占用 `basic.upstream_keepalive_pool_size` 的名额。这个连接池是一个 server 的所有上游共用的，池满之后再放入连接会挤掉等待最久的那条，不管它属于哪个上游：客户端短连接很多时，把这类上游的 `idle_timeout` 调小，或者调大连接池。
+    - `alpn = "h2h1"` 时，如果后端先同意 HTTP/2、之后又要求改用 HTTP/1.1，这个情况在其他上游上是按后端记住的，在这类上游上每条客户端连接都要重新发现一次。把 `alpn` 设成后端实际支持的协议。
+    - 该上游的健康检查同样发送这个头，但不带客户端信息（`LOCAL` 或 `UNKNOWN`），否则后端会把每次检查都当成错误的客户端。带 `check_port` 的 HTTP 检查不发送：在另一个端口上应答的不是这个服务本身。
+    - `connection_timeout`（上游的，或者 location 自己设置的那个）覆盖建立连接和发送头的时间；`tcp_recv_buf`、`tcp_fast_open` 和 keepalive 设置照常生效。
 
 - **熔断**：开启 `enable_backend_stats` 后统计每个后端的响应（`backend_failure_status_code` 决定哪些状态码算失败，默认所有 5xx；连接不上的请求总是算失败）。`circuit_break_max_consecutive_failures` 与 `circuit_break_max_failure_percent`（后者要在统计窗口内累计到 `circuit_break_min_requests_threshold` 个请求后才生效；两者填 `0` 即关闭该规则）任一触发即熔断。统计窗口是最近一个 `backend_stats_interval`（不能小于 `1ms`），按滑动窗口估算：当前周期内的请求，加上上一个周期里仍落在窗口内的那部分（按比例折算）。所以规则对正在发生的失败立即起作用（以前只读上一个已结束的周期，熔断最多晚一个周期才触发，第一个周期内永远不触发），后端恢复之后，等坏的那个周期移出窗口，一次失败也不会再把它重新打开。触发后：后端进入**打开**状态，在 `circuit_break_open_duration` 内被跳过，之后进入**半开**，最多放行 `circuit_break_half_open_consecutive_success_threshold` 个探测请求；连续成功这么多次则关闭熔断，失败一次则重新打开。后端接受了连接却没有给出响应的请求（读超时、响应前连接被关闭）和连接被拒绝一样算作失败；连接池里已经被后端关闭的旧连接不算。探测请求如果一直没有报告结果（例如客户端先断开了），再过一个 `circuit_break_open_duration` 就放弃它们并开始新一轮探测，后端不会一直停在半开状态。状态通过 `pingap_upstream_backend_circuit_state` 导出（0 关闭、1 打开、2 半开）。
 

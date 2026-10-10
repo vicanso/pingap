@@ -51,6 +51,7 @@ export interface Upstream {
   tcp_probe_count?: number;
   tcp_recv_buf?: number;
   tcp_fast_open?: boolean;
+  send_proxy_protocol?: string;
   includes?: string[];
   remark?: string;
 }

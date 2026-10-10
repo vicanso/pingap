@@ -28,6 +28,7 @@ Pingap Core 是 Pingap 项目的基础库，提供一组核心组件与工具，
 - `service`：运行后台任务的 `BackgroundTaskService`。同一个服务里的任务各自计时：每一轮只启动空闲的任务，上一轮还没结束的任务本轮跳过（并带着它已运行的时长打 warn），不会拖住其他任务。传给任务的 `count` 是它自己的运行次数，所以按“每 n 次执行一回”调度的任务不会因为跳过某一轮而错过该它执行的那一次。常规周期只记 debug 日志。
 - `ttl_lru_limit`：基于 TTL 的 LRU 限流器。 计数器是原子的，同一键的并发递增不会丢失。
 - `notification`：发送通知的 trait。
+- `proxy_protocol`：连接发起端的 PROXY protocol。`new_proxy_protocol_header` 按客户端地址生成 v1 或 v2 的头，`ProxyProtocolConnector` 是一个 pingora `Connect`，把这个头作为连接的最初几个字节写出去（`PeerOptions::custom_l4`）。upstream 的 `send_proxy_protocol` 及其健康检查使用它；监听端的读取在 `pingap-proxy`。
 - `util`：杂项工具，含时间缓存与主机名获取。
 
 ## 许可证

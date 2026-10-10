@@ -681,6 +681,14 @@ pub struct UpstreamConf {
     /// Enable TCP Fast Open
     pub tcp_fast_open: Option<bool>,
 
+    /// Starts every connection to a backend with a PROXY protocol header
+    /// that says which client it is made for: `v1` (a line of text) or
+    /// `v2` (the binary form). For a backend that reads one
+    /// (`listen ... proxy_protocol` of nginx, `accept-proxy` of HAProxy);
+    /// one that does not takes the header for a broken request. Unset
+    /// sends none.
+    pub send_proxy_protocol: Option<String>,
+
     /// List of included configuration files
     pub includes: Option<Vec<String>>,
 
@@ -726,6 +734,19 @@ impl Validate for UpstreamConf {
 
         // Validate the HTTP/1 upgrade policy name
         self.validate_h1_upgrade()?;
+
+        // A version there is none of sent no header at all, to a backend
+        // that waits for one.
+        if let Some(version) = &self.send_proxy_protocol
+            && pingap_core::ProxyProtocolVersion::parse(version).is_none()
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "send proxy protocol should be one of {}, got {version:?}",
+                    pingap_core::PROXY_PROTOCOL_VERSIONS.join(", ")
+                ),
+            });
+        }
 
         // A certificate without its key signs nothing, and a key without
         // its certificate says nothing: the upstream would be asked
@@ -3386,6 +3407,41 @@ h2_connection_window_size = "16mib"
             err.contains("h2 connection window size should be between"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn test_upstream_send_proxy_protocol() {
+        let conf: UpstreamConf = toml::from_str(
+            r#"
+addrs = ["127.0.0.1:8080"]
+send_proxy_protocol = "v2"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some("v2".to_string()), conf.send_proxy_protocol);
+        assert_eq!(true, conf.validate().is_ok());
+        let toml = toml::to_string(&conf).unwrap();
+        assert_eq!(true, toml.contains("send_proxy_protocol = \"v2\""));
+
+        let with = |version: Option<&str>| UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            send_proxy_protocol: version.map(str::to_string),
+            ..Default::default()
+        };
+        // none by default, and the name in any case
+        assert_eq!(true, with(None).validate().is_ok());
+        assert_eq!(true, with(Some("v1")).validate().is_ok());
+        assert_eq!(true, with(Some("V2")).validate().is_ok());
+        // A version there is none of is refused: it sent no header, to a
+        // backend that was set to wait for one.
+        for other in ["", "true", "2", "v3"] {
+            assert_eq!(
+                format!(
+                    "Invalid error send proxy protocol should be one of v1, v2, got {other:?}"
+                ),
+                with(Some(other)).validate().unwrap_err().to_string()
+            );
+        }
     }
 
     #[test]

@@ -561,6 +561,9 @@ export default {
     circuitBreakOpenDuration: "熔断打开时长",
     circuitBreakOpenDurationPlaceholder: "输入熔断打开时长",
     tcpFastOpen: "Tcp快速开启",
+    sendProxyProtocol: "发送 PROXY protocol",
+    sendProxyProtocolTips:
+      "发往后端的每条连接都以 PROXY protocol 头开始，说明这条连接是替哪个客户端建立的：v1 是一行文本，v2 是二进制格式。只用于会读这个头的后端（nginx 的 listen ... proxy_protocol、HAProxy 的 accept-proxy）；其他后端会把这个头当成格式错误的请求。开启后，保持的连接只复用给同一条客户端连接，健康检查发送的头不带客户端信息。",
     tcpRecvBuf: "tcp接收缓存",
     tcpRecvBufPlaceholder: "输入tcp接收缓存限制大小",
     tcpUserTimeout: "tcp用户超时",

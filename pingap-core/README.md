@@ -28,6 +28,7 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 - `service`: Includes the `BackgroundTaskService` for running background tasks. Every task of a service keeps its own time: a round starts the tasks that are free, and one that is still running from an earlier round is left out of it (and warned about, with how long it has been running) instead of holding the others up. The `count` a task is given is the number of its own runs, so a task that acts on every nth run does not miss its turn in a round it sat out. Routine rounds log at debug level.
 - `ttl_lru_limit`: Implements a TTL-based LRU rate limiter. Counters are atomic, so concurrent increments on one key are all counted.
 - `notification`: Defines the trait for sending notifications.
+- `proxy_protocol`: The PROXY protocol on the connecting side. `new_proxy_protocol_header` builds a version 1 or 2 header for a client's addresses, and `ProxyProtocolConnector` is a pingora `Connect` that writes it as the first bytes of a connection (`PeerOptions::custom_l4`). Used by `send_proxy_protocol` of an upstream and by its health checks; the listening side is in `pingap-proxy`.
 - `util`: Contains miscellaneous utilities, including time caching and hostname retrieval.
 
 ## License

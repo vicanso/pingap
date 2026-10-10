@@ -572,6 +572,64 @@ mod tests {
         assert_eq!(Parsed::Invalid, parse(&v2(1, 0x21, &[0u8; 35])));
     }
 
+    /// What the connecting side writes (`send_proxy_protocol` of an
+    /// upstream) is what this side reads: one pingap behind another is
+    /// told of the client.
+    #[test]
+    fn test_parse_what_an_upstream_sends() {
+        use pingap_core::{ProxyProtocolVersion, new_proxy_protocol_header};
+        for version in [ProxyProtocolVersion::V1, ProxyProtocolVersion::V2] {
+            for (source, destination, expected) in [
+                ("192.0.2.1:56324", "198.51.100.1:443", "192.0.2.1:56324"),
+                (
+                    "[2001:db8::1]:4000",
+                    "[2001:db8::2]:443",
+                    "[2001:db8::1]:4000",
+                ),
+                // the IPv4 client of a dual-stack listener
+                (
+                    "[::ffff:192.0.2.1]:56324",
+                    "[::ffff:198.51.100.1]:443",
+                    "192.0.2.1:56324",
+                ),
+                // one end of each family
+                (
+                    "192.0.2.1:56324",
+                    "[2001:db8::2]:443",
+                    "[::ffff:192.0.2.1]:56324",
+                ),
+            ] {
+                let header = new_proxy_protocol_header(
+                    version,
+                    Some((
+                        source.parse().unwrap(),
+                        destination.parse().unwrap(),
+                    )),
+                );
+                let mut buf = header.clone();
+                buf.extend_from_slice(b"GET / HTTP/1.1\r\n\r\n");
+                assert_eq!(
+                    Parsed::Header {
+                        header: proxied(expected),
+                        len: header.len(),
+                    },
+                    parse(&buf),
+                    "{version:?} {source} {destination}"
+                );
+            }
+            // a connection of the proxy's own
+            let header = new_proxy_protocol_header(version, None);
+            assert_eq!(
+                Parsed::Header {
+                    header: Header::Local,
+                    len: header.len(),
+                },
+                parse(&header),
+                "{version:?}"
+            );
+        }
+    }
+
     /// A connected pingora stream, and the client end of it.
     async fn connected_stream() -> (L4Stream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

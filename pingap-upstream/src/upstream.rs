@@ -32,10 +32,12 @@ use http::StatusCode;
 use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
 use pingap_core::InflightGuard;
+use pingap_core::LocationInstance;
 use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
-    new_tcp_keepalive,
+    ProxyProtocolConnectOptions, ProxyProtocolConnector, ProxyProtocolVersion,
+    new_proxy_protocol_header, new_tcp_keepalive,
 };
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
@@ -44,7 +46,7 @@ use pingap_discovery::{
     new_docker_discover_backends, new_srv_discover_backends,
     new_static_discovery,
 };
-use pingap_health::new_health_check_with_client_cert;
+use pingap_health::{HealthCheckPeer, new_health_check_with_peer};
 use pingora::lb::Backend;
 use pingora::lb::UpdateTimings;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
@@ -69,10 +71,10 @@ use pingora::utils::tls::{WrappedX509, parse_x509};
 use rustls_pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher, RandomState};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, error};
 
@@ -171,6 +173,15 @@ pub struct PeerAttempt<'a> {
     /// backend it is given, for an upstream that does so
     /// (`sticky:<cookie>`): `None` when the client has it already.
     pub sticky_cookie: Option<&'a mut Option<String>>,
+    /// The location the request is served by, which may set timeouts of
+    /// its own in place of the upstream's.
+    ///
+    /// They are set here and not on the peer that is handed back: an
+    /// upstream that connects in a way of its own (`send_proxy_protocol`)
+    /// gives the time to connect to its connector, and pingora does not
+    /// read it from the peer again. Set afterwards, the timeout of the
+    /// location was not the one such a connection went by.
+    pub location: Option<&'a dyn LocationInstance>,
 }
 
 /// The name of the cookie of `algo = "sticky:<cookie>"`: all that follows
@@ -357,6 +368,10 @@ pub struct Upstream {
     /// Whether to enable TCP Fast Open for reduced connection latency
     tcp_fast_open: Option<bool>,
 
+    /// The PROXY protocol header every connection to a backend starts
+    /// with, in this form; `None` sends none.
+    send_proxy_protocol: Option<ProxyProtocolVersion>,
+
     /// A transparent upstream resolves the request's host to IPv4 only,
     /// the same switch static and DNS discovery apply to their addresses.
     ipv4_only: bool,
@@ -446,11 +461,14 @@ where
     };
 
     // Set up health checking for the backends
-    let (health_check_conf, hc) = new_health_check_with_client_cert(
+    let (health_check_conf, hc) = new_health_check_with_peer(
         name,
         conf.health_check.as_deref().unwrap_or_default(),
         observe,
-        client_cert_key,
+        HealthCheckPeer {
+            client_cert_key,
+            connector: health_check_connector(conf),
+        },
     )
     .map_err(|e| Error::Common {
         message: e.to_string(),
@@ -864,6 +882,60 @@ fn ca_group_key(conf: &UpstreamConf) -> u64 {
     hasher.finish()
 }
 
+/// The version of the PROXY protocol header `send_proxy_protocol` asks
+/// for. The name was validated by `UpstreamConf::validate`.
+fn send_proxy_protocol(conf: &UpstreamConf) -> Option<ProxyProtocolVersion> {
+    conf.send_proxy_protocol
+        .as_deref()
+        .and_then(ProxyProtocolVersion::parse)
+}
+
+/// How a health check connects to the backends of an upstream that sends
+/// a PROXY protocol header: with a header as well, one that names no
+/// client (`LOCAL` in version 2, `UNKNOWN` in version 1). The backend
+/// waits for a header on every connection, and takes a check that comes
+/// without one for a broken client: it was never healthy.
+///
+/// The time a check may take to connect is the check's own to keep
+/// (`total_connection_timeout`, set from its `connection_timeout`).
+fn health_check_connector(
+    conf: &UpstreamConf,
+) -> Option<pingap_health::HealthCheckConnector> {
+    let version = send_proxy_protocol(conf)?;
+    Some(Arc::new(ProxyProtocolConnector::new(
+        new_proxy_protocol_header(version, None),
+        ProxyProtocolConnectOptions::default(),
+    )))
+}
+
+/// Where the connection of `session` comes from and which address of
+/// this proxy it came to. `None` for a session that is on no TCP
+/// connection, which no listener of this proxy has.
+///
+/// The first is the peer of the connection (`$remote_addr`) and never an
+/// address from `X-Forwarded-For`: on a listener that reads the PROXY
+/// protocol it is the one a trusted balancer named. The second is this
+/// listener's own, whatever a header that was read says.
+fn client_addresses(session: &Session) -> Option<(SocketAddr, SocketAddr)> {
+    let source = session.client_addr()?.as_inet()?;
+    let destination = session.server_addr()?.as_inet()?;
+    Some((*source, *destination))
+}
+
+/// What pingora keeps the connections of an upstream that sends a PROXY
+/// protocol header apart by, next to the address and the name: the header
+/// itself. A connection says once whose it is, so it is for the requests
+/// of that client connection and nobody else's - handed to the next
+/// request that came along, the backend took one client for another.
+///
+/// The number is made with a key of this process. With one that is the
+/// same everywhere, whoever chooses the address in a header could look
+/// for two that give the same number.
+fn proxy_protocol_group_key(ca_key: u64, header: &[u8]) -> u64 {
+    static KEY: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+    KEY.hash_one((ca_key, header))
+}
+
 /// Narrows a configured HTTP/2 window to the `u32` pingora takes; the config
 /// layer already rejects anything above RFC 9113's 2^31 - 1.
 fn h2_window_size(size: Option<ByteSize>) -> Option<u32> {
@@ -1073,6 +1145,7 @@ impl Upstream {
             tcp_recv_buf: conf.tcp_recv_buf.map(|item| item.as_u64() as usize),
             tcp_keepalive,
             tcp_fast_open: conf.tcp_fast_open,
+            send_proxy_protocol: send_proxy_protocol(conf),
             ipv4_only: conf.ipv4_only.unwrap_or_default(),
             peer_tracer,
             tracer,
@@ -1439,6 +1512,7 @@ impl Upstream {
                 failed: &[],
                 inflight: None,
                 sticky_cookie: None,
+                location: None,
             },
         )
         .await
@@ -1460,6 +1534,7 @@ impl Upstream {
             failed,
             inflight,
             sticky_cookie,
+            location,
         } = attempt;
         // Before a backend is picked: there is none to pick for a request
         // that has no name to ask it for.
@@ -1573,7 +1648,46 @@ impl Upstream {
         }
         // Set connection tracing if enabled
         p.options.tracer.clone_from(&self.tracer);
+        // What the location waits for the upstream, where it says so.
+        if let Some(location) = location {
+            location.apply_timeouts(&mut p.options);
+        }
+        // Last: the connector takes the options as they are by now.
+        if let Some(version) = self.send_proxy_protocol {
+            self.send_proxy_protocol_to(
+                &mut p,
+                version,
+                client_addresses(session),
+            );
+        }
         Some(p)
+    }
+
+    /// Has the connection `peer` is for start with a PROXY protocol
+    /// header for the client at `addresses`.
+    ///
+    /// pingora's own connector is replaced by one that writes the header,
+    /// and that one is given the address of the backend alone: what the
+    /// peer says by now about the socket and about the time to connect
+    /// goes with it, and what is set on the peer later does not reach it.
+    /// The keepalive, the tracer and the rest pingora applies to the
+    /// connection it gets back, whoever made it.
+    fn send_proxy_protocol_to(
+        &self,
+        peer: &mut HttpPeer,
+        version: ProxyProtocolVersion,
+        addresses: Option<(SocketAddr, SocketAddr)>,
+    ) {
+        let header = new_proxy_protocol_header(version, addresses);
+        peer.group_key = proxy_protocol_group_key(self.ca_key, &header);
+        peer.options.custom_l4 = Some(Arc::new(ProxyProtocolConnector::new(
+            header,
+            ProxyProtocolConnectOptions {
+                connection_timeout: peer.options.connection_timeout,
+                tcp_recv_buf: peer.options.tcp_recv_buf,
+                tcp_fast_open: peer.options.tcp_fast_open,
+            },
+        )));
     }
 
     /// The name a connection for this request asks the backend for: the
@@ -2350,6 +2464,346 @@ mod tests {
         assert_eq!(H1UpgradePolicy::WebSocketOnly, policy.h1_upgrade);
     }
 
+    /// `send_proxy_protocol`: a connection to a backend starts with the
+    /// header of the client it is made for, and is kept for that client.
+    #[tokio::test]
+    async fn test_upstream_send_proxy_protocol() {
+        use super::health_check_connector;
+        use pingap_core::{ProxyProtocolVersion, new_proxy_protocol_header};
+        use tokio::io::AsyncReadExt;
+
+        let input_header = "GET / HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = listener.local_addr().unwrap().to_string();
+        // What a connection made with `connector` starts with.
+        let sent_by =
+            async |connector: &pingap_health::HealthCheckConnector| {
+                let addr = backend.parse().unwrap();
+                let stream = connector.connect(&addr).await.unwrap();
+                drop(stream);
+                let (mut accepted, _) = listener.accept().await.unwrap();
+                let mut received = Vec::new();
+                accepted.read_to_end(&mut received).await.unwrap();
+                received
+            };
+        let conf = |version: Option<&str>| UpstreamConf {
+            addrs: vec![backend.clone()],
+            send_proxy_protocol: version.map(str::to_string),
+            connection_timeout: Some(Duration::from_secs(5)),
+            tcp_recv_buf: Some(ByteSize::kib(64)),
+            ..Default::default()
+        };
+
+        // Not set: pingora connects, and its connections are shared.
+        let up = Upstream::new("pp", &conf(None), None).unwrap();
+        let peer = up.new_http_peer(&session, &mut None, true).await.unwrap();
+        assert_eq!(true, peer.options.custom_l4.is_none());
+        assert_eq!(0, peer.group_key);
+        assert_eq!(true, health_check_connector(&conf(None)).is_none());
+
+        // A client without an address (this session is not on a socket)
+        // is one the backend is told nothing of.
+        let up = Upstream::new("pp", &conf(Some("v1")), None).unwrap();
+        let peer = up.new_http_peer(&session, &mut None, true).await.unwrap();
+        assert_ne!(0, peer.group_key);
+        // The connector is given the address of the backend and nothing
+        // else: what the peer says of the socket and of the time to
+        // connect is with it, or it applied to no connection.
+        let connector = format!("{:?}", peer.options.custom_l4);
+        for option in [
+            "connection_timeout: Some(5s)",
+            "tcp_recv_buf: Some(65536)",
+            "tcp_fast_open: false",
+        ] {
+            assert_eq!(true, connector.contains(option), "{connector}");
+        }
+        let fast_open = Upstream::new(
+            "pp",
+            &UpstreamConf {
+                tcp_fast_open: Some(true),
+                ..conf(Some("v1"))
+            },
+            None,
+        )
+        .unwrap()
+        .new_http_peer(&session, &mut None, true)
+        .await
+        .unwrap();
+        let connector = format!("{:?}", fast_open.options.custom_l4);
+        assert_eq!(true, connector.contains("tcp_fast_open: true"));
+        assert_eq!(
+            b"PROXY UNKNOWN\r\n".to_vec(),
+            sent_by(peer.options.custom_l4.as_ref().unwrap()).await
+        );
+        // The check of the upstream says the same of itself.
+        assert_eq!(
+            b"PROXY UNKNOWN\r\n".to_vec(),
+            sent_by(&health_check_connector(&conf(Some("v1"))).unwrap()).await
+        );
+        assert_eq!(
+            new_proxy_protocol_header(ProxyProtocolVersion::V2, None),
+            sent_by(&health_check_connector(&conf(Some("V2"))).unwrap()).await
+        );
+
+        // The connections of two clients are two kinds of connection to
+        // pingora, which hands a kept one to a request of its own kind
+        // only: the header was said once, for one of them.
+        let server = "198.51.100.1:443".parse().unwrap();
+        let peer_for = |client: &str, version| {
+            let mut peer = peer.clone();
+            up.send_proxy_protocol_to(
+                &mut peer,
+                version,
+                Some((client.parse().unwrap(), server)),
+            );
+            peer
+        };
+        let v2 = ProxyProtocolVersion::V2;
+        let first = peer_for("192.0.2.1:56324", v2);
+        let again = peer_for("192.0.2.1:56324", v2);
+        let other_port = peer_for("192.0.2.1:56325", v2);
+        let other_client = peer_for("192.0.2.2:56324", v2);
+        assert_eq!(first.reuse_hash(), again.reuse_hash());
+        for other in [&other_port, &other_client, &peer] {
+            assert_ne!(first.reuse_hash(), other.reuse_hash());
+        }
+        assert_eq!(
+            new_proxy_protocol_header(
+                v2,
+                Some(("192.0.2.1:56324".parse().unwrap(), server))
+            ),
+            sent_by(first.options.custom_l4.as_ref().unwrap()).await
+        );
+        assert_eq!(
+            b"PROXY TCP4 192.0.2.2 198.51.100.1 56324 443\r\n".to_vec(),
+            sent_by(
+                peer_for("192.0.2.2:56324", ProxyProtocolVersion::V1)
+                    .options
+                    .custom_l4
+                    .as_ref()
+                    .unwrap()
+            )
+            .await
+        );
+
+        // And a connection of another CA is another kind as before.
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                .unwrap();
+        let with_ca = Upstream::new(
+            "pp",
+            &UpstreamConf {
+                sni: Some("localhost".to_string()),
+                ca: Some(cert.cert.pem()),
+                ..conf(Some("v2"))
+            },
+            None,
+        )
+        .unwrap();
+        let mut other_ca = first.clone();
+        with_ca.send_proxy_protocol_to(
+            &mut other_ca,
+            v2,
+            Some(("192.0.2.1:56324".parse().unwrap(), server)),
+        );
+        assert_ne!(first.group_key, other_ca.group_key);
+    }
+
+    /// The header names the two ends of the connection the request came
+    /// on, each in its place: where the client is, and which address of
+    /// this proxy it came to.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_send_proxy_protocol_names_the_client() {
+        use pingora::protocols::l4::stream::Stream;
+        use pingora::protocols::{GetSocketDigest, SocketDigest};
+        use std::os::unix::io::AsRawFd;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // The connection of a client to this proxy, as a listener has it.
+        let front = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = front.local_addr().unwrap();
+        let mut client =
+            tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+        let client_addr = client.local_addr().unwrap();
+        let (accepted, _) = front.accept().await.unwrap();
+        let mut stream = Stream::from(accepted);
+        let fd = stream.as_raw_fd();
+        stream.set_socket_digest(SocketDigest::from_raw_fd(fd));
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: pp.test\r\n\r\n")
+            .await
+            .unwrap();
+        let mut session = Session::new_h1(Box::new(stream));
+        session.read_request().await.unwrap();
+        assert_ne!(client_addr.port(), proxy_addr.port());
+
+        let backend =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let up = Upstream::new(
+            "pp",
+            &UpstreamConf {
+                addrs: vec![backend.local_addr().unwrap().to_string()],
+                send_proxy_protocol: Some("v1".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let peer = up.new_http_peer(&session, &mut None, true).await.unwrap();
+        let connector = peer.options.custom_l4.as_ref().unwrap();
+        drop(connector.connect(peer.address()).await.unwrap());
+        let (mut accepted, _) = backend.accept().await.unwrap();
+        let mut received = String::new();
+        accepted.read_to_string(&mut received).await.unwrap();
+        assert_eq!(
+            format!(
+                "PROXY TCP4 127.0.0.1 127.0.0.1 {} {}\r\n",
+                client_addr.port(),
+                proxy_addr.port()
+            ),
+            received
+        );
+    }
+
+    /// Through pingora's own pool: a connection that is kept goes to the
+    /// next request of the client it was opened for, and to nobody
+    /// else's. Handed to whoever came next, as the connections of any
+    /// other upstream are, the backend took one client for another.
+    #[tokio::test]
+    async fn test_send_proxy_protocol_keeps_connections_apart() {
+        use pingap_core::{ProxyProtocolVersion, new_proxy_protocol_header};
+        use pingora::connectors::http::Connector;
+        use pingora::http::RequestHeader;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let input_header = "GET / HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // A backend that reads the header of each connection and then
+        // answers every request on it.
+        let v2 = ProxyProtocolVersion::V2;
+        let server = "198.51.100.1:443".parse().unwrap();
+        let header_of = |client: &str| {
+            new_proxy_protocol_header(
+                v2,
+                Some((client.parse().unwrap(), server)),
+            )
+        };
+        let header_len = header_of("192.0.2.1:56324").len();
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = listener.local_addr().unwrap().to_string();
+        let (tx, mut opened) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let mut header = vec![0u8; header_len];
+                    if stream.read_exact(&mut header).await.is_err() {
+                        return;
+                    }
+                    let _ = tx.send(header);
+                    // One answer for each request, however it arrives.
+                    let mut read = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 {
+                            return;
+                        }
+                        read.extend_from_slice(&buf[..n]);
+                        while let Some(end) =
+                            read.windows(4).position(|w| w == b"\r\n\r\n")
+                        {
+                            read.drain(..end + 4);
+                            let answered = stream
+                                .write_all(
+                                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+                                )
+                                .await;
+                            if answered.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let up = Upstream::new(
+            "pp",
+            &UpstreamConf {
+                addrs: vec![backend],
+                send_proxy_protocol: Some("v2".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let peer = up.new_http_peer(&session, &mut None, true).await.unwrap();
+        let peer_for = |client: &str| {
+            let mut peer = peer.clone();
+            up.send_proxy_protocol_to(
+                &mut peer,
+                v2,
+                Some((client.parse().unwrap(), server)),
+            );
+            peer
+        };
+        // A request and its answer on a connection of pingora's, which
+        // is given back to the pool. Whether it came from there.
+        let connector = Connector::new(None);
+        let request = async |client: &str| {
+            let peer = peer_for(client);
+            let (mut session, reused) =
+                connector.get_http_session(&peer).await.unwrap();
+            let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+            header.insert_header("Host", "pp.test").unwrap();
+            session
+                .write_request_header(Box::new(header))
+                .await
+                .unwrap();
+            session.finish_request_body().await.unwrap();
+            session.read_response_header().await.unwrap();
+            while session.read_response_body().await.unwrap().is_some() {}
+            connector.release_http_session(session, &peer, None).await;
+            reused
+        };
+
+        assert_eq!(false, request("192.0.2.1:56324").await);
+        // the same client connection again: the connection it has
+        assert_eq!(true, request("192.0.2.1:56324").await);
+        // another connection of that client, and another client: each a
+        // connection of its own, though one is idle in the pool
+        assert_eq!(false, request("192.0.2.1:56325").await);
+        assert_eq!(false, request("192.0.2.2:56324").await);
+        // and each finds its own again
+        assert_eq!(true, request("192.0.2.2:56324").await);
+        assert_eq!(true, request("192.0.2.1:56324").await);
+
+        // Three connections for six requests, each under its own header.
+        let mut headers = Vec::new();
+        for _ in 0..3 {
+            headers.push(opened.recv().await.unwrap());
+        }
+        assert_eq!(
+            vec![
+                header_of("192.0.2.1:56324"),
+                header_of("192.0.2.1:56325"),
+                header_of("192.0.2.2:56324"),
+            ],
+            headers
+        );
+        assert_eq!(true, opened.try_recv().is_err());
+    }
+
     #[tokio::test]
     async fn test_upstream_peer_ca_and_h2_window() {
         let input_header =
@@ -3088,6 +3542,7 @@ mod tests {
                 failed,
                 inflight: None,
                 sticky_cookie: None,
+                location: None,
             },
         )
         .await
@@ -3162,6 +3617,7 @@ mod tests {
                     failed: &[],
                     inflight: Some(slot),
                     sticky_cookie: None,
+                    location: None,
                 },
             )
             .await
@@ -3269,6 +3725,7 @@ mod tests {
                         failed,
                         inflight: None,
                         sticky_cookie: Some(&mut set_cookie),
+                        location: None,
                     },
                 )
                 .await
@@ -3470,6 +3927,7 @@ mod tests {
                         failed,
                         inflight: None,
                         sticky_cookie: Some(&mut set_cookie),
+                        location: None,
                     },
                 )
                 .await
