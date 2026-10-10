@@ -100,6 +100,10 @@ release-all:
 	cargo build --release
 	ls -lh target/release
 
+# End-to-end checks of a built binary: `make e2e BIN=path/to/pingap`
+e2e:
+	./scripts/e2e/run.sh $(or $(BIN),target/release/pingap)
+
 release-perf:
 	cargo build --profile=release-perf --features=perf
 	ls -lh target/release-perf

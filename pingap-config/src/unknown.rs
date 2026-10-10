@@ -293,6 +293,60 @@ else = 1
         assert_eq!(true, missing.is_empty(), "{missing:#?}");
     }
 
+    /// Every key pingap reads has an item in the form of its page in the
+    /// admin, and a field in what the page reads the configuration into:
+    /// a field that is added without them fails here. The admin replaces
+    /// a whole entry with what its form holds, and what cannot be set
+    /// there cannot be seen there either.
+    #[test]
+    fn test_admin_forms_have_an_item_for_every_key() {
+        let web =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/src");
+        let read = |name: &str| {
+            std::fs::read_to_string(web.join(name)).unwrap_or_default()
+        };
+        let state = read("states/config.ts");
+        // `key:` or `key?:` at the start of a line of an interface
+        let in_state = |key: &str| {
+            state.lines().any(|line| {
+                line.trim_start().strip_prefix(key).is_some_and(|rest| {
+                    rest.starts_with(':') || rest.starts_with("?:")
+                })
+            })
+        };
+        let mut missing = vec![];
+        let mut check = |page: &str, known: Vec<String>| {
+            // No admin at hand (a packaged crate): nothing to hold it to.
+            if state.is_empty() {
+                return;
+            }
+            let form = read(&format!("pages/{page}.tsx"));
+            // The admin is there and the page is not: moved or renamed,
+            // and this would hold nothing to anything from then on.
+            if form.is_empty() {
+                missing.push(format!("{page}.tsx: no such page"));
+                return;
+            }
+            for key in known {
+                if !form.contains(&format!("name: \"{key}\"")) {
+                    missing.push(format!("{page}.tsx: no item for {key}"));
+                }
+                if !in_state(&key) {
+                    missing.push(format!("states/config.ts: no field {key}"));
+                }
+            }
+        };
+        check("Basic", known_keys::<BasicConf>());
+        check("Servers", known_keys::<ServerConf>());
+        check("Locations", known_keys::<LocationConf>());
+        check("Upstreams", known_keys::<UpstreamConf>());
+        check("Certificates", known_keys::<CertificateConf>());
+        check("Storages", known_keys::<StorageConf>());
+        missing.sort();
+        missing.dedup();
+        assert_eq!(true, missing.is_empty(), "{missing:#?}");
+    }
+
     /// Every key the samples document is one pingap knows: a field that
     /// stops being listed (it is skipped when it serializes, say) would
     /// show here as unknown.

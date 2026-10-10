@@ -6,6 +6,11 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import zh from "./zh";
 import en from "./en";
 
+// Both languages have the same keys: a text that is added to one and not
+// to the other does not type-check, so `tsc -b` (and with it the build)
+// fails instead of the page showing a bare key in one language.
+export const sameKeys: [typeof en, typeof zh] = [zh, en];
+
 // `options` is passed through so callers can interpolate, e.g. t("summary", { count }).
 export function useI18n(namespace?: string) {
   const { t } = useTranslation();

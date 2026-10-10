@@ -57,6 +57,7 @@ if [ "${TLS_BACKEND}" = "rustls" ]; then
   FULL_SUFFIX="-rustls-full"
 fi
 
+# PINGAP_VERSION=0.15.0 to install that release instead of the latest one.
 # PINGAP_SERVICE=1 to also install a systemd service. Linux with systemd only.
 INSTALL_SERVICE="${PINGAP_SERVICE:-0}"
 
@@ -88,8 +89,16 @@ as_root() {
   fi
 }
 
+# The tag of the latest release. With curl or with wget, like `fetch`: a
+# machine that has only wget got as far as here and was told the tag could
+# not be fetched.
 get_latest_release() {
-  curl --silent "https://api.github.com/repos/${REPO}/releases/latest" |
+  url="https://api.github.com/repos/${REPO}/releases/latest"
+  if has curl; then
+    curl --silent "${url}"
+  elif has wget; then
+    wget -q -O - "${url}"
+  fi |
     grep '"tag_name":' |
     sed -E 's/.*"([^"]+)".*/\1/'
 }
@@ -337,7 +346,17 @@ main() {
     warn "The Windows release job is currently disabled in publish.yml; the asset may not exist for the latest tag."
   fi
 
-  version="$(get_latest_release)"
+  # PINGAP_VERSION=0.15.0 (or v0.15.0) installs that release, to stay on
+  # one or to go back to it; the latest one otherwise.
+  version="${PINGAP_VERSION:-}"
+  if [ -n "${version}" ]; then
+    case "${version}" in
+      v*) ;;
+      *) version="v${version}" ;;
+    esac
+  else
+    version="$(get_latest_release)"
+  fi
   if [ -z "${version}" ]; then
     error "Failed to fetch latest release tag from GitHub API."
     exit 1

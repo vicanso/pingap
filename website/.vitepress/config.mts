@@ -25,6 +25,8 @@ function pluginSidebar(prefix: string, labels: {
         { text: "key_auth", link: `${prefix}/plugins/key_auth` },
         { text: "jwt", link: `${prefix}/plugins/jwt` },
         { text: "combined_auth", link: `${prefix}/plugins/combined_auth` },
+        { text: "hmac_auth", link: `${prefix}/plugins/hmac_auth` },
+        { text: "oidc", link: `${prefix}/plugins/oidc` },
         { text: "forward_auth", link: `${prefix}/plugins/forward_auth` },
         { text: "csrf", link: `${prefix}/plugins/csrf` },
       ],
@@ -37,6 +39,7 @@ function pluginSidebar(prefix: string, labels: {
         { text: "referer_restriction", link: `${prefix}/plugins/referer_restriction` },
         { text: "ua_restriction", link: `${prefix}/plugins/ua_restriction` },
         { text: "geo_restriction", link: `${prefix}/plugins/geo_restriction` },
+        { text: "uri_block", link: `${prefix}/plugins/uri_block` },
       ],
     },
     {
@@ -44,7 +47,9 @@ function pluginSidebar(prefix: string, labels: {
       collapsed: false,
       items: [
         { text: "limit", link: `${prefix}/plugins/limit` },
+        { text: "bandwidth_limit", link: `${prefix}/plugins/bandwidth_limit` },
         { text: "traffic_splitting", link: `${prefix}/plugins/traffic_splitting` },
+        { text: "mirror", link: `${prefix}/plugins/mirror` },
         { text: "cache", link: `${prefix}/plugins/cache` },
       ],
     },
@@ -56,10 +61,12 @@ function pluginSidebar(prefix: string, labels: {
         { text: "accept_encoding", link: `${prefix}/plugins/accept_encoding` },
         { text: "directory", link: `${prefix}/plugins/directory` },
         { text: "sub_filter", link: `${prefix}/plugins/sub_filter` },
+        { text: "request_headers", link: `${prefix}/plugins/request_headers` },
         { text: "response_headers", link: `${prefix}/plugins/response_headers` },
         { text: "cors", link: `${prefix}/plugins/cors` },
         { text: "redirect", link: `${prefix}/plugins/redirect` },
         { text: "image_optim", link: `${prefix}/plugins/image_optim` },
+        { text: "error_page", link: `${prefix}/plugins/error_page` },
       ],
     },
     {
@@ -67,6 +74,8 @@ function pluginSidebar(prefix: string, labels: {
       collapsed: false,
       items: [
         { text: "ping", link: `${prefix}/plugins/ping` },
+        { text: "health", link: `${prefix}/plugins/health` },
+        { text: "maintenance", link: `${prefix}/plugins/maintenance` },
         { text: "mock", link: `${prefix}/plugins/mock` },
         { text: "request_id", link: `${prefix}/plugins/request_id` },
         { text: "stats", link: `${prefix}/plugins/stats` },
