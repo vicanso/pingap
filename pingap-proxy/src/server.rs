@@ -465,8 +465,13 @@ fn classify_proxy_error(e: &pingora::Error) -> (u16, bool) {
                     _ => (502, false),
                 },
                 pingora::ErrorSource::Downstream => match e.etype() {
+                    // `H2Error` is what a write to a stream the client
+                    // has reset comes back with: over HTTP/2 that is the
+                    // client going away, where over HTTP/1.1 it is a
+                    // write error. It was a `500` at error level for
+                    // every download a browser cancelled.
                     ConnectionClosed | ReadError | WriteError
-                    | WriteTimedout => (499, true),
+                    | WriteTimedout | H2Error => (499, true),
                     ReadTimedout | ConnectTimedout => (408, false),
                     // The request itself is malformed - e.g. `Connection`
                     // nominating Host, which the upstream request policy
@@ -1633,6 +1638,17 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
+        // Counted before anything can refuse the request, so the totals
+        // cover requests that match no location, the admin endpoints,
+        // ACME challenges, the metrics endpoint itself and a request whose
+        // target is no path. `logging` takes every request off the gauge
+        // of those in flight again: one that was refused before it had
+        // been put there took the gauge down by one for good, and any
+        // client could send as many of those as it liked.
+        #[cfg(feature = "tracing")]
+        if let Some(prom) = &self.prometheus {
+            prom.on_request_start();
+        }
         // Before anything goes by the path: see `has_routable_target`.
         if !has_routable_target(session.req_header()) {
             return Err(new_internal_error(
@@ -1641,13 +1657,6 @@ impl ProxyHttp for Server {
             ));
         }
         pingap_core::merge_cookie_headers(session.req_header_mut());
-        // Counted before any routing, so the totals cover requests that
-        // match no location, the admin endpoints, ACME challenges and the
-        // metrics endpoint itself.
-        #[cfg(feature = "tracing")]
-        if let Some(prom) = &self.prometheus {
-            prom.on_request_start();
-        }
         if self.h1_pipelining {
             // Opt this HTTP/1.1 connection into sequential pipelining
             // (RFC 9112 §9.3.2). pingora keeps the flag across keep-alive
@@ -4774,6 +4783,44 @@ value = 'proxy_set_headers = ["name:value"]'
         );
     }
 
+    /// Every request that `logging` takes off the gauge of those in
+    /// flight was put on it. Regression: one whose target is no path was
+    /// refused before it was counted, so each of them took the gauge down
+    /// by one for good, and any client could send as many as it liked.
+    #[cfg(feature = "tracing")]
+    #[tokio::test]
+    async fn test_refused_target_leaves_the_gauge_where_it_was() {
+        let toml_data = TEST_TOML.replace(
+            "[servers.test]",
+            "[servers.test]\nprometheus_metrics = \"/metrics\"",
+        );
+        let server = new_server_from(&toml_data, None);
+        let in_flight = || {
+            let metrics =
+                server.prometheus.as_ref().unwrap().metrics().unwrap();
+            String::from_utf8_lossy(&metrics)
+                .lines()
+                .find(|line| {
+                    line.starts_with("pingap_http_requests_current")
+                        && line.contains("location=\"\"")
+                })
+                .and_then(|line| line.rsplit(' ').next().map(str::to_string))
+        };
+        for target in ["robots.txt", "/"] {
+            let input = format!("GET {target} HTTP/1.1\r\nHost: a\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result =
+                server.early_request_filter(&mut session, &mut ctx).await;
+            assert_eq!(target == "/", result.is_ok(), "{target}");
+            assert_eq!(Some("1".to_string()), in_flight(), "{target}");
+            server.logging(&mut session, None, &mut ctx).await;
+            assert_eq!(Some("0".to_string()), in_flight(), "{target}");
+        }
+    }
+
     /// Regression: a target without a slash in front was routed and
     /// cached as `/` and sent to the upstream as it came.
     #[tokio::test]
@@ -5512,6 +5559,7 @@ addr = "127.0.0.1:6188"
         assert_eq!((499, true), classify_proxy_error(&down(ReadError)));
         assert_eq!((499, true), classify_proxy_error(&down(WriteError)));
         assert_eq!((499, true), classify_proxy_error(&down(WriteTimedout)));
+        assert_eq!((499, true), classify_proxy_error(&down(H2Error)));
         assert_eq!((408, false), classify_proxy_error(&down(ReadTimedout)));
         assert_eq!(
             (400, false),

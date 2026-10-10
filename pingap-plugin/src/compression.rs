@@ -467,16 +467,16 @@ impl Plugin for Compression {
     }
 
     /// In the default mode pingora compresses what a plugin answers with
-    /// as well - the files of `directory` above all - so `types` and
-    /// `min_length` have to be asked about those too, or the fonts and
-    /// documents of a static site are compressed with a list that names
-    /// only text. All `handle_response` does in that mode is switch the
-    /// compression off.
+    /// as well - the files of `directory` above all - so what is left out
+    /// has to be asked about those too: `types` and `min_length`, or the
+    /// fonts and documents of a static site are compressed with a list
+    /// that names only text, and a part of a file (a `206`), which
+    /// `directory` answers a range request with whatever the lists say.
+    /// All `handle_response` does in that mode is switch the compression
+    /// off.
     #[inline]
     fn handles_plugin_response(&self) -> bool {
-        !self.upstream_mode
-            && self.support_compression
-            && (self.types.is_some() || self.min_length > 0)
+        !self.upstream_mode && self.support_compression
     }
 
     /// Processes incoming HTTP requests to configure response compression
@@ -650,6 +650,18 @@ impl Plugin for Compression {
         {
             return Ok(ResponsePluginResult::Unchanged);
         }
+        // A plugin of the response step reads this body: the token `jwt`
+        // signs at its `auth_path`, what `sub_filter` rewrites. This runs
+        // ahead of all of them, wherever it stands in the list, and a
+        // body it has coded is opaque to them: no token was issued, and
+        // nothing was rewritten for a client that takes a coding. The
+        // response goes on plain; the cache keeps it under the key of the
+        // coding all the same, for clients that take it plain as well.
+        if ctx.response_body_stays_plain(|types| {
+            matches_types(types, &upstream_response.headers)
+        }) {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
         // The configured types where there are some, the fixed list
         // where there are none.
         let compressible = match &self.types {
@@ -724,11 +736,30 @@ impl Plugin for Compression {
         _ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
+        // A part of a compressed body is nothing that can be decompressed:
+        // in either mode, and for a plugin that has no level of its own.
+        if self.decompression.unwrap_or_default()
+            && is_partial_content(upstream_response)
+            && let Some(c) = session
+                .downstream_modules_ctx
+                .get_mut::<ResponseCompression>()
+            && c.is_header_phase()
+        {
+            c.adjust_decompression(false);
+        }
         if !self.upstream_mode {
             // `adjust_level` panics once the module has gone on to the
             // body, so it is only called while it is still at the header.
             let headers = &upstream_response.headers;
-            let left_out = must_not_transform(headers)
+            // A part of a body is no body to code: pingora has no rule
+            // for it, and compressed the hundred bytes a range request
+            // asked for under a `Content-Range` that still counted in the
+            // bytes of the original - from an upstream, from the cache
+            // (where pingora cuts the range out itself) and from
+            // `directory` alike.
+            let partial = is_partial_content(upstream_response);
+            let left_out = partial
+                || must_not_transform(headers)
                 || self
                     .types
                     .as_ref()
@@ -966,12 +997,13 @@ zstd_level = 6
         );
         assert_eq!(512, compression.min_length);
         assert_eq!(true, compression.skip.is_some());
-        // The responses of other plugins are looked at only in the default
-        // mode, and only with a rule that is about the response.
+        // The responses of other plugins are looked at in the default
+        // mode, where pingora compresses them like any other: for the
+        // rules that are about the response, and for a part of a file.
         assert_eq!(true, compression.handles_plugin_response());
         for (conf, asks) in [
-            ("gzip_level = 6", false),
-            ("gzip_level = 6\nskip = \"^/download/\"", false),
+            ("gzip_level = 6", true),
+            ("gzip_level = 6\nskip = \"^/download/\"", true),
             ("gzip_level = 6\nmin_length = 512", true),
             ("gzip_level = 6\ntypes = [\"text/\"]", true),
             ("types = [\"text/\"]", false),
@@ -1255,6 +1287,91 @@ zstd_level = 6
                 "{target} {content_type} {content_length:?}"
             );
         }
+    }
+
+    /// A part of a body is left as it is in the default mode too.
+    /// Regression: pingora has no rule for a `206`, and the hundred bytes
+    /// a range request asked for came back as the gzip of those bytes,
+    /// under a `Content-Range` that still counted in the bytes of the
+    /// original - from an upstream, from the cache, and from `directory`,
+    /// whose answers this plugin only looked at with `types` or
+    /// `min_length` set.
+    #[tokio::test]
+    async fn test_response_mode_leaves_partial_content() {
+        let plain = new_compression("gzip_level = 6");
+        assert_eq!(true, plain.handles_plugin_response());
+        let enabled = async |status: u16, content_range: Option<&str>| {
+            let mut session = new_module_session(
+                "GET /app.js HTTP/1.1\r\nRange: bytes=0-99\r\nAccept-Encoding: gzip\r\n\r\n",
+            )
+            .await;
+            let mut ctx = Ctx::default();
+            plain
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            let mut resp = response("application/javascript", Some(100));
+            resp.set_status(status).unwrap();
+            if let Some(value) = content_range {
+                resp.insert_header("Content-Range", value).unwrap();
+            }
+            plain
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap();
+            module_enabled(&session)
+        };
+        assert_eq!(true, enabled(200, None).await);
+        assert_eq!(false, enabled(206, Some("bytes 0-99/4200")).await);
+        assert_eq!(false, enabled(206, None).await);
+        assert_eq!(false, enabled(200, Some("bytes 0-99/4200")).await);
+    }
+
+    /// Upstream mode leaves a body alone that a plugin of the response
+    /// step has said it reads. Regression: it codes the body as it comes
+    /// from the upstream, ahead of every such plugin whatever the order
+    /// in the list: the token `jwt` was to sign at its `auth_path` was a
+    /// 502 for every client that takes a coding, and `sub_filter`
+    /// rewrote nothing for them.
+    #[tokio::test]
+    async fn test_upstream_mode_leaves_a_body_a_plugin_reads() {
+        let compression =
+            new_compression("mode = \"upstream\"\ngzip_level = 6");
+        let coded = async |plain_wanted: Option<Option<&[String]>>| {
+            let mut session = new_session(
+                "GET /login HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+            )
+            .await;
+            let mut ctx = Ctx::default();
+            compression
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            if let Some(types) = plain_wanted {
+                ctx.keep_response_body_plain(types);
+            }
+            let mut resp = response("application/json", Some(4096));
+            compression
+                .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+                .unwrap();
+            resp.headers.contains_key(CONTENT_ENCODING)
+        };
+        assert_eq!(true, coded(None).await);
+        assert_eq!(false, coded(Some(None)).await);
+        // A plugin that reads bodies of some types leaves the others to
+        // be coded as before.
+        let html = ["text/html".to_string()];
+        let json = ["application/".to_string()];
+        assert_eq!(true, coded(Some(Some(&html))).await);
+        assert_eq!(false, coded(Some(Some(&json))).await);
     }
 
     /// Upstream mode compresses only responses that have a body, and adds

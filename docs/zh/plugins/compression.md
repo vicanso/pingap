@@ -84,14 +84,15 @@ skip = "^/download/"
 
 下游模式的列表只能收窄 pingora 的规则：把 `image/png` 写进去并不会让 pingora 压缩它。它的用处在于那条规则里范围很宽的 `application/*` 和 `font/*`：其中有本来就压缩过的格式（`font/woff2`、`application/pdf`、预压缩的 `application/wasm`），也有不值得花 CPU 的内容（`application/octet-stream` 的下载）。
 
-下游模式下，`types` 和 `min_length` 对其他插件直接返回的响应同样生效，主要是 [`directory`](directory.md) 的文件：pingora 对它们和其他响应一样压缩，除非用列表限定。
+下游模式下，`types` 和 `min_length` 对其他插件直接返回的响应同样生效，主要是 [`directory`](directory.md) 的文件：pingora 对它们和其他响应一样压缩，除非用列表限定。下面“响应体的一部分”那条规则同样适用于这些响应。
 
 此前 `min_length` 只在上游模式下读取。默认模式的配置里如果已经带了这个键，从这个版本起会生效。
 
 ## 不会被压缩的响应
 
-两种模式下，以下两类响应都按上游发来的样子原样转发：
+两种模式下，以下几类响应都原样转发：
 
+- 响应体的一部分：`206` 或带 `Content-Range` 的响应，不管它来自上游、是从缓存的响应里切出来的，还是 [`directory`](directory.md) 对范围请求的回答。压缩之后，范围请求要的 100 个字节会变成这 100 个字节的 gzip，而 `Content-Range` 仍按原始字节计数。下游模式在这个版本之前会这样做；`decompression` 同样不处理这类响应，因为压缩数据的一段解不出来。
 - `Content-Type: text/event-stream`。压缩器只在缓冲区写满或响应体结束时才输出，事件流里的事件每条只有几个字节、随产生随发送，压缩后会在流关闭时一起到达客户端。
 - 带 `Cache-Control: no-transform` 的响应，它禁止改变内容编码（RFC 9111 5.2.2.6）。在下游模式下这也包括 `decompression`：上游已压缩的响应原样转发，不解压。上游用其他格式做流式输出（按行分隔的 JSON、分块的 AI 补全）时，可以加上这个头，让分块在开启了压缩的 location 上照常流出。
 
@@ -100,7 +101,7 @@ skip = "^/download/"
 仅当**全部**满足时压缩：
 
 1. 有响应体：HEAD 应答、`1xx`、`204` 与 `304` 不处理，否则即便什么都不编码也会输出格式的头尾。
-2. 尚无 `Content-Encoding`，且不属于上面两类响应。也不是响应体的一部分：`206` 或带 `Content-Range` 的响应原样透传。以前范围请求要的 100 个字节会被压缩后返回，而 `Content-Range` 仍按原始字节计数。
+2. 尚无 `Content-Encoding`，且不属于上面两类响应。它的响应体也不是同一 location 上某个插件在回程时要读的内容：[`jwt`](jwt.md) 在 `auth_path` 上要签名的声明，以及 [`sub_filter`](sub_filter.md) 在它生效的路径上要改写的内容。上游模式在响应体到达时就压缩，早于所有 response 步骤的插件，和两者在列表里的顺序无关；压缩之后的内容这些插件读不了——对所有接受压缩的客户端，令牌签发返回 `502`，内容也不会被改写。现在这类响应不压缩；需要“先改写再压缩”的 location 请用默认模式，它在改写之后压缩。
 3. `Content-Type` 可压缩：配置了 `types` 时是其中之一，否则是 `application/json`、`application/xml`、`text/html`，或任意 `text/*`。
 4. 客户端接受已启用算法之一，且请求没有被 `skip` 排除。
 5. `min_length` 为 `0`，或存在 `Content-Length` 且至少为 `min_length`。无 `Content-Length` 的响应总会被压缩。

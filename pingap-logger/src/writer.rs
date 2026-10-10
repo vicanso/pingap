@@ -425,8 +425,8 @@ fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, LogFiles)> {
 pub fn logger_try_init(
     params: LoggerParams,
 ) -> Result<(LoggerReloadHandle, Option<LogFiles>)> {
-    let level = if params.level.is_empty() {
-        std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
+    let level = if params.level.trim().is_empty() {
+        crate::default_log_level()
     } else {
         params.level.clone()
     };

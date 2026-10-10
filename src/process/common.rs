@@ -104,12 +104,19 @@ impl RestartProcessCommand {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.exec_path);
         command
-            .env("RUST_LOG", &self.log_level)
             .env(READY_SOCK_ENV, &self.ready_sock)
             .args(&self.args)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+        // What this process was started with, where it was started with
+        // one. Set to nothing for a process that had none, the replacement
+        // took the empty value for a level and logged errors only: after
+        // the first restart the application log was all but silent, the
+        // access log lines that go to it included.
+        if !self.log_level.trim().is_empty() {
+            command.env("RUST_LOG", &self.log_level);
+        }
         // A directory that is gone by now cannot be started in; the
         // replacement then starts where this process is, as before.
         if let Some(dir) = self.current_dir.as_ref().filter(|dir| dir.is_dir())
@@ -545,6 +552,23 @@ mod tests {
     /// from there.
     #[test]
     fn test_replacement_starts_in_the_original_directory() {
+        // And with the `RUST_LOG` this process had, or none: an empty one
+        // is a level to the replacement, the one that logs errors only.
+        let rust_log = |log_level: &str| {
+            RestartProcessCommand {
+                exec_path: PathBuf::from("pwd"),
+                log_level: log_level.to_string(),
+                ..Default::default()
+            }
+            .command()
+            .get_envs()
+            .find(|(name, _)| *name == "RUST_LOG")
+            .map(|(_, value)| value.map(|value| value.to_os_string()))
+        };
+        assert_eq!(None, rust_log(""));
+        assert_eq!(None, rust_log(" "));
+        assert_eq!(Some(Some("debug".into())), rust_log("debug"));
+
         let dir = tempfile::tempdir().unwrap();
         let started_in = |current_dir: Option<PathBuf>| {
             let output = RestartProcessCommand {

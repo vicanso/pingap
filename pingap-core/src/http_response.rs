@@ -160,6 +160,19 @@ pub struct HttpResponse {
     pub headers: Option<Vec<HttpHeader>>,
 }
 
+/// The failure to write a response as what it is: the client's side of
+/// the connection.
+///
+/// pingora names the source of an error on the path of a proxied response
+/// and leaves it unset on these writes, which a plugin or the proxy itself
+/// answers with. Unset, a client that went away while a file was sent to
+/// it counted as a failure of the proxy: a `500` in the access log and
+/// the metrics, and a line at error level for every download that was
+/// cancelled, where the same on a proxied response is a `499`.
+fn to_client<T>(result: pingora::Result<T>) -> pingora::Result<T> {
+    result.map_err(|e| e.into_down())
+}
+
 impl HttpResponse {
     /// Returns a new `HttpResponseBuilder` to start building a response.
     pub fn builder(status: StatusCode) -> HttpResponseBuilder {
@@ -326,21 +339,21 @@ impl HttpResponse {
         if session.req_header().method == http::Method::HEAD
             || has_no_body(self.status)
         {
-            session
-                .write_response_header(Box::new(header), true)
-                .await?;
-            session.finish_body().await?;
+            to_client(
+                session.write_response_header(Box::new(header), true).await,
+            )?;
+            to_client(session.finish_body().await)?;
             return Ok(0);
         }
         let size = self.body.len();
         // Write the header to the session.
-        session
-            .write_response_header(Box::new(header), false)
-            .await?;
+        to_client(
+            session.write_response_header(Box::new(header), false).await,
+        )?;
         // Write the body to the session. `end_stream` is true because this is the final body part.
-        session.write_response_body(Some(self.body), true).await?;
+        to_client(session.write_response_body(Some(self.body), true).await)?;
         // Finalize the response stream.
-        session.finish_body().await?;
+        to_client(session.finish_body().await)?;
         Ok(size)
     }
 }
@@ -495,9 +508,9 @@ where
         header: ResponseHeader,
     ) -> pingora::Result<usize> {
         // `end_stream` is false because a body will follow.
-        session
-            .write_response_header(Box::new(header), false)
-            .await?;
+        to_client(
+            session.write_response_header(Box::new(header), false).await,
+        )?;
 
         let mut sent = 0;
         let mut buffer = BytesMut::with_capacity(self.chunk_size.max(512));
@@ -508,9 +521,11 @@ where
             let len = chunk.len();
             sent += len;
             pending = self.next_chunk(&mut buffer).await?;
-            session
-                .write_response_body(Some(chunk), pending.is_none())
-                .await?;
+            to_client(
+                session
+                    .write_response_body(Some(chunk), pending.is_none())
+                    .await,
+            )?;
             // Not after the last chunk: there is nothing left to hold
             // back.
             if pending.is_some()
@@ -521,7 +536,7 @@ where
             }
         }
         // Finalize the response stream.
-        session.finish_body().await?;
+        to_client(session.finish_body().await)?;
 
         Ok(sent)
     }
@@ -779,6 +794,49 @@ mod tests {
         .new_response_header()
         .unwrap();
         assert_eq!("12", header.headers.get(header::CONTENT_LENGTH).unwrap());
+    }
+
+    /// A response that cannot be written is the client's side failing,
+    /// and says so. Regression: pingora leaves the source of such an error
+    /// unset here, and unset it counted as a failure of the proxy - a
+    /// `500` and a line at error level for every download a client
+    /// cancelled, where the same on a proxied response is a `499`.
+    #[tokio::test]
+    async fn test_a_failed_write_is_the_clients() {
+        let gone = async || {
+            let (mut client, server) = tokio::io::duplex(1024);
+            tokio::io::AsyncWriteExt::write_all(
+                &mut client,
+                b"GET / HTTP/1.1\r\n\r\n",
+            )
+            .await
+            .unwrap();
+            let mut session = Session::new_h1(Box::new(server));
+            session.read_request().await.unwrap();
+            // the client goes away with its request unanswered
+            drop(client);
+            session
+        };
+        let body = vec![b'x'; 256 * 1024];
+
+        let mut session = gone().await;
+        let error = HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from(body.clone()),
+            ..Default::default()
+        }
+        .send(&mut session)
+        .await
+        .expect_err("nobody is there to be written to");
+        assert_eq!(&pingora::ErrorSource::Downstream, error.esource());
+
+        let mut session = gone().await;
+        let mut reader = std::io::Cursor::new(body);
+        let error = HttpChunkResponse::new(&mut reader)
+            .send(&mut session)
+            .await
+            .expect_err("nobody is there to be written to");
+        assert_eq!(&pingora::ErrorSource::Downstream, error.esource());
     }
 
     /// Regression: the body of an answer to a HEAD, or of a 204 or a 304,

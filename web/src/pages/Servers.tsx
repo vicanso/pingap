@@ -580,8 +580,17 @@ export default function Servers() {
           if (name === newServer) {
             name = value["name"] as string;
           }
-          omitEmptyArrayString(value);
-          await update("server", name, value);
+          // The form only carries the fields it shows, and the server replaces
+          // the whole entry with what it receives. Start from the loaded entry
+          // so fields the form has no item for survive a save. Merged before
+          // empty values are dropped, so a field cleared in the form is still
+          // removed.
+          const data = {
+            ...(config.servers || {})[currentServer],
+            ...value,
+          };
+          omitEmptyArrayString(data);
+          await update("server", name, data);
           handleSelectServer(name);
         }}
       />

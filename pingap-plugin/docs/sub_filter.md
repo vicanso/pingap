@@ -103,8 +103,12 @@ becomes a weak one (`W/"v1"`): both described the body the upstream sent.
   `path` that leaves it out.
 - Compressed upstream responses are skipped, not rewritten: if the upstream
   returns gzip, the filters would never match. Either ask the upstream not to
-  compress, or compress in Pingap with [`compression`](compression.md) after
-  this plugin.
+  compress, or compress in Pingap with [`compression`](compression.md) in its
+  default mode, which compresses after the rewrite. With `mode = "upstream"`
+  the responses this plugin applies to (by its `path`) are not compressed at
+  all: that mode codes a body before any plugin of the response step sees it,
+  whatever their order in the list, and used to leave nothing here to rewrite
+  for a client that takes a coding.
 - A rule that fails to parse is a startup error, so `pingap -t` catches quoting
   mistakes. A text in single quotes can not contain a single quote, and one in
   double quotes no double quote; there is no escaping.

@@ -113,14 +113,24 @@ downloads).
 
 In downstream mode `types` and `min_length` also cover what another plugin
 answers with, the files of [`directory`](directory.md) above all: pingora
-compresses those like any other response unless a list says otherwise.
+compresses those like any other response unless a list says otherwise. So does
+the rule for a part of a body below.
 
 Until now `min_length` was read in upstream mode only. A configuration of the
 default mode that carries the key anyway has it applied from this version on.
 
 ## Responses that are never compressed
 
-In both modes two kinds of response are passed on as the upstream sent them:
+In both modes these responses are passed on as they came:
+
+- A part of a body: a `206`, or anything with a `Content-Range`, whether it
+  comes from the upstream, is cut out of a cached response, or is what
+  [`directory`](directory.md) answers a range request with. Compressed, the
+  hundred bytes a range request asked for came back as the gzip of those
+  bytes, under a `Content-Range` that still counted in the bytes of the
+  original. Downstream mode did that until this version; `decompression`
+  leaves such a response alone as well, since a part of a compressed body
+  cannot be decompressed.
 
 - `Content-Type: text/event-stream`. A compressor hands its output over when
   its buffer is full or the body ends, so the events of a stream — a few bytes
@@ -139,10 +149,15 @@ The response is compressed only when **all** of these hold:
 1. It has a body: HEAD answers, `1xx`, `204` and `304` are left alone, since
    encoding nothing would still emit the format's header and footer.
 2. It has no `Content-Encoding` yet, and is not one of the responses above.
-   Nor is it a part of a body: a `206`, or anything with a `Content-Range`,
-   is passed on as it is. Compressed, the hundred bytes a range request asked
-   for came back as the gzip of those bytes, under a `Content-Range` that
-   still counted in the bytes of the original.
+   Nor is its body one that a plugin of the location reads on the way out:
+   the claims [`jwt`](jwt.md) signs at its `auth_path`, and what
+   [`sub_filter`](sub_filter.md) rewrites on the paths it applies to. Upstream
+   mode codes a body as it arrives, ahead of every plugin of the response step
+   wherever the two stand in the list, and a coded body is opaque to them: the
+   token was a `502` for every client that takes a coding, and nothing was
+   rewritten for those clients. Such a response now goes on uncompressed; use
+   the default mode on a location where rewritten pages are to be compressed,
+   which compresses after the rewrite.
 3. It has a `Content-Type` that is compressible: one of `types` when that is
    set, otherwise `application/json`, `application/xml`, `text/html`, or any
    `text/*`.

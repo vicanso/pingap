@@ -14,7 +14,7 @@ IP-restricted `PURGE` method.
 | `category` | string | — | Must be `cache`. |
 | `directory` | string | memory | Empty or `memory://…` selects the memory backend; any other value is a file cache directory. |
 | `namespace` | string | — | Isolates entries; with a file backend it becomes a subdirectory. |
-| `headers` | string[] | — | Request headers appended to the cache key (variant caching). Each header has its place in the key, kept when the request does not carry it; a `:` inside a value is written `%3A` so that it cannot be taken for the border between two of them. |
+| `headers` | string[] | — | Request headers appended to the cache key (variant caching). Each header has its place in the key, kept when the request does not carry it; a `:` inside a value is written `%3A` so that it cannot be taken for the border between two of them. The values are read when the key is made, once every request plugin has run, see [Headers in the key](#headers-in-the-key). |
 | `vary_headers` | string[] | — | Allow list for the origin's `Vary` response header: only these request headers may create cache variants. Unset honours every header the origin names. |
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
@@ -151,6 +151,12 @@ bypass_headers = ["X-Preview"]
   Without either option the key and the request are as they came, as before;
   setting one changes the keys, and what is cached under the old ones is
   fetched again once.
+- A request that asks for another protocol on its connection (it has an
+  `Upgrade` header: a WebSocket handshake) is neither answered from the cache
+  nor stored. Its key would be the one of a plain `GET` of the same path, and
+  with the answer to that one kept, every handshake got it. The header is the
+  client's to send, so it is also a way past the cache that `query_allow` and
+  `ignore_query` do not close: a handshake has to reach the upstream.
 - A request with one of `bypass_headers` or `bypass_cookies` is somebody's
   own - a logged in session, a preview - and the cache is not asked: it goes
   to the upstream and what it gets is not kept. A cookie is found by its exact
@@ -166,6 +172,27 @@ bypass_headers = ["X-Preview"]
   for a response that has expired and would be served while it is refreshed
   (`stale-while-revalidate`) as well, and such a client gets an error rather
   than the stored copy when the origin can not be reached.
+
+
+## Headers in the key
+
+`headers` names request headers a response depends on. Their values are read
+when the cache key is made, which is after every request plugin of the
+location has run, wherever the cache stands in the list - the same moment the
+query of the key is settled. A header that another plugin sets is therefore in
+the key: the claim [`jwt`](jwt.md) passes on with `claims_to_headers`, what
+[`request_headers`](request_headers.md) writes.
+
+Until this version they were read when the cache plugin ran. With the cache
+listed before the plugin that sets the header, the key had no user in it - or
+whatever the client itself had sent under that name - and the page of one user
+was served to the next.
+
+The key has what the upstream is asked with: every line of the header, and
+nothing of one a plugin has taken away by then (a credential that is hidden
+from the upstream, which cannot answer by it either). A request whose headers
+no plugin touches has the key it always had. A `PURGE` names a variant by
+sending the headers itself, with the values the upstream would be given.
 
 ## Who may purge
 

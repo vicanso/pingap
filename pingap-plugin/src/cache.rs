@@ -16,7 +16,6 @@ use super::{
     Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
-use bstr::ByteSlice;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use fancy_regex::Regex;
@@ -90,7 +89,7 @@ pub struct Cache {
     namespace: Option<String>,
     // Optional list of headers to include when generating cache keys
     // Allows for variant caching (e.g., different versions based on Accept-Encoding)
-    headers: Option<Vec<String>>,
+    headers: Option<Arc<Vec<String>>>,
     // Optional allow list for the origin's `Vary` header: only these request
     // headers may create cache variants. None honours everything it names.
     vary_headers: Option<Arc<Vec<String>>>,
@@ -232,18 +231,6 @@ fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
     PREDICTOR.get_or_init(|| Predictor::new(128, None))
 }
 
-/// The value of a header as one component of the cache key. The
-/// components are joined with `:`, so one inside a value is written
-/// `%3A` (and `%` as `%25`): `Origin: https://a.com` with nothing after it
-/// and `Origin: https` followed by `//a.com:` were one key, and whoever
-/// sent the second chose the response the first was given.
-fn key_slot(value: &str) -> String {
-    if !value.contains([':', '%']) {
-        return value.to_string();
-    }
-    value.replace('%', "%25").replace(':', "%3A")
-}
-
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
 
@@ -333,7 +320,7 @@ impl TryFrom<&PluginConf> for Cache {
         let headers = if headers.is_empty() {
             None
         } else {
-            Some(headers)
+            Some(Arc::new(headers))
         };
         let vary_headers = get_str_slice_conf(value, "vary_headers");
         let vary_headers = if vary_headers.is_empty() {
@@ -644,6 +631,17 @@ impl Plugin for Cache {
             return Ok(RequestPluginResult::Skipped);
         }
 
+        // A request that asks for another protocol on its connection (a
+        // WebSocket handshake) is for the upstream to answer. The key is
+        // the method and the url, which a plain `GET` of the same path
+        // has too: with the answer to that one kept - a `404`, a page
+        // that says to come back with a handshake - every handshake was
+        // answered with it for as long as it stayed, and whoever could
+        // send the plain request could keep it there.
+        if !is_purge && req_header.headers.contains_key(http::header::UPGRADE) {
+            return Ok(RequestPluginResult::Skipped);
+        }
+
         // A request that carries one of these is somebody's own: a
         // session cookie, a preview header. It is not answered with what
         // is cached and what it gets is not kept. A purge is about the
@@ -658,8 +656,6 @@ impl Plugin for Cache {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        // Build cache key components including configured headers
-        let mut keys = Vec::with_capacity(4);
         {
             // The rule the key takes its query by, in place of the query
             // as it came; a purge names the url the same way. The proxy
@@ -671,24 +667,14 @@ impl Plugin for Cache {
             let cache_info = ctx.cache.get_or_insert_default();
             cache_info.namespace = self.namespace.clone();
             cache_info.query_rule = self.query_rule.clone();
-        }
-        if let Some(headers) = &self.headers {
-            // One slot per configured header, kept for a header the
-            // request does not have: with the empty ones left out, `X-A: 1`
-            // alone and `X-B: 1` alone gave the same key. A request with
-            // none of them adds nothing, as before.
-            keys.extend(headers.iter().map(|key| {
-                key_slot(&session.get_header_bytes(key).to_str_lossy())
-            }));
-            if keys.iter().all(|value| value.is_empty()) {
-                keys.clear();
-            }
-        }
-        if !keys.is_empty() {
-            ctx.extend_cache_keys(keys);
-            if let Some(cache_info) = &ctx.cache {
-                debug!("Cache keys: {:?}", cache_info.keys);
-            }
+            // The headers the key is made of: one component for each,
+            // kept for a header the request does not have (with the
+            // empty ones left out, `X-A: 1` alone and `X-B: 1` alone gave
+            // the same key), and none for a request with none of them.
+            // What they hold is read when the key is made, like the
+            // query: a plugin after this one has set its header by then,
+            // see `CacheInfo::header_key_components`.
+            cache_info.key_headers.clone_from(&self.headers);
         }
 
         // Handle PURGE requests with IP-based access control
@@ -815,6 +801,7 @@ mod tests {
     use super::*;
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep};
+    use pingora::http::RequestHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -902,8 +889,83 @@ vary_headers = ["Accept-Encoding", " accept "]
                 .unwrap(),
         )
         .unwrap();
-        let key_of = async |headers: &str| {
-            let input = format!("GET /a HTTP/1.1\r\n{headers}\r\n");
+        // What the key has in front of the method and the url, for a
+        // request with `headers`, to which a plugin after the cache then
+        // does `later`.
+        let key_with =
+            async |headers: &str, later: &dyn Fn(&mut RequestHeader)| {
+                let input = format!("GET /a HTTP/1.1\r\n{headers}\r\n");
+                let mock_io = Builder::new().read(input.as_bytes()).build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                let mut ctx = Ctx::default();
+                cache
+                    .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                    .await
+                    .unwrap();
+                later(session.req_header_mut());
+                let key = get_cache_key(&ctx, "GET", session.req_header());
+                key.primary_key_str()
+                    .unwrap_or_default()
+                    .strip_suffix("GET:/a")
+                    .unwrap()
+                    .to_string()
+            };
+        let key_of = async |headers: &str| key_with(headers, &|_| {}).await;
+        assert_eq!("1::", key_of("X-A: 1\r\n").await);
+        assert_eq!(":1:", key_of("X-B: 1\r\n").await);
+        assert_eq!("1:2:", key_of("X-A: 1\r\nX-B: 2\r\n").await);
+        // None of them: nothing is added, as before.
+        assert_eq!("", key_of("").await);
+        // A `:` in a value cannot move the border between two of them.
+        let split = key_of("X-A: https://a.com\r\n").await;
+        let shifted = key_of("X-A: https\r\nX-B: //a.com:\r\n").await;
+        assert_eq!("https%3A//a.com::", split);
+        assert_eq!("https://a.com%3A:", shifted);
+        assert_eq!("50%25::", key_of("X-A: 50%\r\n").await);
+
+        // Regression: the headers were read when the cache plugin ran. One
+        // that a plugin listed after it sets - `jwt` passing a claim on -
+        // was not in the key, and the page of one user was the next
+        // one's. They are read when the key is made.
+        let set = |value: &'static str| {
+            move |header: &mut RequestHeader| {
+                header.insert_header("X-A", value).unwrap();
+            }
+        };
+        let alice = key_with("", &set("alice")).await;
+        let bob = key_with("", &set("bob")).await;
+        assert_eq!("alice::", alice);
+        assert_ne!(alice, bob);
+        // What the client itself sent under the name does not stand in
+        // for what the plugin put there: the key is of what the upstream
+        // is asked with.
+        assert_eq!("alice::", key_with("X-A: bob\r\n", &set("alice")).await);
+        // And a purge that names the variant by sending the header finds
+        // the entry such a request made.
+        assert_eq!(alice, key_of("X-A: alice\r\n").await);
+        // Every line of a header, as the upstream gets them.
+        let append = |header: &mut RequestHeader| {
+            header.append_header("X-A", "more").unwrap();
+        };
+        assert_eq!("one, more::", key_with("X-A: one\r\n", &append).await);
+        assert_eq!("one, two::", key_of("X-A: one\r\nX-A: two\r\n").await);
+    }
+
+    /// A request that asks for another protocol on its connection is not
+    /// answered from the cache and what it gets is not kept. Regression:
+    /// the key of a WebSocket handshake is the one of a plain `GET` of
+    /// its path, and with the answer to that one kept every handshake
+    /// got it.
+    #[tokio::test]
+    async fn test_cache_leaves_upgrade_requests() {
+        let cache = Cache::try_from(&toml::from_str::<PluginConf>("").unwrap())
+            .unwrap();
+        for (headers, cached) in [
+            ("", true),
+            ("Connection: Upgrade\r\nUpgrade: websocket\r\n", false),
+        ] {
+            let input = format!("GET /cable HTTP/1.1\r\n{headers}\r\n");
             let mock_io = Builder::new().read(input.as_bytes()).build();
             let mut session = Session::new_h1(Box::new(mock_io));
             session.read_request().await.unwrap();
@@ -912,24 +974,8 @@ vary_headers = ["Accept-Encoding", " accept "]
                 .handle_request(PluginStep::Request, &mut session, &mut ctx)
                 .await
                 .unwrap();
-            ctx.cache
-                .and_then(|info| info.keys)
-                .map(|keys| keys.join(":"))
-        };
-        assert_eq!(Some("1:".to_string()), key_of("X-A: 1\r\n").await);
-        assert_eq!(Some(":1".to_string()), key_of("X-B: 1\r\n").await);
-        assert_eq!(
-            Some("1:2".to_string()),
-            key_of("X-A: 1\r\nX-B: 2\r\n").await
-        );
-        // None of them: nothing is added, as before.
-        assert_eq!(None, key_of("").await);
-        // A `:` in a value cannot move the border between two of them.
-        let split = key_of("X-A: https://a.com\r\n").await;
-        let shifted = key_of("X-A: https\r\nX-B: //a.com:\r\n").await;
-        assert_eq!(Some("https%3A//a.com:".to_string()), split);
-        assert_eq!(Some("https://a.com%3A".to_string()), shifted);
-        assert_eq!(Some("50%25:".to_string()), key_of("X-A: 50%\r\n").await);
+            assert_eq!(cached, session.cache.enabled(), "{headers}");
+        }
     }
 
     #[test]
@@ -1343,8 +1389,8 @@ max_ttl = "1m"
             ctx.cache.as_ref().unwrap().namespace.as_ref().unwrap()
         );
         assert_eq!(
-            "gzip",
-            ctx.cache.as_ref().unwrap().keys.as_ref().unwrap().join(":")
+            Some("pingapgzip:GET:/vicanso/pingap?size=1"),
+            get_cache_key(&ctx, "GET", session.req_header()).primary_key_str()
         );
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);

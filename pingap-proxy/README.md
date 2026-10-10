@@ -291,7 +291,11 @@ server:
 `499` is nginx's code for a client that went away. It is recorded for the
 access log and the metrics, but nothing is written to a connection that is dead
 or stuck, and the event is logged at `info` rather than `error` because there
-is nothing to fix on this side. Once a final response header has gone out, a
+is nothing to fix on this side. That holds for a response a plugin writes
+itself as well - a client that cancels a download from
+[`directory`](../pingap-plugin/docs/directory.md) - and for a client that
+resets its stream over HTTP/2: both used to be logged at error level as a
+failure of the proxy (`fail to proxy`, `500`). Once a final response header has gone out, a
 later failure (an upstream dropping mid-body, say) keeps the status the client
 saw and appends nothing to the body, the same rule pingora's own error response
 follows.

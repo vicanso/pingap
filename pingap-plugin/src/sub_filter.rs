@@ -347,7 +347,7 @@ impl Plugin for SubFilter {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != PluginStep::Request {
             return Ok(RequestPluginResult::Skipped);
@@ -357,6 +357,13 @@ impl Plugin for SubFilter {
         {
             return Ok(RequestPluginResult::Skipped);
         }
+        // The rules are for the text of the body: `compression` in its
+        // upstream mode is not to code it before they have seen it. It
+        // did, wherever the two stood in the list, and nothing was
+        // rewritten for a client that takes a coding. Of the types the
+        // rules are for, where they are for some: the rest of a site is
+        // compressed as before.
+        ctx.keep_response_body_plain(self.types.as_deref());
         let header = session.req_header_mut();
         if header.headers.contains_key(http::header::RANGE) {
             header.remove_header(&http::header::RANGE);
@@ -800,6 +807,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ResponsePluginResult::Unchanged, result);
+    }
+
+    /// Where the rules apply, the body is asked for as the upstream
+    /// sends it. Regression: `compression` in its upstream mode codes a
+    /// body ahead of every plugin of the response step, wherever the two
+    /// stand in the list, and nothing was rewritten for a client that
+    /// takes a coding.
+    #[tokio::test]
+    async fn test_sub_filter_asks_for_a_plain_body() {
+        let plain = async |plugin: &SubFilter, path: &str| {
+            let mut session =
+                new_session(&format!("GET {path} HTTP/1.1\r\n\r\n")).await;
+            let mut ctx = Ctx::default();
+            plugin
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            // for a response of the type `text/html`, and for another
+            let html = ["text/html".to_string()];
+            let of = |types: &[String]| types == html.as_slice();
+            (
+                ctx.response_body_stays_plain(of),
+                ctx.response_body_stays_plain(|_| false),
+            )
+        };
+        assert_eq!((true, true), plain(&new_plugin(""), "/").await);
+        let scoped = new_plugin("path = \"^/docs/\"\n");
+        assert_eq!((true, true), plain(&scoped, "/docs/a.html").await);
+        assert_eq!((false, false), plain(&scoped, "/api/a").await);
+        // With `types`, only what the rules are for.
+        let typed = new_plugin("types = [\"text/html\"]\n");
+        assert_eq!((true, false), plain(&typed, "/").await);
     }
 
     /// A part of a body is not rewritten, so a request must not be able to

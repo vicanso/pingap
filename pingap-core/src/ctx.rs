@@ -506,6 +506,10 @@ pub struct CacheInfo {
     /// Empty for no query at all. The upstream is asked with it too, see
     /// `ask_with_key_query`.
     pub key_query: Option<String>,
+    /// The request headers the key is made of as well (`headers` of the
+    /// cache plugin), by name. Their values are read when the key is
+    /// made, see [`CacheInfo::header_key_components`].
+    pub key_headers: Option<Arc<Vec<String>>>,
     /// The client asked for a copy that is checked with the origin
     /// (`Cache-Control: no-cache`), and the plugin lets clients do that:
     /// what is cached is revalidated before it is served.
@@ -516,7 +520,66 @@ pub struct CacheInfo {
     pub writing_count: Option<u32>,
 }
 
+/// The value of a header as one component of the cache key. The
+/// components are joined with `:`, so one inside a value is written
+/// `%3A` (and `%` as `%25`): `Origin: https://a.com` with nothing after it
+/// and `Origin: https` followed by `//a.com:` were one key, and whoever
+/// sent the second chose the response the first was given.
+pub fn cache_key_slot(value: &str) -> String {
+    if !value.contains([':', '%']) {
+        return value.to_string();
+    }
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
+/// What `header` has under `name`, as a component of the cache key: every
+/// line of it, as the upstream gets them. Read from the first line alone,
+/// a second one a client or a plugin had added was sent on and not in the
+/// key.
+fn header_key_slot(header: &RequestHeader, name: &str) -> String {
+    let mut values = header.headers.get_all(name).iter();
+    let Some(first) = values.next() else {
+        return String::new();
+    };
+    let mut value = String::from_utf8_lossy(first.as_bytes()).into_owned();
+    for more in values {
+        value.push_str(", ");
+        value.push_str(&String::from_utf8_lossy(more.as_bytes()));
+    }
+    cache_key_slot(&value)
+}
+
 impl CacheInfo {
+    /// The components the key has for the headers it is made of
+    /// (`headers` of the cache plugin): one for each name, kept for a
+    /// header the request does not have, and none at all for a request
+    /// that has none of them.
+    ///
+    /// The values are those of `header`, the request as it is when the
+    /// key is made: after every request plugin has run, as the query of
+    /// the key is, and so what the upstream is asked with. A plugin that
+    /// is listed after the cache has set its header by then: `jwt`
+    /// passing a claim on (`claims_to_headers`), `request_headers`. Read
+    /// when the cache plugin ran, such a header was not in the key at
+    /// all - or it was what the client itself had sent under that name -
+    /// and the page of one user was the next one's.
+    ///
+    /// A key that is made of another request, a purge, has the values of
+    /// that one: it names the variant by sending the headers itself.
+    fn header_key_components(&self, header: &RequestHeader) -> Vec<String> {
+        let Some(names) = &self.key_headers else {
+            return vec![];
+        };
+        let mut slots: Vec<String> = names
+            .iter()
+            .map(|name| header_key_slot(header, name))
+            .collect();
+        if slots.iter().all(|slot| slot.is_empty()) {
+            slots.clear();
+        }
+        slots
+    }
+
     /// Makes the query the cache key is made of, from the request as it
     /// is now. Called when the key is made, which is after the request
     /// plugins have run: one that takes a parameter out of the query
@@ -696,12 +759,26 @@ pub struct Features {
     /// a response from the upstream or the cache as for a file a plugin
     /// sends itself.
     pub body_pace: Option<BodyPace>,
+    /// A plugin reads the body of the answer to this request on its way
+    /// to the client and has to have it as the upstream sends it: see
+    /// [`Ctx::keep_response_body_plain`].
+    pub plain_response_body: Option<PlainBody>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).
     #[cfg(feature = "tracing")]
     pub otel_tracer: Option<OtelTracer>,
     /// OpenTelemetry span for the upstream request (available with the "tracing" feature).
     #[cfg(feature = "tracing")]
     pub upstream_span: Option<BoxedSpan>,
+}
+
+/// The responses whose body a plugin reads, see
+/// [`Ctx::keep_response_body_plain`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlainBody {
+    /// Whatever the response is.
+    Any,
+    /// Those of these content types: prefixes, in lower case.
+    Types(Vec<String>),
 }
 
 #[derive(Default)]
@@ -1039,6 +1116,52 @@ impl Ctx {
             .iter()
             .find(|(key, _)| key == name)
             .map(|(_, note)| *note)
+    }
+
+    /// Says that a plugin reads the body of the answer to this request on
+    /// its way to the client - signs it as a token, rewrites it by rules -
+    /// and so has to have it as the upstream sends it.
+    ///
+    /// What looks at the response before the plugins of the response step
+    /// do goes by it: compression in its upstream mode, which codes the
+    /// body as it arrives from the upstream, leaves such a response as it
+    /// comes. Coded there, the body was opaque bytes to every plugin
+    /// after it, whatever their order in the list.
+    ///
+    /// `types` are the content types the plugin reads (prefixes, in lower
+    /// case), where it reads only some: the others are none of its
+    /// business and are coded as before. `None` is every response.
+    #[inline]
+    pub fn keep_response_body_plain(&mut self, types: Option<&[String]>) {
+        let wanted =
+            &mut self.features.get_or_insert_default().plain_response_body;
+        *wanted = match (wanted.take(), types) {
+            (Some(PlainBody::Any), _) | (_, None) => Some(PlainBody::Any),
+            (Some(PlainBody::Types(mut all)), Some(types)) => {
+                all.extend_from_slice(types);
+                Some(PlainBody::Types(all))
+            },
+            (None, Some(types)) => Some(PlainBody::Types(types.to_vec())),
+        };
+    }
+
+    /// Whether a plugin asked for the body of this response as the
+    /// upstream sends it ([`Ctx::keep_response_body_plain`]). `is_of` says
+    /// whether the response is of one of the content types it is given.
+    #[inline]
+    pub fn response_body_stays_plain(
+        &self,
+        is_of: impl FnOnce(&[String]) -> bool,
+    ) -> bool {
+        let wanted = self
+            .features
+            .as_ref()
+            .and_then(|features| features.plain_response_body.as_ref());
+        match wanted {
+            None => false,
+            Some(PlainBody::Any) => true,
+            Some(PlainBody::Types(types)) => is_of(types),
+        }
     }
 
     /// Adds a modify body handler to the context.
@@ -1689,10 +1812,14 @@ pub fn get_cache_key(
     // here. The storage layer still partitions by namespace, so it also
     // travels in `user_tag`, which is carried alongside the key but never
     // hashed.
+    let header_keys = cache_info.header_key_components(header);
     let keys_len = cache_info
         .keys
-        .as_ref()
-        .map_or(0, |keys| keys.iter().map(|s| s.len() + 1).sum::<usize>());
+        .iter()
+        .flatten()
+        .chain(&header_keys)
+        .map(|s| s.len() + 1)
+        .sum::<usize>();
     let mut key_buf = String::with_capacity(
         namespace.len()
             + keys_len
@@ -1704,11 +1831,9 @@ pub fn get_cache_key(
     );
     key_buf.push_str(namespace);
     // Custom key components first, each followed by ':'.
-    if let Some(keys) = &cache_info.keys {
-        for k in keys {
-            key_buf.push_str(k);
-            key_buf.push(':');
-        }
+    for k in cache_info.keys.iter().flatten().chain(&header_keys) {
+        key_buf.push_str(k);
+        key_buf.push(':');
     }
     // Then "METHOD:host/path?query".
     key_buf.push_str(method);

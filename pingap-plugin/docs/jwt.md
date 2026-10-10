@@ -181,7 +181,10 @@ upstream therefore returns the *claims* (`{"id":"u-1","exp":…}`), not a token.
 The body is signed byte for byte, so the request to `auth_path` goes to the
 upstream without the client's `Accept-Encoding`: the claims come back
 uncompressed. An upstream that compresses them anyway is answered with a `502`
-rather than a token whose payload is a gzip stream.
+rather than a token whose payload is a gzip stream. Pingap's own
+[`compression`](compression.md) with `mode = "upstream"` on the same location
+leaves this response alone; it used to compress the claims before they were
+signed, and every client that accepts a coding got that `502`.
 
 Minting only works with HMAC — the signature is always computed from `secret`
 using `HS256`, `HS384` or `HS512`. Only a `2xx` upstream response is signed; an error

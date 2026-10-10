@@ -1140,7 +1140,7 @@ impl Plugin for JwtAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
@@ -1153,6 +1153,11 @@ impl Plugin for JwtAuth {
             session
                 .req_header_mut()
                 .remove_header(&http::header::ACCEPT_ENCODING);
+            // And the proxy puts none on it either, before it is signed:
+            // `compression` in its upstream mode codes the body ahead of
+            // every plugin of the response step, and the token was a 502
+            // for every client that takes a coding.
+            ctx.keep_response_body_plain(None);
             // No token is asked for here, so there is no claim to pass
             // on: the headers that carry them are the client's own, and
             // do not go to an upstream that takes them for the proxy's.
@@ -2769,6 +2774,10 @@ auth_path = "/login"
             false,
             session.req_header().headers.contains_key("accept-encoding")
         );
+        // Nor is it coded by the proxy before it is signed: `compression`
+        // in its upstream mode goes by this, and without it the token
+        // was a 502 for every client that takes a coding.
+        assert_eq!(true, ctx.response_body_stays_plain(|_| false));
 
         // Coded all the same: no token is made of it.
         let mut coded = ResponseHeader::build_no_case(200, None).unwrap();

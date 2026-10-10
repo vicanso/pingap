@@ -796,8 +796,17 @@ export default function Upstreams() {
           if (name === newUpstream) {
             name = value["name"] as string;
           }
-          omitEmptyArrayString(value);
-          await update("upstream", name, value);
+          // The form only carries the fields it shows, and the server replaces
+          // the whole entry with what it receives. Start from the loaded entry
+          // so fields the form has no item for survive a save. Merged before
+          // empty values are dropped, so a field cleared in the form is still
+          // removed.
+          const data = {
+            ...(config.upstreams || {})[currentUpstream],
+            ...value,
+          };
+          omitEmptyArrayString(data);
+          await update("upstream", name, data);
           handleSelectUpstream(name);
         }}
       />
