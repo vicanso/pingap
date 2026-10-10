@@ -117,11 +117,13 @@ function guideSidebar(prefix: string, labels: {
   modules: string;
   acme: string;
   examples: string;
+  upgrading: string;
 }) {
   return [
     { text: labels.modules, link: `${prefix}/guide/modules` },
     { text: labels.acme, link: `${prefix}/guide/acme-flow` },
     { text: labels.examples, link: `${prefix}/guide/examples` },
+    { text: labels.upgrading, link: `${prefix}/guide/upgrading` },
   ];
 }
 
@@ -183,6 +185,7 @@ export default withMermaid(
               modules: "Architecture",
               acme: "ACME flow",
               examples: "Examples",
+              upgrading: "Upgrading",
             }),
             "/plugins/": pluginSidebar("", {
               overview: "Overview",
@@ -234,6 +237,7 @@ export default withMermaid(
               modules: "架构",
               acme: "ACME 流程",
               examples: "示例",
+              upgrading: "升级说明",
             }),
             "/zh/plugins/": pluginSidebar("/zh", {
               overview: "概览",

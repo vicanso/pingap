@@ -47,6 +47,9 @@ make release             # default features
 make release-full        # tracing + imageoptim
 make release-perf        # release-perf profile, includes pyroscope agent
 
+# End-to-end checks of a built binary (scripts/e2e/run.sh, see "CI gates")
+make e2e BIN=path/to/pingap     # default: target/release/pingap
+
 # Web admin assets (rust-embed'd into the binary at build time)
 make build-web           # cd web && npm install && npm run build, then cp dist ../
 
@@ -147,6 +150,15 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 | `cargo llvm-cov` | `make cov` |
 | `make release-all` (builds both `pingap` and `pingap-full`) | `make release-all` |
 | `make build-web` (web assets) | `make build-web` |
+| `./scripts/e2e/run.sh` (stable leg, against both binaries of `make release-all`) | `make e2e BIN=<binary>` |
+
+### End-to-end checks
+
+`scripts/e2e/run.sh <binary>` starts the binary and looks at it from outside: the sample configurations (`conf/`, `--template`, every `examples/*`) validate with `--strict`, a request goes through and the admin page is in the binary, a reload, `send_proxy_protocol` against nginx where one is installed, a daemon and its signals, and - on Linux only, pingora hands sockets over nowhere else - a restart through the admin, one by `--autorestart`, and an upgrade with `-u`, each under a loop of requests of which none may fail. Each check prints `ok` or `FAIL`; the exit status is the number of failures. `E2E_ONLY="reload restart"` runs some cases, `E2E_KEEP=1` leaves the working directory. The restart and upgrade cases cannot be run on macOS: a change to them is only verified once the workflow has run it (`gh workflow run test.yml --ref <branch>`).
+
+A behaviour that only shows with a running process - a second process, a signal, another server on the wire - gets a case there, next to its unit tests.
+
+Nothing builds for Windows before a release does: `windows.yml` runs on a push to a `windows` branch or by hand (`gh workflow run windows.yml --ref <branch>`), and the `windows` job of `test.yml` is switched off.
 
 ### Release toolchain vs MSRV
 
@@ -156,7 +168,7 @@ The MSRV (`rust-version` in `Cargo.toml`, `msrv` in `clippy.toml`, first entry o
 
 `web/` is a Vite/React app. After editing it, run `make build-web` so the compiled assets in `dist/` get embedded into the binary via `rust-embed` at compile time. `--admin user:pass@host:port[/prefix]` exposes the admin UI; in `make dev` it's on `127.0.0.1:3018`.
 
-**Every config field must have a form item in `web/`.** A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the admin can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
+**Every config field must have a form item in `web/`**, and `test_admin_forms_have_an_item_for_every_key` (`pingap-config/src/unknown.rs`) fails for one that has none. The two languages of the admin have the same keys, or `tsc -b` fails (`web/src/i18n/index.ts`). A field added to a `pingap-config` struct (`BasicConf`, `ServerConf`, `LocationConf`, `UpstreamConf`, `CertificateConf`, `StorageConf`) or to a plugin's config is not done until the admin can show and edit it. For a config struct, add the field to the matching interface in `web/src/states/config.ts` and an item to the page in `web/src/pages/` (`Basic.tsx`, `Servers.tsx`, `Locations.tsx`, `Upstreams.tsx`, `Certificates.tsx`, `Storages.tsx`); for a plugin field, add it to that plugin's builder in `web/src/plugin-fields.ts`. Each item needs its label/placeholder (and a `tips` line when the semantics are not obvious) in **both** `web/src/i18n/en.ts` and `web/src/i18n/zh.ts`, under the page's section. Pick the control by the Rust type: `Option<bool>` -> `RADIOS` + `newBooleanOptions()` with `defaultValue: conf.field` (never `|| null`, that turns an explicit `false` into Unset); enum-like `Option<String>` -> `RADIOS`/`SELECT` + `newStringOptions(..., withNone = true)` with `defaultValue: conf.field || ""` so an unset field stays unset instead of being saved as the first option; `Option<Vec<String>>` of free-form entries (`name` or `name:value`) -> `TEXTS`, and only use `KV_LIST` when every entry really is `key<sep>value` (its placeholder is `"key hint : value hint"`, split on `" : "`); numbers -> `NUMBER`; durations/sizes -> `TEXT` with the `newZodDuration()`/`newZodBytes()` schema entry.
 
 The pages save an entry by merging the form values over the loaded entry (`{ ...loaded, ...value }`) because the server replaces the whole entry with what it receives; keep that merge when touching `onSave`, and keep it before `omitEmptyArrayString` so a field cleared in the form is still removed. Verify a new item end to end in the admin (`make dev`, or `make build-web` then run the binary with `--admin`): the value renders, an edit is saved, and clearing it removes the key from the config file.
 
@@ -183,6 +195,7 @@ Linking rules:
 | Crate-level feature | `pingap-<crate>/README.md` **and** `docs/zh/crates/<crate>.md` |
 | CLI flag / env var / quick start | `README.md`, `README_zh.md`, and the two home pages in `scripts/build-website.sh` (both are written inline there, in `build_en` and `build_zh`; `docs/zh/README.md` is read on GitHub and is no part of the site) |
 | Architecture / ACME flow / examples | `docs/modules.md`, `docs/acme_chart.md`, `examples/README.md` and their `docs/zh/guide/*` counterparts |
+| Anything that can break or surprise a deployment that keeps its configuration (a value that is now refused, a changed default or status, a removed key, a changed crate API) | the section of the coming release in `docs/upgrading.md` **and** `docs/zh/guide/upgrading.md` |
 
 The Chinese tree is a **maintained translation**, not a generated one: adding an English page without its `docs/zh/` counterpart leaves a gap in the Chinese site.
 

@@ -180,6 +180,12 @@ build_en() {
   append_source_footer "${EN}/guide/modules.md" "docs/modules.md" \
     "https://github.com/vicanso/pingap/blob/main/docs/modules.md"
 
+  cp "${ROOT}/docs/upgrading.md" "${EN}/guide/upgrading.md"
+  rewrite_links "${EN}/guide/upgrading.md" guide
+  strip_md_links "${EN}/guide/upgrading.md"
+  append_source_footer "${EN}/guide/upgrading.md" "docs/upgrading.md" \
+    "https://github.com/vicanso/pingap/blob/main/docs/upgrading.md"
+
   cp "${ROOT}/docs/acme_chart.md" "${EN}/guide/acme-flow.md"
   rewrite_links "${EN}/guide/acme-flow.md" guide
   append_source_footer "${EN}/guide/acme-flow.md" "docs/acme_chart.md" \
@@ -323,6 +329,7 @@ Listens on `0.0.0.0:443` (override with `--addr`); `--upstream` and `--domain` t
 | [Crates](/crates/) | Workspace crate reference |
 | [Examples](/guide/examples) | API gateway, gRPC-Web, static serve, and more |
 | [ACME flow](/guide/acme-flow) | Certificate issuance sequence diagrams |
+| [Upgrading](/guide/upgrading) | What changes between releases for a configuration that stays the same |
 
 ## Configuration sketch
 
@@ -546,6 +553,7 @@ pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 | [组件](/zh/crates/) | 工作区 crate 参考 |
 | [示例](/zh/guide/examples) | API 网关、gRPC-Web、静态站点等 |
 | [ACME 流程](/zh/guide/acme-flow) | 证书签发时序图 |
+| [升级说明](/zh/guide/upgrading) | 配置不变时，版本之间会发生哪些变化 |
 
 中文源文件维护在仓库 [`docs/zh/`](https://github.com/vicanso/pingap/tree/main/docs/zh)。
 EOF
