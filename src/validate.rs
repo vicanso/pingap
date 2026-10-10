@@ -24,12 +24,19 @@
 //! every reload after it and the next cold start.
 
 use crate::plugin;
+use async_trait::async_trait;
 use pingap_certificate::{TlsCertificate, validate_servers_tls_for_backend};
-use pingap_config::{MissingReference, PingapConfig, PingapTomlConfig};
+use pingap_config::{
+    ConfigManager, MissingReference, PingapConfig, PingapTomlConfig,
+};
+use pingap_core::{
+    BackgroundTask, BackgroundTaskService, Error as ServiceError,
+};
 use std::error::Error;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 use tracing::warn;
 
 static LOG_TARGET: &str = "validate";
@@ -45,6 +52,117 @@ static CONTROL_PANEL: AtomicBool = AtomicBool::new(false);
 /// that says anything about the nodes the configuration is for.
 pub fn set_control_panel() {
     CONTROL_PANEL.store(true, Ordering::Relaxed);
+}
+
+/// The `basic.trusted_proxies` a stored document has, as they are to be
+/// used on this machine: a reference to its environment or to a file is
+/// replaced when it names something here, and stays as it is written
+/// (which is no address, and is left out when the list is used) when not.
+///
+/// An error when the basic settings are not ones that can be read: the
+/// list written as a text, say. That is not a document without a list.
+fn stored_trusted_proxies(
+    document: PingapTomlConfig,
+) -> Result<Option<Vec<String>>, String> {
+    // Of the document only this: the rest of it is for other machines,
+    // and what is wrong with it there is no reason to go without here.
+    let basic = PingapTomlConfig {
+        basic: document.basic,
+        ..Default::default()
+    };
+    let config = match basic.to_running_config(MissingReference::Refuse) {
+        Ok(config) => config,
+        Err(_) => basic
+            .to_running_config(MissingReference::Keep)
+            .map_err(|e| e.to_string())?,
+    };
+    Ok(config.basic.trusted_proxies)
+}
+
+/// Whether the trusted proxies of the stored configuration could not be
+/// had the last time they were asked for: said when it starts, not every
+/// minute.
+static TRUSTED_PROXIES_UNREAD: AtomicBool = AtomicBool::new(false);
+
+/// One at a time: the list that is set is the one of the storage as it
+/// was last read, not of a read that began earlier and ended later.
+static TRUSTED_PROXIES_APPLYING: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
+
+/// Puts the `basic.trusted_proxies` of the stored configuration to use
+/// on a control panel node.
+///
+/// Such a node runs none of what it stores, so the setting never reached
+/// it: behind an ingress every administrator had the address of the
+/// ingress, and the failed logins of any of them - ten in five minutes -
+/// locked all of them out. It is read when the node starts, every minute
+/// after that, and when the basic settings are changed through it. A
+/// storage that does not read, or whose basic settings do not, leaves
+/// things as they are.
+///
+/// The whole of the stored configuration is read for it, as it is
+/// loaded: the basic settings are not in a file of their own in every
+/// directory.
+pub async fn apply_stored_trusted_proxies(manager: &ConfigManager) {
+    if !CONTROL_PANEL.load(Ordering::Relaxed) {
+        return;
+    }
+    let _guard = TRUSTED_PROXIES_APPLYING.lock().await;
+    let trusted = match manager.load_all().await {
+        // Off this thread: a reference to a file is read from disk.
+        Ok(document) => tokio::task::spawn_blocking(move || {
+            stored_trusted_proxies(document)
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string())),
+        Err(e) => Err(e.to_string()),
+    };
+    match trusted {
+        Ok(trusted) => {
+            TRUSTED_PROXIES_UNREAD.store(false, Ordering::Relaxed);
+            pingap_core::set_trusted_proxies(&trusted);
+        },
+        Err(error) => {
+            if !TRUSTED_PROXIES_UNREAD.swap(true, Ordering::Relaxed) {
+                warn!(
+                    target: LOG_TARGET,
+                    error,
+                    "the trusted proxies of the stored configuration could not be read, the ones in use stay"
+                );
+            }
+        },
+    }
+}
+
+struct TrustedProxiesRefresh {
+    manager: Arc<ConfigManager>,
+}
+
+#[async_trait]
+impl BackgroundTask for TrustedProxiesRefresh {
+    async fn execute(&self, _count: u32) -> Result<bool, ServiceError> {
+        apply_stored_trusted_proxies(&self.manager).await;
+        Ok(true)
+    }
+}
+
+/// The service of a control panel node that keeps its trusted proxies
+/// those of the stored configuration: read as it starts and every minute.
+/// A storage that is not there yet when the node starts - an etcd that
+/// comes up after it - is so read once it is, and a change made through
+/// another node or in the storage itself arrives without a restart.
+pub fn new_trusted_proxies_service(
+    manager: Arc<ConfigManager>,
+) -> BackgroundTaskService {
+    let name = "trusted_proxies";
+    let mut service = BackgroundTaskService::new_single(
+        name,
+        Duration::from_secs(60),
+        name,
+        Box::new(TrustedProxiesRefresh { manager }),
+    );
+    service.set_immediately(true);
+    service
 }
 
 /// `--strict`: what the configuration has that pingap does not read is an
@@ -295,6 +413,55 @@ mod tests {
 
     fn toml_config(data: &str) -> PingapTomlConfig {
         PingapTomlConfig::from_toml(data).unwrap()
+    }
+
+    /// What a control panel node takes from the configuration it stores:
+    /// the trusted proxies, and those whatever else the document holds.
+    #[test]
+    fn test_stored_trusted_proxies() {
+        let list = |items: &[&str]| -> Result<Option<Vec<String>>, String> {
+            Ok(Some(items.iter().map(|item| item.to_string()).collect()))
+        };
+        assert_eq!(
+            list(&["10.0.0.0/8", "192.168.1.1"]),
+            stored_trusted_proxies(toml_config(
+                "[basic]\ntrusted_proxies = [\"10.0.0.0/8\", \"192.168.1.1\"]\n"
+            ))
+        );
+        assert_eq!(
+            Ok(None),
+            stored_trusted_proxies(toml_config("[basic]\nname = \"x\"\n"))
+        );
+        assert_eq!(Ok(None), stored_trusted_proxies(toml_config("")));
+        // The rest of the document is for the machines that run it: an
+        // entry of it that would not load there, or a secret that is not
+        // on this machine, does not stand in the way.
+        assert_eq!(
+            list(&["10.0.0.0/8"]),
+            stored_trusted_proxies(toml_config(
+                r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+webhook = "$ENV:PINGAP_TEST_NO_SUCH_VARIABLE"
+
+[upstreams.broken]
+addrs = 1
+
+[plugins.auth]
+category = "jwt"
+secret = "$FILE:/no/such/file"
+"#
+            ))
+        );
+        // Basic settings that do not read are not settings without a
+        // list: the list in use is not to be dropped for them.
+        assert_eq!(
+            true,
+            stored_trusted_proxies(toml_config(
+                "[basic]\ntrusted_proxies = \"10.0.0.0/8\"\n"
+            ))
+            .is_err()
+        );
     }
 
     const VALID: &str = r#"

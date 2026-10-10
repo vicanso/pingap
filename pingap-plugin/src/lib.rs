@@ -16,7 +16,6 @@ use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::PluginStep;
 use snafu::Snafu;
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::str::FromStr;
@@ -196,16 +195,7 @@ pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
     }
 }
 
-/// The value of a query parameter as the client meant it, with its
-/// percent-encoding decoded. `+` stays a plus: that it stands for a space
-/// is a rule of html forms, not of urls. A value that does not decode to
-/// text is compared as it came.
-pub(crate) fn decode_query_value(raw: &str) -> Cow<'_, str> {
-    if !raw.contains('%') {
-        return Cow::Borrowed(raw);
-    }
-    urlencoding::decode(raw).unwrap_or(Cow::Borrowed(raw))
-}
+pub(crate) use pingap_core::decode_query_value;
 
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
     match value.get(key) {

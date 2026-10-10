@@ -39,5 +39,5 @@ mod prom;
 #[cfg(feature = "tracing")]
 pub use prom::{
     Prometheus, new_prometheus, new_prometheus_push_service,
-    set_metrics_upstream_provider,
+    set_metrics_location_provider, set_metrics_upstream_provider,
 };

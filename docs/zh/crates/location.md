@@ -15,6 +15,7 @@
   - **正则匹配**：如 `~/users/(?<id>\d+)`，支持命名捕获。
 - **URL 改写**：代理前动态修改请求路径，可替换命名捕获变量。
   - `rewrite = "<正则> <替换>"`；替换里的 `$1`、`$name` 指正则的分组。若 `$name` 是**请求变量**——主机模式的命名捕获，或插件设置的变量——则先替换为该变量的值，例如 `host = "~(?<tenant>.+)\.example\.com"` 配 `rewrite = "^/users/(.*)$ /$tenant/$1"`，`acme.example.com/users/me` 会改写为 `/acme/me`。只写一个带 `$` 的替换（`"/$1"`）表示整段路径替换。请求的查询串会保留：用 `?` 接在后面，替换本身带查询串时用 `&`（`rewrite = "^/old/(.*) /search?from=old&q=$1"` 把 `/old/a?page=2` 改写为 `/search?from=old&q=a&page=2`）。正则编译失败或超过两段的规则，在构建 location 时报错，而不再被静默忽略。
+- **匹配条件**：`match_headers`、`match_query`、`match_cookies` 把 location 限定在带有所列内容的请求上，每项写成 `name:value`（值完全相等）或 `name`（存在即可），全部满足才匹配。查询参数的值既按发来的原样比较，带百分号编码时也按解码后的值比较：`match_query = ["v:a+b"]` 对 `?v=a+b` 和 `?v=a%2Bb` 都成立。`+` 就是加号，不当作空格。
 - **请求节流**：限制 location 同时处理的最大并发请求数。
 - **正文大小限制**：限制客户端请求体最大尺寸，防止滥用。
 - **按 location 设置超时**：location 上的 `connection_timeout`、`read_timeout`、`write_timeout` 对这个 location 的请求生效，替代 upstream 上的同名设置。这样同一个 upstream 下，上传路径或长轮询可以等得更久，普通接口等得更短。location 没设的项沿用 upstream 的值。`connection_timeout` 比 upstream 的 `total_connection_timeout` 长时，后者会被一并抬高。超时配成 `0s` 是配置错误。

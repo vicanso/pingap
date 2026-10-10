@@ -27,7 +27,7 @@ use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     CacheQueryRule, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_verified_client_ip, get_cache_key,
+    ensure_verified_client_ip, get_cache_key, normalize_path,
 };
 use pingap_util::IpRules;
 use pingora::cache::CacheOptionOverrides;
@@ -558,6 +558,37 @@ static METHOD_PURGE: LazyLock<Method> = LazyLock::new(|| {
     Method::from_bytes(b"PURGE").expect("Failed to create PURGE method")
 });
 
+/// Whether `skip` takes the request out of the cache: by its path and
+/// query as they were sent, or as the path is read.
+///
+/// The location a request goes to is chosen by the path with its dot
+/// segments, doubled slashes and percent-encoding resolved
+/// (`normalize_path`), and that is the path most upstreams answer for.
+/// `skip` saw the path as it was sent and nothing else: with
+/// `skip = "^/api/"`, written to keep what `/api/` answers out of the
+/// cache, `//api/me`, `/./api/me` and `/%61pi/me` were all kept there.
+///
+/// A match of either takes it out. Skipping is the side that keeps
+/// nothing, and a pattern written for the path as it is sent goes on
+/// matching what it matched.
+fn is_skipped(skip: &Regex, uri: &http::Uri) -> bool {
+    let Some(sent) = uri.path_and_query() else {
+        return false;
+    };
+    if skip.is_match(sent.as_str()).unwrap_or_default() {
+        return true;
+    }
+    // Nearly every path is read as it is sent.
+    let Cow::Owned(path) = normalize_path(uri.path()) else {
+        return false;
+    };
+    let read = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+    skip.is_match(&read).unwrap_or_default()
+}
+
 #[async_trait]
 impl Plugin for Cache {
     /// Returns the unique hash key for this cache configuration.
@@ -608,8 +639,7 @@ impl Plugin for Cache {
 
         // Check if request matches skip pattern (if configured)
         if let Some(skip) = &self.skip
-            && let Some(value) = req_header.uri.path_and_query()
-            && skip.is_match(value.as_str()).unwrap_or_default()
+            && is_skipped(skip, &req_header.uri)
         {
             return Ok(RequestPluginResult::Skipped);
         }
@@ -1318,6 +1348,69 @@ max_ttl = "1m"
         );
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
+    }
+
+    /// Regression: `skip` was matched against the path as it was sent,
+    /// while the location - and the upstream - go by the path as it is
+    /// read. Whatever `skip = "^/api/"` was to keep out of the cache got
+    /// in with a second slash in front of it.
+    #[tokio::test]
+    async fn test_skip_goes_by_the_path_as_it_is_read_too() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                "skip = \"^/api/|[?&]preview=\"\nmax_ttl = \"1m\"\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let skipped = async |path: &str| {
+            let input_header = format!("GET {path} HTTP/1.1\r\n\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = cache
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                matches!(result, RequestPluginResult::Skipped),
+                !session.cache.enabled(),
+                "{path}"
+            );
+            !session.cache.enabled()
+        };
+        for path in [
+            "/api/me",
+            "//api/me",
+            "/./api/me",
+            "/x/../api/me",
+            "/%61pi/me",
+            "/api//me?a=1",
+            // The query is a part of what is matched, as it is sent.
+            "/page?preview=1",
+            "//page?a=1&preview=1",
+        ] {
+            assert_eq!(true, skipped(path).await, "{path}");
+        }
+        for path in ["/page", "//page", "/apis/me", "/x/api/me", "/page?a=1"] {
+            assert_eq!(false, skipped(path).await, "{path}");
+        }
+
+        // What a pattern matches of the path as it is sent, it still does.
+        let pattern = Regex::new("^//internal/|%2e").unwrap();
+        for (path, expected) in [
+            ("//internal/x", true),
+            ("/internal/x", false),
+            ("/a/%2e%2e/b", true),
+            ("/b", false),
+        ] {
+            let uri: http::Uri = path.parse().unwrap();
+            assert_eq!(expected, is_skipped(&pattern, &uri), "{path}");
+        }
     }
 
     async fn purge(cache: &Cache, path: &str) -> HttpResponse {

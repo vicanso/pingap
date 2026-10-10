@@ -24,7 +24,7 @@ IP-restricted `PURGE` method.
 | `predictor` | bool | `false` | `true` enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
 | `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. See [who may purge](#who-may-purge) for the address that is checked. |
-| `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. |
+| `skip` | string | — | Regex on path+query; matching requests bypass the cache entirely. Matched against the path as it was sent and as it is read (dot segments, doubled slashes and percent-encoding resolved, the way a location is chosen): with `^/api/`, `//api/me` and `/%61pi/me` bypass it too. |
 | `default_ttl` | duration | `1s` | How long a response is kept when the origin names no lifetime, for the statuses that are kept by default. `0s` keeps none of them. See [Lifetimes of your own](#lifetimes-of-your-own). |
 | `status_ttl` | string[] | — | `status:duration` entries (`"404:10s"`, `"301:1h"`): the same per status, also for a status that is not kept by default. `0s` keeps that status out. |
 | `bypass_headers` | string[] | — | A request with any of these headers is neither answered from the cache nor stored. |

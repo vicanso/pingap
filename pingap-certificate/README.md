@@ -178,13 +178,22 @@ A change to the configuration is hot reloaded entry by entry. An entry that is
 not one of ACME is added, replaced or removed in place, also when other entries
 are; with a single `acme` entry in the configuration no certificate at all used
 to be reloaded until a restart. An entry that has `acme` set in the new
-configuration stays as it is, and a new one stays out: the ACME service orders
-and stores its certificate, and a change to its settings (`domains`, the
-challenge) takes a restart, which `--autorestart` performs and `--autoreload`
-only logs a warning about. An entry that no longer has `acme`, or is removed,
-is reloaded like any other, and the ACME service stops renewing it. When two
-entries name the same domain and the one serving it is removed, the domain goes
-to the other.
+configuration is handed to the ACME service with the settings it has now, a
+new one included: the service looks at it at its next run, a minute later at
+most unless it is busy with an order, and until its certificate is there the
+entry serves the one it has for the domains it now names. The certificate and
+key of an entry that was the service's already are not taken from the storage
+by a reload: the service stores and installs them itself. (With
+`--autorestart` a certificate in the storage that is not the running one
+restarts the process, as before.) Where the ACME service does not run
+(`PINGAP_DISABLE_ACME`) an entry with `acme` is reloaded like any other, its
+certificate included. In either case an entry whose HTTP-01 challenge needs a
+listener on port 80 that the process does not have still takes a restart,
+which `--autorestart` performs and `--autoreload` reports (a warning in the
+log and a `reload_config_fail` notification); see the ACME page. An entry that
+no longer has `acme`, or is removed, is reloaded like any other, and the ACME
+service stops renewing it. When two entries name the same domain and the one serving it is removed,
+the domain goes to the other.
 
 Under OpenSSL, a `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version` or
 `tls_max_version` that OpenSSL rejects (or a version name other than

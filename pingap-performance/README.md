@@ -148,7 +148,9 @@ count and circuit state, and the per-upstream discovery and selector build
 times — are rebuilt from scratch on every scrape, so a backend that has gone
 away stops being exported instead of lingering with its last value. The same
 happens to the per-upstream series of an upstream removed from the
-configuration. This matters most with DNS and Docker discovery, where backend
+configuration, and to the series of a location that was removed or renamed:
+they are dropped at a scrape once the location has been gone for a minute and
+no request of it is in flight any more. This matters most with DNS and Docker discovery, where backend
 addresses churn and would otherwise accumulate as dead time series.
 
 ## Process information

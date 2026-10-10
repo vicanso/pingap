@@ -891,6 +891,17 @@ pub fn get_query_value<'a>(
         })
 }
 
+/// The value of a query parameter as the client meant it, with its
+/// percent-encoding decoded. `+` stays a plus: that it stands for a space
+/// is a rule of html forms, not of urls. A value that does not decode to
+/// text is returned as it came.
+pub fn decode_query_value(raw: &str) -> Cow<'_, str> {
+    if !raw.contains('%') {
+        return Cow::Borrowed(raw);
+    }
+    urlencoding::decode(raw).unwrap_or(Cow::Borrowed(raw))
+}
+
 /// Removes a specific query parameter from the request header's URI.
 ///
 /// This function modifies the `req_header` in place.

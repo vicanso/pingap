@@ -20,6 +20,7 @@ use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::{Ctx, get_hostname};
+use pingap_location::LocationProvider;
 use pingap_upstream::UpstreamProvider;
 use pingora::cache::{CachePhase, NoCacheReason};
 use pingora::proxy::Session;
@@ -33,8 +34,8 @@ use prometheus::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tracing::{error, warn};
 use url::Url;
 
@@ -47,6 +48,27 @@ static METRICS_UPSTREAM_PROVIDER: OnceLock<Arc<dyn UpstreamProvider>> =
 pub fn set_metrics_upstream_provider(provider: Arc<dyn UpstreamProvider>) {
     let _ = METRICS_UPSTREAM_PROVIDER.set(provider);
 }
+
+/// Optional location provider: what a scrape goes by to tell the
+/// locations that are configured from the ones that are gone.
+static METRICS_LOCATION_PROVIDER: OnceLock<Arc<dyn LocationProvider>> =
+    OnceLock::new();
+
+/// Registers the process-wide location provider, so that the series of a
+/// location that was removed or renamed are dropped instead of exported
+/// with their last values for as long as the process runs.
+pub fn set_metrics_location_provider(provider: Arc<dyn LocationProvider>) {
+    let _ = METRICS_LOCATION_PROVIDER.set(provider);
+}
+
+/// How long a location has to be gone before its series are dropped.
+///
+/// A reload takes the location out of the configuration first and out of
+/// the routes a moment later, with the reloads of other things and their
+/// notifications in between; a request is still matched to it meanwhile.
+/// Counted while the series were being dropped, it left some of them
+/// behind for good. A minute later no route has the location any more.
+const LOCATION_GONE_GRACE: Duration = Duration::from_secs(60);
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
@@ -98,6 +120,11 @@ pub struct Prometheus {
     /// per-upstream series of an upstream that has since been removed from
     /// the configuration can be dropped rather than exported forever.
     known_upstreams: ArcSwap<Vec<String>>,
+
+    /// The locations a scrape found gone, with when it first did. Their
+    /// series are dropped once that is long enough ago, see
+    /// `forget_removed_locations`.
+    locations_gone_since: Mutex<HashMap<String, Instant>>,
 
     /// Counter tracking total HTTP requests by location.
     /// Helps understand traffic patterns and load distribution.
@@ -567,7 +594,6 @@ impl Prometheus {
 
         if !location.is_empty() {
             self.with_location(location, |series| {
-                series.requests_current.dec();
                 series.received.observe(payload_size);
                 series.received_bytes.inc_by(payload_bytes);
                 series.response_time.observe(response_time);
@@ -604,6 +630,11 @@ impl Prometheus {
                         })
                         .inc();
                 }
+                // Last: while a request is in flight the series of a
+                // location that is gone are kept
+                // (`forget_removed_locations`), and what is made above
+                // for the first time is made in that time.
+                series.requests_current.dec();
             });
         }
 
@@ -788,6 +819,12 @@ impl Prometheus {
         self.tcp_count.set(info.tcp_count as i64);
         self.tcp6_count.set(info.tcp6_count as i64);
         self.refresh_upstream_backend_metrics();
+        if let Some(provider) = METRICS_LOCATION_PROVIDER.get() {
+            self.forget_removed_locations(
+                |name| provider.get(name).is_some(),
+                LOCATION_GONE_GRACE,
+            );
+        }
         // What is counted for the process as a whole.
         self.cache_memory_evictions
             .follow(pingap_cache::memory_cache_evictions());
@@ -892,6 +929,98 @@ impl Prometheus {
         if !unchanged {
             self.known_upstreams
                 .store(Arc::new(live.keys().cloned().collect()));
+        }
+    }
+
+    /// Removes the series of every location that is no longer configured.
+    ///
+    /// They are written on the request path and kept by name, so a
+    /// location that was removed or renamed went on being exported with
+    /// its last values for as long as the process ran: one more set of
+    /// series - some forty of them - with every rename.
+    ///
+    /// Not while a request of the location is still on its way, which may
+    /// be a long one: counted when it ends, it would find the series gone
+    /// and make new ones, with `-1` requests in flight.
+    ///
+    /// And not before the location has been gone for `grace`, by which
+    /// time no route leads to it: see [`LOCATION_GONE_GRACE`]. A request
+    /// that gets there all the same, counted between this look at the
+    /// series and their removal, makes them anew and leaves them below
+    /// zero when it ends; those are dropped by a later scrape, "none in
+    /// flight" being zero or less.
+    fn forget_removed_locations(
+        &self,
+        is_configured: impl Fn(&str) -> bool,
+        grace: Duration,
+    ) {
+        let series = self.location_series.load();
+        let is_gone = |name: &str, series: &LocationSeries| {
+            !is_configured(name) && series.requests_current.get() <= 0
+        };
+        let now = Instant::now();
+        let mut since = self
+            .locations_gone_since
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // One that is configured again, or has a request on its way
+        // again, is gone anew the next time it is.
+        since.retain(|name, _| {
+            series.get(name).is_some_and(|series| is_gone(name, series))
+        });
+        let gone: Vec<&String> = series
+            .iter()
+            .filter(|(name, series)| is_gone(name, series))
+            .filter(|(name, _)| {
+                let at = *since.entry((*name).clone()).or_insert(now);
+                now.duration_since(at) >= grace
+            })
+            .map(|(name, _)| name)
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        for name in gone.iter() {
+            let labels = [name.as_str()];
+            let _ = self.http_requests_total.remove_label_values(&labels);
+            let _ = self.http_requests_current.remove_label_values(&labels);
+            let _ = self.http_received.remove_label_values(&labels);
+            let _ = self.http_received_bytes.remove_label_values(&labels);
+            let _ = self.http_response_time.remove_label_values(&labels);
+            let _ = self.http_sent.remove_label_values(&labels);
+            let _ = self.http_sent_bytes.remove_label_values(&labels);
+            for code in CODE_LABELS {
+                let _ = self
+                    .http_responses_codes
+                    .remove_label_values(&[name.as_str(), code]);
+            }
+            // Every status there may be a series of, not the ones that
+            // are known of at this moment: one that is made while this
+            // goes on would be left behind for good.
+            for status in 100..=599_u16 {
+                let _ = self.http_responses_status.remove_label_values(&[
+                    name.as_str(),
+                    status.to_string().as_str(),
+                ]);
+            }
+            for status in CACHE_LABELS {
+                let _ = self
+                    .cache_responses
+                    .remove_label_values(&[name.as_str(), status]);
+            }
+        }
+        // After the series, not before: what is kept here points at them,
+        // and a location of this name that comes back has to find its
+        // series anew.
+        self.location_series.rcu(|current| {
+            let mut next = current.as_ref().clone();
+            for name in gone.iter() {
+                next.remove(*name);
+            }
+            next
+        });
+        for name in gone.iter() {
+            since.remove(*name);
         }
     }
 
@@ -1627,6 +1756,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         location_series: ArcSwap::from_pointee(HashMap::new()),
         upstream_series: ArcSwap::from_pointee(HashMap::new()),
         known_upstreams: ArcSwap::from_pointee(Vec::new()),
+        locations_gone_since: Mutex::new(HashMap::new()),
         http_requests_total,
         http_requests_current,
         http_received,
@@ -2121,6 +2251,98 @@ mod tests {
         for name in ["pingap_upstream_retries{", "pingap_upstream_errors{"] {
             assert_eq!(None, metric_value(&buf, name, &[]), "{name}: {buf}");
         }
+    }
+
+    /// Regression: the series of a location were kept by name for as long
+    /// as the process ran, whatever became of the location.
+    #[test]
+    fn test_forget_removed_locations() {
+        let p = new_prometheus("pingap").unwrap();
+        let count = |p: &Prometheus, location: &str| {
+            let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+            buf.lines()
+                .filter(|line| {
+                    line.contains(&format!("location=\"{location}\""))
+                })
+                .count()
+        };
+        for location in ["kept", "gone"] {
+            p.on_location_matched(location);
+            p.http_sent_bytes.with_label_values(&[location]).inc();
+            p.http_responses_codes
+                .with_label_values(&[location, "4xx"])
+                .inc();
+            p.http_responses_status
+                .with_label_values(&[location, "404"])
+                .inc();
+            p.cache_responses
+                .with_label_values(&[location, "hit"])
+                .inc();
+        }
+        let kept = count(&p, "kept");
+        assert_eq!(true, kept > 10, "{kept}");
+        assert_eq!(kept, count(&p, "gone"));
+
+        // A request of it is still on its way: counted when it ends, it
+        // is to find the series it was counted in when it came.
+        let is_configured = |name: &str| name == "kept";
+        p.forget_removed_locations(is_configured, Duration::ZERO);
+        assert_eq!(kept, count(&p, "gone"));
+        p.with_location("gone", |series| series.requests_current.dec());
+        p.forget_removed_locations(is_configured, Duration::ZERO);
+        assert_eq!(0, count(&p, "gone"));
+        assert_eq!(kept, count(&p, "kept"));
+        assert_eq!(false, p.location_series.load().contains_key("gone"));
+        // The requests of all locations are counted as before.
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_http_requests_total{",
+                &["location=\"kept\""]
+            )
+        );
+
+        // One of the name that comes back starts anew.
+        p.on_location_matched("gone");
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_http_requests_total{",
+                &["location=\"gone\""]
+            )
+        );
+        // Nothing is gone while every location is configured.
+        p.with_location("gone", |series| series.requests_current.dec());
+        p.forget_removed_locations(|_| true, Duration::ZERO);
+        assert_eq!(true, count(&p, "gone") > 0);
+
+        // Not before it has been gone for a while: a request may still
+        // be matched to it, by a route that is about to be replaced.
+        let hour = Duration::from_secs(3600);
+        p.forget_removed_locations(is_configured, hour);
+        p.forget_removed_locations(is_configured, hour);
+        assert_eq!(true, count(&p, "gone") > 0);
+        assert_eq!(
+            true,
+            p.locations_gone_since.lock().unwrap().contains_key("gone")
+        );
+        // Configured again meanwhile, it is not on its way out any more.
+        p.forget_removed_locations(|_| true, hour);
+        assert_eq!(true, p.locations_gone_since.lock().unwrap().is_empty());
+
+        // A request that was counted in series which were dropped before
+        // it ended makes them anew, and leaves them below zero: dropped
+        // as well.
+        p.forget_removed_locations(is_configured, Duration::ZERO);
+        assert_eq!(0, count(&p, "gone"));
+        p.with_location("gone", |series| series.requests_current.dec());
+        assert_eq!(true, count(&p, "gone") > 0);
+        p.forget_removed_locations(is_configured, Duration::ZERO);
+        assert_eq!(0, count(&p, "gone"));
     }
 
     #[test]

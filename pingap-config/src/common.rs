@@ -252,6 +252,14 @@ impl CertificateConf {
     pub fn is_acme(&self) -> bool {
         self.acme.as_deref().is_some_and(|acme| !acme.is_empty())
     }
+
+    /// Whether this entry is ordered through ACME with the challenge that
+    /// is answered over HTTP: the CA comes to port 80 for it.
+    pub fn is_acme_http_challenge(&self) -> bool {
+        self.is_acme()
+            && self.domains.as_deref().is_some_and(|d| !d.is_empty())
+            && !self.dns_challenge.unwrap_or_default()
+    }
 }
 
 // Generate hash key for certificate configuration
@@ -4222,6 +4230,38 @@ upstream_connect_offload_thread_per_pool = 8
             "Invalid error upstream connect offload threadpools and thread per pool should be set together",
             conf.validate().expect_err("").to_string()
         );
+    }
+
+    /// The challenge of an entry is answered over HTTP when it is ordered
+    /// through ACME, for a domain, and not through the DNS: the same thing
+    /// for the server that is added on port 80, the path that is answered
+    /// there, and the reload that is given the entry.
+    #[test]
+    fn test_certificate_acme_http_challenge() {
+        let conf = |acme: &str, domains: Option<&str>, dns: Option<bool>| {
+            CertificateConf {
+                acme: Some(acme.to_string()),
+                domains: domains.map(str::to_string),
+                dns_challenge: dns,
+                ..Default::default()
+            }
+        };
+        let http = conf("lets_encrypt", Some("example.com"), None);
+        assert_eq!(true, http.is_acme_http_challenge());
+        assert_eq!(
+            true,
+            conf("lets_encrypt", Some("example.com"), Some(false))
+                .is_acme_http_challenge()
+        );
+        for other in [
+            conf("lets_encrypt", Some("example.com"), Some(true)),
+            conf("lets_encrypt", None, None),
+            conf("lets_encrypt", Some(""), None),
+            conf("", Some("example.com"), None),
+            CertificateConf { acme: None, ..http },
+        ] {
+            assert_eq!(false, other.is_acme_http_challenge(), "{other:?}");
+        }
     }
 
     #[test]

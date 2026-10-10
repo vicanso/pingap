@@ -102,6 +102,13 @@ pub fn try_update_certificates(
 /// goes, the domain is given to the other, a certificate that was left
 /// alone included: it is not in the store under a name it lost to the
 /// certificate that is now gone, and without this the domain had none.
+///
+/// Which of the two serves it is what it is when the store is built from
+/// the whole configuration (`update_certificates`): an entry of ACME gives
+/// way to one that is not, and of two of ACME the first by name has it. A
+/// certificate of ACME is among the ones brought up to date here when a
+/// reload hands its entry over, and it does not take a domain from one
+/// that was left alone and comes before it.
 pub fn try_update_certificates_except(
     certificate_configs: &HashMap<String, CertificateConf>,
     is_left: impl Fn(&str) -> bool,
@@ -135,11 +142,24 @@ fn update_except(
             .filter(|(_, cert)| cert.name.as_deref().is_none_or(&is_left))
             .map(|(domain, cert)| (domain.clone(), cert.clone()))
             .collect();
-        merged.extend(
-            rebuilt
-                .iter()
-                .map(|(domain, cert)| (domain.clone(), cert.clone())),
-        );
+        for (domain, cert) in rebuilt.iter() {
+            // By what the ones left alone, all of ACME, have a claim to,
+            // and not by what they hold in the store: one of them may
+            // have lost this name to a certificate that is going now, or
+            // that is itself of ACME from now on.
+            let gives_way = claimed.get(domain).is_some_and(|theirs| {
+                match (&theirs.name, &cert.name) {
+                    (Some(theirs), Some(name)) => {
+                        ours.get(name).is_some_and(|conf| conf.is_acme())
+                            && theirs < name
+                    },
+                    _ => false,
+                }
+            });
+            if !gives_way {
+                merged.insert(domain.clone(), cert.clone());
+            }
+        }
         for (domain, cert) in claimed.iter() {
             if merged.contains_key(domain) {
                 continue;
@@ -170,6 +190,17 @@ fn update_except(
         for cert in certificates.values().chain(claimed.values()) {
             if let Some(name) = &cert.name
                 && theirs.contains_key(name)
+                && !serving.contains(name)
+            {
+                merged
+                    .entry(unused_certificate_key(name))
+                    .or_insert_with(|| cert.clone());
+            }
+        }
+        // And so does one that was brought up to date and gave way with
+        // every name it has.
+        for cert in rebuilt.values() {
+            if let Some(name) = &cert.name
                 && !serving.contains(name)
             {
                 merged
@@ -448,6 +479,134 @@ mod tests {
 
         try_update_certificates_except(&HashMap::new(), |name| !mine(name));
         assert_eq!(None, loaded("cfg8b-shared.test"));
+    }
+
+    /// A reload hands an entry of ACME over with the settings it has now,
+    /// and its certificate is brought up to date like the ones that are
+    /// not of ACME. It is not one of those: a domain that another entry of
+    /// ACME has, which was left alone and comes first by name, stays with
+    /// that one, as it does when the store is built from the whole
+    /// configuration. It used to be so by construction, when no entry of
+    /// ACME was ever among the ones brought up to date.
+    #[test]
+    fn test_update_certificates_except_keeps_the_order_among_acme() {
+        let mine = |name: &str| name.starts_with("cfg8c-");
+        let configs = |items: &[(&str, &CertificateConf)]| {
+            items
+                .iter()
+                .map(|(name, conf)| (name.to_string(), (*conf).clone()))
+                .collect::<HashMap<_, _>>()
+        };
+        let acme = |domains: &str| CertificateConf {
+            acme: Some("lets_encrypt".to_string()),
+            domains: Some(domains.to_string()),
+            ..new_conf("cfg8c-x.test")
+        };
+        let first = acme("cfg8c-x.test");
+        let second = acme("cfg8c-y.test");
+        let all = [("cfg8c-a", &first), ("cfg8c-b", &second)];
+        try_update_certificates_except(&configs(&all), |name| !mine(name));
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-x.test"));
+        assert_eq!(Some(second.hash_key()), loaded("cfg8c-y.test"));
+
+        // The second is given the domain of the first as well, and is
+        // handed over: it serves its own, with the certificate it has.
+        let second = CertificateConf {
+            domains: Some("cfg8c-x.test,cfg8c-y.test".to_string()),
+            ..second
+        };
+        let all = [("cfg8c-a", &first), ("cfg8c-b", &second)];
+        let (updated, errors) =
+            try_update_certificates_except(&configs(&all), |name| {
+                name == "cfg8c-a" || !mine(name)
+            });
+        assert_eq!("", errors);
+        assert_eq!(vec!["cfg8c-b".to_string()], updated);
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-x.test"));
+        assert_eq!(Some(second.hash_key()), loaded("cfg8c-y.test"));
+        // The same as when all of them are built.
+        let (whole, _, _) =
+            update_certificates(&configs(&all), &AHashMap::new());
+        assert_eq!(
+            Some(first.hash_key()),
+            whole.get("cfg8c-x.test").map(|cert| cert.hash_key.clone())
+        );
+
+        // The other way round the domain goes to the one that is handed
+        // over, which comes first; the one that was left alone and has no
+        // name any more is still loaded.
+        let first = CertificateConf {
+            domains: Some("cfg8c-x.test,cfg8c-y.test".to_string()),
+            ..first
+        };
+        let second = acme("cfg8c-y.test");
+        let all = [("cfg8c-a", &first), ("cfg8c-b", &second)];
+        try_update_certificates_except(&configs(&all), |name| !mine(name));
+        try_update_certificates_except(&configs(&all), |name| {
+            name == "cfg8c-b" || !mine(name)
+        });
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-x.test"));
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-y.test"));
+        assert_eq!(
+            Some(second.hash_key()),
+            loaded(&unused_certificate_key("cfg8c-b"))
+        );
+
+        // One that is handed over and gives way with every name it has
+        // is still loaded as well.
+        let first = acme("cfg8c-x.test");
+        let second = acme("cfg8c-y.test");
+        let all = [("cfg8c-a", &first), ("cfg8c-b", &second)];
+        try_update_certificates_except(&configs(&all), |name| !mine(name));
+        let second = CertificateConf {
+            domains: Some("cfg8c-x.test".to_string()),
+            ..second
+        };
+        let all = [("cfg8c-a", &first), ("cfg8c-b", &second)];
+        try_update_certificates_except(&configs(&all), |name| {
+            name == "cfg8c-a" || !mine(name)
+        });
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-x.test"));
+        assert_eq!(None, loaded("cfg8c-y.test"));
+        assert_eq!(
+            Some(second.hash_key()),
+            loaded(&unused_certificate_key("cfg8c-b"))
+        );
+
+        // A name that an entry left alone has a claim to and does not
+        // hold - it lost it to a certificate that is not of ACME - goes
+        // to that entry when the certificate that has it becomes one of
+        // ACME that comes after it.
+        let first = acme("cfg8c-x.test");
+        let plain = CertificateConf {
+            acme: None,
+            ..acme("cfg8c-x.test")
+        };
+        let all = [("cfg8c-a", &first), ("cfg8c-s", &plain)];
+        try_update_certificates_except(&configs(&all), |name| !mine(name));
+        assert_eq!(Some(plain.hash_key()), loaded("cfg8c-x.test"));
+        let handed = CertificateConf {
+            acme: Some("lets_encrypt".to_string()),
+            ..plain.clone()
+        };
+        let all = [("cfg8c-a", &first), ("cfg8c-s", &handed)];
+        try_update_certificates_except(&configs(&all), |name| {
+            name == "cfg8c-a" || !mine(name)
+        });
+        assert_eq!(Some(first.hash_key()), loaded("cfg8c-x.test"));
+        let (whole, _, _) =
+            update_certificates(&configs(&all), &AHashMap::new());
+        assert_eq!(
+            Some(first.hash_key()),
+            whole.get("cfg8c-x.test").map(|cert| cert.hash_key.clone())
+        );
+        assert_eq!(
+            Some(handed.hash_key()),
+            loaded(&unused_certificate_key("cfg8c-s"))
+        );
+
+        try_update_certificates_except(&HashMap::new(), |name| !mine(name));
+        assert_eq!(None, loaded("cfg8c-x.test"));
     }
 
     /// A domain with a certificate for each kind of key is served with

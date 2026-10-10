@@ -410,6 +410,29 @@ fn condition_met(actual: Option<&str>, expected: &Option<String>) -> bool {
     }
 }
 
+/// [`condition_met`] for a query parameter: the value is also taken as
+/// the client meant it, with its percent-encoding decoded.
+///
+/// It used to be compared as it was sent and nothing else. A client that
+/// encodes what it may - `?v=a%2Bb` for `a+b`, `%2F` for a slash, any
+/// character that is not ASCII - did not match `match_query = ["v:a+b"]`,
+/// and went to whatever location came next. A condition that was written
+/// in the encoded form to get around that goes on matching: the value as
+/// it was sent is compared first.
+#[inline]
+fn query_condition_met(
+    actual: Option<&str>,
+    expected: &Option<String>,
+) -> bool {
+    if condition_met(actual, expected) {
+        return true;
+    }
+    match actual.map(pingap_core::decode_query_value) {
+        Some(Cow::Owned(decoded)) => condition_met(Some(&decoded), expected),
+        _ => false,
+    }
+}
+
 /// The plugin instances a location's names resolved to, stamped with the
 /// provider version they came from.
 struct ResolvedPlugins {
@@ -836,7 +859,7 @@ impl Location {
                 expected,
             )
         }) && self.query_conditions.iter().all(|(name, expected)| {
-            condition_met(
+            query_condition_met(
                 pingap_core::get_query_value(req_header, name),
                 expected,
             )
@@ -1807,6 +1830,60 @@ mod tests {
         // No named groups -> the second regex pass is skipped, no variables.
         assert_eq!(None, variables);
         assert_eq!("/new/thing?x=1", req_header.uri.to_string());
+    }
+
+    /// Regression: `match_query` compared the value of a parameter as it
+    /// was sent, so a client that percent-encodes it did not match.
+    #[test]
+    fn test_match_query_takes_the_value_as_it_is_meant() {
+        let location = |conditions: &[&str]| {
+            Location::new(
+                "lo",
+                &LocationConf {
+                    upstream: Some("charts".to_string()),
+                    path: Some("/".to_string()),
+                    match_query: Some(
+                        conditions.iter().map(|c| c.to_string()).collect(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let matches = |lo: &Location, uri: &str| {
+            let req =
+                RequestHeader::build("GET", uri.as_bytes(), None).unwrap();
+            lo.match_conditions(&req)
+        };
+        let lo = location(&["v:a+b"]);
+        assert_eq!(true, matches(&lo, "/?v=a+b"));
+        assert_eq!(true, matches(&lo, "/?v=a%2Bb"));
+        assert_eq!(true, matches(&lo, "/?x=1&v=a%2bb"));
+        // A plus is a plus, and a space is not one.
+        assert_eq!(false, matches(&lo, "/?v=a%20b"));
+        assert_eq!(false, matches(&lo, "/?v=a%252Bb"));
+        assert_eq!(false, matches(&lo, "/?v=a"));
+        assert_eq!(false, matches(&lo, "/"));
+
+        // spellchecker:off
+        let lo = location(&["path:/a/b", "name:caf\u{e9}", "debug"]);
+        assert_eq!(
+            true,
+            matches(&lo, "/?path=%2Fa%2Fb&name=caf%C3%A9&debug=%31")
+        );
+        assert_eq!(true, matches(&lo, "/?path=/a/b&name=caf%c3%a9&debug="));
+        assert_eq!(
+            false,
+            matches(&lo, "/?path=%2Fa%2Fc&name=caf%C3%A9&debug=1")
+        );
+        // What does not decode to text is compared as it came.
+        assert_eq!(false, matches(&lo, "/?path=/a/b&name=caf%E9&debug=1"));
+        // spellchecker:on
+
+        // A condition written the way the value is sent still holds.
+        let lo = location(&["v:a%2Bb"]);
+        assert_eq!(true, matches(&lo, "/?v=a%2Bb"));
+        assert_eq!(false, matches(&lo, "/?v=a+b"));
     }
 
     #[test]

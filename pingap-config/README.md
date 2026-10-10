@@ -236,6 +236,32 @@ edits one entry at a time through `ConfigManager::update`, which holds only
 that entry and so cannot clean up a file containing all the others. That single
 write is what turns a directory carrying one old layout into a broken one.
 
+A file that is put into the directory while the process runs is not migrated
+until the next start, and is read like the rest meanwhile. A write that would
+duplicate what it defines is refused, with the name of the file and of its
+entries: any write of a category the file has entries of where a category is
+one file, a write of one of its entries where an entry is a file of its own,
+and an import. It used to be made and answered with a success, after which the
+directory did not load any more. Other writes go through as before.
+
+The same goes for a table that was put, by hand, into a file of the layout it
+does not belong in. Where a category is one file, `[locations.x]` in
+`upstreams.toml` was written a second time by the next write of a location and
+dropped by the next write of an upstream; both are refused now, and so is the
+write of an entry whose own file holds another entry beside it. This is not
+something the migration at start resolves: the entries have to be moved by
+hand into the file they belong in, or the configuration imported again, which
+writes every file of the layout anew. (Where an entry is a file of its own,
+the files of the other entries are not read for this at every write: an entry
+that is also defined in the file of another one is still written a second
+time, and found by the configuration no longer loading.)
+
+A directory that does not load as it is can still be repaired through the
+admin where an entry is a file of its own, and by an import: nothing is
+refused there. An ACME order checks all of this before it asks the CA for
+anything, for the certificate and for the account and the token it stores on
+its way: what could not be stored is not ordered.
+
 `MemoryStorage` backs the config-file-less quick start
 (`pingap --domain=… --upstream=…`): the configuration is synthesized from the
 command line and held in memory, with writes optionally mirrored to a file so an

@@ -30,6 +30,7 @@ strum = { workspace = true }
 TinyUFO = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+urlencoding = { workspace = true }
 
 
 [features]

@@ -57,7 +57,9 @@ use pingap_logger::{
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 #[cfg(feature = "tracing")]
-use pingap_performance::set_metrics_upstream_provider;
+use pingap_performance::{
+    set_metrics_location_provider, set_metrics_upstream_provider,
+};
 use pingap_plugin::get_plugin_factory;
 use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
@@ -608,6 +610,19 @@ fn available_memory(machine: u64, cgroup_limit: Option<u64>) -> u64 {
     }
 }
 
+/// Whether a server with this `addr` listens on port 80, where a CA comes
+/// for the answer to an http-01 challenge.
+///
+/// `addr` may list several addresses. Only the last one used to be looked
+/// at: a server on `0.0.0.0:80,[::]:8080` was not taken for one on port
+/// 80, so it did not answer the challenge, and the server that is added
+/// for the challenge when there is none was added on the same address.
+/// The two then shared the socket, and each got a part of the connections:
+/// the challenge was answered now and then, and so was everything else.
+fn listens_on_port_80(addr: &str) -> bool {
+    addr.split(',').any(|addr| addr.trim().ends_with(":80"))
+}
+
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
@@ -639,6 +654,13 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     };
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(Some(opt))?;
+    // The one setting of what it stores that this node runs with: who
+    // the proxies in front of it are, for the address a failed login is
+    // counted by.
+    let trusted_proxies =
+        validate::new_trusted_proxies_service(config_manager.clone());
+    let service_name = trusted_proxies.name().to_string();
+    my_server.add_service(background_service(&service_name, trusted_proxies));
     let ctx = AppContext {
         server_locations_provider: new_server_locations_provider(),
         location_provider: new_location_provider(),
@@ -989,6 +1011,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "tracing")]
     set_metrics_upstream_provider(new_upstream_provider());
     try_init_locations(&config.locations)?;
+    // And the locations, for the series of the ones that are gone.
+    #[cfg(feature = "tracing")]
+    set_metrics_location_provider(new_location_provider());
     try_init_server_locations(&config.servers, &config.locations)?;
     let certificates = config.certificates.clone();
 
@@ -1127,7 +1152,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut exits_80_server = false;
     for serve_conf in server_conf_list.iter() {
-        if serve_conf.addr.ends_with(":80") {
+        if listens_on_port_80(&serve_conf.addr) {
             exits_80_server = true;
         }
         #[cfg(feature = "tracing")]
@@ -1181,17 +1206,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_background_service.add_task("storage_clear", task);
     }
 
-    let enabled_http_challenge = certificates.iter().any(|(_, certificate)| {
-        let acme = certificate.acme.clone().unwrap_or_default();
-        let domains = certificate.domains.clone().unwrap_or_default();
-        let dns_challenge = certificate.dns_challenge.unwrap_or_default();
-        !acme.is_empty() && !domains.is_empty() && !dns_challenge
-    });
+    let enabled_http_challenge = certificates
+        .values()
+        .any(|certificate| certificate.is_acme_http_challenge());
 
-    if std::env::var("PINGAP_DISABLE_ACME")
+    let acme_enabled = std::env::var("PINGAP_DISABLE_ACME")
         .unwrap_or_default()
-        .is_empty()
-    {
+        .is_empty();
+    if acme_enabled {
         simple_background_service.add_task(
             "lets_encrypt",
             new_lets_encrypt_service(
@@ -1222,9 +1244,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         });
     }
+    // What a reload goes by when it is given a certificate of ACME:
+    // whether the service above is there to hand it to, and whether a
+    // server is there for the http-01 challenge - it cannot add the one
+    // above.
+    process::set_acme_here(
+        acme_enabled,
+        exits_80_server || enabled_http_challenge,
+    );
 
     for server_conf in server_conf_list {
-        let listen_80_port = server_conf.addr.ends_with(":80");
+        let listen_80_port = listens_on_port_80(&server_conf.addr);
         let (log_format, log_path) =
             parse_access_log_directive(server_conf.access_log.as_ref());
 
@@ -1256,7 +1286,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             logger: access_logger,
         };
         let mut ps = Server::new(&server_conf, ctx)?;
-        if enabled_http_challenge && listen_80_port {
+        // Every server on port 80, whether or not a certificate is
+        // ordered with the http-01 challenge now: one may be after the
+        // next reload, and a request is only taken as a challenge while
+        // there is one.
+        if listen_80_port {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
@@ -1381,6 +1415,24 @@ fn main() {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_listens_on_port_80() {
+        for addr in [
+            "0.0.0.0:80",
+            "[::]:80",
+            "0.0.0.0:80,[::]:8080",
+            "127.0.0.1:8080, 0.0.0.0:80",
+            "0.0.0.0:443 , [::]:80 ,127.0.0.1:8080",
+        ] {
+            assert_eq!(true, listens_on_port_80(addr), "{addr}");
+        }
+        for addr in
+            ["0.0.0.0:8080", "0.0.0.0:443,[::]:8080", "127.0.0.1:180", ""]
+        {
+            assert_eq!(false, listens_on_port_80(addr), "{addr}");
+        }
+    }
 
     #[test]
     fn test_available_memory_keeps_to_the_container() {

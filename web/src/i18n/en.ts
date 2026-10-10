@@ -468,7 +468,7 @@ export default {
     matchCookiesPlaceholder:
       "Input cookie condition(e.g. session:abc or session)",
     matchConditionTips:
-      "One condition per entry: name:value requires that exact value, a bare name only requires it to be present. The location matches only when every condition holds.",
+      "One condition per entry: name:value requires that exact value, a bare name only requires it to be present. The location matches only when every condition holds. A query value is also compared with its percent-encoding decoded (a+b matches a%2Bb).",
     proxySetHeaders: "Proxy Set Headers",
     proxySetHeadersPlaceholder:
       "Input the http header name : Input the http header value",

@@ -312,6 +312,23 @@ belong to the machines the configuration is for. When the stored configuration
 names files that are not on the control-panel node at all, it does not pass
 there as a whole, and writes are then only checked entry by entry.
 
+One setting of what it stores does apply to the control-panel node itself:
+`basic.trusted_proxies`. Failed logins are counted by the address of the
+client, and behind an ingress that is the address of the ingress unless it is
+named there: the failed logins of anyone then count against everyone, and ten
+of them in five minutes lock every administrator out. The node reads the
+setting when it starts, every minute after that, and when the basic settings
+are changed through it.
+
+It is the list the data plane goes by, and it means the same here as there:
+whoever connects from one of its addresses is believed about the client it
+speaks for. A client inside a range that is listed - a pod in a subnet named
+as a whole - that reaches the admin port directly can so choose the address
+its failed logins are counted under, a new one for every guess or that of an
+administrator it wants locked out. List the addresses of the proxies, not the
+networks they are in, and do not let anything else in those ranges reach the
+control-panel node.
+
 ## Usage notes
 
 - **An empty `authorizations` disables authentication.** Never expose such an

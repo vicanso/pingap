@@ -41,8 +41,8 @@ use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -116,8 +116,13 @@ fn failed_recently(last: Option<&LastFailed>, hash: u64) -> bool {
 /// does not load keeps the certificates it had, and their files may be
 /// renewed all the same.
 async fn reload_changed_certificate_files(config_manager: &ConfigManager) {
-    let config = config_manager.get_current_config();
-    let (updated, errors) = try_reload_certificate_files(&config.certificates);
+    let (updated, errors) = {
+        // The certificates of the running configuration, while nobody
+        // else is making another of it.
+        let _guard = config_manager.lock_current_config().await;
+        let config = config_manager.get_current_config();
+        try_reload_certificate_files(&config.certificates)
+    };
     report_certificate_reload(updated, errors).await;
 }
 
@@ -309,35 +314,105 @@ async fn diff_and_update_config(
     Ok(Some(new_config))
 }
 
+/// What this process does for the certificates of ACME.
+#[derive(Clone, Copy)]
+struct AcmeHere {
+    /// Its ACME service runs. With `PINGAP_DISABLE_ACME` it does not, and
+    /// nobody here orders a certificate or stores one.
+    orders: bool,
+    /// One of its servers listens on port 80, where a CA asks for the
+    /// answer to an http-01 challenge. A listener is not something a
+    /// reload adds.
+    http_listener: bool,
+}
+
+static ACME_ORDERS: AtomicBool = AtomicBool::new(true);
+static HTTP_CHALLENGE_LISTENER: AtomicBool = AtomicBool::new(false);
+
+/// Notes what this process does for the certificates of ACME: whether its
+/// ACME service runs, and whether a server of it listens on port 80. Once,
+/// when its services and servers are made.
+pub fn set_acme_here(orders: bool, http_listener: bool) {
+    ACME_ORDERS.store(orders, Ordering::Relaxed);
+    HTTP_CHALLENGE_LISTENER.store(http_listener, Ordering::Relaxed);
+}
+
+/// Whether this process only ever reloads (`--autoreload`): a change that
+/// takes a restart then waits for somebody to make one.
+static ONLY_HOT_RELOAD: AtomicBool = AtomicBool::new(false);
+
+/// The certificates that were last told to be waiting for a restart.
+static LEFT_REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Notes the certificates that wait for a restart, and says whether they
+/// are worth telling: there are some, and they are not the ones that were
+/// told the last time. Every change to the configuration is a pass that
+/// finds them still waiting.
+fn left_is_news(left: &[String]) -> bool {
+    let mut reported = LEFT_REPORTED.lock().unwrap_or_else(|e| e.into_inner());
+    if reported.as_slice() == left {
+        return false;
+    }
+    *reported = left.to_vec();
+    !left.is_empty()
+}
+
 /// What a hot reload does with a change of the certificates.
 struct CertificateChanges {
     /// The certificates once the reload is done.
     merged: HashMap<String, CertificateConf>,
-    /// Whether any entry that is reloaded here changed.
+    /// Whether the certificate store is to be brought up to date: an entry
+    /// that is not in `kept` is not what it was.
     changed: bool,
-    /// The entries the new configuration gives to ACME: not reloaded here.
-    of_acme: HashSet<String>,
-    /// Those of them whose settings changed, which only a restart applies.
+    /// Whether that is so for an entry other than the ones in `handed`.
+    changed_others: bool,
+    /// The entries of ACME that are what they were. Their certificates
+    /// are not loaded again here: what the store has under their names
+    /// was put there by their service.
+    kept: HashSet<String>,
+    /// The entries the ACME service is handed with the settings they have
+    /// now: new ones, ones that were given to it, and ones of its own
+    /// whose settings changed. It looks at the ones it orders differently
+    /// for at its next run.
+    handed: Vec<String>,
+    /// The entries that only a restart applies: their challenge is
+    /// answered on port 80, and nothing listens there.
     left: Vec<String>,
 }
 
-/// Splits a change of the certificates into the entries a hot reload takes
-/// and the ones it leaves.
+/// Splits a change of the certificates into what a hot reload does with
+/// each entry.
 ///
-/// An entry the new configuration gives to ACME stays as it is, a new one
-/// stays out: the ACME service reads its settings from the running
-/// configuration and stores the certificate it orders into the same entry,
-/// and what a server needs to answer its challenge is set up at start.
-/// That write alone - `tls_cert` and `tls_key` of an entry that is
-/// otherwise the same - is the service's own doing and nothing to report.
+/// The ACME service reads the settings of its entries from the running
+/// configuration at every run, and stores the certificate it orders into
+/// the same entry. So an entry of ACME is taken with the settings the new
+/// configuration has for it - a new one whole - and the service does the
+/// rest. Such a change used to wait for a restart, with a warning in the
+/// log of a process that never restarts by itself.
+///
+/// The certificate and the key of an entry that was the service's already
+/// stay the running ones: what the storage holds was read a moment ago,
+/// and the service may have renewed since. That write alone - `tls_cert`
+/// and `tls_key` of an entry that is otherwise the same - is its own doing,
+/// nothing to reload and nothing to report.
+///
+/// One thing a reload cannot give the service: a listener. An entry whose
+/// challenge is answered over HTTP is left as it is, or left out, when no
+/// server of this process is on port 80; the server that is added for it
+/// when the process starts is not there.
 ///
 /// An entry that is no longer one of ACME, or no longer there, is reloaded
 /// like any other. Left in the running configuration, the service went on
 /// renewing it: over the certificate that was put in its place, or for an
 /// entry that is not stored any more.
+///
+/// And so is every entry where the service does not run: there is nobody
+/// to hand it to, and nobody but the storage to have its certificate from.
+/// The listener is missed there as well.
 fn merge_certificates(
     current: &HashMap<String, CertificateConf>,
     new: &HashMap<String, CertificateConf>,
+    acme: AcmeHere,
 ) -> CertificateChanges {
     let settings = |conf: Option<&CertificateConf>| {
         conf.map(|conf| CertificateConf {
@@ -349,26 +424,61 @@ fn merge_certificates(
     let mut changes = CertificateChanges {
         merged: HashMap::with_capacity(new.len()),
         changed: false,
-        of_acme: HashSet::new(),
+        changed_others: false,
+        kept: HashSet::new(),
+        handed: vec![],
         left: vec![],
     };
     let names: BTreeSet<&String> = current.keys().chain(new.keys()).collect();
     for name in names {
         let (before, after) = (current.get(name), new.get(name));
-        if after.is_some_and(|conf| conf.is_acme()) {
-            changes.of_acme.insert(name.clone());
-            if settings(before) != settings(after) {
-                changes.left.push(name.clone());
-            }
-            if let Some(conf) = before {
-                changes.merged.insert(name.clone(), conf.clone());
+        let of_acme = after.filter(|conf| conf.is_acme());
+        let same_settings = settings(before) == settings(after);
+        // A listener that is not there is missed whoever orders: an
+        // instance that does not order answers the challenges of the
+        // ones that do, when they share a storage. What is running stays
+        // as it is, and the change waits for a restart.
+        let unanswered = of_acme.is_some_and(|conf| {
+            conf.is_acme_http_challenge() && !acme.http_listener
+        });
+        if unanswered && !same_settings {
+            changes.left.push(name.clone());
+            if let Some(running) = before {
+                if acme.orders && running.is_acme() {
+                    changes.kept.insert(name.clone());
+                }
+                changes.merged.insert(name.clone(), running.clone());
             }
             continue;
         }
-        changes.changed |= before != after;
-        if let Some(conf) = after {
-            changes.merged.insert(name.clone(), conf.clone());
+        let Some(conf) = of_acme.filter(|_| acme.orders) else {
+            let changed = before != after;
+            changes.changed |= changed;
+            changes.changed_others |= changed;
+            if let Some(conf) = after {
+                changes.merged.insert(name.clone(), conf.clone());
+            }
+            continue;
+        };
+        // The same entry of ACME: what is running stays as it is.
+        if same_settings {
+            if let Some(running) = before {
+                changes.kept.insert(name.clone());
+                changes.merged.insert(name.clone(), running.clone());
+            }
+            continue;
         }
+        changes.changed = true;
+        changes.handed.push(name.clone());
+        let merged = match before.filter(|running| running.is_acme()) {
+            Some(running) => CertificateConf {
+                tls_cert: running.tls_cert.clone(),
+                tls_key: running.tls_key.clone(),
+                ..conf.clone()
+            },
+            None => conf.clone(),
+        };
+        changes.merged.insert(name.clone(), merged);
     }
     changes
 }
@@ -383,7 +493,8 @@ fn merge_certificates(
 ///    - Upstream configurations
 ///    - Location definitions
 ///    - Plugin configurations
-///    - Certificates, entry by entry: all but the ones of ACME
+///    - Certificates, entry by entry. One of ACME is handed to its service
+///      with the settings it has now, see `merge_certificates`
 ///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`,
 ///      `webhook_batch_window`, `webhook_batch_max_events`,
 ///      `webhook_min_level`, `webhook_headers`, `webhook_secret`,
@@ -409,6 +520,11 @@ async fn apply_config(
     })
     .await
     .map_err(|e| e.to_string())??;
+    // From here to where the running configuration is set: the ACME
+    // service puts a certificate into its entry of that configuration, and
+    // one that it put there while this reload went on was written over by
+    // what the reload had read before, then ordered again.
+    let running_guard = config_manager.lock_current_config().await;
     let current_config: PingapConfig =
         config_manager.get_current_config().as_ref().clone();
 
@@ -422,6 +538,9 @@ async fn apply_config(
     );
     // no update config
     if original_diff_result.is_empty() {
+        // Nor a certificate that waits for a restart: one that waits is
+        // not in the running configuration as the storage has it.
+        left_is_news(&[]);
         return Ok(false);
     }
 
@@ -457,6 +576,8 @@ async fn apply_config(
     let mut location_reload_failed = false;
     let mut server_location_reload_failed = false;
     let mut certificate_reload_failed = false;
+    // The entries of ACME this reload hands to their service.
+    let mut handed_to_acme: Vec<String> = vec![];
     let mut hot_reload_config = current_config.clone();
     // What the references of the new configuration stood for goes with
     // its entries. Left behind, a value that was read from a file or the
@@ -515,24 +636,47 @@ async fn apply_config(
         // so again on each attempt, ten minutes apart.
         hot_reload_config.storages = new_config.storages.clone();
 
-        // Certificates are taken entry by entry. One of ACME is left as
-        // it is: its certificate is its service's to order and to store.
-        // With a single such entry no certificate at all used to be
-        // reloaded, the ones given in the configuration included, and
-        // nothing said so.
+        // Certificates are taken entry by entry. The certificate of an
+        // entry of ACME is its service's to order and to store, and its
+        // settings are what the service is handed here. With a single
+        // such entry no certificate at all used to be reloaded, the ones
+        // given in the configuration included, and nothing said so.
         let certificates = merge_certificates(
             &current_config.certificates,
             &new_config.certificates,
+            AcmeHere {
+                orders: ACME_ORDERS.load(Ordering::Relaxed),
+                http_listener: HTTP_CHALLENGE_LISTENER.load(Ordering::Relaxed),
+            },
         );
         hot_reload_config.certificates = certificates.merged;
-        let certificates_of_acme = certificates.of_acme;
+        let certificates_kept = certificates.kept;
+        let certificates_handed = certificates.handed;
+        handed_to_acme.clone_from(&certificates_handed);
         let should_reload_certificate = certificates.changed;
+        let certificates_changed_others = certificates.changed_others;
+        let left_is_news = left_is_news(&certificates.left);
         if !certificates.left.is_empty() {
+            let names = certificates.left.join(",");
             warn!(
                 target: LOG_TARGET,
-                certificates = certificates.left.join(","),
-                "the change to a certificate of acme takes a restart to apply"
+                certificates = names,
+                "the http-01 challenge of a certificate of acme needs a server on port 80, which takes a restart to add"
             );
+            // Who never restarts by itself is the one to be told: the
+            // certificate is not ordered until somebody does it. Once,
+            // not with every later change that finds it still waiting.
+            if left_is_news && ONLY_HOT_RELOAD.load(Ordering::Relaxed) {
+                send_notification(NotificationData {
+                    category: "reload_config_fail".to_string(),
+                    level: NotificationLevel::Warn,
+                    message: format!(
+                        "Certificate({names}) is ordered with the http-01 challenge, and no server listens on port 80: restart to apply"
+                    ),
+                    ..Default::default()
+                })
+                .await;
+            }
         }
 
         for category in updated_category_list {
@@ -643,11 +787,37 @@ async fn apply_config(
         if should_reload_certificate {
             let (updated_certificates, errors) = try_update_certificates_except(
                 &hot_reload_config.certificates,
-                |name| certificates_of_acme.contains(name),
+                |name| certificates_kept.contains(name),
             );
+            // The entries of ACME are told by themselves, and as what
+            // they are: modified. Whether one is ordered for is its
+            // service's to find, and to tell.
+            if !certificates_handed.is_empty() {
+                let names = certificates_handed.join(",");
+                info!(
+                    target: LOG_TARGET,
+                    certificates = names,
+                    "reload certificate of acme success"
+                );
+                send_notification(NotificationData {
+                    category: "reload_config".to_string(),
+                    level: NotificationLevel::Info,
+                    message: format!(
+                        "Certificate({names}) of acme is modified"
+                    ),
+                    ..Default::default()
+                })
+                .await;
+            }
+            let updated_certificates: Vec<String> = updated_certificates
+                .into_iter()
+                .filter(|name| !certificates_handed.contains(name))
+                .collect();
             // Said when something was reloaded or taken out, not ahead of
             // the errors as if all of it had been.
-            if !updated_certificates.is_empty() || errors.is_empty() {
+            if !updated_certificates.is_empty()
+                || (errors.is_empty() && certificates_changed_others)
+            {
                 info!(target: LOG_TARGET, "reload certificate success");
                 send_notification(NotificationData {
                     category: "reload_config".to_string(),
@@ -792,6 +962,9 @@ async fn apply_config(
         }
         // update current config to what is running now
         config_manager.set_current_config(running_config);
+        // Said once the entries are running: the service looks for them
+        // there.
+        pingap_acme::hand_over(&handed_to_acme);
         // A reload that changed something, counted as it went: applied,
         // or with a part of it that did not go through. A pass that found
         // nothing to do is not one.
@@ -821,6 +994,7 @@ async fn apply_config(
     // restart mode
     // update current config to what is running now
     config_manager.set_current_config(running_config);
+    pingap_acme::hand_over(&handed_to_acme);
 
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(new_config);
@@ -860,6 +1034,7 @@ async fn apply_config(
             .await;
         }
     }
+    drop(running_guard);
     if should_restart {
         restart().await;
     }
@@ -904,6 +1079,7 @@ pub fn new_auto_restart_service(
         .clone()
         .unwrap_or_default();
 
+    ONLY_HOT_RELOAD.store(only_hot_reload, Ordering::Relaxed);
     let task = Box::new(AutoRestart {
         log_reload_handle,
         config_manager,
@@ -957,6 +1133,7 @@ pub fn new_observer_service(
         .clone()
         .unwrap_or_default();
 
+    ONLY_HOT_RELOAD.store(only_hot_reload, Ordering::Relaxed);
     ConfigObserverService {
         config_manager,
         log_reload_handle,
@@ -1190,10 +1367,20 @@ fn reload_log_level(
 
 #[cfg(test)]
 mod tests {
-    use super::{LastSeen, merge_certificates, should_skip};
+    use super::{AcmeHere, LastSeen, merge_certificates, should_skip};
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    /// The ACME service runs, and a server listens on port 80.
+    const HERE: AcmeHere = AcmeHere {
+        orders: true,
+        http_listener: true,
+    };
+    const NO_LISTENER: AcmeHere = AcmeHere {
+        orders: true,
+        http_listener: false,
+    };
 
     /// Regression: one certificate of ACME in the configuration and no
     /// certificate was hot reloaded, the ones given as PEM included.
@@ -1219,12 +1406,19 @@ mod tests {
             ("was-acme", conf("w1", true)),
         ]);
 
+        let sorted = |names: &HashSet<String>| {
+            let mut names: Vec<_> = names.iter().cloned().collect();
+            names.sort();
+            names
+        };
+
         // Nothing changed.
-        let changes = merge_certificates(&current, &current);
+        let changes = merge_certificates(&current, &current, HERE);
         assert_eq!(current, changes.merged);
         assert_eq!(false, changes.changed);
         assert_eq!(true, changes.left.is_empty());
-        assert_eq!(2, changes.of_acme.len());
+        assert_eq!(true, changes.handed.is_empty());
+        assert_eq!(vec!["acme", "was-acme"], sorted(&changes.kept));
 
         let new = configs(&[
             // Renewed: what the ACME service itself stores.
@@ -1233,48 +1427,187 @@ mod tests {
             ("added", conf("n1", false)),
             // No longer of ACME: reloaded, so that its service lets go.
             ("was-acme", conf("w2", false)),
-            // Given to ACME, and a new one of ACME: both wait.
+            // Given to ACME, and a new one of ACME: both are its
+            // service's from here on, as they are written.
             ("gone", conf("g1", true)),
             ("new-acme", conf("", true)),
         ]);
-        let changes = merge_certificates(&current, &new);
+        let changes = merge_certificates(&current, &new, HERE);
         assert_eq!(true, changes.changed);
+        assert_eq!(true, changes.changed_others);
         assert_eq!(
             configs(&[
                 ("acme", conf("a1", true)),
                 ("static", conf("s2", false)),
                 ("added", conf("n1", false)),
                 ("was-acme", conf("w2", false)),
-                ("gone", conf("g1", false)),
+                ("gone", conf("g1", true)),
+                ("new-acme", conf("", true)),
             ]),
             changes.merged
         );
+        assert_eq!(true, changes.left.is_empty());
         assert_eq!(
             vec!["gone".to_string(), "new-acme".to_string()],
-            changes.left
+            changes.handed
         );
-        let mut of_acme: Vec<_> = changes.of_acme.into_iter().collect();
-        of_acme.sort();
-        assert_eq!(vec!["acme", "gone", "new-acme"], of_acme);
+        // Only the one that is what it was is not loaded again.
+        assert_eq!(vec!["acme"], sorted(&changes.kept));
 
         // The last entry of ACME is taken out: reloaded like any other.
         // Left in the running configuration, its service went on renewing
         // a certificate that is not stored any more.
         let new = configs(&[("static", conf("s1", false))]);
-        let changes = merge_certificates(&current, &new);
+        let changes = merge_certificates(&current, &new, HERE);
         assert_eq!(true, changes.changed);
         assert_eq!(new, changes.merged);
         assert_eq!(true, changes.left.is_empty());
-        assert_eq!(true, changes.of_acme.is_empty());
+        assert_eq!(true, changes.kept.is_empty());
+    }
 
-        // The settings of an entry of ACME changed: said, and left.
-        let mut new = current.clone();
-        new.get_mut("acme").unwrap().domains =
-            Some("example.com,www.example.com".to_string());
-        let changes = merge_certificates(&current, &new);
-        assert_eq!(false, changes.changed);
+    /// Regression: a change to an entry of ACME - its domains, a new
+    /// entry - was left for a restart, which a process that only reloads
+    /// never makes. A warning in its log was all there was.
+    #[test]
+    fn test_merge_certificates_hands_the_settings_to_acme() {
+        let conf = |domains: &str, cert: &str| CertificateConf {
+            domains: Some(domains.to_string()),
+            tls_cert: Some(cert.to_string()),
+            tls_key: Some(cert.to_string()),
+            acme: Some("lets_encrypt".to_string()),
+            ..Default::default()
+        };
+        let configs = |items: &[(&str, CertificateConf)]| {
+            items
+                .iter()
+                .map(|(name, conf)| (name.to_string(), conf.clone()))
+                .collect::<HashMap<_, _>>()
+        };
+        let current = configs(&[("site", conf("example.com", "running"))]);
+
+        // The settings are the new ones. The certificate is the one that
+        // is running, not what the storage held when it was read: the
+        // service may have stored another since.
+        let new = configs(&[(
+            "site",
+            conf("example.com,www.example.com", "as stored"),
+        )]);
+        let changes = merge_certificates(&current, &new, HERE);
+        assert_eq!(
+            configs(&[(
+                "site",
+                conf("example.com,www.example.com", "running")
+            )]),
+            changes.merged
+        );
+        assert_eq!(vec!["site".to_string()], changes.handed);
+        // Loaded again, for the domains it has now.
+        assert_eq!(true, changes.changed);
+        assert_eq!(false, changes.changed_others);
+        assert_eq!(true, changes.kept.is_empty());
+        assert_eq!(true, changes.left.is_empty());
+
+        // A certificate stored by the service, and nothing else: not a
+        // change of the entry.
+        let new = configs(&[("site", conf("example.com", "as stored"))]);
+        let changes = merge_certificates(&current, &new, HERE);
         assert_eq!(current, changes.merged);
-        assert_eq!(vec!["acme".to_string()], changes.left);
+        assert_eq!(false, changes.changed);
+        assert_eq!(true, changes.handed.is_empty());
+        assert_eq!(1, changes.kept.len());
+
+        // Nothing listens on port 80, and a listener is not something a
+        // reload adds: the entry stays as it is, a new one stays out, and
+        // both are named.
+        let new = configs(&[
+            ("site", conf("example.com,www.example.com", "as stored")),
+            ("other", conf("other.test", "")),
+        ]);
+        let changes = merge_certificates(&current, &new, NO_LISTENER);
+        assert_eq!(current, changes.merged);
+        assert_eq!(false, changes.changed);
+        assert_eq!(true, changes.handed.is_empty());
+        assert_eq!(vec!["other".to_string(), "site".to_string()], changes.left);
+        assert_eq!(1, changes.kept.len());
+
+        // Where the ACME service does not run (`PINGAP_DISABLE_ACME`)
+        // there is nobody to hand an entry to, and nobody but the storage
+        // to have its certificate from: every entry is reloaded as it is
+        // written.
+        let changes = merge_certificates(
+            &current,
+            &new,
+            AcmeHere {
+                orders: false,
+                http_listener: true,
+            },
+        );
+        assert_eq!(new, changes.merged);
+        assert_eq!(true, changes.changed);
+        assert_eq!(true, changes.changed_others);
+        assert_eq!(true, changes.handed.is_empty());
+        assert_eq!(true, changes.left.is_empty());
+        assert_eq!(true, changes.kept.is_empty());
+        // The listener is missed there too: such a process answers the
+        // challenges of the ones that order. But a certificate that the
+        // storage has anew, for an entry that is otherwise the same, is
+        // nothing a listener is needed for.
+        let here = AcmeHere {
+            orders: false,
+            http_listener: false,
+        };
+        let changes = merge_certificates(&current, &new, here);
+        assert_eq!(current, changes.merged);
+        assert_eq!(false, changes.changed);
+        assert_eq!(vec!["other".to_string(), "site".to_string()], changes.left);
+        assert_eq!(true, changes.kept.is_empty());
+        let renewed = configs(&[("site", conf("example.com", "as stored"))]);
+        let changes = merge_certificates(&current, &renewed, here);
+        assert_eq!(renewed, changes.merged);
+        assert_eq!(true, changes.changed);
+        assert_eq!(true, changes.left.is_empty());
+
+        // The challenge that is answered through the DNS needs none.
+        let dns = |domains: &str, cert: &str| CertificateConf {
+            dns_challenge: Some(true),
+            dns_provider: Some("cf".to_string()),
+            ..conf(domains, cert)
+        };
+        let current = configs(&[("site", dns("example.com", "running"))]);
+        let new = configs(&[
+            ("site", dns("*.example.com", "as stored")),
+            ("other", dns("other.test", "")),
+        ]);
+        let changes = merge_certificates(&current, &new, NO_LISTENER);
+        assert_eq!(
+            configs(&[
+                ("site", dns("*.example.com", "running")),
+                ("other", dns("other.test", "")),
+            ]),
+            changes.merged
+        );
+        assert_eq!(
+            vec!["other".to_string(), "site".to_string()],
+            changes.handed
+        );
+        assert_eq!(true, changes.left.is_empty());
+    }
+
+    /// The certificates that wait for a restart are told when they come
+    /// to wait, not at every change to the configuration after that.
+    #[test]
+    fn test_left_is_news() {
+        let names = |names: &[&str]| -> Vec<String> {
+            names.iter().map(|name| name.to_string()).collect()
+        };
+        assert_eq!(false, super::left_is_news(&[]));
+        assert_eq!(true, super::left_is_news(&names(&["a"])));
+        assert_eq!(false, super::left_is_news(&names(&["a"])));
+        assert_eq!(true, super::left_is_news(&names(&["a", "b"])));
+        // None any more is nothing to tell, and the same one is news
+        // when it waits again.
+        assert_eq!(false, super::left_is_news(&[]));
+        assert_eq!(true, super::left_is_news(&names(&["a"])));
     }
 
     #[test]

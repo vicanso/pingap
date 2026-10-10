@@ -863,10 +863,14 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let category = Category::from_str(category)
             .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        let basic = category == Category::Basic;
         self.manager.delete(category, name).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
             pingap_core::new_internal_error(400, e)
         })?;
+        if basic {
+            crate::validate::apply_stored_trusted_proxies(&self.manager).await;
+        }
         Ok(HttpResponse::no_content())
     }
     async fn handle_update_config<T>(
@@ -994,6 +998,10 @@ impl AdminServe {
                     Category::Basic,
                 )
                 .await?;
+                // A control panel node runs with this one setting of
+                // what it stores.
+                crate::validate::apply_stored_trusted_proxies(&self.manager)
+                    .await;
             },
             // Anything else used to be stored as the basic config, which a
             // body meant for another category - `upstreams/x` for
@@ -1052,6 +1060,7 @@ impl AdminServe {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
+        crate::validate::apply_stored_trusted_proxies(&self.manager).await;
 
         Ok(HttpResponse::no_content())
     }

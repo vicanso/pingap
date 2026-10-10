@@ -24,7 +24,7 @@ use crate::{Category, Error, Observer};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use pingap_util::resolve_path;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use toml::{Value, map::Map};
@@ -160,6 +160,40 @@ impl PingapTomlConfig {
                 .chain(sections.into_iter().flatten().flat_map(Map::values))
                 .chain(fragments.iter()),
         )
+    }
+
+    /// The entries this document has, as `category.name` (`basic` for
+    /// the basic settings): all of them, the ones of `category`, or the
+    /// one entry `name` of it.
+    fn entry_names(
+        &self,
+        category: Option<&Category>,
+        name: Option<&str>,
+    ) -> Vec<String> {
+        let wanted = |of: &Category| category.is_none_or(|c| c == of);
+        let mut names = vec![];
+        if wanted(&Category::Basic) && self.basic.is_some() {
+            names.push(format_category(&Category::Basic).to_string());
+        }
+        for (of, entries) in [
+            (Category::Server, &self.servers),
+            (Category::Location, &self.locations),
+            (Category::Upstream, &self.upstreams),
+            (Category::Plugin, &self.plugins),
+            (Category::Certificate, &self.certificates),
+            (Category::Storage, &self.storages),
+        ] {
+            if !wanted(&of) {
+                continue;
+            }
+            let section = format_category(&of);
+            for entry in entries.iter().flat_map(|entries| entries.keys()) {
+                if name.is_none_or(|name| name == entry) {
+                    names.push(format!("{section}.{entry}"));
+                }
+            }
+        }
+        names
     }
 
     fn get_toml(&self, category: &Category, name: &str) -> Result<String> {
@@ -412,6 +446,9 @@ pub struct ConfigManager {
     // so concurrent admin/ACME writes to the same storage file cannot clobber
     // each other's changes.
     write_lock: tokio::sync::Mutex<()>,
+    // Held by whoever reads the running configuration to write it back
+    // changed, see `lock_current_config`.
+    current_lock: tokio::sync::Mutex<()>,
 }
 
 impl ConfigManager {
@@ -422,6 +459,7 @@ impl ConfigManager {
             current_config: ArcSwap::from_pointee(PingapConfig::default()),
             current_hash: ArcSwapOption::const_empty(),
             write_lock: tokio::sync::Mutex::new(()),
+            current_lock: tokio::sync::Mutex::new(()),
         }
     }
     pub fn support_observer(&self) -> bool {
@@ -449,6 +487,19 @@ impl ConfigManager {
         let hash = config.hash().unwrap_or_default();
         self.current_config.store(Arc::new(config));
         self.current_hash.store(Some(Arc::new(hash)));
+    }
+    /// To be held from reading the running configuration until what was
+    /// made of it is set, by everyone who does so while the process runs:
+    /// a reload, and the ACME service putting a certificate into its
+    /// entry. Each used to set what it had made of a configuration the
+    /// other had replaced meanwhile, and the other's change was gone: a
+    /// renewed certificate out of the running configuration, to be ordered
+    /// again at the next check.
+    ///
+    /// It is not the lock the writes to the storage are made under, and
+    /// it is not taken again by who holds it.
+    pub async fn lock_current_config(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.current_lock.lock().await
     }
     /// The hash of the running configuration, `None` when none has been
     /// set: a control panel node stores a configuration and runs none.
@@ -557,6 +608,136 @@ impl ConfigManager {
             .collect())
     }
 
+    /// Refuses a write that would leave an entry defined twice, or drop
+    /// one it was not about.
+    ///
+    /// The loader reads every `.toml` file of the directory; a write goes
+    /// to the files of the layout and to no other (`is_canonical_key`),
+    /// and rewrites the one it goes to with what belongs there. A file
+    /// beside them is merged into the layout when the process starts
+    /// ([`ConfigManager::migrate_layout`]), but one that is put there
+    /// while it runs is read like the rest, and what it defines is part
+    /// of what a write puts into the file of its category: the same table
+    /// in two files. From then on the storage does not load - not for a
+    /// reload, not for the next write, not for the next start - and the
+    /// write that did it was answered with a success. The same goes for
+    /// a table that was put into a file of the layout it does not belong
+    /// in, `[locations.x]` in `upstreams.toml`: written a second time by
+    /// the next write of a location, dropped by the next one of an
+    /// upstream.
+    ///
+    /// What a write touches is its category where a category is one file,
+    /// and its entry where an entry is; `None` for all of it. A file that
+    /// has nothing to do with that is no reason to refuse. Nor is anything
+    /// refused in a storage that does not load as it is, where the write
+    /// may be the one that repairs it: of an entry that is a file of its
+    /// own, or of everything at once. (A write of a category that is one
+    /// file reads the whole storage first, and fails there.)
+    ///
+    /// Where an entry is a file, the files of the other entries are not
+    /// read for this: that would be all of them, at every write.
+    async fn refuse_duplicating_write(
+        &self,
+        category: Option<&Category>,
+        name: Option<&str>,
+    ) -> Result<()> {
+        if self.mode == ConfigMode::Single {
+            return Ok(());
+        }
+        let by_item = self.mode == ConfigMode::MultiByItem;
+        // An item of its own, except for the basic settings: they are one
+        // table in one file in every layout.
+        let name = name.filter(|_| {
+            by_item && category.is_some_and(|c| *c != Category::Basic)
+        });
+        let target = match category {
+            Some(category) => {
+                Some(self.get_key(category, name.unwrap_or_default())?)
+            },
+            None => None,
+        };
+        let mut problems = vec![];
+        // Whether one of them is about a file that is not of the layout,
+        // which a start merges into it.
+        let mut beside_the_layout = false;
+        for key in self.storage.list_keys("").await? {
+            let is_target = Some(&key) == target.as_ref();
+            // The file that is written, the ones that are not of the
+            // layout, and - where there are only a few - all the others.
+            let looked_at = is_target
+                || !self.is_canonical_key(&key)
+                || (!by_item && category.is_some());
+            if !looked_at {
+                continue;
+            }
+            // A file that does not read or parse is nothing this can
+            // speak for: the configuration does not load with it either.
+            let Ok(data) = self.storage.fetch(&key).await else {
+                continue;
+            };
+            let Ok(document) = PingapTomlConfig::from_toml(&data) else {
+                continue;
+            };
+            let written = document.entry_names(category, name);
+            if !is_target {
+                if !written.is_empty() {
+                    beside_the_layout |= !self.is_canonical_key(&key);
+                    problems.push(format!(
+                        "{key} defines {}, which this would write a second time or leave as it is",
+                        written.join(", ")
+                    ));
+                }
+                continue;
+            }
+            let written: HashSet<String> = written.into_iter().collect();
+            let others: Vec<String> = document
+                .entry_names(None, None)
+                .into_iter()
+                .filter(|entry| !written.contains(entry))
+                .collect();
+            if !others.is_empty() {
+                problems.push(format!(
+                    "{key} also holds {}, which this would drop from it",
+                    others.join(", ")
+                ));
+            }
+        }
+        if problems.is_empty() {
+            return Ok(());
+        }
+        let repairs = by_item || category.is_none();
+        if repairs && self.load_all().await.is_err() {
+            return Ok(());
+        }
+        let advice = if beside_the_layout {
+            "; a file that is not one of the layout's is merged into it when a server starts on this directory"
+        } else {
+            ""
+        };
+        Err(Error::Invalid {
+            message: format!(
+                "refused: {}. Move these entries into the files this config layout writes{advice}.",
+                problems.join("; ")
+            ),
+        })
+    }
+
+    /// Whether the entry `name` of `category` can be written, as far as
+    /// can be told without writing it. For who has something to do first
+    /// that is not undone when the write is refused: an ACME order, whose
+    /// certificate was issued and then dropped, at every attempt.
+    pub async fn ensure_entry_writable(
+        &self,
+        category: Category,
+        name: &str,
+    ) -> Result<()> {
+        self.ensure_writable()?;
+        // The key is checked as a write checks it.
+        self.get_key(&category, name)?;
+        self.refuse_duplicating_write(Some(&category), Some(name))
+            .await
+    }
+
     /// Rewrites the configuration in canonical form and retires the files the
     /// current mode would never have written itself - another mode's leftovers
     /// or hand combined files.
@@ -593,8 +774,13 @@ impl ConfigManager {
             },
         };
         // Write the new layout before retiring the old one: interrupted the
-        // other way round, the configuration would be gone.
-        self.save_all(&config).await?;
+        // other way round, the configuration would be gone. Without the
+        // check of a write: the files it would refuse for are the ones
+        // that are retired next.
+        {
+            let _guard = self.write_lock.lock().await;
+            self.save_all_locked(&config).await?;
+        }
         let mut retired = Vec::with_capacity(stale.len());
         for key in stale {
             retired.push(self.storage.retire(&key).await?);
@@ -603,6 +789,11 @@ impl ConfigManager {
     }
     pub async fn save_all(&self, config: &PingapTomlConfig) -> Result<()> {
         let _guard = self.write_lock.lock().await;
+        self.refuse_duplicating_write(None, None).await?;
+        self.save_all_locked(config).await
+    }
+    /// [`ConfigManager::save_all`], by who holds the write lock.
+    async fn save_all_locked(&self, config: &PingapTomlConfig) -> Result<()> {
         match self.mode {
             ConfigMode::Single => {
                 self.storage
@@ -725,7 +916,53 @@ impl ConfigManager {
         check: Option<ChangeCheck>,
     ) -> Result<()> {
         let _guard = self.write_lock.lock().await;
+        self.update_locked(category, name, value, check).await
+    }
+    /// Changes the entry `name` of `category` as it is stored now: `change`
+    /// is given the entry, read under the write lock, and what it makes of
+    /// it is written before the lock is let go - when it returns `true`;
+    /// with `false` it has looked at the entry and wants nothing written.
+    /// `Ok(false)`, and nothing written, in that case and when there is no
+    /// such entry.
+    ///
+    /// For who has only a part of the entry to write, and took its time
+    /// getting it: a `get` followed by an `update` writes back whatever
+    /// the entry was when it was read, over every change made since.
+    ///
+    /// The lock is this process's. Another one on the same storage is not
+    /// kept out between the read and the write, which are moments apart.
+    pub async fn modify<T, F>(
+        &self,
+        category: Category,
+        name: &str,
+        change: F,
+    ) -> Result<bool>
+    where
+        T: Serialize + DeserializeOwned + Send + Sync,
+        F: FnOnce(&mut T) -> bool + Send,
+    {
+        let _guard = self.write_lock.lock().await;
+        let Some(mut value) = self.get::<T>(category.clone(), name).await?
+        else {
+            return Ok(false);
+        };
+        if !change(&mut value) {
+            return Ok(false);
+        }
+        self.update_locked(category, name, &value, None).await?;
+        Ok(true)
+    }
+    /// [`ConfigManager::update_checked`], by who holds the write lock.
+    async fn update_locked<T: Serialize + Send + Sync>(
+        &self,
+        category: Category,
+        name: &str,
+        value: &T,
+        check: Option<ChangeCheck>,
+    ) -> Result<()> {
         let key = self.get_key(&category, name)?;
+        self.refuse_duplicating_write(Some(&category), Some(name))
+            .await?;
         let value =
             Value::try_from(value).map_err(|e| Error::Ser { source: e })?;
         // update by item
@@ -805,6 +1042,11 @@ impl ConfigManager {
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
         let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
+        // Also for the entry that is to go: where it is defined in a file
+        // of another layout, removing it from the files of this one
+        // removes nothing.
+        self.refuse_duplicating_write(Some(&category), Some(name))
+            .await?;
 
         // Refuse to remove something still referenced - in the storage,
         // read here under the write lock. The config this process runs
@@ -882,6 +1124,7 @@ impl ConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CertificateConf;
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
 
@@ -2144,6 +2387,369 @@ addrs = ["127.0.0.1:7080"]
                 true,
                 upstreams.contains_key(format!("up{i}").as_str()),
                 "upstream up{i} was lost to a concurrent write"
+            );
+        }
+    }
+
+    /// Regression: a file put beside the files of the layout while the
+    /// process runs is read like them, and a write of its category wrote
+    /// what it defines into the file of the layout as well. The write was
+    /// answered with a success, and the storage did not load any more.
+    #[tokio::test]
+    async fn test_write_beside_a_file_of_another_layout() {
+        let upstream = |addr: &str| -> toml::Value {
+            toml::from_str(&format!("addrs = [\"{addr}\"]")).unwrap()
+        };
+        let location: toml::Value =
+            toml::from_str("upstream = \"a\"\npath = \"/\"").unwrap();
+        let refused = |result: Result<()>| {
+            let message = result.unwrap_err().to_string();
+            assert_eq!(true, message.contains("extra.toml"), "{message}");
+            assert_eq!(true, message.contains("upstreams.x"), "{message}");
+            message
+        };
+        for layout in ["by-type", "by-item"] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut url = dir.path().to_string_lossy().to_string();
+            if layout == "by-item" {
+                url.push_str("?separation=true");
+            }
+            let manager = new_file_config_manager(&url).unwrap();
+            manager
+                .update(Category::Upstream, "a", &upstream("127.0.0.1:1"))
+                .await
+                .unwrap();
+            // What somebody puts there by hand, with the process running.
+            std::fs::write(
+                dir.path().join("extra.toml"),
+                "[upstreams.x]\naddrs = [\"127.0.0.1:2\"]\n",
+            )
+            .unwrap();
+            let stored = manager.load_all_raw().await.unwrap();
+
+            // The entry of that file itself, in every layout.
+            refused(
+                manager
+                    .update(Category::Upstream, "x", &upstream("127.0.0.1:3"))
+                    .await,
+            );
+            refused(manager.delete(Category::Upstream, "x").await);
+            // Everything at once.
+            let all = manager.load_all().await.unwrap();
+            refused(manager.save_all(&all).await);
+            // Another entry of its category is written with it where a
+            // category is a file, and by itself where an entry is.
+            let other = manager
+                .update(Category::Upstream, "y", &upstream("127.0.0.1:4"))
+                .await;
+            let removed = manager.delete(Category::Upstream, "a").await;
+            if layout == "by-type" {
+                refused(other);
+                refused(removed);
+                // Nothing was written.
+                assert_eq!(stored, manager.load_all_raw().await.unwrap());
+            } else {
+                other.unwrap();
+                removed.unwrap();
+            }
+            // What the file has nothing of is written as ever.
+            manager
+                .update(Category::Location, "l", &location)
+                .await
+                .unwrap();
+            let changed = manager
+                .modify(Category::Location, "l", |entry: &mut toml::Value| {
+                    entry
+                        .as_table_mut()
+                        .unwrap()
+                        .insert("path".to_string(), "/l".into());
+                    true
+                })
+                .await
+                .unwrap();
+            assert_eq!(true, changed, "{layout}");
+
+            // And the storage loads, with the entry of the file in it
+            // once.
+            let config = manager.load_all().await.unwrap();
+            assert_eq!(
+                true,
+                config.upstreams.unwrap().contains_key("x"),
+                "{layout}"
+            );
+            assert_eq!(
+                Some("/l"),
+                config.locations.unwrap()["l"]
+                    .get("path")
+                    .and_then(|v| v.as_str()),
+                "{layout}"
+            );
+
+            // Merged in, as at a start, it is an entry like any other.
+            let retired = manager.migrate_layout().await.unwrap();
+            assert_eq!(1, retired.len(), "{layout}: {retired:?}");
+            manager
+                .update(Category::Upstream, "x", &upstream("127.0.0.1:3"))
+                .await
+                .unwrap();
+            manager.delete(Category::Upstream, "x").await.unwrap();
+            let config = manager.load_all().await.unwrap();
+            assert_eq!(
+                false,
+                config.upstreams.unwrap_or_default().contains_key("x"),
+                "{layout}"
+            );
+        }
+
+        // One file for everything has nothing beside it.
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        let manager =
+            new_file_config_manager(&file.path().to_string_lossy()).unwrap();
+        manager
+            .update(Category::Upstream, "a", &upstream("127.0.0.1:1"))
+            .await
+            .unwrap();
+    }
+
+    /// The same for a table that is in a file of the layout it does not
+    /// belong in; and a storage that is broken already is not kept from
+    /// being repaired.
+    #[tokio::test]
+    async fn test_write_beside_entries_out_of_place() {
+        let upstream = |addr: &str| -> toml::Value {
+            toml::from_str(&format!("addrs = [\"{addr}\"]")).unwrap()
+        };
+        let location: toml::Value =
+            toml::from_str("upstream = \"a\"\npath = \"/\"").unwrap();
+        let message = |result: Result<()>| result.unwrap_err().to_string();
+
+        // A category to a file: a location in the file of the upstreams.
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager =
+            new_file_config_manager(&dir.path().to_string_lossy()).unwrap();
+        manager
+            .update(Category::Upstream, "a", &upstream("127.0.0.1:1"))
+            .await
+            .unwrap();
+        manager
+            .update(Category::Location, "l", &location)
+            .await
+            .unwrap();
+        let file = dir.path().join("upstreams.toml");
+        let mut hand_edited = std::fs::read_to_string(&file).unwrap();
+        hand_edited.push_str("\n[locations.x]\nupstream = \"a\"\n");
+        std::fs::write(&file, &hand_edited).unwrap();
+        let stored = manager.load_all_raw().await.unwrap();
+        // The next write of a location would write it a second time.
+        let refused =
+            message(manager.update(Category::Location, "l", &location).await);
+        assert_eq!(
+            true,
+            refused.contains("upstreams.toml defines locations.x"),
+            "{refused}"
+        );
+        // The next one of an upstream would drop it.
+        let refused = message(
+            manager
+                .update(Category::Upstream, "b", &upstream("127.0.0.1:2"))
+                .await,
+        );
+        assert_eq!(
+            true,
+            refused.contains("upstreams.toml also holds locations.x"),
+            "{refused}"
+        );
+        let refused = message(
+            manager
+                .ensure_entry_writable(Category::Location, "new")
+                .await,
+        );
+        assert_eq!(true, refused.contains("locations.x"), "{refused}");
+        assert_eq!(stored, manager.load_all_raw().await.unwrap());
+        // A category it has nothing to do with is written as ever.
+        manager
+            .ensure_entry_writable(Category::Certificate, "site")
+            .await
+            .unwrap();
+        // Put where it belongs, by hand.
+        std::fs::write(
+            &file,
+            hand_edited.replace("[locations.x]", "[upstreams.x]"),
+        )
+        .unwrap();
+        manager
+            .update(Category::Location, "l", &location)
+            .await
+            .unwrap();
+        manager
+            .update(Category::Upstream, "b", &upstream("127.0.0.1:2"))
+            .await
+            .unwrap();
+
+        // An entry to a file: the file of one entry holds another too.
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = format!("{}?separation=true", dir.path().to_string_lossy());
+        let manager = new_file_config_manager(&url).unwrap();
+        manager
+            .update(Category::Upstream, "a", &upstream("127.0.0.1:1"))
+            .await
+            .unwrap();
+        let file = dir.path().join("upstreams/a.toml");
+        let mut hand_edited = std::fs::read_to_string(&file).unwrap();
+        hand_edited.push_str("\n[upstreams.b]\naddrs = [\"127.0.0.1:2\"]\n");
+        std::fs::write(&file, &hand_edited).unwrap();
+        let refused = message(
+            manager
+                .update(Category::Upstream, "a", &upstream("127.0.0.1:3"))
+                .await,
+        );
+        assert_eq!(
+            true,
+            refused.contains("upstreams/a.toml also holds upstreams.b"),
+            "{refused}"
+        );
+        manager
+            .update(Category::Upstream, "c", &upstream("127.0.0.1:4"))
+            .await
+            .unwrap();
+
+        // A directory that does not load as it is - a copy of a category
+        // beside it, every entry twice - is repaired through the writes
+        // that are otherwise refused.
+        let dir = tempfile::TempDir::new().unwrap();
+        let url = format!("{}?separation=true", dir.path().to_string_lossy());
+        let manager = new_file_config_manager(&url).unwrap();
+        manager
+            .update(Category::Upstream, "a", &upstream("127.0.0.1:1"))
+            .await
+            .unwrap();
+        std::fs::create_dir(dir.path().join("copy")).unwrap();
+        std::fs::copy(
+            dir.path().join("upstreams/a.toml"),
+            dir.path().join("copy/a.toml"),
+        )
+        .unwrap();
+        assert_eq!(true, manager.load_all().await.is_err());
+        manager.delete(Category::Upstream, "a").await.unwrap();
+        let config = manager.load_all().await.unwrap();
+        assert_eq!(true, config.upstreams.unwrap().contains_key("a"));
+    }
+
+    /// A part of an entry is written into the entry as it is stored, not
+    /// as it was when somebody last read it; and an entry that is gone is
+    /// not written back.
+    #[tokio::test]
+    async fn test_modify_changes_the_entry_as_it_is_stored() {
+        for layout in ["file", "by-type", "by-item"] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let path = match layout {
+                "file" => dir.path().join("pingap.toml"),
+                _ => dir.path().to_path_buf(),
+            };
+            let mut url = path.to_string_lossy().to_string();
+            if layout == "by-item" {
+                url.push_str("?separation=true");
+            }
+            let manager = new_file_config_manager(&url).unwrap();
+            let conf = |domains: &str| CertificateConf {
+                domains: Some(domains.to_string()),
+                acme: Some("lets_encrypt".to_string()),
+                ..Default::default()
+            };
+            manager
+                .update(Category::Certificate, "site", &conf("a.test"))
+                .await
+                .unwrap();
+            // What is stored beside it stays as it is.
+            let upstream: toml::Value =
+                toml::from_str(r#"addrs = ["127.0.0.1:7080"]"#).unwrap();
+            manager
+                .update(Category::Upstream, "app", &upstream)
+                .await
+                .unwrap();
+            manager
+                .update(Category::Certificate, "other", &conf("other.test"))
+                .await
+                .unwrap();
+            let beside = manager.load_all().await.unwrap();
+            // Read by one, changed by another, and then a part of it is
+            // written by the first.
+            manager
+                .update(Category::Certificate, "site", &conf("a.test,b.test"))
+                .await
+                .unwrap();
+            let changed = manager
+                .modify(
+                    Category::Certificate,
+                    "site",
+                    |entry: &mut CertificateConf| {
+                        entry.tls_cert = Some("pem".to_string());
+                        true
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, changed, "{layout}");
+            let stored: CertificateConf = manager
+                .get(Category::Certificate, "site")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                CertificateConf {
+                    tls_cert: Some("pem".to_string()),
+                    ..conf("a.test,b.test")
+                },
+                stored,
+                "{layout}"
+            );
+            let after = manager.load_all().await.unwrap();
+            assert_eq!(beside.upstreams, after.upstreams, "{layout}");
+            assert_eq!(
+                beside.certificates.as_ref().and_then(|c| c.get("other")),
+                after.certificates.as_ref().and_then(|c| c.get("other")),
+                "{layout}"
+            );
+            // Looked at, and nothing to write.
+            let changed = manager
+                .modify(
+                    Category::Certificate,
+                    "site",
+                    |entry: &mut CertificateConf| {
+                        entry.tls_cert = Some("another".to_string());
+                        false
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(false, changed, "{layout}");
+            let stored: CertificateConf = manager
+                .get(Category::Certificate, "site")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(Some("pem".to_string()), stored.tls_cert, "{layout}");
+
+            manager.delete(Category::Certificate, "site").await.unwrap();
+            let changed = manager
+                .modify(
+                    Category::Certificate,
+                    "site",
+                    |entry: &mut CertificateConf| {
+                        entry.tls_cert = Some("pem".to_string());
+                        true
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(false, changed, "{layout}");
+            assert_eq!(
+                None,
+                manager
+                    .get::<CertificateConf>(Category::Certificate, "site")
+                    .await
+                    .unwrap(),
+                "{layout}"
             );
         }
     }

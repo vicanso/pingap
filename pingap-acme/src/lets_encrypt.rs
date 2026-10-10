@@ -48,7 +48,7 @@ use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use scopeguard::defer;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -115,7 +115,7 @@ async fn update_certificate_lets_encrypt(
             category: "load_config".to_string(),
             message: e.to_string(),
         })?;
-    let Some(mut cert) = cert else {
+    let Some(cert) = cert else {
         return Err(Error::Fail {
             category: "save_config".to_string(),
             message: format!(
@@ -124,21 +124,97 @@ async fn update_certificate_lets_encrypt(
             ),
         });
     };
+    // Nor does one that the storage no longer gives to ACME: the entry is
+    // ordered for by a process that runs with what the storage held
+    // before - one that does not reload, or whose reload fails on another
+    // part of the document. The certificate would be issued and dropped,
+    // at every attempt.
+    if !cert.is_acme() {
+        return Err(Error::Fail {
+            category: "save_config".to_string(),
+            message: format!(
+                "certificate({}) is no longer one of acme in the storage, so nothing is ordered for it; the running configuration is not the stored one",
+                params.name
+            ),
+        });
+    }
+    // And one whose write would be refused: a file beside the ones of the
+    // layout, put there while the process runs, defines certificates as
+    // well, and writing this one would define them twice. The certificate
+    // would be issued, and dropped when it could not be stored.
+    //
+    // The same for what the order stores on its way, the account and the
+    // token of an http-01 challenge: where a category is one file, a
+    // table of the storages in another file has both refused, the first
+    // with a new account registered at every attempt and the second once
+    // the order is made.
+    let account = params.server.account_storage_name();
+    for (category, name) in [
+        (Category::Certificate, params.name.as_str()),
+        (Category::Storage, account.as_str()),
+    ] {
+        config_manager
+            .ensure_entry_writable(category, name)
+            .await
+            .map_err(|e| Error::Fail {
+                category: "save_config".to_string(),
+                message: e.to_string(),
+            })?;
+    }
 
     // get new certificate from lets encrypt
     let (pem, key) =
         new_lets_encrypt(config_manager.clone(), params.clone()).await?;
 
-    cert.tls_cert = Some(pem);
-    cert.tls_key = Some(key);
+    store_certificate(&config_manager, &params.name, pem, key).await
+}
+
+/// Stores the certificate an order gave into its entry, as the entry is
+/// stored now.
+///
+/// It used to go into the entry as it was read before the order, and an
+/// order takes its time: seconds at the least, minutes with a DNS record to
+/// wait for. Whatever was changed in the entry meanwhile was written over
+/// with what it had been, and an entry that was removed meanwhile was
+/// written back. One that was taken from ACME meanwhile - `acme` removed,
+/// a certificate of one's own put in - is left as it is: the certificate
+/// it has is not the task's to replace. Now that an entry is ordered for while its configuration
+/// is being worked on, and not only when the process starts, that is no
+/// longer a matter of bad luck.
+async fn store_certificate(
+    config_manager: &ConfigManager,
+    name: &str,
+    pem: String,
+    key: String,
+) -> Result<()> {
+    // `None` while the entry has not been seen: it is not there.
+    let mut of_acme = None;
     config_manager
-        .update(Category::Certificate, &params.name, &cert)
+        .modify(Category::Certificate, name, |cert: &mut CertificateConf| {
+            of_acme = Some(cert.is_acme());
+            if !cert.is_acme() {
+                return false;
+            }
+            cert.tls_cert = Some(pem);
+            cert.tls_key = Some(key);
+            true
+        })
         .await
         .map_err(|e| Error::Fail {
             category: "save_config".to_string(),
             message: e.to_string(),
         })?;
-    Ok(())
+    let gone = match of_acme {
+        Some(true) => return Ok(()),
+        Some(false) => "is no longer one of acme",
+        None => "was removed",
+    };
+    Err(Error::Fail {
+        category: "save_config".to_string(),
+        message: format!(
+            "certificate({name}) {gone} since it was ordered, the new certificate is not stored"
+        ),
+    })
 }
 
 /// Where a certificate is ordered, and as whom: Let's Encrypt, as an
@@ -253,8 +329,9 @@ impl AcmeServer {
     }
 }
 
-/// File cache parameters
-#[derive(Debug, Clone)]
+/// What a certificate is ordered with: the settings of its entry that the
+/// order goes by.
+#[derive(Debug, Clone, PartialEq)]
 struct UpdateCertificateParams {
     name: String,
     domains: Vec<String>,
@@ -263,6 +340,65 @@ struct UpdateCertificateParams {
     dns_provider: String,
     dns_service_url: String,
     server: AcmeServer,
+}
+
+impl UpdateCertificateParams {
+    /// What the entry `name` is ordered with, `None` when it is not one
+    /// that is ordered: no `acme`, or no domains.
+    fn of(name: &str, certificate: &CertificateConf) -> Option<Self> {
+        let acme = certificate.acme.as_deref().unwrap_or_default();
+        let domains = certificate.domains.as_deref().unwrap_or_default();
+        if acme.is_empty() || domains.is_empty() {
+            return None;
+        }
+        let dns_service_url = dns_service_url_from_env(
+            certificate.dns_service_url.as_deref().unwrap_or_default(),
+        );
+        Some(Self {
+            name: name.to_string(),
+            buffer_days: certificate.buffer_days.unwrap_or_default(),
+            domains: ordered_domains(domains),
+            dns_challenge: certificate.dns_challenge.unwrap_or_default(),
+            // Normalized once here so the match on it only ever sees a
+            // canonical name. `validate` rejects anything unrecognised, so
+            // the fallback is only reached for `manual` / unset.
+            dns_provider: normalize_dns_provider(
+                certificate.dns_provider.as_deref().unwrap_or_default(),
+            )
+            .unwrap_or(DNS_PROVIDER_MANUAL)
+            .to_string(),
+            dns_service_url,
+            server: AcmeServer::new(certificate),
+        })
+    }
+}
+
+/// The entries a reload has handed over and the task has not come for
+/// yet, with when they were.
+static HANDED_OVER: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How long a name that was handed over is kept for the task. It comes
+/// by every minute, or after however long the orders of a run take; a
+/// name that is still there after a day is of an entry that was taken out
+/// again before it did.
+const HANDED_OVER_KEPT: Duration = Duration::from_secs(24 * 3600);
+
+/// Tells the ACME task of the entries a reload has just given it, new or
+/// with other settings: it looks at them at its next run.
+///
+/// The task finds most of them by itself, by what they are ordered with
+/// now and were the run before. Not every one: an entry that was taken
+/// out and put back as it was between two runs looks the same to it, and
+/// so does one that was changed and changed back. A minute lies between
+/// two runs, or the minutes an order takes.
+pub fn hand_over(names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    let now = Instant::now();
+    let mut handed = HANDED_OVER.lock().unwrap_or_else(|e| e.into_inner());
+    handed.extend(names.iter().map(|name| (name.clone(), now)));
 }
 
 /// The orders of one certificate that failed in a row, and when the next
@@ -337,6 +473,8 @@ struct LetsEncryptTask {
     running: AtomicBool,
     order: Order,
     retries: Mutex<HashMap<String, Retry>>,
+    /// What each entry was ordered with when the task last ran.
+    seen: Mutex<HashMap<String, UpdateCertificateParams>>,
 }
 
 impl LetsEncryptTask {
@@ -357,32 +495,118 @@ impl LetsEncryptTask {
         retries.remove(name);
     }
 
+    /// Notes what the entries are ordered with now, and returns the names
+    /// of those that are news: an entry that was not there the last time,
+    /// or whose settings are not what they were. That is how a reload
+    /// hands an entry over - the task reads the running configuration at
+    /// every run, and a change to it used to wait for a restart.
+    ///
+    /// Whatever was held against an entry goes with its old settings: the
+    /// wait after a failed order was for a domain that could not be
+    /// validated, or a CA that refused, and the entry that was corrected
+    /// is not to wait six hours for it. An entry that is gone is forgotten,
+    /// so that it is news again when it comes back.
+    fn take_news(&self, params: &[UpdateCertificateParams]) -> HashSet<String> {
+        // Of what was handed over, the entries that are this task's:
+        // the names it has an entry of. The rest stays for whose it is.
+        let handed: HashSet<String> = {
+            let mut handed =
+                HANDED_OVER.lock().unwrap_or_else(|e| e.into_inner());
+            handed.retain(|_, at| at.elapsed() < HANDED_OVER_KEPT);
+            params
+                .iter()
+                .filter(|item| handed.remove(&item.name).is_some())
+                .map(|item| item.name.clone())
+                .collect()
+        };
+        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        let news: HashSet<String> = params
+            .iter()
+            .filter(|item| {
+                seen.get(&item.name) != Some(item)
+                    || handed.contains(&item.name)
+            })
+            .map(|item| item.name.clone())
+            .collect();
+        *seen = params
+            .iter()
+            .map(|item| (item.name.clone(), item.clone()))
+            .collect();
+        let mut retries =
+            self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        retries
+            .retain(|name, _| seen.contains_key(name) && !news.contains(name));
+        news
+    }
+
     /// Periodically checks and updates certificates that need renewal.
     /// A certificate needs renewal if:
     /// - It is invalid or expired
     /// - The configured domains have changed
     /// - The certificate cannot be loaded
     ///
-    /// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
+    /// Every entry is checked every UPDATE_INTERVAL iterations, and the
+    /// ones in `news` at once: see [`Self::take_news`].
+    ///
+    /// `started_with` is the running configuration `params` were made of.
     async fn update_certificates(
         &self,
         count: u32,
+        started_with: &PingapConfig,
         params: &[UpdateCertificateParams],
+        news: &HashSet<String>,
     ) -> Result<bool, ServiceError> {
         if params.is_empty() {
             return Ok(false);
         }
         const UPDATE_INTERVAL: u32 = 10;
-        if !count.is_multiple_of(UPDATE_INTERVAL) {
+        let scheduled = count.is_multiple_of(UPDATE_INTERVAL);
+        if !scheduled && news.is_empty() {
             return Ok(false);
         }
-        let config = self.config_manager.get_current_config();
         for item in params.iter() {
             let name = &item.name;
             let domains = &item.domains;
+            let is_news = news.contains(name);
+            if !scheduled && !is_news {
+                continue;
+            }
+            // The entry as it is running now, which is not what it was
+            // when this run began if an order for one before it took its
+            // minutes and a reload came by meanwhile. An entry that was
+            // changed, taken out or taken from ACME since is left for the
+            // next run, where it is news with the settings it then has:
+            // ordered for here, it got a certificate for what it no longer
+            // says, and another one a minute later.
+            let ordered_with = |config: &PingapConfig| {
+                config.certificates.get(name).and_then(|certificate| {
+                    UpdateCertificateParams::of(name, certificate)
+                })
+            };
+            // And once it is the next run's it is news there whatever it
+            // says then, the same as now included.
+            let left_for_the_next_run = || {
+                let config = self.config_manager.get_current_config();
+                if ordered_with(&config) == ordered_with(started_with) {
+                    return None;
+                }
+                debug!(
+                    target: LOG_TARGET,
+                    name, "the entry was changed during this run"
+                );
+                let mut seen =
+                    self.seen.lock().unwrap_or_else(|e| e.into_inner());
+                seen.remove(name);
+                Some(())
+            };
+            if left_for_the_next_run().is_some() {
+                continue;
+            }
+            let config = self.config_manager.get_current_config();
             let is_manual = item.dns_provider == DNS_PROVIDER_MANUAL;
-            // manual dns challenge is only run once
-            if item.dns_challenge && is_manual && count > 0 {
+            // The challenge answered by hand is asked for once: when the
+            // process starts, or when its entry is new to it.
+            if item.dns_challenge && is_manual && count > 0 && !is_news {
                 continue;
             }
 
@@ -443,6 +667,15 @@ impl LetsEncryptTask {
                 },
             }
 
+            // Looked at again: the certificate of the storage was put to
+            // use while no reload was changing the running configuration,
+            // and one that was may have taken its time. An entry it took
+            // from ACME, whose certificate was refused above for that, is
+            // not ordered for.
+            if left_for_the_next_run().is_some() {
+                continue;
+            }
+
             let now = pingap_core::now_sec();
             if let Some(retry) = self.retry_of(name)
                 && now < retry.not_before
@@ -492,12 +725,12 @@ impl LetsEncryptTask {
                 },
             );
         }
-        // The challenge answered by hand is asked for once, when the
-        // process starts.
+        // The challenge answered by hand is asked for once: when the
+        // process starts, or when its entry is changed.
         let manual =
             params.dns_challenge && params.dns_provider == DNS_PROVIDER_MANUAL;
         let retry_in = if manual {
-            "the next start".to_string()
+            "the next start, or a change to the entry".to_string()
         } else {
             format!("{}m", delay / 60)
         };
@@ -554,18 +787,6 @@ impl LetsEncryptTask {
         &self,
         params: &UpdateCertificateParams,
     ) -> Result<()> {
-        info!(
-            target: LOG_TARGET,
-            domains = params.domains.join(","),
-            "renew certificate success"
-        );
-        self.notify(NotificationData {
-            category: "lets_encrypt".to_string(),
-            title: "Generate new cert from let's encrypt".to_string(),
-            message: format!("Domains: {:?}", params.domains),
-            ..Default::default()
-        })
-        .await;
         let stored: Option<CertificateConf> = self
             .config_manager
             .get(Category::Certificate, &params.name)
@@ -585,6 +806,24 @@ impl LetsEncryptTask {
         };
         let usable = is_usable(&conf, params);
         self.install(&params.name, conf).await?;
+        // Told once the certificate is in use, and not before: with the
+        // notification on its way first, a reload that came by found a
+        // certificate in the storage that was not the running one - which
+        // restarts a process that restarts by itself - and an entry that
+        // could not be installed was reported as a new certificate and
+        // as a failure.
+        info!(
+            target: LOG_TARGET,
+            domains = params.domains.join(","),
+            "renew certificate success"
+        );
+        self.notify(NotificationData {
+            category: "lets_encrypt".to_string(),
+            title: "Generate new cert from let's encrypt".to_string(),
+            message: format!("Domains: {:?}", params.domains),
+            ..Default::default()
+        })
+        .await;
         // The certificate is in use, and the next check would order
         // another all the same: `buffer_days` is not less than what a
         // certificate is good for, or `domains` is not what the CA put
@@ -622,22 +861,46 @@ impl LetsEncryptTask {
     /// had changed and restarted for it. A setting that was changed in
     /// the storage is the reload's to apply, as for any other entry.
     async fn install(&self, name: &str, conf: CertificateConf) -> Result<()> {
-        let mut config =
-            self.config_manager.get_current_config().as_ref().clone();
-        let conf = match config.certificates.get(name) {
-            Some(running) => CertificateConf {
+        let errors = {
+            // A reload reads the running configuration and sets what it
+            // made of it as well: one at a time.
+            let _guard = self.config_manager.lock_current_config().await;
+            let mut config =
+                self.config_manager.get_current_config().as_ref().clone();
+            // An entry that a reload took out while its certificate was
+            // on the way is not put back: nothing of the configuration
+            // names it any more.
+            // Nor is the certificate put into an entry that was taken
+            // from ACME meanwhile: the one it has now was put there by
+            // whoever did that.
+            let running = config
+                .certificates
+                .get(name)
+                .filter(|running| running.is_acme());
+            let Some(running) = running else {
+                return Err(Error::Fail {
+                    category: "install_certificate".to_string(),
+                    message: format!(
+                        "certificate({name}) is no longer one of acme in the running configuration"
+                    ),
+                });
+            };
+            let conf = CertificateConf {
                 tls_cert: conf.tls_cert,
                 tls_key: conf.tls_key,
                 ..running.clone()
-            },
-            None => conf,
+            };
+            config.certificates.insert(name.to_string(), conf);
+            let (certificates, errors, _) = update_certificates(
+                &config.certificates,
+                &self.certificate_provider.list(),
+            );
+            self.certificate_provider.store(certificates);
+            if !errors.iter().any(|(failed, _)| failed == name) {
+                self.config_manager.set_current_config(config);
+            }
+            errors
         };
-        config.certificates.insert(name.to_string(), conf);
-        let (certificates, errors, _) = update_certificates(
-            &config.certificates,
-            &self.certificate_provider.list(),
-        );
-        self.certificate_provider.store(certificates);
 
         let (own, others): (Vec<_>, Vec<_>) =
             errors.into_iter().partition(|(failed, _)| failed == name);
@@ -662,7 +925,6 @@ impl LetsEncryptTask {
                 message,
             });
         }
-        self.config_manager.set_current_config(config);
         Ok(())
     }
 }
@@ -674,37 +936,17 @@ impl BackgroundTask for LetsEncryptTask {
             return Ok(true);
         }
         defer!(self.running.store(false, Ordering::Relaxed););
-        let mut params = vec![];
         let config = self.config_manager.get_current_config();
-
-        for (name, certificate) in config.certificates.iter() {
-            let acme = certificate.acme.clone().unwrap_or_default();
-            let domains = certificate.domains.clone().unwrap_or_default();
-            if acme.is_empty() || domains.is_empty() {
-                continue;
-            }
-            let dns_service_url = dns_service_url_from_env(
-                certificate.dns_service_url.as_deref().unwrap_or_default(),
-            );
-
-            params.push(UpdateCertificateParams {
-                name: name.to_string(),
-                buffer_days: certificate.buffer_days.unwrap_or_default(),
-                domains: ordered_domains(&domains),
-                dns_challenge: certificate.dns_challenge.unwrap_or_default(),
-                // Normalized once here so the match below only ever sees a
-                // canonical name. `validate` rejects anything unrecognised, so
-                // the fallback is only reached for `manual` / unset.
-                dns_provider: normalize_dns_provider(
-                    &certificate.dns_provider.clone().unwrap_or_default(),
-                )
-                .unwrap_or(DNS_PROVIDER_MANUAL)
-                .to_string(),
-                dns_service_url,
-                server: AcmeServer::new(certificate),
-            });
-        }
-        self.update_certificates(count, &params).await?;
+        let params: Vec<UpdateCertificateParams> = config
+            .certificates
+            .iter()
+            .filter_map(|(name, certificate)| {
+                UpdateCertificateParams::of(name, certificate)
+            })
+            .collect();
+        let news = self.take_news(&params);
+        self.update_certificates(count, &config, &params, &news)
+            .await?;
 
         // Hourly (the service ticks once a minute), and never on the first
         // cycle: during a rolling upgrade an old instance may still be mid
@@ -825,6 +1067,7 @@ pub fn new_lets_encrypt_service(
             Box::pin(update_certificate_lets_encrypt(config_manager, params))
         }),
         retries: Mutex::new(HashMap::new()),
+        seen: Mutex::new(HashMap::new()),
     })
 }
 
@@ -853,12 +1096,28 @@ fn get_lets_encrypt_certificate(
     Ok(Some(cert))
 }
 
+/// Whether `path` is where a CA asks for the answer to an http-01
+/// challenge.
+pub fn is_http_challenge_path(path: &str) -> bool {
+    path.starts_with(WELL_KNOWN_PATH_PREFIX)
+}
+
 /// Handles the HTTP-01 challenge verification for Let's Encrypt.
 /// This function:
 /// 1. Intercepts requests to /.well-known/acme-challenge/
 /// 2. Extracts the challenge token from the URL path
 /// 3. Loads the pre-stored token response from storage
 /// 4. Returns the token response to validate domain ownership
+///
+/// The path is this function's while the running configuration has a
+/// certificate that is ordered with this challenge, which a reload may
+/// add or take away: whether it had one when the process started used to
+/// decide for as long as it ran. Without such a certificate a request is
+/// left to the locations, where something behind this proxy may be
+/// ordering certificates of its own - and left to them at once, without
+/// a look at the storage: a storage that is away must not hold up a
+/// validation that is none of this proxy's. (But for the token of an
+/// order of this process that is still on its way, which is in memory.)
 pub async fn handle_lets_encrypt(
     config_manager: Arc<ConfigManager>,
     session: &mut Session,
@@ -870,6 +1129,14 @@ pub async fn handle_lets_encrypt(
         return Ok(false);
     };
     {
+        let expected = config_manager
+            .get_current_config()
+            .certificates
+            .values()
+            .any(|certificate| certificate.is_acme_http_challenge());
+        if !expected && own_token(token).is_none() {
+            return Ok(false);
+        }
         // The token is attacker-controlled and used directly as a storage
         // lookup key. ACME HTTP-01 tokens are base64url strings, so reject
         // anything else up front: this blocks path traversal (`../certificate/
@@ -1655,23 +1922,27 @@ async fn new_lets_encrypt(
 mod tests {
     use super::is_valid_challenge_token;
     use super::{
-        LetsEncryptTask, Order, UpdateCertificateParams, retry_delay,
-        update_certificate_lets_encrypt,
+        HTTP_01_TOKEN_REMARK, LetsEncryptTask, Order, UpdateCertificateParams,
+        WELL_KNOWN_PATH_PREFIX, handle_lets_encrypt, is_http_challenge_path,
+        retry_delay, update_certificate_lets_encrypt,
     };
     use pingap_certificate::{
         CertificateProvider, DynamicCertificates, TlsCertificate, rcgen,
     };
     use pingap_config::{
-        Category, CertificateConf, ConfigManager, new_file_config_manager,
+        Category, CertificateConf, ConfigManager, StorageConf,
+        new_file_config_manager,
     };
     use pingap_core::{
-        BackgroundTask, Notification, NotificationData, NotificationLevel,
+        BackgroundTask, Ctx, Notification, NotificationData, NotificationLevel,
         NotificationSender,
     };
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     #[derive(Default)]
     struct Store(Mutex<Arc<DynamicCertificates>>);
@@ -1721,6 +1992,18 @@ mod tests {
         }
     }
 
+    /// [`params`] with a CA that is nowhere: what is to stop before the CA
+    /// is asked does not reach one when it does not stop.
+    fn nowhere() -> UpdateCertificateParams {
+        UpdateCertificateParams {
+            server: super::AcmeServer {
+                directory: Some("https://127.0.0.1:1/directory".to_string()),
+                ..Default::default()
+            },
+            ..params()
+        }
+    }
+
     struct Fixture {
         _dir: tempfile::TempDir,
         manager: Arc<ConfigManager>,
@@ -1759,6 +2042,7 @@ mod tests {
                 order(manager, params)
             }),
             retries: Mutex::new(HashMap::new()),
+            seen: Mutex::new(HashMap::new()),
         };
         Fixture {
             _dir: dir,
@@ -1826,7 +2110,12 @@ mod tests {
 
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -1866,7 +2155,12 @@ mod tests {
 
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -1891,7 +2185,12 @@ mod tests {
 
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -1971,7 +2270,12 @@ mod tests {
 
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(0, fixture.orders.load(Ordering::Relaxed));
@@ -1997,6 +2301,739 @@ mod tests {
         );
     }
 
+    /// An order that works for whatever domains it is asked for.
+    fn issuing_for_the_domains() -> Order {
+        Box::new(|manager, params| {
+            Box::pin(async move {
+                let mut conf: CertificateConf = manager
+                    .get(Category::Certificate, &params.name)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let key = rcgen::KeyPair::generate().unwrap();
+                let cert =
+                    rcgen::CertificateParams::new(params.domains.clone())
+                        .unwrap()
+                        .self_signed(&key)
+                        .unwrap();
+                conf.tls_cert = Some(cert.pem());
+                conf.tls_key = Some(key.serialize_pem());
+                manager
+                    .update(Category::Certificate, &params.name, &conf)
+                    .await
+                    .unwrap();
+                Ok(())
+            })
+        })
+    }
+
+    /// What a reload does with an entry of ACME: the entry as it is
+    /// written goes into the storage and into the running configuration,
+    /// the certificate of an entry that had one staying what it is.
+    async fn reload(fixture: &Fixture, name: &str, entry: &str) {
+        let conf: CertificateConf = toml::from_str(entry).unwrap();
+        let stored = fixture
+            .manager
+            .get::<CertificateConf>(Category::Certificate, name)
+            .await
+            .unwrap();
+        let stored = CertificateConf {
+            tls_cert: stored.as_ref().and_then(|c| c.tls_cert.clone()),
+            tls_key: stored.as_ref().and_then(|c| c.tls_key.clone()),
+            ..conf.clone()
+        };
+        fixture
+            .manager
+            .update(Category::Certificate, name, &stored)
+            .await
+            .unwrap();
+        let mut running = fixture.manager.get_current_config().as_ref().clone();
+        let merged = match running.certificates.get(name) {
+            Some(before) => CertificateConf {
+                tls_cert: before.tls_cert.clone(),
+                tls_key: before.tls_key.clone(),
+                ..conf
+            },
+            None => conf,
+        };
+        running.certificates.insert(name.to_string(), merged);
+        fixture.manager.set_current_config(running);
+    }
+
+    /// Regression: an entry of ACME that a reload added, or whose domains
+    /// it changed, was not ordered for until the process was restarted.
+    /// Once a reload hands such an entry over, the task that looks at
+    /// every certificate each ten minutes is to see it at its next run.
+    #[tokio::test]
+    async fn test_entry_that_is_news_is_ordered_for_at_once() {
+        let acme = "acme = \"lets_encrypt\"\n";
+        let fixture = fixture(SITE, issuing_for_the_domains()).await;
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        // Not the time to look at the certificates, and nothing new.
+        fixture.task.execute(1).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+
+        // A new entry.
+        reload(
+            &fixture,
+            "other",
+            &format!("domains = \"other.test\"\n{acme}"),
+        )
+        .await;
+        fixture.task.execute(2).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("other.test").is_some());
+        assert_eq!(
+            true,
+            fixture.manager.get_current_config().certificates["other"]
+                .tls_cert
+                .is_some()
+        );
+        // Once: its certificate is not news.
+        fixture.task.execute(3).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+
+        // Another domain for the first one. The other entry is not looked
+        // at on the way, it has its time: with a certificate that is over
+        // it would be ordered for, were it looked at.
+        let (over, over_key) = certificate(true);
+        let mut running = fixture.manager.get_current_config().as_ref().clone();
+        let entry = running.certificates.get_mut("other").unwrap();
+        entry.tls_cert = Some(over.clone());
+        entry.tls_key = Some(over_key.clone());
+        fixture.manager.set_current_config(running);
+        fixture
+            .manager
+            .modify(
+                Category::Certificate,
+                "other",
+                |entry: &mut CertificateConf| {
+                    entry.tls_cert = Some(over);
+                    entry.tls_key = Some(over_key);
+                    true
+                },
+            )
+            .await
+            .unwrap();
+        reload(
+            &fixture,
+            "site",
+            &format!("domains = \"example.com,www.example.com\"\n{acme}"),
+        )
+        .await;
+        fixture.task.execute(4).await.unwrap();
+        assert_eq!(3, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(true, fixture.store.get("www.example.com").is_some());
+        // At its time it is.
+        fixture.task.execute(10).await.unwrap();
+        assert_eq!(4, fixture.orders.load(Ordering::Relaxed));
+
+        // A setting no order goes by is no reason for one, nor is the
+        // entry being looked at ahead of its time.
+        reload(
+            &fixture,
+            "site",
+            &format!(
+                "domains = \"example.com,www.example.com\"\n{acme}remark = \"mine\"\n"
+            ),
+        )
+        .await;
+        fixture.task.execute(11).await.unwrap();
+        assert_eq!(4, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(
+            false,
+            fixture
+                .notifications
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|data| data.level != NotificationLevel::Info),
+        );
+    }
+
+    /// Regression: a reload and this task each read the running
+    /// configuration, made another of it and set that. Whichever set last
+    /// had not seen what the other did: a renewed certificate was written
+    /// over with the one from before, and ordered again.
+    #[tokio::test]
+    async fn test_install_waits_for_who_is_changing_the_running_configuration()
+    {
+        let fixture = fixture(SITE, issuing()).await;
+        let (pem, key) = certificate(false);
+        let conf = CertificateConf {
+            tls_cert: Some(pem),
+            tls_key: Some(key),
+            ..Default::default()
+        };
+        let running = |fixture: &Fixture| {
+            fixture.manager.get_current_config().as_ref().clone()
+        };
+
+        // A reload is under way.
+        let guard = fixture.manager.lock_current_config().await;
+        let waited = tokio::time::timeout(
+            Duration::from_millis(100),
+            fixture.task.install("site", conf.clone()),
+        )
+        .await;
+        assert_eq!(true, waited.is_err(), "the reload was not waited for");
+        assert_eq!(None, running(&fixture).certificates["site"].tls_cert);
+        // It sets what it made of the configuration, and is done.
+        let mut config = running(&fixture);
+        config.certificates.get_mut("site").unwrap().buffer_days = Some(7);
+        fixture.manager.set_current_config(config);
+        drop(guard);
+
+        // The certificate goes into what the reload made.
+        fixture.task.install("site", conf.clone()).await.unwrap();
+        let entry = running(&fixture).certificates["site"].clone();
+        assert_eq!(conf.tls_cert, entry.tls_cert);
+        assert_eq!(Some(7), entry.buffer_days);
+
+        // An entry that a reload took from ACME meanwhile keeps the
+        // certificate it was given there.
+        let mut config = running(&fixture);
+        let entry = config.certificates.get_mut("site").unwrap();
+        entry.acme = None;
+        entry.tls_cert = Some("my own".to_string());
+        fixture.manager.set_current_config(config);
+        let error = fixture
+            .task
+            .install("site", conf.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            true,
+            error.to_string().contains("no longer one of acme"),
+            "{error}"
+        );
+        assert_eq!(
+            Some("my own".to_string()),
+            running(&fixture).certificates["site"].tls_cert
+        );
+
+        // And one that a reload took out meanwhile is not put back.
+        let mut config = running(&fixture);
+        config.certificates.remove("site");
+        fixture.manager.set_current_config(config);
+        let error = fixture.task.install("site", conf).await.unwrap_err();
+        assert_eq!(
+            true,
+            error.to_string().contains("no longer one of acme"),
+            "{error}"
+        );
+        assert_eq!(true, running(&fixture).certificates.is_empty());
+    }
+
+    /// Regression: the certificate of an order went into the entry as it
+    /// had been read before the order. What was changed in the entry while
+    /// the CA was at work was written over with what it had been, and an
+    /// entry that was removed came back.
+    #[tokio::test]
+    async fn test_certificate_is_stored_into_the_entry_as_it_is_now() {
+        let fixture = fixture(SITE, issuing()).await;
+        // Changed while the order is on its way.
+        reload(
+            &fixture,
+            "site",
+            "domains = \"example.com,www.example.com\"\nacme = \"lets_encrypt\"\nbuffer_days = 20\n",
+        )
+        .await;
+        let (pem, key) = certificate(false);
+        super::store_certificate(&fixture.manager, "site", pem.clone(), key)
+            .await
+            .unwrap();
+        let stored: CertificateConf = fixture
+            .manager
+            .get(Category::Certificate, "site")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Some(pem), stored.tls_cert);
+        assert_eq!(
+            Some("example.com,www.example.com".to_string()),
+            stored.domains
+        );
+        assert_eq!(Some(20), stored.buffer_days);
+
+        // Taken from ACME while the order is on its way, with a
+        // certificate of one's own: that one stays.
+        let own = CertificateConf {
+            domains: Some("example.com".to_string()),
+            tls_cert: Some("my own".to_string()),
+            tls_key: Some("my own key".to_string()),
+            ..Default::default()
+        };
+        fixture
+            .manager
+            .update(Category::Certificate, "site", &own)
+            .await
+            .unwrap();
+        let (pem, key) = certificate(false);
+        let error =
+            super::store_certificate(&fixture.manager, "site", pem, key)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            true,
+            error.to_string().contains("is no longer one of acme"),
+            "{error}"
+        );
+        assert_eq!(
+            Some(own),
+            fixture
+                .manager
+                .get::<CertificateConf>(Category::Certificate, "site")
+                .await
+                .unwrap()
+        );
+
+        // Removed while the order is on its way.
+        fixture
+            .manager
+            .delete(Category::Certificate, "site")
+            .await
+            .unwrap();
+        let (pem, key) = certificate(false);
+        let error =
+            super::store_certificate(&fixture.manager, "site", pem, key)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            true,
+            error
+                .to_string()
+                .contains("was removed since it was ordered"),
+            "{error}"
+        );
+        assert_eq!(
+            None,
+            fixture
+                .manager
+                .get::<CertificateConf>(Category::Certificate, "site")
+                .await
+                .unwrap()
+        );
+    }
+
+    /// Regression: every entry was ordered for with the settings it had
+    /// when the run began. An order takes its time, and an entry that a
+    /// reload changed while the one before it was ordered for got a
+    /// certificate for what it no longer said - and another one at the
+    /// next run, for what it did say.
+    #[tokio::test]
+    async fn test_entry_changed_during_a_run_is_left_for_the_next() {
+        // The first order of the two, whichever entry it is for, takes
+        // long enough for a reload to give the other entry another domain.
+        let changed: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let ordered: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let (noted, seen) = (changed.clone(), ordered.clone());
+        let order: Order = Box::new(move |manager, params| {
+            let (noted, seen) = (noted.clone(), seen.clone());
+            Box::pin(async move {
+                seen.lock().unwrap().push(params.domains.join(","));
+                let other = if params.name == "a" { "b" } else { "a" };
+                let first = noted.lock().unwrap().is_none();
+                if first {
+                    *noted.lock().unwrap() = Some(other.to_string());
+                    let domains = Some(format!("{other}-new.test"));
+                    let mut running =
+                        manager.get_current_config().as_ref().clone();
+                    running.certificates.get_mut(other).unwrap().domains =
+                        domains.clone();
+                    manager.set_current_config(running);
+                    manager
+                        .modify(
+                            Category::Certificate,
+                            other,
+                            |entry: &mut CertificateConf| {
+                                entry.domains = domains;
+                                true
+                            },
+                        )
+                        .await
+                        .unwrap();
+                }
+                issuing_for_the_domains()(manager, params).await
+            })
+        });
+        let acme = "acme = \"lets_encrypt\"\n";
+        let fixture = fixture(
+            &format!(
+                "[certificates.a]\ndomains = \"a.test\"\n{acme}\n[certificates.b]\ndomains = \"b.test\"\n{acme}"
+            ),
+            order,
+        )
+        .await;
+
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        let other = changed.lock().unwrap().clone().unwrap();
+        // The next run has it as news, with what it says now.
+        fixture.task.execute(1).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(
+            true,
+            fixture.store.get(&format!("{other}-new.test")).is_some()
+        );
+        // Nothing was ordered for what it said before.
+        assert_eq!(
+            false,
+            ordered.lock().unwrap().contains(&format!("{other}.test")),
+            "{:?}",
+            ordered.lock().unwrap()
+        );
+        fixture.task.execute(2).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+    }
+
+    /// An entry that was taken out and put back as it was between two
+    /// runs looks to the task as it did: what it is ordered with has not
+    /// changed. The reload that put it back says so.
+    #[tokio::test]
+    async fn test_entry_that_a_reload_hands_over_is_news() {
+        let manual = "acme = \"lets_encrypt\"\ndns_challenge = true\ndns_provider = \"manual\"\n";
+        let failing: Order = Box::new(|_, _| {
+            Box::pin(async {
+                Err(super::Error::Fail {
+                    category: "order".to_string(),
+                    message: "nobody set the record".to_string(),
+                })
+            })
+        });
+        let fixture = fixture(
+            &format!(
+                "[certificates.handed-over]\ndomains = \"example.com\"\n{manual}"
+            ),
+            failing,
+        )
+        .await;
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        // The challenge that is answered by hand is asked for once, and
+        // the entry waits after its failure.
+        fixture.task.execute(1).await.unwrap();
+        fixture.task.execute(10).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+
+        // Taken out and put back, as it was: a new entry to whoever did
+        // it, the same one to the task.
+        super::hand_over(&["handed-over".to_string()]);
+        fixture.task.execute(11).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        // Said once.
+        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.execute(12).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+
+        // One that is no entry of the task is nothing to it.
+        super::hand_over(&["no-such-entry".to_string()]);
+        fixture.task.execute(13).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+    }
+
+    /// Regression: the certificate of the storage is put to use once no
+    /// reload is changing the running configuration. When that reload had
+    /// taken the entry from ACME the certificate was refused, as it has to
+    /// be - and the entry was then ordered for, with a certificate that
+    /// was dropped when it came.
+    #[tokio::test]
+    async fn test_entry_taken_from_acme_meanwhile_is_not_ordered_for() {
+        // The storage has a certificate to go on with, as from another
+        // instance; what is running is due.
+        let (pem, key) = certificate(false);
+        let fixture = fixture(
+            &format!(
+                "{SITE}tls_cert = \"\"\"\n{pem}\"\"\"\ntls_key = \"\"\"\n{key}\"\"\"\n"
+            ),
+            issuing(),
+        )
+        .await;
+        let (over, over_key) = certificate(true);
+        let mut running = fixture.manager.get_current_config().as_ref().clone();
+        let entry = running.certificates.get_mut("site").unwrap();
+        entry.tls_cert = Some(over);
+        entry.tls_key = Some(over_key);
+        fixture.manager.set_current_config(running);
+        let started_with = fixture.manager.get_current_config();
+        let params = UpdateCertificateParams::of(
+            "site",
+            &started_with.certificates["site"],
+        )
+        .unwrap();
+
+        // A reload is under way, and takes the entry from ACME with a
+        // certificate of one's own while the task waits to put the one of
+        // the storage to use.
+        let guard = fixture.manager.lock_current_config().await;
+        let (own, own_key) = certificate(false);
+        let reload = async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let mut running = started_with.as_ref().clone();
+            running.certificates.insert(
+                "site".to_string(),
+                CertificateConf {
+                    domains: Some("example.com".to_string()),
+                    tls_cert: Some(own.clone()),
+                    tls_key: Some(own_key),
+                    ..Default::default()
+                },
+            );
+            fixture.manager.set_current_config(running);
+            drop(guard);
+        };
+        let no_news = HashSet::new();
+        let run = fixture.task.update_certificates(
+            0,
+            &started_with,
+            std::slice::from_ref(&params),
+            &no_news,
+        );
+        let (run, _) = tokio::join!(run, reload);
+        run.unwrap();
+
+        assert_eq!(0, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(
+            Some(own),
+            fixture.manager.get_current_config().certificates["site"]
+                .tls_cert
+                .clone()
+        );
+        // Nothing failed: there is nothing to report.
+        assert_eq!(true, fixture.notifications.lock().unwrap().is_empty());
+        // The entry is the next run's, whatever it says then.
+        assert_eq!(
+            false,
+            fixture.task.seen.lock().unwrap().contains_key("site")
+        );
+    }
+
+    /// Regression: an entry that the storage no longer gives to ACME was
+    /// ordered for all the same by a process still running with what the
+    /// storage held before. The certificate came, was not stored, and was
+    /// ordered again after the wait: five times in a few hours, which is
+    /// what a CA allows of one certificate in a week.
+    #[tokio::test]
+    async fn test_nothing_is_ordered_for_an_entry_the_storage_took_from_acme() {
+        let fixture = fixture(
+            "[certificates.site]\ndomains = \"example.com\"\n",
+            issuing(),
+        )
+        .await;
+        // Before the CA is asked for anything.
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            update_certificate_lets_encrypt(fixture.manager.clone(), nowhere()),
+        )
+        .await
+        .expect("it went on to the CA")
+        .unwrap_err();
+        assert_eq!(
+            true,
+            error
+                .to_string()
+                .contains("no longer one of acme in the storage"),
+            "{error}"
+        );
+    }
+
+    /// The wait after a failed order belongs to the settings it failed
+    /// with. A domain that was mistyped and is corrected is not to wait
+    /// out the hours its mistake earned.
+    #[tokio::test]
+    async fn test_changed_entry_does_not_wait_for_its_old_failures() {
+        let failing: Order = Box::new(|_, _| {
+            Box::pin(async {
+                Err(super::Error::Fail {
+                    category: "order".to_string(),
+                    message: "the CA says no".to_string(),
+                })
+            })
+        });
+        let fixture = fixture(SITE, failing).await;
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        assert_eq!(1, fixture.task.retries.lock().unwrap()["site"].failures);
+        // The same entry waits, also when the certificates are looked at.
+        fixture.task.execute(10).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+
+        reload(
+            &fixture,
+            "site",
+            "domains = \"example.org\"\nacme = \"lets_encrypt\"\n",
+        )
+        .await;
+        fixture.task.execute(11).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        // It failed again, with these settings: once.
+        assert_eq!(1, fixture.task.retries.lock().unwrap()["site"].failures);
+        fixture.task.execute(12).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+
+        // An entry that is gone leaves nothing behind.
+        let mut running = fixture.manager.get_current_config().as_ref().clone();
+        running.certificates.clear();
+        fixture.manager.set_current_config(running);
+        fixture.task.execute(13).await.unwrap();
+        assert_eq!(true, fixture.task.retries.lock().unwrap().is_empty());
+        assert_eq!(true, fixture.task.seen.lock().unwrap().is_empty());
+    }
+
+    /// The challenge that is answered by hand is asked for when the
+    /// process starts, and never again while it runs. An entry that comes
+    /// with a reload has its start then.
+    #[tokio::test]
+    async fn test_manual_challenge_of_an_entry_that_is_news() {
+        let manual = "acme = \"lets_encrypt\"\ndns_challenge = true\ndns_provider = \"manual\"\n";
+        let failing: Order = Box::new(|_, _| {
+            Box::pin(async {
+                Err(super::Error::Fail {
+                    category: "order".to_string(),
+                    message: "nobody set the record".to_string(),
+                })
+            })
+        });
+        let fixture = fixture(
+            &format!(
+                "[certificates.site]\ndomains = \"example.com\"\n{manual}"
+            ),
+            failing,
+        )
+        .await;
+        fixture.task.execute(0).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+        // Not at the later checks, whatever became of the wait.
+        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.execute(10).await.unwrap();
+        assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
+
+        reload(
+            &fixture,
+            "other",
+            &format!("domains = \"other.test\"\n{manual}"),
+        )
+        .await;
+        fixture.task.execute(11).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.execute(20).await.unwrap();
+        assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
+    }
+
+    /// Regression: whether the challenge path was this proxy's was decided
+    /// when the process started. A certificate that a reload added was
+    /// ordered into a 404 of the locations, and one that a reload took
+    /// away went on hiding the path from them.
+    #[tokio::test]
+    async fn test_challenge_path_goes_by_the_running_configuration() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // What the request is answered with: `None` when it is left to
+        // the locations.
+        async fn ask(
+            manager: &Arc<ConfigManager>,
+            token: &str,
+        ) -> Option<String> {
+            let (mut client, server) = tokio::io::duplex(64 * 1024);
+            let request = format!(
+                "GET {WELL_KNOWN_PATH_PREFIX}{token} HTTP/1.1\r\nHost: example.com\r\n\r\n"
+            );
+            client.write_all(request.as_bytes()).await.unwrap();
+            let mut session = Session::new_h1(Box::new(server));
+            session.read_request().await.unwrap();
+            let handled = handle_lets_encrypt(
+                manager.clone(),
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+            drop(session);
+            let mut buf = vec![];
+            client.read_to_end(&mut buf).await.unwrap();
+            handled.then(|| String::from_utf8_lossy(&buf).into_owned())
+        }
+        assert_eq!(
+            true,
+            is_http_challenge_path("/.well-known/acme-challenge/a")
+        );
+        assert_eq!(false, is_http_challenge_path("/.well-known/other"));
+
+        // No certificate of ACME: the path is the locations', whatever
+        // is asked for.
+        let fixture = fixture(
+            "[certificates.static]\ndomains = \"example.com\"\n",
+            issuing(),
+        )
+        .await;
+        let manager = &fixture.manager;
+        assert_eq!(None, ask(manager, "unknown-token").await);
+        assert_eq!(None, ask(manager, "not%20a%20token").await);
+
+        // A token in the storage is not looked for either: that would be
+        // a read of the storage, for a request that is somebody else's.
+        let token = StorageConf {
+            category: "secret".to_string(),
+            value: "the-answer".to_string(),
+            remark: Some(HTTP_01_TOKEN_REMARK.to_string()),
+            created_at: Some(pingap_core::now_sec()),
+            ..Default::default()
+        };
+        manager
+            .update(Category::Storage, "stored-token", &token)
+            .await
+            .unwrap();
+        assert_eq!(None, ask(manager, "stored-token").await);
+        // The token of an order of this process is in memory.
+        super::remember_own_token("own-token", "own-answer");
+        let response = ask(manager, "own-token").await.unwrap();
+        assert_eq!(true, response.ends_with("own-answer"), "{response}");
+
+        // A certificate that is ordered through the DNS asks for nothing
+        // on this path either.
+        let mut running = manager.get_current_config().as_ref().clone();
+        let acme = CertificateConf {
+            domains: Some("example.com".to_string()),
+            acme: Some("lets_encrypt".to_string()),
+            dns_challenge: Some(true),
+            ..Default::default()
+        };
+        running
+            .certificates
+            .insert("site".to_string(), acme.clone());
+        manager.set_current_config(running.clone());
+        assert_eq!(None, ask(manager, "unknown-token").await);
+
+        // One that is ordered with the http-01 challenge: the path is
+        // this proxy's, and what is not a token of its is not found.
+        running.certificates.insert(
+            "site".to_string(),
+            CertificateConf {
+                dns_challenge: None,
+                ..acme
+            },
+        );
+        manager.set_current_config(running.clone());
+        for token in ["unknown-token", "not%20a%20token"] {
+            let response = ask(manager, token).await.unwrap();
+            assert_eq!(
+                true,
+                response.starts_with("HTTP/1.1 404"),
+                "{response}"
+            );
+        }
+        // The token of another instance on the same storage.
+        let response = ask(manager, "stored-token").await.unwrap();
+        assert_eq!(true, response.starts_with("HTTP/1.1 200"), "{response}");
+        assert_eq!(true, response.ends_with("the-answer"), "{response}");
+
+        // Taken away again.
+        running.certificates.remove("site");
+        manager.set_current_config(running);
+        assert_eq!(None, ask(manager, "unknown-token").await);
+    }
+
     /// Regression: a failed order was logged and tried again at the next
     /// check, ten minutes later, without end and without a word to
     /// whoever could do something about it.
@@ -2014,7 +3051,12 @@ mod tests {
 
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -2033,7 +3075,12 @@ mod tests {
         // The next check comes too soon for another order.
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -2051,7 +3098,12 @@ mod tests {
         assert_eq!(true, (590..=600).contains(&waited), "{waited}");
         fixture
             .task
-            .update_certificates(0, &[params()])
+            .update_certificates(
+                0,
+                &fixture.manager.get_current_config(),
+                &[params()],
+                &HashSet::new(),
+            )
             .await
             .unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
@@ -2098,7 +3150,12 @@ mod tests {
         for _ in 0..3 {
             fixture
                 .task
-                .update_certificates(0, std::slice::from_ref(&params))
+                .update_certificates(
+                    0,
+                    &fixture.manager.get_current_config(),
+                    std::slice::from_ref(&params),
+                    &HashSet::new(),
+                )
                 .await
                 .unwrap();
         }
@@ -2294,6 +3351,56 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("panel"), "{message}");
         assert!(message.contains("could not be persisted"), "{message}");
+    }
+
+    /// Regression: a file beside the ones of the layout that defines
+    /// certificates too has the write of every certificate refused. The
+    /// order was made all the same, and its certificate dropped: at every
+    /// attempt, until the CA had given all it gives of one in a week.
+    #[tokio::test]
+    async fn test_nothing_is_ordered_when_the_write_would_be_refused() {
+        let fixture = fixture(SITE, issuing()).await;
+        std::fs::write(
+            fixture._dir.path().join("extra.toml"),
+            "[certificates.other]\ndomains = \"other.test\"\n",
+        )
+        .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            update_certificate_lets_encrypt(fixture.manager.clone(), nowhere()),
+        )
+        .await
+        .expect("it went on to the CA")
+        .unwrap_err();
+        assert_eq!(
+            true,
+            error
+                .to_string()
+                .contains("extra.toml defines certificates.other"),
+            "{error}"
+        );
+
+        // What the order stores on its way is written to the storages:
+        // the account, the token of its challenge.
+        std::fs::write(
+            fixture._dir.path().join("extra.toml"),
+            "[storages.fragment]\ncategory = \"config\"\nvalue = \"\"\n",
+        )
+        .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            update_certificate_lets_encrypt(fixture.manager.clone(), nowhere()),
+        )
+        .await
+        .expect("it went on to the CA")
+        .unwrap_err();
+        assert_eq!(
+            true,
+            error
+                .to_string()
+                .contains("extra.toml defines storages.fragment"),
+            "{error}"
+        );
     }
 
     /// A directory of hcl files is read-only, and the certificate could

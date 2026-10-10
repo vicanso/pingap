@@ -109,7 +109,7 @@ pingap_config_last_reload_successful == 0
 
 空 `location` 标签即总量，而且确实是全部请求：未匹配任何 location 的请求（404）、admin 端点、ACME challenge，以及对该指标端点自身的抓取都计入其中。只有被路由到某处的请求才另外带上具体的 `location`。
 
-描述当前状态的序列——每个 backend 的失败率、请求数与熔断状态，以及每个 upstream 的服务发现与选择器构建耗时——在每次抓取时整体重建，因此消失的 backend 会停止导出，而不是带着最后一次的值一直留着。从配置中删除的 upstream，其按 upstream 打标的序列同样会被清掉。这在 DNS 与 Docker 发现下最关键：backend 地址不断变化，否则会积累成永不消失的死序列。
+描述当前状态的序列——每个 backend 的失败率、请求数与熔断状态，以及每个 upstream 的服务发现与选择器构建耗时——在每次抓取时整体重建，因此消失的 backend 会停止导出，而不是带着最后一次的值一直留着。从配置中删除的 upstream，其按 upstream 打标的序列同样会被清掉；被删除或改名的 location 的序列也一样：location 不在配置里满一分钟、并且没有在途请求之后，在下一次抓取时清掉。这在 DNS 与 Docker 发现下最关键：backend 地址不断变化，否则会积累成永不消失的死序列。
 
 ## 进程信息
 

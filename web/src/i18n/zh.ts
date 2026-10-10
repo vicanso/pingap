@@ -431,7 +431,7 @@ export default {
     matchCookies: "匹配Cookie",
     matchCookiesPlaceholder: "输入Cookie条件(如session:abc或session)",
     matchConditionTips:
-      "每项一个条件：name:value 要求值完全相等，只写 name 表示存在即可。所有条件都满足时才匹配该 location。",
+      "每项一个条件：name:value 要求值完全相等，只写 name 表示存在即可。所有条件都满足时才匹配该 location。查询参数的值也会按百分号解码后的结果比较（a+b 能匹配 a%2Bb）。",
     proxySetHeaders: "转发设置请求头",
     proxySetHeadersPlaceholder: "输入请求头名称 : 输入请求头值",
     proxyAddHeaders: "转发添加请求头",

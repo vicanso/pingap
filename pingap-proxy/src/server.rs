@@ -27,7 +27,7 @@ use bstr::ByteSlice;
 use bytes::Bytes;
 use bytes::BytesMut;
 use http::StatusCode;
-use pingap_acme::handle_lets_encrypt;
+use pingap_acme::{handle_lets_encrypt, is_http_challenge_path};
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::ConfigManager;
@@ -666,8 +666,11 @@ impl Server {
         }
         Some(options)
     }
-    /// Enable lets encrypt proxy plugin for handling ACME challenges at
-    /// `/.well-known/acme-challenge` path
+    /// Lets this server answer ACME http-01 challenges at
+    /// `/.well-known/acme-challenge`: for a server on port 80, where a CA
+    /// comes for them. Whether a request to that path is a challenge of
+    /// this proxy is decided when it arrives, by the certificates of the
+    /// configuration that is running then.
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
@@ -1072,7 +1075,9 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> Option<pingora::Result<bool>> {
-        if self.lets_encrypt_enabled {
+        if self.lets_encrypt_enabled
+            && is_http_challenge_path(session.req_header().uri.path())
+        {
             return match handle_lets_encrypt(
                 self.config_manager.clone(),
                 session,

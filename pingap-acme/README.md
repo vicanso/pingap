@@ -28,10 +28,18 @@ enabled_h2 = true
 
 Pingap serves the challenge on `/.well-known/acme-challenge/<token>` itself. If
 no server in the configuration listens on port 80, one named `lets encrypt` is
-added automatically for the duration — you do not need to declare it. Only the
-tokens of a running validation are answered there; any other name is a `404`,
-including the names of the other entries kept in the same storage (the ACME
-account, includes).
+added automatically when the process starts — you do not need to declare it. A
+server whose `addr` lists several addresses is one on port 80 when any of them
+is (`0.0.0.0:80,[::]:8080`); only the last address used to be looked at, and
+the listener was added a second time on an address that was taken.
+Only the tokens of a running validation are answered there; any other name is a
+`404`, including the names of the other entries kept in the same storage (the
+ACME account, includes).
+
+The path is Pingap's for as long as the running configuration has a certificate
+that is ordered with this challenge. Without one, a request to it goes to the
+locations like any other, so a service behind Pingap can run an ACME client of
+its own.
 
 The one-command quick start does the same thing with no config file at all:
 
@@ -79,7 +87,8 @@ The provider adds the `_acme-challenge` TXT record, waits for validation, and
 removes it afterwards. The zone is the registrable domain of the record name,
 resolved against the public suffix list (`example.co.uk`, not `co.uk`). With
 `manual` (or an empty provider) the challenge is attempted only once per
-process start, since there is nothing to poll; the TXT value is logged and
+process start, and once more when its entry is changed, since there is nothing
+to poll; the TXT value is logged and
 also written to the storage category, from where the hourly sweep removes it
 a day later.
 
@@ -112,7 +121,7 @@ hand, leaves it alone while its renewal is not overdue. It is warned about once
 half of its renewal margin is gone as well, a week before its end at the
 latest: by then the renewal has been failing for a while, or was never going to
 happen (`PINGAP_DISABLE_ACME`, or a DNS challenge answered by hand, which is
-only asked for when the process starts). What goes wrong with a renewal is
+only asked for when the process starts or its entry is changed). What goes wrong with a renewal is
 reported as it happens, see
 [When an order does not go through](#when-an-order-does-not-go-through).
 
@@ -206,16 +215,29 @@ means:
   installs that one and orders nothing. Each instance used to go by its own
   running configuration and order its own, and half a dozen of them ran into
   the CA's limit on duplicate certificates. Two instances that reach the check
-  at the same moment can still both order; nothing coordinates them.
+  at the same moment can still both order; nothing coordinates them. An entry
+  that is added or changed is looked at by every instance within the same
+  minute, so with a challenge that takes longer than that (DNS-01) each of
+  them orders.
 - With the **quick start**, the certificate is persisted to
   `~/.pingap/acme/<domains>.toml` (owner-readable only) and restored on the next
   start.
 
 The challenge path (`/.well-known/acme-challenge/<token>`) is answered ahead of
-every plugin, to anyone. A token of an order this process made is answered
-from memory. Any other may belong to an order of another instance on the same
-storage, or of the process this one took over from in a restart, so it is
-looked for among the tokens in the storage. Those are read once for everyone
+the plugins (all but those of the `early_request` step), to anyone, on every
+server on port 80 - on each of its addresses, when it listens on others as
+well. Whether it is answered at all goes by the configuration
+that is running when the request arrives, not by the one the process started
+with: a certificate that a reload added is validated on the servers that are
+there, and one that a reload took away gives the path back to the locations.
+While no certificate asks for the challenge the storage is not read for it
+either, so a storage that is away does not hold up a request that is somebody
+else's.
+
+A token of an order this process made is answered from memory. Any other may
+belong to an order of another instance on the same storage, or of the process
+this one took over from in a restart, so it is looked for among the tokens in
+the storage. Those are read once for everyone
 who asks within a second, and requests that arrive during the read wait for
 it: a flood of made-up tokens costs one read a second and cannot keep a real
 one from being found. An order waits a second and a half between storing a
@@ -241,10 +263,57 @@ account's private key, like a certificate entry holds its `tls_key`.
 
 | Variable | Effect |
 | --- | --- |
-| `PINGAP_DISABLE_ACME` | Skips the ACME background task. The port-80 challenge listener is still created. |
+| `PINGAP_DISABLE_ACME` | Skips the ACME background task. The port-80 challenge listener is still created. Nothing in this process orders or stores a certificate then, so a reload takes an `acme` entry like any other: with the certificate the storage holds for it. |
 
 Useful in staging or in tests, where you want the rest of the configuration to
 behave identically without contacting Let's Encrypt.
+
+## Adding and changing entries without a restart
+
+With `--autoreload` or `--autorestart`, an entry with `acme` that is added to
+the configuration, or whose settings change (`domains`, the challenge, the CA,
+`buffer_days`), is handed to the ACME task by the reload. The task looks at
+such an entry at its next run and not at the ten-minute check: within a minute
+of the reload, or once the order it is busy with is over. A wait that failed
+orders had earned the entry is over, since it was for the settings from
+before. An entry that is given `acme` and holds a certificate already keeps it
+when the certificate is for exactly the domains of the entry and not yet
+within its renewal margin; any other is replaced by an order at once.
+
+Until the new certificate is there, the entry serves the one it has, for the
+domains it names now. The certificate and key of an entry that was the task's
+already are never taken from the storage by a reload: the task stores them
+itself, and puts them to use itself.
+
+An order takes seconds at least, and minutes with a DNS record to wait for. A
+change that is made to the entry meanwhile is kept: the new certificate is
+stored into the entry as it is when the order is done, and the changed
+settings are ordered for at the next run. An entry that was removed meanwhile
+is not written back, and one that was taken from ACME meanwhile (`acme`
+removed, a certificate of your own put in) keeps what it was given; the
+certificate that was ordered is dropped, and the log says so. An entry that is
+changed while the task is busy with the order of another one is not ordered
+for with the settings it had: it waits for the next run as well.
+
+With several instances on one storage, each takes the new configuration at its
+own reload, moments apart. One that has not taken it yet, and has no other
+certificate with the HTTP-01 challenge, passes a validation request for
+another instance's order on to its locations; that order fails and is tried
+again after the usual wait.
+
+What a reload cannot add is a listener. The HTTP-01 challenge needs a server on
+port 80, and the `lets encrypt` one is only added when the process starts
+(with `PINGAP_DISABLE_ACME` too: such a process answers the challenges of the
+instances that order). A
+process that started without a server on port 80 and without an HTTP-01 entry
+leaves such an entry for a restart: `--autorestart` performs it, and
+`--autoreload` logs a warning and sends a `reload_config_fail` notification of
+level `warn`, and the certificate is not ordered until the process is
+restarted. A server on port 80 in the configuration, or the DNS-01 challenge,
+avoids that.
+
+The challenge that is answered by hand (`dns_provider = "manual"`) is asked for
+once: when the process starts, or when its entry is new or changed.
 
 ## When an order does not go through
 
@@ -255,7 +324,7 @@ level `error`, and tried again after a wait that doubles with every failure in
 a row: ten minutes, twenty, forty, up to six hours. It used to be tried again
 at every check, which is more often than the five failed validations an hour a
 CA allows a name. A success, or a usable certificate turning up in the storage,
-ends the wait; so does a restart.
+ends the wait; so does a restart, or a change to the settings of the entry.
 
 An order that goes through and gives a certificate the entry cannot go on with
 counts as a failure too, with the same wait: `buffer_days` not less than what
@@ -280,10 +349,18 @@ every ten minutes.)
 - The storage has to take writes: the account, the challenge token and the
   certificate are all saved to it. On a configuration directory of `.hcl` or
   `.kdl` files, which is read-only, the attempt stops before the CA is asked
-  for anything.
+  for anything. So does one for an entry that the storage no longer gives to
+  ACME while the process still runs with it (it does not reload, or its
+  reload fails), and one in a directory where a file that is not of the
+  layout, or a table in the wrong file of it, would have the write of the
+  certificate, the account or the token refused: what could not be stored is
+  not ordered.
 - With `--autorestart`, what the ACME task writes on the way (its account, the
   tokens) does not restart the process. The new certificate is installed in
-  place.
+  place. A change to an entry with `acme` does not restart it either, unless
+  it takes a new listener (see above). A certificate in the storage that is
+  not the running one - another instance renewed it, or it was put there by
+  hand - restarts it, as before.
 
 ## Rate limits
 

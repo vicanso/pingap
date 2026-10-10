@@ -22,7 +22,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `predictor` | bool | `false` | `true` 启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
 | `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。校验的是哪个地址见[谁可以清理](#谁可以清理)。 |
-| `skip` | string | — | 路径+查询串的正则；匹配的请求完全绕过缓存。 |
+| `skip` | string | — | 路径+查询串的正则；匹配的请求完全绕过缓存。既按请求发来的路径匹配，也按解读后的路径匹配（去掉 `.`/`..` 段、合并重复的斜杠、解开百分号编码，和选择 location 时一样）：写 `^/api/` 时，`//api/me`、`/%61pi/me` 同样绕过缓存。 |
 | `default_ttl` | duration | `1s` | 源站没有给出缓存时间时响应保留多久，适用于默认会缓存的那些状态码。`0s` 表示这些都不缓存。见[自定缓存时间](#自定缓存时间)。 |
 | `status_ttl` | string[] | — | `状态码:时长`（`"404:10s"`、`"301:1h"`）：按状态码指定同样的时间，也可以指定默认不缓存的状态码。`0s` 表示该状态码不缓存。 |
 | `bypass_headers` | string[] | — | 请求带其中任何一个头时，既不用缓存应答，也不存入缓存。 |

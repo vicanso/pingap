@@ -46,7 +46,7 @@ webhook_notifications = [
 | `parse_certificate_fail` | 配置的证书无法解析 |
 | `lets_encrypt` | ACME 下单成功或失败 |
 | `diff_config` | 检测到配置变更 |
-| `reload_config` / `reload_config_fail` | 热更新结果。存储里的配置校验不通过时、以及存储根本读不到时（etcd 不可达、文件权限被改）也会发 `reload_config_fail`：在开始出问题时发一次，不是每一轮都发 |
+| `reload_config` / `reload_config_fail` | 热更新结果。存储里的配置校验不通过时、以及存储根本读不到时（etcd 不可达、文件权限被改）也会发 `reload_config_fail`：在开始出问题时发一次，不是每一轮都发。`--autoreload` 下出现了要用 HTTP-01 验证的证书（新增的，或者改成这种验证方式的）、而进程没有 80 端口的 server 时，也会发一条 `warn` 级别的 `reload_config_fail` |
 | `restart` / `restart_fail` | 优雅重启结果 |
 
 每条通知带类别、级别（`Info`、`Warn`、`Error`）、标题与消息。载荷还含主机名与本地 IP 列表，多实例部署时可区分报告节点。
