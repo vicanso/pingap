@@ -1489,6 +1489,65 @@ async fn create_account(
     Ok(account)
 }
 
+/// Adds the TXT record of a challenge with `task` and keeps the task in
+/// `dns_tasks`, for the cleanup at the end of the order. `false` when the
+/// record could not be added and the order goes on all the same, with one
+/// that is `published` already.
+///
+/// The task is kept whatever became of the call: what it has added is
+/// removed when the order ends, also when a step after this one fails or
+/// the order runs out of time. It used to be kept only once its record
+/// had been seen in the DNS, a minute and a half later, and an order that
+/// ended in between left the record where it was.
+///
+/// A record left behind - by that, or by a process that was stopped in
+/// the middle of an order - is refused as a duplicate by a provider when
+/// the next order asks for it, which it does: the CA hands the unfinished
+/// order out again, with the challenge it had. That failed every order
+/// from then on, for as long as the CA kept that one. What the CA is to
+/// find is there, so the order goes on.
+async fn add_challenge_record(
+    task: Box<dyn AcmeDnsTask>,
+    dns_tasks: &mut Vec<Box<dyn AcmeDnsTask>>,
+    name: &str,
+    value: &str,
+    published: impl Future<Output = bool>,
+) -> Result<bool> {
+    let added = task.add_txt_record(name, value).await;
+    dns_tasks.push(task);
+    let Err(e) = added else {
+        return Ok(true);
+    };
+    if !published.await {
+        return Err(e);
+    }
+    warn!(
+        target: LOG_TARGET,
+        error = %e,
+        "the dns txt record of {name} could not be added and is published already, going on with it: it was left by an order that did not finish and is not removed by this one, remove it by hand"
+    );
+    Ok(false)
+}
+
+/// The values of the TXT records `name` has in the DNS, as this host
+/// sees it.
+async fn lookup_txt(
+    resolver: &Resolver<TokioRuntimeProvider>,
+    name: &str,
+) -> std::result::Result<Vec<String>, hickory_resolver::net::NetError> {
+    let response = resolver.lookup(name, RecordType::TXT).await?;
+    Ok(response
+        .answers()
+        .iter()
+        .filter_map(|record| match &record.data {
+            hickory_resolver::proto::rr::RData::TXT(txt) => {
+                Some(txt.to_string())
+            },
+            _ => None,
+        })
+        .collect())
+}
+
 /// A resolver on the system's DNS configuration for confirming that a TXT
 /// record has propagated. No caching: the first lookup runs before the
 /// record exists, and a cached NXDOMAIN (negative TTL is the SOA minimum -
@@ -1711,17 +1770,32 @@ async fn new_lets_encrypt(
                     dns_txt_value,
                     "start add dns txt record for {acme_dns_name}"
                 );
-                task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
-                info!(
-                    target: LOG_TARGET,
-                    dns_provider = params.dns_provider,
-                    dns_txt_value,
-                    "add dns txt record success for {acme_dns_name}"
-                );
+                // Before the record is added: this can fail, and a record
+                // that is there by then would be left behind.
                 let resolver = match &resolver {
                     Some(resolver) => resolver,
                     None => resolver.insert(new_txt_resolver()?),
                 };
+                let added = add_challenge_record(
+                    task,
+                    &mut dns_tasks,
+                    &acme_dns_name,
+                    &dns_txt_value,
+                    async {
+                        lookup_txt(resolver, &acme_dns_name).await.is_ok_and(
+                            |records| records.contains(&dns_txt_value),
+                        )
+                    },
+                )
+                .await?;
+                if added {
+                    info!(
+                        target: LOG_TARGET,
+                        dns_provider = params.dns_provider,
+                        dns_txt_value,
+                        "add dns txt record success for {acme_dns_name}"
+                    );
+                }
                 // dns txt record may take a while to propagate, so we need to retry
                 let mut confirmed = false;
                 for i in 0..10 {
@@ -1730,19 +1804,8 @@ async fn new_lets_encrypt(
                         target: LOG_TARGET,
                         "lookup dns txt record of {acme_dns_name}, times:{i}"
                     );
-                    match resolver.lookup(&acme_dns_name, RecordType::TXT).await
-                    {
-                        Ok(response) => {
-                            let txt_records: Vec<String> = response
-                                .answers()
-                                .iter()
-                                .filter_map(|record| match &record.data {
-                                    hickory_resolver::proto::rr::RData::TXT(
-                                        txt,
-                                    ) => Some(txt.to_string()),
-                                    _ => None,
-                                })
-                                .collect();
+                    match lookup_txt(resolver, &acme_dns_name).await {
+                        Ok(txt_records) => {
                             let matched =
                                 txt_records.contains(&dns_txt_value);
                             // The name accumulates stale values when earlier
@@ -1786,7 +1849,6 @@ async fn new_lets_encrypt(
                         "dns txt record of {acme_dns_name} was not confirmed, proceeding to let the CA validate"
                     );
                 }
-                dns_tasks.push(task);
                 challenge
             } else {
                 let challenge = authz
@@ -2077,6 +2139,113 @@ mod tests {
     }
 
     const SITE: &str = "[certificates.site]\ndomains = \"example.com\"\nacme = \"lets_encrypt\"\n";
+
+    /// A DNS task that says what was asked of it, and whose record can
+    /// not be added when it is told so.
+    struct RecordedTask {
+        refuses: bool,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::AcmeDnsTask for RecordedTask {
+        async fn add_txt_record(
+            &self,
+            domain: &str,
+            value: &str,
+        ) -> super::Result<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("add {domain} {value}"));
+            if self.refuses {
+                return Err(super::Error::Fail {
+                    category: "ali".to_string(),
+                    message: "DomainRecordDuplicate".to_string(),
+                });
+            }
+            Ok(())
+        }
+        async fn done(&self) -> super::Result<()> {
+            self.calls.lock().unwrap().push("done".to_string());
+            Ok(())
+        }
+    }
+
+    /// The task of a challenge is kept for the cleanup from the moment it
+    /// is asked to add its record, and a record that cannot be added and
+    /// is published already does not end the order.
+    ///
+    /// Regression: the task was kept only after its record had been seen
+    /// in the DNS, a minute and a half later, so an order that ended in
+    /// between left the record behind. The CA hands an unfinished order
+    /// out again with the challenge it had, the provider refused the
+    /// record that was there as a duplicate, and every order failed from
+    /// then on.
+    #[tokio::test]
+    async fn test_challenge_record_is_kept_for_the_cleanup() {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let task = |refuses: bool| -> Box<dyn super::AcmeDnsTask> {
+            Box::new(RecordedTask {
+                refuses,
+                calls: calls.clone(),
+            })
+        };
+        let name = "_acme-challenge.example.com";
+        let mut kept = vec![];
+
+        // Added: kept, and nobody looks whether it is published.
+        let added = super::add_challenge_record(
+            task(false),
+            &mut kept,
+            name,
+            "value",
+            async { panic!("not asked when the record was added") },
+        )
+        .await
+        .unwrap();
+        assert_eq!((true, 1), (added, kept.len()));
+
+        // Refused and there already: the order goes on, and the task is
+        // kept all the same.
+        let added = super::add_challenge_record(
+            task(true),
+            &mut kept,
+            name,
+            "value",
+            async { true },
+        )
+        .await
+        .unwrap();
+        assert_eq!((false, 2), (added, kept.len()));
+
+        // Refused and not there: the error of the provider, and the task
+        // is kept for what it may have done.
+        let error = super::add_challenge_record(
+            task(true),
+            &mut kept,
+            name,
+            "value",
+            async { false },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(true, error.to_string().contains("DomainRecordDuplicate"));
+        assert_eq!(3, kept.len());
+
+        for task in kept.iter() {
+            task.done().await.unwrap();
+        }
+        assert_eq!(
+            3,
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| *call == "done")
+                .count()
+        );
+    }
 
     /// Regression: the entry a new certificate was installed with was the
     /// stored one, whole. A setting written as a reference is the

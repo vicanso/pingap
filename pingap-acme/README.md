@@ -84,7 +84,31 @@ variable that is not set is a configuration error, where it used to reach the
 provider as that text.
 
 The provider adds the `_acme-challenge` TXT record, waits for validation, and
-removes it afterwards. The zone is the registrable domain of the record name,
+removes it afterwards. A certificate for `*.example.com` and `example.com`
+has two values under the one name `_acme-challenge.example.com`: one for each
+name.
+
+A record that is still there when no order is running was left behind by an
+order that could not finish: the process was stopped or restarted in the
+middle of it. The CA hands an unfinished order out again with the challenges
+it had (Let's Encrypt does for up to a week), so the next order asks for the
+same value, and the provider refuses a record that exists. Until this version
+that failed every order from then on (`DomainRecordDuplicate` from Aliyun),
+and removing the records by hand was the way out. Now:
+
+- `ali`: the record that exists is taken over, and removed when the order is
+  done. That takes an access key that may list records
+  (`DescribeSubDomainRecords`); with one that may only add and remove them
+  the order goes on all the same and the record stays.
+- `cf`, `tencent`: the order goes on with the record that is published
+  already. It is not removed by that order: remove it by hand.
+- `huawei`: this task does not take over a record set that exists. Remove
+  what is left behind by hand before the next order.
+- With any provider, the record of a name the CA had already validated when
+  the order was stopped is not asked about again, so nothing takes it over.
+  It stays until it is removed by hand.
+
+The zone is the registrable domain of the record name,
 resolved against the public suffix list (`example.co.uk`, not `co.uk`). With
 `manual` (or an empty provider) the challenge is attempted only once per
 process start, and once more when its entry is changed, since there is nothing
