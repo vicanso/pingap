@@ -26,7 +26,12 @@ otlp_exporter = "http://otel-collector:4317"
 
 The service name is `pingap:` followed by the name of the server
 (`pingap:main` here), so several servers in one process report under distinct
-names. The URL is the collector's endpoint as it is; its path is not the
+names. The labels of the deployment (`basic.labels`) are attributes of the
+resource the spans are reported for, each under its key (`cluster`), with
+`service.namespace` (`basic.name`, where one is set) and `service.version`
+next to them: several deployments that report to one collector are told
+apart by these. What `OTEL_RESOURCE_ATTRIBUTES` sets under one of these keys
+stays as it is. The URL is the collector's endpoint as it is; its path is not the
 service name, as this README used to say. Query parameters on the URL
 configure the exporter:
 

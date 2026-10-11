@@ -38,6 +38,7 @@ fn is_always_list(field: &str) -> bool {
             | "match_query"
             | "match_cookies"
             | "trusted_proxies"
+            | "labels"
     )
 }
 
@@ -1058,6 +1059,7 @@ server "web" addr="0.0.0.0:3000" {
     fn test_single_value_list_roundtrip() {
         let toml_input = r#"
 [basic]
+labels = ["cluster:sh-prod"]
 trusted_proxies = ["10.0.0.0/8"]
 
 [locations.app]
@@ -1098,6 +1100,7 @@ type = "deny"
             r#"
 basic {
     trusted_proxies "10.0.0.0/8"
+    labels "cluster:$ENV:CLUSTER"
 }
 location "app" {
     match_headers "X-Env=prod"
@@ -1116,6 +1119,7 @@ location "app" {
             current[key].as_array().map(|arr| arr.len())
         };
         assert_eq!(Some(1), list("basic", None, "trusted_proxies"));
+        assert_eq!(Some(1), list("basic", None, "labels"));
         for key in ["match_headers", "match_query", "match_cookies"] {
             assert_eq!(Some(1), list("locations", Some("app"), key), "{key}");
         }

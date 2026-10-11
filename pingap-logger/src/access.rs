@@ -16,6 +16,7 @@ use bytes::{BufMut, BytesMut};
 use chrono::{DateTime, Datelike, Local, Offset, TimeZone, Timelike, Utc};
 use pingap_core::{
     Ctx, CtxLogField, HOST_NAME_TAG, format_duration, get_hostname,
+    get_identity,
 };
 use pingap_util::format_byte_size;
 use pingora::http::{RequestHeader, ResponseHeader};
@@ -129,6 +130,13 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
         "$" => {
             if key.as_bytes() == HOST_NAME_TAG {
                 Some(Tag::fill(get_hostname()))
+            } else if value == "name" {
+                // What the deployment is called (`basic.name`).
+                Some(Tag::fill(&get_identity().name))
+            } else if let Some(label) = value.strip_prefix("label:") {
+                // One of its labels (`basic.labels`), nothing where it
+                // has no such label.
+                Some(Tag::fill(get_identity().label(label).unwrap_or_default()))
             } else {
                 Some(Tag::fill(&std::env::var(value).unwrap_or_default()))
             }
@@ -975,6 +983,22 @@ mod tests {
         let env = format_extra_tag("{$HOME}").unwrap();
         assert_eq!(TagCategory::Fill, env.category);
         assert_eq!(false, env.data.unwrap().is_empty());
+
+        // Which deployment a line is from: its name and its labels. This
+        // is the one test of the crate that says who the process is.
+        pingap_core::set_identity(pingap_core::Identity::new(
+            Some("edge-sh"),
+            vec![("cluster".to_string(), "sh-prod".to_string())],
+        ));
+        let filled = |key: &str| {
+            let tag = format_extra_tag(key).unwrap();
+            assert_eq!(TagCategory::Fill, tag.category);
+            tag.data.unwrap()
+        };
+        assert_eq!("edge-sh", filled("{$name}"));
+        assert_eq!("sh-prod", filled("{$label:cluster}"));
+        // A label the deployment has none of prints nothing.
+        assert_eq!("", filled("{$label:region}"));
     }
     #[test]
     fn test_parse_format() {

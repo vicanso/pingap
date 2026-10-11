@@ -16,8 +16,8 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pingap_core::{
     Notification, NotificationData, NotificationLevel, get_hostname,
-    is_ntfy_notification, parse_notification_headers, parse_notification_level,
-    parse_notification_retries, parse_ntfy_url,
+    get_identity, is_ntfy_notification, parse_notification_headers,
+    parse_notification_level, parse_notification_retries, parse_ntfy_url,
 };
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Map, Value};
@@ -36,6 +36,11 @@ pub const DEFAULT_BATCH_WINDOW: Duration = Duration::from_secs(10);
 /// At most this many notifications go into one post; the batch goes out as
 /// soon as it is full.
 pub const DEFAULT_BATCH_MAX_EVENTS: usize = 5;
+
+/// The version of pingap, which a notification says: with several
+/// deployments, some of them a version behind, it is the first thing
+/// asked about one that reports.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// In the list of categories to send (`webhook_notifications`): every
 /// category there is, and every one a later version adds.
@@ -378,9 +383,14 @@ impl Inner {
         let Some(params) = merge(events) else {
             return;
         };
+        // Who it is from: the name and the labels of the deployment, as
+        // the configuration has them. It used to say `pingap` whatever
+        // `basic.name` was.
+        let identity = get_identity();
         let message = Message {
-            // TODO get app name from config
-            name: "pingap".to_string(),
+            name: identity.name.clone(),
+            labels: identity.labels.clone(),
+            version: VERSION.to_string(),
             level: params.level,
             title: params.title,
             hostname: get_hostname().to_string(),
@@ -659,6 +669,10 @@ const NTFY_BODY_LIMIT: usize = 8000;
 /// A title of ntfy may be 1024 bytes long.
 const NTFY_TITLE_LIMIT: usize = 250;
 
+/// What the tags of a message for ntfy may add up to. ntfy takes 512
+/// bytes of them and refuses the message that has more.
+const NTFY_TAGS_LIMIT: usize = 500;
+
 /// `text` cut to `limit` bytes at most, between two characters, with
 /// what says that there was more.
 fn shortened(text: &str, limit: usize) -> String {
@@ -724,6 +738,9 @@ impl Kind {
 /// What is posted, as the parts a template is made of.
 struct Message {
     name: String,
+    /// The labels of the deployment, each a key and a value.
+    labels: Vec<(String, String)>,
+    version: String,
     level: NotificationLevel,
     title: String,
     hostname: String,
@@ -734,10 +751,32 @@ struct Message {
 }
 
 impl Message {
+    /// The labels in one line: `cluster=sh-prod, env=prod`.
+    fn labels_text(&self) -> String {
+        self.labels
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// What stands for `{{name}}` in a template.
     fn part(&self, name: &str) -> Option<String> {
+        // One label, `{{label.cluster}}`: nothing where the deployment
+        // has no such label, so that one template does for all of them.
+        if let Some(key) = name.strip_prefix("label.") {
+            return Some(
+                self.labels
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_default(),
+            );
+        }
         Some(match name {
             "name" => self.name.clone(),
+            "version" => self.version.clone(),
+            "labels" => self.labels_text(),
             "level" => self.level.to_string(),
             "title" => self.title.clone(),
             "hostname" => self.hostname.clone(),
@@ -793,6 +832,25 @@ impl Message {
             NotificationLevel::Warn => (4, "warning"),
             NotificationLevel::Info => (3, "information_source"),
         };
+        // The labels are tags as well, `cluster=sh-prod`. ntfy takes the
+        // tags as one list with commas between them, and no more than
+        // 512 bytes of them in all: a message with more is refused, so
+        // the labels that find no room among them are told in the text.
+        let mut tags: Vec<String> = std::iter::once(sign)
+            .chain(self.category.split(',').filter(|tag| !tag.is_empty()))
+            .map(str::to_string)
+            .collect();
+        let mut used: usize = tags.iter().map(String::len).sum();
+        let mut left_out = vec![];
+        for (key, value) in self.labels.iter() {
+            let tag = format!("{key}={}", value.replace(',', " "));
+            if used + tag.len() <= NTFY_TAGS_LIMIT {
+                used += tag.len();
+                tags.push(tag);
+            } else {
+                left_out.push(tag);
+            }
+        }
         let rendered = template
             .map(|template| self.render(template, |text| text.to_string()));
         // The text, of `limit` bytes at most.
@@ -805,6 +863,10 @@ impl Message {
                 if !self.ip.is_empty() {
                     from = format!("{from} ({})", self.ip);
                 }
+                from = format!("{from}, v{}", self.version);
+                if !left_out.is_empty() {
+                    from = format!("{from}\n{}", left_out.join(", "));
+                }
                 let room = limit.saturating_sub(from.len() + 2);
                 format!("{}\n\n{from}", shortened(&self.message, room))
             },
@@ -814,15 +876,19 @@ impl Message {
         } else {
             &self.title
         };
-        let tags = std::iter::once(sign)
-            .chain(self.category.split(',').filter(|tag| !tag.is_empty()))
-            .map(|tag| Value::String(tag.to_string()))
-            .collect();
+        // Ahead of it, the deployment it is about, where that has a name
+        // of its own: the title is all a phone shows of a message.
+        let title = if self.name == pingap_core::DEFAULT_IDENTITY_NAME {
+            title.clone()
+        } else {
+            format!("{}: {title}", self.name)
+        };
+        let tags = tags.into_iter().map(Value::String).collect();
         let mut data = Map::new();
         data.insert("topic".to_string(), Value::String(topic.to_string()));
         data.insert(
             "title".to_string(),
-            Value::String(shortened(title, NTFY_TITLE_LIMIT)),
+            Value::String(shortened(&title, NTFY_TITLE_LIMIT)),
         );
         data.insert("priority".to_string(), Value::from(priority));
         data.insert("tags".to_string(), Value::Array(tags));
@@ -856,11 +922,17 @@ impl Message {
                     NotificationLevel::Warn => "warning",
                     _ => "comment",
                 };
+                // The labels have a line where there are some.
+                let mut labels = self.labels_text();
+                if !labels.is_empty() {
+                    labels = format!("\n                >labels: {labels}");
+                }
                 format!(
                     r###" <font color="{color_type}">{}({})</font>
                 >title: {}
                 >hostname: {}
-                >ip: {}
+                >ip: {}{labels}
+                >version: {}
                 >category: {}
                 >message: {}"###,
                     self.name,
@@ -868,6 +940,7 @@ impl Message {
                     self.title,
                     self.hostname,
                     self.ip,
+                    self.version,
                     self.category,
                     self.message
                 )
@@ -935,6 +1008,22 @@ impl Message {
                     Value::String(self.hostname.clone()),
                 );
                 data.insert("ip".to_string(), Value::String(self.ip.clone()));
+                data.insert(
+                    "version".to_string(),
+                    Value::String(self.version.clone()),
+                );
+                // An object, empty where the deployment has no labels.
+                data.insert(
+                    "labels".to_string(),
+                    Value::Object(
+                        self.labels
+                            .iter()
+                            .map(|(key, value)| {
+                                (key.clone(), Value::String(value.clone()))
+                            })
+                            .collect(),
+                    ),
+                );
                 data.insert(
                     "category".to_string(),
                     Value::String(self.category.clone()),
@@ -1558,6 +1647,8 @@ mod tests {
 
         let message = Message {
             name: "pingap".to_string(),
+            labels: vec![],
+            version: "0.16.0".to_string(),
             level: NotificationLevel::Warn,
             title: "T".to_string(),
             hostname: "h".to_string(),
@@ -1723,6 +1814,8 @@ mod tests {
 
         let message = Message {
             name: "pingap".to_string(),
+            labels: vec![],
+            version: "0.16.0".to_string(),
             level: NotificationLevel::Warn,
             title: "2 notifications".to_string(),
             hostname: "web-1".to_string(),
@@ -1747,7 +1840,7 @@ mod tests {
             value["tags"]
         );
         assert_eq!(
-            "1. [warn] a\n2. [info] b\n\nweb-1 (10.0.0.5)",
+            "1. [warn] a\n2. [info] b\n\nweb-1 (10.0.0.5), v0.16.0",
             field(&value, "message")
         );
         // A template is the text, as it is written.
@@ -1777,7 +1870,7 @@ mod tests {
         assert_eq!(true, text.len() <= 4096, "{}", text.len());
         assert_eq!(true, text.len() > 3900, "{}", text.len());
         // Who it is from is still there.
-        assert_eq!(true, text.ends_with("…\n\nweb-1"), "{text}");
+        assert_eq!(true, text.ends_with("…\n\nweb-1, v0.16.0"), "{text}");
         // A text that is twice as long as JSON, with a topic and a
         // title as long as they get: the body stays one ntfy reads.
         let escaped = Message {
@@ -1822,6 +1915,125 @@ mod tests {
             .send_notification(event("a", NotificationLevel::Error, "T", "m"))
             .await;
         assert_eq!(true, posts.try_recv().is_err());
+    }
+
+    /// Which deployment a notification is from: its name, its labels
+    /// and its version, in every format.
+    #[test]
+    fn test_identity_in_notifications() {
+        let message = |name: &str, labels: &[(&str, &str)]| Message {
+            name: name.to_string(),
+            labels: labels
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            version: "0.16.0".to_string(),
+            level: NotificationLevel::Error,
+            title: "Upstream unhealthy".to_string(),
+            hostname: "pod-x2k4q".to_string(),
+            ip: "10.0.0.5".to_string(),
+            category: "upstream_status".to_string(),
+            message: "api".to_string(),
+            count: 1,
+        };
+        let named =
+            message("edge-sh", &[("cluster", "sh-prod"), ("env", "a,b")]);
+        let plain = message("pingap", &[]);
+        let json = |message: &Message, kind: Kind| -> Value {
+            serde_json::from_str(&message.body(kind, None, "alerts"))
+                .expect("json")
+        };
+
+        // The generic post: the name, the version, and the labels as an
+        // object, which is empty where there are none.
+        let value = json(&named, Kind::Other);
+        assert_eq!("edge-sh", field(&value, "name"));
+        assert_eq!("0.16.0", field(&value, "version"));
+        assert_eq!(
+            serde_json::json!({"cluster": "sh-prod", "env": "a,b"}),
+            value["labels"]
+        );
+        let value = json(&plain, Kind::Other);
+        assert_eq!("pingap", field(&value, "name"));
+        assert_eq!(serde_json::json!({}), value["labels"]);
+
+        // The chats: a line for the labels where there are some.
+        let text = json(&named, Kind::WeCom)["markdown"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(true, text.contains(">edge-sh(error)</font>"), "{text}");
+        assert_eq!(
+            true,
+            text.contains(">labels: cluster=sh-prod, env=a,b\n"),
+            "{text}"
+        );
+        assert_eq!(true, text.contains(">version: 0.16.0\n"), "{text}");
+        let text = json(&plain, Kind::DingTalk)["markdown"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(false, text.contains("labels"), "{text}");
+        assert_eq!(true, text.contains(">version: 0.16.0\n"), "{text}");
+
+        // ntfy: the name ahead of the title where it is one of its own,
+        // and the labels among the tags.
+        let value = json(&named, Kind::Ntfy);
+        assert_eq!("edge-sh: Upstream unhealthy", field(&value, "title"));
+        assert_eq!(
+            serde_json::json!([
+                "rotating_light",
+                "upstream_status",
+                "cluster=sh-prod",
+                "env=a b"
+            ]),
+            value["tags"]
+        );
+        let value = json(&plain, Kind::Ntfy);
+        assert_eq!("Upstream unhealthy", field(&value, "title"));
+        assert_eq!(
+            serde_json::json!(["rotating_light", "upstream_status"]),
+            value["tags"]
+        );
+
+        // More labels than ntfy takes tags for: the message is one it
+        // takes all the same, and the rest of them are in its text.
+        let many: Vec<(String, String)> = (0..16)
+            .map(|i| (format!("{}{i:02}", "k".repeat(30)), "v".repeat(128)))
+            .collect();
+        let crowded = Message {
+            labels: many.clone(),
+            ..message("edge-sh", &[])
+        };
+        let value = json(&crowded, Kind::Ntfy);
+        let tags: Vec<&str> = value["tags"]
+            .as_array()
+            .map(|tags| tags.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let size: usize = tags.iter().map(|tag| tag.len()).sum();
+        assert_eq!(true, size <= 512, "{size}");
+        // the sign, the category, and the labels there was room for
+        assert_eq!(4, tags.len(), "{tags:?}");
+        let text = field(&value, "message");
+        for (index, (key, _)) in many.iter().enumerate() {
+            let told = tags.iter().any(|tag| tag.starts_with(key.as_str()))
+                || text.contains(&format!("{key}="));
+            assert_eq!(true, told, "label {index} is told nowhere");
+        }
+        assert_eq!(
+            true,
+            text.starts_with("api\n\npod-x2k4q (10.0.0.5), v0.16.0\n")
+        );
+
+        // A template: all labels, one of them, and one there is none of.
+        assert_eq!(
+            "edge-sh 0.16.0 [cluster=sh-prod, env=a,b] sh-prod|| {{label}}",
+            named.render(
+                "{{name}} {{version}} [{{labels}}] {{label.cluster}}|{{label.region}}| {{label}}",
+                |text| text.to_string()
+            )
+        );
+        assert_eq!("[]", plain.render("[{{labels}}]", |text| text.to_string()));
     }
 
     /// A post that failed is tried again as often as is asked for, when

@@ -174,6 +174,16 @@ entry that is not a trusted proxy, where they used to be the left-most one.
   compressed and removed; 0.15 walked the whole directory.
 - Text access logs escape quotes, backslashes and control characters in what
   a request supplies. Lines without those are unchanged.
+- **Webhook**: a notification is from `basic.name`. It used to say `pingap`
+  whatever that was set to, so a configuration with a name of its own now
+  shows it: in the first line of a chat message, in `name` of the JSON. The
+  JSON also has `version` and `labels`, and a chat message a `version` line.
+- **Access log**: `{$name}` is `basic.name`, and `{$label:<key>}` a label of
+  the deployment. `{$name}` used to be the environment variable `name`.
+- **Traces**: the resource has `service.version`, the labels of the
+  deployment, and `service.namespace` where `basic.name` is set, unless
+  `OTEL_RESOURCE_ATTRIBUTES` says them already.
+- `basic.name` is one line of at most 64 bytes; anything else is refused.
 - **Webhook**: `webhook_type = "ntfy"` is a type of its own, for a topic of
   [ntfy](https://ntfy.sh/). 0.15 read it like any name it did not know, as
   the generic JSON post to `webhook`. A configuration that happened to use
@@ -258,7 +268,7 @@ reports as an error:
   for a certificate, and without `proxy_protocol` the header of a load
   balancer that still sends one is a broken request. The others are
   `send_proxy_protocol`, `fail_open`, `client_cert`, the timeouts of a
-  location, `acme_*`, `ocsp_stapling`, and the webhook's `webhook_min_level`,
+  location, `acme_*`, `ocsp_stapling`, `labels`, and the webhook's `webhook_min_level`,
   `webhook_headers`, `webhook_secret`, `webhook_template`, `webhook_retries`.
 - **An admin whose only credentials are tokens** (`tokens`, `?token=` on
   `--admin`) runs **without authentication**: 0.15 does not know them.

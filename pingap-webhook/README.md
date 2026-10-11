@@ -58,6 +58,43 @@ Each notification carries a category, a level (`Info`, `Warn`, `Error`), a title
 and a message. The payload also includes the hostname and the local IP list, so
 in a multi-instance deployment you can tell which node reported.
 
+## Which deployment it is from
+
+With several deployments - a cluster per region, production next to staging -
+a hostname such as `pingap-7d9f5c6b8-x2k4q` does not say which of them
+reports. Two settings of `[basic]` do. The built-in text of every notification
+carries them, along with the version of pingap, and a `webhook_template`
+names the ones it wants:
+
+```toml
+[basic]
+name = "edge-sh-prod"                           # `pingap` unless set
+labels = ["cluster:sh-prod", "env:prod", "region:cn-east"]
+```
+
+- `name` is who the notification is from: the first line of a chat message,
+  `name` in the JSON, and ahead of the title for ntfy
+  (`edge-sh-prod: Upstream unhealthy`). One line, at most 64 bytes.
+- `labels` are free: whatever tells your deployments apart, each `key:value`.
+  At most 16 of them, with a key of letters, digits, `_` and `-` (at most 32)
+  and a value of one line (at most 128 bytes). They are a line of a chat
+  message (`labels: cluster=sh-prod, env=prod`), the object `labels` in the
+  JSON, and tags for ntfy (`cluster=sh-prod`, a comma in a value written as a
+  space). ntfy takes 512 bytes of tags: the labels that find no room among
+  them are in the text of the message.
+- Several deployments that run one configuration - nodes of more than one
+  cluster on the same etcd - take what differs from the environment:
+  `name = "$ENV:PINGAP_NAME"`, `labels = ["cluster:$ENV:CLUSTER", "env:prod"]`.
+  Set the variable on every node before the label is added: a variable that
+  is not set is a configuration error, and a node without it takes nothing
+  of the changed configuration.
+- Both are read when pingap starts: a change takes a restart, and `--autoreload`
+  reports it as one that waits.
+
+The same name and labels can be printed in the access log
+([pingap-logger](../pingap-logger/README.md)) and are attributes of the traces
+([pingap-otel](../pingap-otel/README.md)).
+
 ## Batching
 
 Bursts are merged so a flapping upstream or a reload that touches several
@@ -98,7 +135,7 @@ every notification immediately. Embedders set the same policy with
 | `wecom` | WeCom (企业微信) markdown message, colour-coded by level |
 | `dingtalk` | DingTalk (钉钉) markdown message |
 | `ntfy` | A message of [ntfy](https://ntfy.sh/), with a priority and a sign by level, see [ntfy](#ntfy) |
-| anything else | Generic JSON POST: an object with `name` (`pingap`), `title`, `level` (`info`, `warn`, `error`), `category`, `message`, `hostname` and `ip` (the local addresses, `;` separated). `title` used to be missing from it. |
+| anything else | Generic JSON POST: an object with `name` (`basic.name`, `pingap` unless set), `title`, `level` (`info`, `warn`, `error`), `category`, `message`, `hostname`, `ip` (the local addresses, `;` separated), `version` (of pingap) and `labels` (an object, `{"cluster": "sh-prod"}`, empty without labels). `title` used to be missing from it, and `name` used to be `pingap` whatever was configured. |
 
 `Warn` and `Error` render in warning colour; `Info` renders as a comment.
 
@@ -121,9 +158,10 @@ pick one that cannot be guessed, or use a topic that is protected.
 | Of the notification | In ntfy |
 | --- | --- |
 | level `info` / `warn` / `error` | priority `3` (default) / `4` (high) / `5` (max), and the first tag, which ntfy shows as a sign in front of the title: ℹ️ / ⚠️ / 🚨 |
-| title | the title; the category where the notification has no title of its own, which is most of them |
+| title | the title; the category where the notification has no title of its own, which is most of them. `basic.name` goes ahead of it where one is set: `edge-sh-prod: Upstream unhealthy` |
 | category | a tag, one for each category of a post that merges several, so a subscription can be told to show some of them |
-| message | the text, followed by the hostname and the addresses of the machine |
+| `basic.labels` | a tag each, `cluster=sh-prod` |
+| message | the text, followed by the hostname, the addresses of the machine and the version of pingap |
 
 - **A topic that is protected**: give the token in `webhook_headers`
   (`"Authorization: Bearer tk_..."`), or the user and the password in the url
@@ -177,7 +215,9 @@ webhook_min_level = "warn"      # ...that is a warning or worse
 
 `webhook_template` replaces the text that is built in. These are filled in:
 `{{title}}`, `{{message}}`, `{{level}}`, `{{category}}`, `{{hostname}}`,
-`{{ip}}`, `{{name}}` (`pingap`) and `{{count}}` (how many notifications the
+`{{ip}}`, `{{name}}` (`basic.name`), `{{version}}`, `{{labels}}` (all of them,
+`cluster=sh-prod, env=prod`), `{{label.<key>}}` (one of them, nothing where
+the deployment has no such label) and `{{count}}` (how many notifications the
 post merges).
 
 - For `wecom` and `dingtalk` the template is the markdown that is shown:

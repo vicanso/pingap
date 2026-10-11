@@ -187,7 +187,13 @@ export default {
     sectionNotify: "通知",
     sectionAdvanced: "高级",
     name: "名称",
-    namePlaceholder: "输入应用名称",
+    namePlaceholder: "输入这套部署的名称(如 edge-sh-prod)",
+    nameTips:
+      "这套部署叫什么，不设置时是 pingap：告警里显示为发送方，访问日志里用 {$name} 输出。可以写成 $ENV:变量名。修改后需要重启生效。",
+    labels: "标签",
+    labelsPlaceholder: "键，如 cluster : 值，如 sh-prod 或 $ENV:CLUSTER",
+    labelsTips:
+      "用来区分各套部署的标记（集群、环境、地域）。会出现在告警里、访问日志里（格式中写 {$label:键}）和链路追踪里。值可以写成 $ENV:变量名 从环境变量读取，这样多套部署可以共用一份配置。修改后需要重启生效。",
     threads: "线程数",
     threadsPlaceholder: "输入服务线程数",
     threadsTips: "填 0 表示使用 CPU 核数；留空则使用内置默认值。",
@@ -310,7 +316,7 @@ export default {
     webhookTemplate: "Webhook消息模板",
     webhookTemplatePlaceholder: "输入消息模板，如 **{{title}}** {{message}}",
     webhookTemplateTips:
-      "替换内置的文本。wecom 和 dingtalk：消息的 markdown。ntfy：消息的正文。其他类型：整个 JSON 正文。可用 {{title}}、{{message}}、{{level}}、{{category}}、{{hostname}}、{{ip}}、{{name}}、{{count}}。",
+      "替换内置的文本。wecom 和 dingtalk：消息的 markdown。ntfy：消息的正文。其他类型：整个 JSON 正文。可用 {{title}}、{{message}}、{{level}}、{{category}}、{{hostname}}、{{ip}}、{{name}}、{{version}}、{{labels}}、{{label.<键>}}、{{count}}。",
     sentry: "Sentry的连接串",
     sentryPlaceholder: "输入sentry的连接串",
     pyroscope: "Pyroscope的连接串",

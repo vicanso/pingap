@@ -16,6 +16,7 @@ use super::provider;
 use async_trait::async_trait;
 use humantime::parse_duration;
 use opentelemetry::{
+    Key, KeyValue,
     global::{self, BoxedTracer},
     propagation::{TextMapCompositePropagator, TextMapPropagator},
     trace::TracerProvider,
@@ -250,6 +251,9 @@ pub struct TracerService {
     name: String,
     endpoint: String,
     config: TracerConfig,
+    /// What every span of this process is from, beyond the name of its
+    /// service: the labels of the deployment.
+    attributes: Vec<(String, String)>,
 }
 
 impl TracerService {
@@ -261,6 +265,14 @@ impl TracerService {
     /// Creates a new TracerService with default configuration
     pub fn new(name: &str, endpoint: &str) -> Self {
         Self::builder().name(name).endpoint(endpoint).build()
+    }
+
+    /// Adds attributes to the resource the spans are reported for, each a
+    /// key and a value: `cluster` and `sh-prod`. With several deployments
+    /// that report to one collector, they are what tells them apart.
+    pub fn with_attributes(mut self, attributes: &[(String, String)]) -> Self {
+        self.attributes.extend(attributes.iter().cloned());
+        self
     }
 }
 
@@ -387,6 +399,7 @@ impl TracerServiceBuilder {
                 .endpoint
                 .unwrap_or_else(|| "http://localhost:4317".to_string()),
             config: self.config,
+            attributes: vec![],
         }
     }
 }
@@ -447,6 +460,25 @@ pub fn inject_span_context(
     global::get_text_map_propagator(|propagator| {
         propagator.inject_context(&cx, injector);
     });
+}
+
+/// The resource the spans of the service `name` are reported for: its
+/// name, what the environment says of it (`OTEL_RESOURCE_ATTRIBUTES`),
+/// and `attributes`. Where the environment has a key the attributes
+/// have as well, the environment stays: it was the only way to say such
+/// a thing before, and who had set `service.version` there would have
+/// found it written over.
+fn resource_of(name: &str, attributes: &[(String, String)]) -> Resource {
+    let named =
+        || Resource::builder().with_service_name(get_service_name(name));
+    let from_environment = named().build();
+    let added = attributes
+        .iter()
+        .filter(|(key, _)| {
+            from_environment.get(&Key::new(key.clone())).is_none()
+        })
+        .map(|(key, value)| KeyValue::new(key.clone(), value.clone()));
+    named().with_attributes(added).build()
 }
 
 /// Gets the full service name by adding the 'pingap:' prefix
@@ -569,11 +601,7 @@ impl BackgroundService for TracerService {
                 .with_id_generator(RandomIdGenerator::default())
                 .with_max_attributes_per_span(self.config.max_attributes)
                 .with_max_events_per_span(self.config.max_events)
-                .with_resource(
-                    Resource::builder()
-                        .with_service_name(get_service_name(&self.name))
-                        .build(),
-                )
+                .with_resource(resource_of(&self.name, &self.attributes))
                 .build()
         });
 
@@ -725,6 +753,33 @@ mod tests {
 
     /// The parameters that are refused when they are wrong: read as if
     /// they were not there, a sampler with a typo would trace everything.
+    /// The labels of a deployment are attributes of the resource, next
+    /// to the name of the service and without writing over it.
+    #[test]
+    fn test_resource_of() {
+        let attributes = vec![
+            ("cluster".to_string(), "sh-prod".to_string()),
+            ("service.version".to_string(), "0.16.0".to_string()),
+            // The name of the service is not one of them to set.
+            ("service.name".to_string(), "other".to_string()),
+        ];
+        let resource = resource_of("main", &attributes);
+        let get = |key: &'static str| {
+            resource.get(&Key::new(key)).map(|value| value.to_string())
+        };
+        assert_eq!(Some("pingap:main".to_string()), get("service.name"));
+        assert_eq!(Some("sh-prod".to_string()), get("cluster"));
+        assert_eq!(Some("0.16.0".to_string()), get("service.version"));
+        assert_eq!(None, get("env"));
+        // Without any, the resource is what it was.
+        let plain = resource_of("main", &[]);
+        assert_eq!(
+            Some("pingap:main".to_string()),
+            plain.get(&Key::new("service.name")).map(|v| v.to_string())
+        );
+        assert_eq!(None, plain.get(&Key::new("cluster")));
+    }
+
     #[test]
     fn test_validate_endpoint() {
         for endpoint in [

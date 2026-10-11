@@ -2,8 +2,15 @@
 # Basic config
 ###
 [basic]
-# Specify the application instance name, which is used to easily identify the application when sending notifications. Default `pingap`
+# What this deployment is called: who a notification is from, `{$name}` in an access log. With more than one
+# deployment, give each its own, or take it from the environment: "$ENV:PINGAP_NAME". Default `pingap`
 # name = "pingap"
+
+# What tells this deployment from the others, each "key:value" with a key of letters, digits, `_` and `-`.
+# They are in every notification, in the access log where its format has `{$label:cluster}`, and attributes of the
+# traces. A value may come from the environment, so that several deployments run one configuration:
+# "cluster:$ENV:CLUSTER". Default `none`
+# labels = ["cluster:sh-prod", "env:prod"]
 
 # Error response templates, which can be configured as HTML or JSON. The following characters in the template will be replaced.
 # {{version}} - the version of the application
@@ -114,8 +121,8 @@
 
 # The text of the message in place of the built-in one: the markdown of a wecom or
 # dingtalk message, the text of an ntfy message, the whole JSON body for any other type. `{{title}}`, `{{message}}`,
-# `{{level}}`, `{{category}}`, `{{hostname}}`, `{{ip}}`, `{{name}}` and `{{count}}` are
-# filled in. Default `none`
+# `{{level}}`, `{{category}}`, `{{hostname}}`, `{{ip}}`, `{{name}}`, `{{version}}`, `{{labels}}`,
+# `{{label.<key>}}` and `{{count}}` are filled in. Default `none`
 # webhook_template = "**{{title}}**\n\n{{message}}"
 
 # How many times a post that failed is sent again, at most 10. Default `0`

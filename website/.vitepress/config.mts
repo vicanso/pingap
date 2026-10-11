@@ -148,6 +148,22 @@ export default withMermaid(
       theme: "neutral",
     },
 
+    // Inline code is text. Without this Vue fills in what stands between
+    // two pairs of braces: the `{{title}}` of a template was shown as
+    // nothing at all, and one that is no expression (`{{label.<key>}}`)
+    // stopped the build. Fenced blocks have `v-pre` already.
+    markdown: {
+      config: (md) => {
+        const render = md.renderer.rules.code_inline;
+        md.renderer.rules.code_inline = (tokens, idx, options, env, self) => {
+          tokens[idx].attrSet("v-pre", "");
+          return render
+            ? render(tokens, idx, options, env, self)
+            : self.renderToken(tokens, idx, options);
+        };
+      },
+    },
+
     themeConfig: {
       logo: "/logo.png",
       socialLinks: [{ icon: "github", link: github }],

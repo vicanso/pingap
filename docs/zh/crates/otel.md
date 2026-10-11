@@ -21,7 +21,7 @@ locations = ["app"]
 otlp_exporter = "http://otel-collector:4317"
 ```
 
-服务名是 `pingap:` 加 server 的名字（这里是 `pingap:main`），因此同一进程中的多个 server 以不同名称上报。URL 原样作为采集端的地址，它的路径并不是服务名（本文档以前是这么写的）。URL 上的查询参数配置导出器：
+服务名是 `pingap:` 加 server 的名字（这里是 `pingap:main`），因此同一进程中的多个 server 以不同名称上报。这套部署的标签（`basic.labels`）会作为 span 所属资源的属性上报，属性名就是标签的键（`cluster`），另外还有 `service.namespace`（设置了 `basic.name` 时）和 `service.version`：多套部署上报到同一个采集端时靠它们区分。`OTEL_RESOURCE_ATTRIBUTES` 已经设了同名属性时，以环境变量的为准。URL 原样作为采集端的地址，它的路径并不是服务名（本文档以前是这么写的）。URL 上的查询参数配置导出器：
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |

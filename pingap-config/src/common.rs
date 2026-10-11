@@ -15,7 +15,8 @@
 use super::{Error, Result};
 use crate::PingapTomlConfig;
 use crate::reference::{
-    MissingReference, entry_has_reference, has_reference, resolve_entry,
+    MissingReference, entry_has_reference, has_reference, is_reference,
+    label_to_check, labels_have_variable, resolve_entry, resolve_label_values,
 };
 use crate::secrets::{masked_entry, masked_fragment};
 use bytesize::ByteSize;
@@ -1581,8 +1582,14 @@ const H2_MAX_WINDOW_SIZE: u64 = (1 << 31) - 1;
 /// Basic configuration options for the application
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct BasicConf {
-    /// Application name
+    /// What this deployment is called, `pingap` unless set. It is who a
+    /// notification is from, and `{$name}` in an access log.
     pub name: Option<String>,
+    /// What tells this deployment from the others, each `key:value`:
+    /// `cluster:sh-prod`, `env:prod`. They go into notifications, into the
+    /// access log where its format asks for one (`{$label:cluster}`) and
+    /// into the traces. A value may be `$ENV:NAME`.
+    pub labels: Option<Vec<String>>,
     /// Error page template
     pub error_template: Option<String>,
     /// Path to PID file (default: /run/pingap.pid)
@@ -1676,7 +1683,8 @@ pub struct BasicConf {
     pub webhook_secret: Option<String>,
     /// The text of the message in place of the built-in one, with
     /// `{{title}}`, `{{message}}`, `{{level}}`, `{{category}}`,
-    /// `{{hostname}}`, `{{ip}}`, `{{name}}` and `{{count}}` in it
+    /// `{{hostname}}`, `{{ip}}`, `{{name}}`, `{{version}}`, `{{labels}}`,
+    /// `{{label.<key>}}` and `{{count}}` in it
     pub webhook_template: Option<String>,
     /// How many times a post that failed is tried again (default: 0)
     pub webhook_retries: Option<u32>,
@@ -1791,6 +1799,21 @@ impl Validate for BasicConf {
         .map_err(invalid)?;
         pingap_core::parse_notification_retries(self.webhook_retries)
             .map_err(invalid)?;
+        // The name and the labels of the deployment: a name of one
+        // line, keys that can be written wherever one is named, and
+        // values. A value that is still a reference is for another
+        // machine to read, and its key is checked all the same.
+        if !self.name.as_deref().is_some_and(is_reference) {
+            pingap_core::parse_identity_name(self.name.as_deref())
+                .map_err(invalid)?;
+        }
+        let labels: Vec<String> = self
+            .labels
+            .iter()
+            .flatten()
+            .filter_map(|item| label_to_check(item))
+            .collect();
+        pingap_core::parse_labels(&labels).map_err(invalid)?;
         // A topic of ntfy has a url of a shape of its own. One that is
         // still a reference is for another machine to read.
         let webhook = self.webhook.as_deref().unwrap_or_default();
@@ -2176,7 +2199,10 @@ fn parse_entry_with_references<T: DeserializeOwned>(
     let Some((missing, referenced)) = references else {
         return parse_entry(kind, name, value);
     };
-    if !has_reference(&value) {
+    // The labels of a deployment, which take their value from a variable
+    // in a form of their own: `cluster:$ENV:CLUSTER`.
+    let with_labels = kind == CATEGORY_BASIC && labels_have_variable(&value);
+    if !has_reference(&value) && !with_labels {
         return parse_entry(kind, name, value);
     }
     let label = if name.is_empty() {
@@ -2197,11 +2223,13 @@ fn parse_entry_with_references<T: DeserializeOwned>(
         },
         other => other,
     })?;
-    resolve_entry(&mut value, missing, referenced).map_err(|message| {
-        Error::Invalid {
-            message: format!("{label}: {message}"),
-        }
-    })?;
+    let located = |message: String| Error::Invalid {
+        message: format!("{label}: {message}"),
+    };
+    if with_labels {
+        resolve_label_values(&mut value, missing).map_err(located)?;
+    }
+    resolve_entry(&mut value, missing, referenced).map_err(located)?;
     parse_entry(kind, name, value)
 }
 
@@ -4226,6 +4254,40 @@ restart_ready_timeout = "2m"
             assert_eq!(true, error.contains(message), "{conf}: {error}");
             // the token of a header is not in what is reported
             assert_eq!(false, error.contains("t0ken"), "{conf}: {error}");
+        }
+        // The labels of a deployment.
+        for conf in [
+            "labels = [\"cluster:sh-prod\", \"env:prod\"]",
+            // read by another machine, or not read yet
+            "labels = [\"cluster:$ENV:CLUSTER\", \"$ENV:PINGAP_LABEL\"]",
+            "labels = []",
+        ] {
+            assert_eq!(Ok(()), basic(conf), "{conf}");
+        }
+        for (conf, message) in [
+            (
+                "labels = [\"cluster\"]",
+                "labels: \"cluster\" should be `key:value`",
+            ),
+            ("labels = [\"a.b:c\"]", "labels: \"a.b\" should be a key of"),
+            // Also where the value is for another machine to read.
+            (
+                "labels = [\"my cluster:$ENV:C\"]",
+                "labels: \"my cluster\" should be a key of",
+            ),
+            (
+                "labels = [\"a:$ENV:C\", \"a:b\"]",
+                "labels: \"a\" is there twice",
+            ),
+            ("labels = [\"a:$FILE:/etc/a\"]", "starts with $"),
+            ("name = \"a\\nb\"", "name should be one line"),
+            (
+                "labels = [\"a:b\", \"a:c\"]",
+                "labels: \"a\" is there twice",
+            ),
+        ] {
+            let error = basic(conf).unwrap_err();
+            assert_eq!(true, error.contains(message), "{conf}: {error}");
         }
         // ntfy: the url of a topic, a reference that another machine
         // reads, or no webhook at all. Any other type takes any url.

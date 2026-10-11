@@ -86,6 +86,10 @@
 - **日志输出位置**：`--log stdout` 和 `access_log = "stdout ..."` 是标准输出（`stderr` 同理）；0.15 会写到名为 `stdout.<日期>` 的文件里。`syslog://<host>` 现在是远程服务器，以前 host 被忽略。
 - **压缩后的日志归档**按它包含的文件命名（`access.log.2026-10-05.zst`），而且只压缩和删除这份日志自己滚动出来的文件；0.15 会遍历整个目录。
 - 文本格式的访问日志会转义请求所提供内容里的引号、反斜杠和控制字符。不含这些字符的行没有变化。
+- **Webhook**：通知的发送方是 `basic.name`。以前不管它设成什么，通知里都写 `pingap`，所以配置里有自己名称的，现在会显示出来：聊天消息的第一行、JSON 里的 `name`。JSON 里还多了 `version` 和 `labels`，聊天消息多了一行 `version`。
+- **访问日志**：`{$name}` 是 `basic.name`，`{$label:<键>}` 是这套部署的一个标签。`{$name}` 以前读的是名为 `name` 的环境变量。
+- **链路追踪**：资源属性里多了 `service.version`、这套部署的标签，以及 `service.namespace`（设置了 `basic.name` 时）；`OTEL_RESOURCE_ATTRIBUTES` 里已经有的不会被覆盖。
+- `basic.name` 只能是一行，最长 64 字节，否则会被拒绝。
 - **Webhook**：`webhook_type = "ntfy"` 现在是一个独立的类型，对应 [ntfy](https://ntfy.sh/) 的 topic。0.15 把它和其他不认识的名字一样，当成发往 `webhook` 的通用 JSON POST。碰巧用了这个名字的配置，现在发送的是 ntfy 的 JSON，并且发到去掉最后一段（topic）之后的地址；`webhook` 不是 topic 地址时会被[拒绝](#现在会被拒绝的配置)。
 
 ### 重载、重启与配置文件
@@ -121,7 +125,7 @@
 
 0.15 读取 0.16 的配置时有下面这些差异，它都不会报错：
 
-- 0.16 新增的键被忽略，它们的作用也就没有了。其中有些是保护措施：没有 `tls_client_ca`，监听不再向客户端要证书；没有 `proxy_protocol`，仍在发送这个头的负载均衡器发来的头会被当成格式错误的请求。其余的有 `send_proxy_protocol`、`fail_open`、`client_cert`、location 的超时、`acme_*`、`ocsp_stapling`，以及 webhook 的 `webhook_min_level`、`webhook_headers`、`webhook_secret`、`webhook_template`、`webhook_retries`。
+- 0.16 新增的键被忽略，它们的作用也就没有了。其中有些是保护措施：没有 `tls_client_ca`，监听不再向客户端要证书；没有 `proxy_protocol`，仍在发送这个头的负载均衡器发来的头会被当成格式错误的请求。其余的有 `send_proxy_protocol`、`fail_open`、`client_cert`、location 的超时、`acme_*`、`ocsp_stapling`、`labels`，以及 webhook 的 `webhook_min_level`、`webhook_headers`、`webhook_secret`、`webhook_template`、`webhook_retries`。
 - **只配了令牌作为凭据的 admin**（`tokens`，或 `--admin` 上的 `?token=`）会在**没有认证**的情况下运行：0.15 不认识它们。
 - 用了 0.16 新增插件（`oidc`、`hmac_auth`、`uri_block`、`maintenance` 等）的 location 会在**没有**这个插件的情况下提供服务。回退前先把这些 location 下线。
 - `discovery = "srv"` 被当成静态地址。

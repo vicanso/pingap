@@ -204,7 +204,7 @@ server "https" {
 }
 ```
 
-KDL 里只有一个值的节点就是这个值，有多个值的节点是列表。固定为列表的字段（`addrs`、`locations`、`plugins`、`includes`、`modules`、`proxy_set_headers`、`proxy_add_headers`、`match_headers`、`match_query`、`match_cookies`、`trusted_proxies`、`webhook_notifications`）只有一个值时也是列表。其他字段（例如插件的字段）要表示只有一个元素的列表时，用 `item` 子节点，`--to-kdl` 输出的也是这种写法：
+KDL 里只有一个值的节点就是这个值，有多个值的节点是列表。固定为列表的字段（`addrs`、`locations`、`plugins`、`includes`、`modules`、`proxy_set_headers`、`proxy_add_headers`、`match_headers`、`match_query`、`match_cookies`、`trusted_proxies`、`webhook_notifications`、`webhook_headers`、`labels`）只有一个值时也是列表。其他字段（例如插件的字段）要表示只有一个元素的列表时，用 `item` 子节点，`--to-kdl` 输出的也是这种写法：
 
 ```text
 plugin "blockList" {
@@ -247,7 +247,7 @@ webhook = "$ENV:PINGAP_WEBHOOK"
 
 TOML、HCL、KDL 三种格式以及存放在 etcd 里的配置，规则相同：
 
-- 引用必须是字符串值的**全部**，不论这个字符串在哪里：条目的字段、列表里的一项、插件的配置项、条目通过 `includes` 从 storage 里取到的值。`"Bearer $ENV:TOKEN"` 不是引用，按字面处理。（有两处自己会多读一些：证书的 `dns_service_url` 的任意查询参数，见 [pingap-acme](acme.md)；以及请求头的值用 `$NAME` 引用环境变量，见 `proxy_set_headers`。）
+- 引用必须是字符串值的**全部**，不论这个字符串在哪里：条目的字段、列表里的一项、插件的配置项、条目通过 `includes` 从 storage 里取到的值。`"Bearer $ENV:TOKEN"` 不是引用，按字面处理。（有三处自己会多读一些：证书的 `dns_service_url` 的任意查询参数，见 [pingap-acme](acme.md)；请求头的值用 `$NAME` 引用环境变量，见 `proxy_set_headers`；以及标签的值，`basic.labels = ["cluster:$ENV:CLUSTER"]`，共用一份配置的多套部署正是在这里不同，见 [pingap-webhook](webhook.md)。）
 - 引用代表的是文本。`basic`、server、location、upstream、certificate 里类型是时长、大小、数字或布尔值的字段不能写引用，写了是配置错误。插件的配置项只要是以文本书写的就可以，包括时长。条目和键的名称不做解析。
 - 引用指向的东西不存在（变量没设置、文件读不了）是配置错误，并指出是哪个条目的哪个键：`plugin(jwtAuth): secret: environment variable JWT_SECRET is not set`。启动会失败，`pingap -t` 会报告，重载则保留正在运行的配置。它不会被按字面采用，否则密钥就成了 `$ENV:JWT_SECRET` 这串字。
 - 引用得到的内容就是值，不会再对它做一次引用解析。

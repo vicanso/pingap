@@ -369,8 +369,8 @@ server "https" {
 In KDL a node with one value is that value and a node with several is a list.
 The fields that are always lists (`addrs`, `locations`, `plugins`, `includes`,
 `modules`, `proxy_set_headers`, `proxy_add_headers`, `match_headers`,
-`match_query`, `match_cookies`, `trusted_proxies`, `webhook_notifications`)
-are lists with one value too. For any other field, a plugin's for example, a
+`match_query`, `match_cookies`, `trusted_proxies`, `webhook_notifications`,
+`webhook_headers`, `labels`) are lists with one value too. For any other field, a plugin's for example, a
 list of one is written with `item` children, which is also what `--to-kdl`
 produces:
 
@@ -427,10 +427,13 @@ The rules are the same in TOML, HCL and KDL, and for a configuration in etcd:
 - A reference is the **whole** of a string value, wherever that string is: a
   field of an entry, an item of a list, a setting of a plugin, a value that
   an entry takes from a storage it `includes`. `"Bearer $ENV:TOKEN"` is not
-  one and stays the text it is. (Two places read more on their own: any query
-  parameter of a certificate's `dns_service_url`, see
-  [pingap-acme](../pingap-acme/README.md), and a header value that names a
-  variable as `$NAME`, see `proxy_set_headers`.)
+  one and stays the text it is. (Three places read more on their own: any
+  query parameter of a certificate's `dns_service_url`, see
+  [pingap-acme](../pingap-acme/README.md); a header value that names a
+  variable as `$NAME`, see `proxy_set_headers`; and the value of a label,
+  `basic.labels = ["cluster:$ENV:CLUSTER"]`, which is where deployments that
+  share one configuration differ, see
+  [pingap-webhook](../pingap-webhook/README.md).)
 - It stands for text. A field of `basic`, a server, a location, an upstream
   or a certificate that is a duration, a size, a number or a boolean does not
   take one: that is a configuration error. A setting of a plugin that is

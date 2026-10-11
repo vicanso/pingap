@@ -187,6 +187,7 @@ export interface Storage {
 interface Basic {
   error_template?: string;
   name?: string;
+  labels?: string[];
   pid_file?: string;
   error_log?: string;
   upgrade_sock?: string;

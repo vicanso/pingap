@@ -74,6 +74,7 @@ util -> core -> {discovery, config, logger, location, cache, certificate, upstre
 ```
 
 - `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, clock helpers (`now_sec`/`now_ms`), `BackgroundTaskService`. Every other crate depends on it.
+- `pingap-core::identity` — who the process is: `basic.name` and `basic.labels`, set once in `main.rs` (`set_identity`) and read by what says where it is from: the webhook (`name`, `labels`, `version` in every format), the access log (`{$name}`, `{$label:<key>}`), the tracer's resource attributes. Not by the metrics: a label there changes what a series is. A label's value is the one place a `$ENV:NAME` reference is a part of a string (`resolve_label_values` in `pingap-config/src/reference.rs`).
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
 - `pingap-proxy` — implements pingora's `ProxyHttp`. The request lifecycle in `pingap-proxy/src/server.rs` calls (in order) `early_request_filter` -> `request_filter` -> `proxy_upstream_filter` -> `upstream_request_filter` -> `upstream_response_filter` -> `logging`. Each step matches the `PluginStep` enum in `pingap-core/src/plugin.rs` (`EarlyRequest`, `Request`, `ProxyUpstream`, `UpstreamResponse`, `Response`); a plugin runs at most one step per request.
 - `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.

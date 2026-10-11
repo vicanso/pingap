@@ -373,14 +373,26 @@ case_webhook() {
   local proxy=$((PORT_BASE + 90)) hook=$((PORT_BASE + 91)) out
   run_bg "$DIR/hook.out" python3 "$HERE/hook.py" $hook "$DIR/hook.log"
   wait_port $hook || fail "the receiver listens on $hook"
+  # The deployment has a name and labels, one of them from its
+  # environment: what tells it from another that runs the same
+  # configuration.
+  export E2E_CLUSTER=sh-e2e
   basic_conf "$DIR/c" "webhook = \"http://127.0.0.1:$hook/alerts?from=e2e\"" \
     'webhook_type = "ntfy"' 'webhook_notifications = ["*"]' \
-    'webhook_batch_window = "0s"' 'webhook_headers = ["Authorization: Bearer tk_e2e"]'
+    'webhook_batch_window = "0s"' 'webhook_headers = ["Authorization: Bearer tk_e2e"]' \
+    'name = "edge-e2e"' 'labels = ["cluster:$ENV:E2E_CLUSTER", "env:test"]'
   printf '[upstreams.b1]\naddrs = ["127.0.0.1:9"]\n' >"$DIR/c/upstreams.toml"
   printf '[locations.b1]\nupstream = "b1"\npath = "/"\n' >"$DIR/c/locations.toml"
-  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $proxy >"$DIR/c/servers.toml"
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\naccess_log = "{$name} {$label:cluster} {$label:none}- {path}"\n' \
+    $proxy >"$DIR/c/servers.toml"
   pingap "$DIR/pingap.log" -c "$DIR/c" --autoreload
   wait_port $proxy || fail "pingap listens on $proxy"
+
+  # A line of the access log says which deployment it is from.
+  status "http://127.0.0.1:$proxy/who" >/dev/null
+  wait_for 10 grep -q 'edge-e2e sh-e2e - /who' "$DIR/pingap.log"
+  expect_match "the access log has the name and a label of the deployment" \
+    'edge-e2e sh-e2e - /who' "$(plain <"$DIR/pingap.log" | grep '/who')"
 
   # A change that is reloaded is one of the things that are told.
   printf '[locations.b1]\nupstream = "b1"\npath = "/api"\n' >"$DIR/locations.next"
@@ -391,22 +403,42 @@ case_webhook() {
     '^POST /\?from=e2e ' "$out"
   expect_match "with the header it was given" ' auth=Bearer tk_e2e ' "$out"
   expect_match "the topic is named in the body" '"topic":"alerts"' "$out"
-  expect_match "the category is the title where there is none" '"title":"reload_config"' "$out"
+  expect_match "the title is the category, after the name of the deployment" \
+    '"title":"edge-e2e: reload_config"' "$out"
   expect_match "the level is the priority" '"priority":3[,}]' "$out"
-  expect_match "and the first of the tags, ahead of the category" \
-    '"tags":\["information_source","reload_config"\]' "$out"
+  expect_match "and the first of the tags, ahead of the category and the labels" \
+    '"tags":\["information_source","reload_config","cluster=sh-e2e","env=test"\]' "$out"
   wait_for 5 grep -q 'send webhook success' "$DIR/pingap.log"
   expect_match "and pingap takes it for sent" 'send webhook success' "$(plain <"$DIR/pingap.log")"
   # `*` is every category: the difference of the reload came as well.
-  wait_for 5 grep -q '"title":"diff_config"' "$DIR/hook.log"
+  wait_for 5 grep -q '"title":"edge-e2e: diff_config"' "$DIR/hook.log"
   expect_match "webhook_notifications = [\"*\"] sends the other categories too" '^[1-9]' \
-    "$(grep -c '"title":"diff_config"' "$DIR/hook.log")"
+    "$(grep -c '"title":"edge-e2e: diff_config"' "$DIR/hook.log")"
+
+  # a label without a value, and one whose variable is not there
+  mkdir -p "$DIR/label" && cp "$DIR"/c/*.toml "$DIR/label/"
+  sed -i.orig 's#"env:test"#"env"#' "$DIR/label/basic.toml" && rm -f "$DIR/label/basic.toml.orig"
+  expect_match "a label that is no key:value is a configuration error" \
+    'labels: "env" should be `key:value`' "$("$BIN" -t -c "$DIR/label" 2>&1 | plain)"
+  expect_match "and so is one whose variable is not set" \
+    'basic: labels\[0\]: environment variable E2E_CLUSTER is not set' \
+    "$(env -u E2E_CLUSTER "$BIN" -t -c "$DIR/c" 2>&1 | plain)"
 
   # the url of a server is no url of a topic
   mkdir -p "$DIR/bad" && cp "$DIR"/c/*.toml "$DIR/bad/"
   sed -i.orig 's#/alerts?from=e2e##' "$DIR/bad/basic.toml" && rm -f "$DIR/bad/basic.toml.orig"
   expect_match "a url that names no topic is a configuration error" \
     'the url of ntfy names no topic' "$("$BIN" -t -c "$DIR/bad" 2>&1 | plain)"
+
+  # The name and the labels are read when the process starts: a change
+  # of one waits for a restart, and is said to.
+  sed 's#"env:test"#"env:prod"#' "$DIR/c/basic.toml" >"$DIR/basic.next"
+  mv -f "$DIR/basic.next" "$DIR/c/basic.toml"
+  wait_for 10 grep -q 'takes a restart to apply' "$DIR/pingap.log"
+  expect_match "a label that is changed is reported as waiting for a restart" \
+    'takes a restart to apply.*env:prod' \
+    "$(plain <"$DIR/pingap.log" | grep 'takes a restart to apply')"
+  unset E2E_CLUSTER
 }
 
 # ---------------------------------------------------------------------------

@@ -151,6 +151,91 @@ fn lookup(value: &str) -> Option<Result<Lookup, String>> {
     value.strip_prefix(FILE_PREFIX).map(read_file)
 }
 
+/// The variable a label takes its value from: `CLUSTER` for
+/// `cluster:$ENV:CLUSTER`.
+///
+/// A reference is the whole of a value everywhere else, and a label is a
+/// key and a value in one string. Its value is where a deployment differs
+/// from the next one that runs the same configuration - several clusters
+/// on one etcd - so the value alone may come from the environment. Not
+/// from a file: what a label says is no secret, and a file that changes
+/// is looked for by the whole value.
+fn label_variable(item: &str) -> Option<(&str, &str)> {
+    // A reference as a whole is one of the kind every value can be, and
+    // is read once: what it names is not looked through for another.
+    if is_reference(item) {
+        return None;
+    }
+    let (key, value) = item.split_once(':')?;
+    let name = value.trim().strip_prefix(ENV_PREFIX)?;
+    Some((key, name))
+}
+
+/// The label `item` as it can be checked without its environment: as it
+/// is, with something in the place of a value that is still a reference
+/// (its key is there to be looked at all the same), or `None` for one
+/// that is a reference as a whole. That is how a machine that only
+/// stores the configuration has it.
+pub(crate) fn label_to_check(item: &str) -> Option<String> {
+    if is_reference(item) {
+        return None;
+    }
+    Some(match label_variable(item) {
+        Some((key, _)) => format!("{key}:-"),
+        None => item.to_string(),
+    })
+}
+
+fn labels_of(entry: &Value) -> Option<&Vec<Value>> {
+    entry.get(LABELS_KEY)?.as_array()
+}
+
+const LABELS_KEY: &str = "labels";
+
+/// Whether a label of the basic settings `entry` takes its value from a
+/// variable.
+pub(crate) fn labels_have_variable(entry: &Value) -> bool {
+    labels_of(entry).is_some_and(|items| {
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|item| label_variable(item).is_some())
+    })
+}
+
+/// Puts what the variables name into the labels of the basic settings
+/// `entry` that are written as `key:$ENV:NAME`. What a label says is
+/// printed as it is, so it is not counted among what the references
+/// stood for.
+pub(crate) fn resolve_label_values(
+    entry: &mut Value,
+    missing: MissingReference,
+) -> Result<(), String> {
+    let Some(items) = entry.get_mut(LABELS_KEY).and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    for (index, item) in items.iter_mut().enumerate() {
+        let Value::String(text) = item else {
+            continue;
+        };
+        let Some((key, name)) = label_variable(text) else {
+            continue;
+        };
+        let located =
+            |message: String| format!("{LABELS_KEY}[{index}]: {message}");
+        match read_env(name).map_err(located)? {
+            Lookup::Found(value) => *text = format!("{key}:{value}"),
+            Lookup::Missing(message) => {
+                if missing == MissingReference::Refuse {
+                    return Err(located(message));
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
 /// Whether any value of `entry` is written as a reference.
 pub fn entry_has_reference<T: serde::Serialize>(entry: &T) -> bool {
     Value::try_from(entry).is_ok_and(|value| has_reference(&value))
@@ -333,6 +418,140 @@ mod tests {
         assert_eq!(false, has_reference(&entry("a = \"b\"\nc = 1")));
         assert_eq!(true, has_reference(&entry("a = [\"b\", \"$ENV:C\"]")));
         assert_eq!(true, has_reference(&entry("[a.b]\nc = \"$FILE:/d\"")));
+    }
+
+    /// The value of a label may come from the environment, where the
+    /// whole of any other value has to.
+    #[test]
+    fn test_resolve_label_values() {
+        let path = std::env::var("PATH").unwrap();
+        let entry = |data: &str| Value::Table(toml::from_str(data).unwrap());
+        let labels = |value: &Value| -> Vec<String> {
+            value["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item.as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let check = |item: &str| label_to_check(item);
+        // The key of a label whose value is yet to be read is checked.
+        assert_eq!(Some("cluster:-".to_string()), check("cluster:$ENV:C"));
+        assert_eq!(
+            Some("my cluster:-".to_string()),
+            check("my cluster: $ENV:C")
+        );
+        // One that is a reference as a whole has nothing to look at.
+        assert_eq!(None, check("$ENV:CLUSTER_LABEL"));
+        assert_eq!(None, check("$FILE:/etc/label"));
+        assert_eq!(
+            Some("cluster:sh-prod".to_string()),
+            check("cluster:sh-prod")
+        );
+        // A file is read for the whole of a value, not for a label's: it
+        // stays what it is, and is refused as a value.
+        assert_eq!(
+            Some("cluster:$FILE:/etc/c".to_string()),
+            check("cluster:$FILE:/etc/c")
+        );
+        // A reference as a whole is read once, whatever it looks like.
+        assert_eq!(None, label_variable("$ENV:$ENV:X"));
+        assert_eq!(None, label_variable("$FILE:$ENV:X"));
+
+        let mut value = entry(
+            "labels = [\"path:$ENV:PATH\", \"env:prod\", \"zone: $ENV:PATH\"]\nother = [\"path:$ENV:PATH\"]",
+        );
+        assert_eq!(true, labels_have_variable(&value));
+        resolve_label_values(&mut value, MissingReference::Refuse).unwrap();
+        assert_eq!(
+            vec![
+                format!("path:{path}"),
+                "env:prod".to_string(),
+                format!("zone:{path}")
+            ],
+            labels(&value)
+        );
+        // Of the labels alone.
+        assert_eq!(Some("path:$ENV:PATH"), value["other"][0].as_str());
+
+        // A variable that is not there: an error that says where, or the
+        // label as it is written for a machine that only stores it.
+        let missing =
+            "labels = [\"a:b\", \"cluster:$ENV:PINGAP_TEST_NO_SUCH_VARIABLE\"]";
+        let mut value = entry(missing);
+        assert_eq!(
+            Err("labels[1]: environment variable PINGAP_TEST_NO_SUCH_VARIABLE is not set".to_string()),
+            resolve_label_values(&mut value, MissingReference::Refuse)
+        );
+        let mut value = entry(missing);
+        resolve_label_values(&mut value, MissingReference::Keep).unwrap();
+        assert_eq!(
+            "cluster:$ENV:PINGAP_TEST_NO_SUCH_VARIABLE",
+            labels(&value)[1]
+        );
+        // What is no name of a variable is not taken for the value.
+        let mut value = entry("labels = [\"cluster:$ENV:a-b\"]");
+        assert_eq!(
+            true,
+            resolve_label_values(&mut value, MissingReference::Keep).is_err()
+        );
+
+        assert_eq!(false, labels_have_variable(&entry("labels = [\"a:b\"]")));
+        assert_eq!(false, labels_have_variable(&entry("name = \"a:$ENV:B\"")));
+    }
+
+    /// A configuration that several deployments run: the name and the
+    /// value of a label are what each takes from its environment.
+    #[test]
+    fn test_labels_of_a_running_config() {
+        // A variable that is set wherever the tests run, and short.
+        let home = std::env::var("HOME").unwrap();
+        let document = PingapTomlConfig::from_toml(
+            r#"
+[basic]
+name = "$ENV:HOME"
+labels = ["home:$ENV:HOME", "env:prod"]
+"#,
+        )
+        .unwrap();
+        let config = document
+            .to_running_config(MissingReference::Refuse)
+            .unwrap();
+        assert_eq!(Some(home.clone()), config.basic.name);
+        assert_eq!(
+            Some(vec![format!("home:{home}"), "env:prod".to_string()]),
+            config.basic.labels
+        );
+        config.validate().unwrap();
+        // What a label says is no secret: it is printed as it is, where
+        // the name, a value that was a reference as a whole, is not.
+        assert_eq!(false, config.referenced.contains(&format!("home:{home}")));
+        assert_eq!(true, config.referenced.contains(&home));
+        // As it is written, for what the admin shows and stores.
+        let stored = document.to_pingap_config(false).unwrap();
+        assert_eq!(
+            Some("home:$ENV:HOME".to_string()),
+            stored.basic.labels.unwrap_or_default().first().cloned()
+        );
+
+        // A variable that is not there is an error that says where.
+        let missing = PingapTomlConfig::from_toml(
+            "[basic]\nlabels = [\"cluster:$ENV:PINGAP_TEST_NO_SUCH_VARIABLE\"]\n",
+        )
+        .unwrap();
+        let error = missing
+            .to_running_config(MissingReference::Refuse)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            true,
+            error.contains("basic: labels[0]: environment variable PINGAP_TEST_NO_SUCH_VARIABLE is not set"),
+            "{error}"
+        );
+        // A machine that only stores it keeps it, and takes it as valid.
+        let kept = missing.to_running_config(MissingReference::Keep).unwrap();
+        kept.validate().unwrap();
     }
 
     #[test]

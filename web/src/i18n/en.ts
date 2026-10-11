@@ -190,7 +190,13 @@ export default {
     sectionNotify: "Notifications",
     sectionAdvanced: "Advanced",
     name: "Name",
-    namePlaceholder: "Input the name of pingap process",
+    namePlaceholder: "Input the name of this deployment(e.g. edge-sh-prod)",
+    nameTips:
+      "What this deployment is called, pingap unless set: who a notification is from, {$name} in an access log. May be $ENV:NAME. Takes a restart to change.",
+    labels: "Labels",
+    labelsPlaceholder: "key, e.g. cluster : value, e.g. sh-prod or $ENV:CLUSTER",
+    labelsTips:
+      "What tells this deployment from the others (cluster, env, region). They go into notifications, into the access log where its format has {$label:key}, and into the traces. A value may come from the environment as $ENV:NAME, so that several deployments run one configuration. Takes a restart to change.",
     threads: "Threads",
     threadsPlaceholder: "Input the default thread count",
     threadsTips:
@@ -332,7 +338,7 @@ export default {
     webhookTemplatePlaceholder:
       "Input the message template, e.g. **{{title}}** {{message}}",
     webhookTemplateTips:
-      "Replaces the built-in text. wecom and dingtalk: the markdown of the message. ntfy: the text of the message. Other types: the whole JSON body. {{title}}, {{message}}, {{level}}, {{category}}, {{hostname}}, {{ip}}, {{name}} and {{count}} are filled in.",
+      "Replaces the built-in text. wecom and dingtalk: the markdown of the message. ntfy: the text of the message. Other types: the whole JSON body. {{title}}, {{message}}, {{level}}, {{category}}, {{hostname}}, {{ip}}, {{name}}, {{version}}, {{labels}}, {{label.<key>}} and {{count}} are filled in.",
     sentry: "Sentry Connect Url",
     sentryPlaceholder: "Input the connect url of sentry",
     pyroscope: "Pyroscope Connect Url",

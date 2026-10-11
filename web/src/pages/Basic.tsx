@@ -59,10 +59,21 @@ export default function Basic() {
       name: "name",
       label: basicI18n("name"),
       placeholder: basicI18n("namePlaceholder"),
+      tips: basicI18n("nameTips"),
       defaultValue: basic.name,
       span: 6,
       section: sec.core,
       category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "labels",
+      label: basicI18n("labels"),
+      placeholder: basicI18n("labelsPlaceholder"),
+      tips: basicI18n("labelsTips"),
+      defaultValue: basic.labels,
+      span: 6,
+      section: sec.core,
+      category: ExFormItemCategory.KV_LIST,
     },
     {
       name: "threads",
@@ -489,8 +500,9 @@ export default function Basic() {
     category: ExFormItemCategory.TEXTAREA,
   });
 
-  // Core (5) + Logging (7) = 12 default fields.
-  const defaultShow = 12;
+  // What is shown before "more settings": the first 13 items, which are
+  // the Core section and the first two of Logging.
+  const defaultShow = 13;
 
   const schema = z.object({
     name: z.string().optional(),
@@ -532,6 +544,11 @@ export default function Basic() {
           // All of them ticked is written as `*`: every category, the
           // ones a later version adds included. With one unticked it is
           // the list of the others again.
+          // Labels that were all taken out are no labels: an empty list
+          // is another configuration than none, and asks for a restart.
+          if (data.labels?.length === 0) {
+            data.labels = undefined;
+          }
           const chosen = data.webhook_notifications;
           if (
             chosen &&

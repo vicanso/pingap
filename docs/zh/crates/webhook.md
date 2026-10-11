@@ -51,6 +51,23 @@ webhook_notifications = [
 
 每条通知带类别、级别（`Info`、`Warn`、`Error`）、标题与消息。载荷还含主机名与本地 IP 列表，多实例部署时可区分报告节点。
 
+## 通知来自哪一套部署
+
+有多套部署时（每个地域一个集群、生产和预发并存），`pingap-7d9f5c6b8-x2k4q` 这样的主机名看不出是哪一套在报。`[basic]` 的两项设置用来说明这一点。每条通知的内置文本都会带上它们以及 pingap 的版本号；用了 `webhook_template` 时，模板里写了哪些就带哪些：
+
+```toml
+[basic]
+name = "edge-sh-prod"                           # 不设置时是 `pingap`
+labels = ["cluster:sh-prod", "env:prod", "region:cn-east"]
+```
+
+- `name` 是通知的发送方：聊天消息的第一行、JSON 里的 `name`，ntfy 里放在标题前面（`edge-sh-prod: Upstream unhealthy`）。只能是一行，最长 64 字节。
+- `labels` 是自由的：任何能区分各套部署的标记，每项 `键:值`。最多 16 个，键由字母、数字、`_` 和 `-` 组成（最长 32），值是一行文本（最长 128 字节）。它们是聊天消息里的一行（`labels: cluster=sh-prod, env=prod`）、JSON 里的 `labels` 对象，在 ntfy 里是 tag（`cluster=sh-prod`，值里的逗号写成空格）。ntfy 的 tag 总共只收 512 字节：放不下的标签会写在消息正文里。
+- 多套部署共用一份配置时（多个集群的节点连同一个 etcd），不同的部分从环境变量取：`name = "$ENV:PINGAP_NAME"`、`labels = ["cluster:$ENV:CLUSTER", "env:prod"]`。要先在每个节点上设好变量，再往配置里加这个标签：变量没设置属于配置错误，缺少变量的节点会整个不接受这次配置变更。
+- 两者都在 pingap 启动时读取：修改后需要重启生效，`--autoreload` 会把它报告为等待重启的变更。
+
+同样的名称和标签可以输出到访问日志（[pingap-logger](logger.md)），也会作为链路追踪的属性（[pingap-otel](otel.md)）。
+
 ## 合并发送
 
 短时间内的多条通知会合并成一条，上游抖动或一次改动多个条目的重载只会收到一条消息而不是五条：
@@ -75,7 +92,7 @@ webhook_notifications = [
 | `wecom` | 企业微信 markdown 消息，按级别着色 |
 | `dingtalk` | 钉钉 markdown 消息 |
 | `ntfy` | [ntfy](https://ntfy.sh/) 的消息，按级别设置优先级和图标，见 [ntfy](#ntfy) |
-| 其他 | 通用 JSON POST：一个对象，包含 `name`（`pingap`）、`title`、`level`（`info`、`warn`、`error`）、`category`、`message`、`hostname` 和 `ip`（本机地址，以 `;` 分隔）。以前其中没有 `title`。 |
+| 其他 | 通用 JSON POST：一个对象，包含 `name`（`basic.name`，不设置时是 `pingap`）、`title`、`level`（`info`、`warn`、`error`）、`category`、`message`、`hostname`、`ip`（本机地址，以 `;` 分隔）、`version`（pingap 的版本）和 `labels`（一个对象，`{"cluster": "sh-prod"}`，没有标签时为空）。以前其中没有 `title`，`name` 也不管配置了什么都是 `pingap`。 |
 
 `Warn` 与 `Error` 用警告色；`Info` 以评论样式渲染。
 
@@ -95,9 +112,10 @@ webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
 | 通知里的 | 在 ntfy 里 |
 | --- | --- |
 | 级别 `info` / `warn` / `error` | 优先级 `3`（默认）/ `4`（高）/ `5`（最高），以及第一个标签，ntfy 把它显示成标题前面的图标：ℹ️ / ⚠️ / 🚨 |
-| 标题 | 标题；通知本身没有标题时（大多数通知如此）用类别代替 |
+| 标题 | 标题；通知本身没有标题时（大多数通知如此）用类别代替。设置了 `basic.name` 时放在它前面：`edge-sh-prod: Upstream unhealthy` |
 | 类别 | 标签；合并了多条通知的消息每个类别一个标签，订阅时可以只看其中几种 |
-| 消息 | 正文，后面跟主机名和本机地址 |
+| `basic.labels` | 每个一个 tag，`cluster=sh-prod` |
+| 消息 | 正文，后面跟主机名、本机地址和 pingap 的版本 |
 
 - **受保护的 topic**：把令牌放在 `webhook_headers` 里（`"Authorization: Bearer tk_..."`），或者把用户名和密码写在 url 里（`https://user:password@ntfy.example.com/alerts`，字母和数字以外的字符要做百分号编码：`p@ss` 写成 `p%40ss`）。
 - **ntfy 支持的其他请求头**可以用同样的方式对所有消息设置：`"X-Markdown: yes"` 搭配用 markdown 写的 `webhook_template`，`"X-Click: https://..."`、`"X-Icon: ..."`、`"X-Email: ..."`。标题、优先级和标签始终是上表里的，不受请求头影响。
@@ -124,7 +142,7 @@ webhook_min_level = "warn"      # ……里级别是 warn 及以上的
 
 ## 模板
 
-`webhook_template` 替换内置的文本。可用的占位符：`{{title}}`、`{{message}}`、`{{level}}`、`{{category}}`、`{{hostname}}`、`{{ip}}`、`{{name}}`（`pingap`）和 `{{count}}`（这条消息合并了几条通知）。
+`webhook_template` 替换内置的文本。可用的占位符：`{{title}}`、`{{message}}`、`{{level}}`、`{{category}}`、`{{hostname}}`、`{{ip}}`、`{{name}}`（`basic.name`）、`{{version}}`、`{{labels}}`（全部标签，`cluster=sh-prod, env=prod`）、`{{label.<键>}}`（其中一个，这套部署没有这个标签时为空）和 `{{count}}`（这条消息合并了几条通知）。
 
 - `wecom` 和 `dingtalk`：模板就是显示出来的 markdown：
 

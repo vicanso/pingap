@@ -1727,6 +1727,15 @@ locations = ["api"]
         assert_eq!(false, left.contains("log_level"), "{left}");
         assert_eq!(false, left.contains("location"), "{left}");
 
+        // The name and the labels of the deployment are read when the
+        // process starts.
+        let mut wanted = running.clone();
+        wanted.basic.name = Some("edge-sh".to_string());
+        wanted.basic.labels = Some(vec!["cluster:sh-prod".to_string()]);
+        let left = super::left_for_restart(&running, &wanted).join("\n");
+        assert_eq!(true, left.contains("+ name = \"edge-sh\""), "{left}");
+        assert_eq!(true, left.contains("cluster:sh-prod"), "{left}");
+
         // The log level alone, or what a reload takes: nothing is left.
         let wanted = config("127.0.0.1:6118", 1, "debug", "/v2");
         let mut reloaded = running.clone();

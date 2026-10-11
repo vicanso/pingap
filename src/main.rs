@@ -1082,6 +1082,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "perf")]
     info!(target: LOG_TARGET, "Enable feature perf");
 
+    // Who this process is, for what it says about itself: the name and
+    // the labels of the deployment go into notifications, the access log
+    // and the traces. The validation above has taken the labels.
+    pingap_core::set_identity(pingap_core::Identity::new(
+        basic_conf.name.as_deref(),
+        pingap_core::parse_labels(
+            basic_conf.labels.as_deref().unwrap_or_default(),
+        )?,
+    ));
+
     // Whether a restart is something this process can do: what the admin
     // and `--autorestart` go by.
     process::set_restart_mode(args.daemon);
@@ -1262,6 +1272,22 @@ fn run() -> Result<(), Box<dyn Error>> {
     let exits_80_server = server_conf_list
         .iter()
         .any(|item| listens_on_port_80(&item.addr));
+    // What every span is from besides its service: the labels of the
+    // deployment, its name where it has one of its own, and the version.
+    #[cfg(feature = "tracing")]
+    let trace_attributes = {
+        let identity = pingap_core::get_identity();
+        let mut attributes = identity.labels.clone();
+        if identity.is_named() {
+            attributes
+                .push(("service.namespace".to_string(), identity.name.clone()));
+        }
+        attributes.push((
+            "service.version".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        ));
+        attributes
+    };
     #[cfg(feature = "tracing")]
     for serve_conf in server_conf_list.iter() {
         // add otlp service
@@ -1273,7 +1299,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             })?;
             my_server.add_service(background_service(
                 &format!("otlp:{}", serve_conf.name),
-                TracerService::new(&serve_conf.name, otlp_exporter),
+                TracerService::new(&serve_conf.name, otlp_exporter)
+                    .with_attributes(&trace_attributes),
             ));
         }
     }

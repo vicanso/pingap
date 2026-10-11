@@ -120,6 +120,10 @@ The following tags are available for access logging:
 | `{><header_name>}`     | Value of a request header.                             |
 | `{<<header_name>}`     | Value of a response header.                            |
 | `{:<context_key>}`     | Value from the context.                                |
+| `{$hostname}`          | Hostname of the machine.                               |
+| `{$name}`              | Name of the deployment (`basic.name`).                 |
+| `{$label:<key>}`       | One of its labels (`basic.labels`), e.g. `{$label:cluster}`. Nothing where the deployment has no such label. |
+| `{$<VARIABLE>}`        | Value of an environment variable.                      |
 
 A placeholder is `{`, a name made of letters, digits and `_ - < > ~ : $`, and
 `}`; a `{` not followed by that is literal text. A missing value - an absent
