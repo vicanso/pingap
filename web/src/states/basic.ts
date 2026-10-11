@@ -35,6 +35,9 @@ interface Basic {
   // The account may look and not change: the page leaves out what it can
   // not do. The server refuses those requests whatever the page shows.
   read_only: boolean;
+  // Why this process cannot be restarted from the page, where it cannot:
+  // "container", "foreground" or "platform". Empty where it can.
+  restart_unsupported: string;
   upstream_healthy_status: Record<string, UpstreamHealthyStatus>;
 }
 
@@ -73,6 +76,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     upstream_healthy_status: {},
     support_history: false,
     read_only: false,
+    restart_unsupported: "",
   },
   initialized: false,
   fetch: async () => {
@@ -84,7 +88,11 @@ const useBasicState = create<ConfigState>()((set) => ({
     return data;
   },
   restart: async () => {
-    await request.post("/restart");
+    // Answered when the new process has reported ready, or when it is
+    // clear that it will not: up to `restart_ready_timeout`, a minute
+    // unless configured. Cut off at the ten seconds every other request
+    // gets, a restart that went through was told as one that failed.
+    await request.post("/restart", undefined, { timeout: 0 });
   },
 }));
 

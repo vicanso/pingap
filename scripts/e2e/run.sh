@@ -23,7 +23,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy reload webhook proxy_protocol daemon restart restart_guard upgrade systemd"
+CASES="samples proxy reload webhook foreground proxy_protocol daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -145,6 +145,13 @@ pingap() {
 
 cleanup() {
   local pid file
+  # What a case started as root, ahead of the rest: nobody else can end
+  # it, and waiting for it would wait for ever. The pattern is written so
+  # that it is not the command line of the pkill that looks for it.
+  if [ "$LINUX" = 1 ] && sudo -n true 2>/dev/null; then
+    sudo pkill -9 -f "[/]${WORK#/}" 2>/dev/null
+    sudo chown -R "$(id -u)" "$WORK" 2>/dev/null
+  fi
   for pid in "${PIDS[@]:-}"; do stop "$pid"; done
   [ "${E2E_SYSTEMD:-0}" = 1 ] && systemd_cleanup
   # daemons are nobody's child: by their pid files, and by the directory
@@ -396,6 +403,79 @@ case_webhook() {
   sed -i.orig 's#/alerts?from=e2e##' "$DIR/bad/basic.toml" && rm -f "$DIR/bad/basic.toml.orig"
   expect_match "a url that names no topic is a configuration error" \
     'the url of ntfy names no topic' "$("$BIN" -t -c "$DIR/bad" 2>&1 | plain)"
+}
+
+# ---------------------------------------------------------------------------
+# foreground: a restart hands the sockets to a daemon and lets the process
+# that was started exit, which is the end of the service to whatever
+# started it - of the container, where it is the first process of one.
+# A process that is no daemon makes no such restart: it says why, and
+# with --autorestart it reloads and reports what waits.
+case_foreground() {
+  local proxy=$((PORT_BASE + 100)) admin=$((PORT_BASE + 101)) moved=$((PORT_BASE + 102))
+  local proxy1=$((PORT_BASE + 103)) admin1=$((PORT_BASE + 104)) pid out want
+  basic_info() { # <admin port> <field>
+    body "http://127.0.0.1:$1/api/basic" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$2" 2>/dev/null
+  }
+  restart_asked() { # <admin port>: the answer and its status
+    curl -s -m 20 -X POST -w ' %{http_code}' "http://127.0.0.1:$1/api/restart"
+  }
+  basic_conf "$DIR/c"
+  printf '[upstreams.b1]\naddrs = ["127.0.0.1:9"]\n' >"$DIR/c/upstreams.toml"
+  printf '[locations.b1]\nupstream = "b1"\npath = "/"\n' >"$DIR/c/locations.toml"
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $proxy >"$DIR/c/servers.toml"
+  pingap "$DIR/pingap.log" -c "$DIR/c" --admin "127.0.0.1:$admin" --autorestart
+  pid=$LAST_PID
+  wait_port $proxy || fail "pingap listens on $proxy"
+  wait_port $admin || fail "the admin listens on $admin"
+
+  want=platform
+  [ "$LINUX" = 1 ] && want=foreground
+  expect "the admin is told why no restart is made from it" "$want" \
+    "$(basic_info $admin restart_unsupported)"
+  out=$(restart_asked $admin)
+  expect_match "a restart that is asked for is refused, with the reason" \
+    '(runs in the foreground|on Linux only).* 400$' "$out"
+  expect "and nothing is started for it" 0 \
+    "$(plain <"$DIR/pingap.log" | grep -c 'new pingap process spawned')"
+  expect_match "--autorestart says that it only reloads here" \
+    'autorestart only reloads here' "$(plain <"$DIR/pingap.log")"
+
+  # What only a restart applies is said, and waits for one.
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $moved >"$DIR/servers.next"
+  mv -f "$DIR/servers.next" "$DIR/c/servers.toml"
+  wait_for 10 grep -q 'takes a restart to apply' "$DIR/pingap.log"
+  expect_match "a new addr of a server is reported as waiting for a restart" \
+    "takes a restart to apply.*127.0.0.1:$moved" \
+    "$(plain <"$DIR/pingap.log" | grep 'takes a restart to apply')"
+  expect "by the process that was started, which goes on" "yes $proxy" \
+    "$(alive "$pid" && echo yes || echo no) $(wait_port $proxy 10 && echo $proxy)"
+
+  # The first process of a container: of a pid namespace of its own here,
+  # which is what a container makes of it.
+  if [ "$LINUX" != 1 ] || ! command -v unshare >/dev/null || ! sudo -n true 2>/dev/null ||
+    ! sudo unshare --pid --fork --kill-child --mount-proc true 2>/dev/null; then
+    skip "as the first process of a container: takes Linux, a sudo that asks nothing and an unshare that is allowed"
+    return
+  fi
+  cp -R "$DIR/c" "$DIR/c1"
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $proxy1 >"$DIR/c1/servers.toml"
+  # --kill-child: the process ends with the unshare that started it
+  run_bg "$DIR/pid1.log" sudo unshare --pid --fork --kill-child --mount-proc \
+    "$BIN" -c "$DIR/c1" --admin "127.0.0.1:$admin1" --autorestart
+  wait_port $admin1 || fail "the first process of the namespace listens on $admin1"
+  expect "as the first process of a container: its pid is 1" 1 "$(basic_info $admin1 pid)"
+  expect "the admin is told that it is one" container "$(basic_info $admin1 restart_unsupported)"
+  out=$(restart_asked $admin1)
+  expect_match "a restart is refused, with the container as the thing to restart" \
+    'first process of a container.*restart the container.* 400$' "$out"
+  sleep 1
+  expect "and the process goes on serving" 200 "$(status "http://127.0.0.1:$admin1/api/basic")"
+  # root's, like what it wrote; see cleanup for the pattern
+  sudo pkill -9 -f "[/]${DIR#/}/c1" 2>/dev/null
+  sudo chown -R "$(id -u)" "$DIR" 2>/dev/null
+  return 0
 }
 
 # ---------------------------------------------------------------------------

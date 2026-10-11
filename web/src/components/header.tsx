@@ -117,9 +117,30 @@ export function MainHeader({
   };
 
   const confirmRestart = async () => {
-    await restart();
-    toast(t("restartSuccess"));
+    // A restart that is refused says why: a new address that cannot be
+    // bound, a replacement that did not come up.
+    try {
+      toast(t("restartPending"));
+      await restart();
+      toast(t("restartSuccess"));
+    } catch (err) {
+      toast(t("restartFail"), {
+        description: formatError(err),
+      });
+    }
   };
+  // Where this process cannot be restarted from the page - the first
+  // process of a container, one in the foreground - the page says so
+  // instead of offering it.
+  const restartUnsupported: Record<string, string> = {
+    container: t("restartUnsupportedContainer"),
+    foreground: t("restartUnsupportedForeground"),
+    platform: t("restartUnsupportedPlatform"),
+  };
+  const noRestart = basicInfo.restart_unsupported
+    ? restartUnsupported[basicInfo.restart_unsupported] ||
+      restartUnsupported.foreground
+    : "";
 
   const zhLang = "zh";
   const enLang = "en";
@@ -270,16 +291,24 @@ export function MainHeader({
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>{t("restartTitle")}</AlertDialogTitle>
+                  <AlertDialogTitle>
+                    {noRestart
+                      ? t("restartUnsupportedTitle")
+                      : t("restartTitle")}
+                  </AlertDialogTitle>
                   <AlertDialogDescription>
-                    {t("restartDescription")}
+                    {noRestart || t("restartDescription")}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
-                  <AlertDialogAction onClick={confirmRestart}>
-                    {t("confirm")}
-                  </AlertDialogAction>
+                  <AlertDialogCancel>
+                    {noRestart ? t("confirm") : t("cancel")}
+                  </AlertDialogCancel>
+                  {!noRestart && (
+                    <AlertDialogAction onClick={confirmRestart}>
+                      {t("confirm")}
+                    </AlertDialogAction>
+                  )}
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>

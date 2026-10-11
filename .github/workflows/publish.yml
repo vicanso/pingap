@@ -1,8 +1,25 @@
 name: "publish"
 on:
+  # A release: the push of a tag.
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
     # branches: []
+  # A rehearsal, by hand and for any branch
+  # (`gh workflow run publish.yml --ref <branch>`, once this trigger is on
+  # main): everything a release builds is built and packed, the images
+  # included, and nothing leaves the runner - no release, no asset, no
+  # image. For a change to this file or to what it builds
+  # with, which otherwise runs for the first time when a release is made.
+  workflow_dispatch:
+
+# What a release is made of, in the order it happens:
+#   draft    the release is created as a draft, with its notes
+#   macos, linux-*   build, pack, and upload into the draft
+#   docker, merge    the images of the version
+#   release  the draft is made public, once all of the above succeeded
+# Every step that sends something somewhere has
+# `if: github.event_name == 'push'` (or `push:` set to that): that is the
+# whole difference between a release and a rehearsal.
 
 # Release toolchain: a pinned recent stable, deliberately newer than the
 # workspace MSRV. test.yml proves the MSRV; this file only has to produce
@@ -12,19 +29,46 @@ env:
   CARGO_TERM_COLOR: always
   IMAGE_NAME: vicanso/pingap
 
-# Only the jobs that publish release assets get write access, and only their
-# upload steps get the token. The built-in token instead of a personal access
+# Only the jobs that create, fill or publish the release get write access,
+# and only the steps that do it get the token. The built-in token instead of a personal access
 # token: it cannot expire, and an expired PAT is indistinguishable from an
 # empty release list in the upload script. Nothing here triggers on `release`,
 # so the built-in token not raising workflow events costs us nothing.
 permissions:
   contents: read
 
+# One release at a time, and a rehearsal next to it: the images of a
+# version are put together from tags every release writes.
+concurrency:
+  group: publish-${{ github.event_name }}
+  cancel-in-progress: false
+
 jobs:
+  # The release starts as a draft, made here and by nobody else. Public
+  # from the start, it was a release without files for the quarter of an
+  # hour the builds take, and `install.sh` asks for the latest one. And
+  # made by whichever build got there first, two of them could each make
+  # a draft of their own.
+  draft:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'push'
+        with:
+          persist-credentials: false
+      - name: Create the draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/workflows/draft_release.sh "$GITHUB_REF_NAME"
+
   macos:
+    needs: [draft]
     runs-on: macos-latest
     permissions:
-      contents: write # create the release and upload assets
+      contents: write # upload assets
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,8 +91,6 @@ jobs:
       - name: Install protobuf
         run: brew install protobuf
       - name: release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rustc --version
           cargo build --release --target=aarch64-apple-darwin
@@ -68,16 +110,24 @@ jobs:
           tar -czvf pingap-darwin-x86-full.tar.gz pingap-darwin-x86-full
 
           ls -lh pingap*.gz
-
+          # the runner is the first of the two architectures
+          ./pingap-darwin-aarch64 --version
+      # The token is given to this step alone, not to the build.
+      - name: Upload Assets
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64-full.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-darwin-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-darwin-x86-full.tar.gz $GITHUB_TOKEN
 
   linux-musl-x86:
+    needs: [draft]
     runs-on: ubuntu-22.04
     permissions:
-      contents: write # create the release and upload assets
+      contents: write # upload assets
     steps:
       - uses: actions/checkout@v7
         with:
@@ -120,16 +170,25 @@ jobs:
           # the host toolchain cannot strip a foreign binary anyway.
           cargo deb --target x86_64-unknown-linux-musl --no-build --no-strip \
             --output ./pingap-linux-x86.deb
-      - name: Upload Assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pack
         run: |
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
           tar -czvf pingap-linux-musl-x86-full.tar.gz pingap-linux-musl-x86-full
           tar -czvf pingap-linux-musl-x86-rustls-full.tar.gz pingap-linux-musl-x86-rustls-full
 
           ls -lh pingap*.gz
-
+          # Static, so it runs here: the version, and the commit it names.
+          # `unknown` for the commit is the build in the container not
+          # being allowed to read the checkout.
+          ./pingap-linux-musl-x86 --version
+          if ./pingap-linux-musl-x86 --version | grep -q unknown; then
+            echo "::warning::the musl build does not know the commit it was built from"
+          fi
+      - name: Upload Assets
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86-full.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86-rustls-full.tar.gz $GITHUB_TOKEN
@@ -143,9 +202,10 @@ jobs:
           fi
 
   linux-musl-aarch64:
+    needs: [draft]
     runs-on: ubuntu-22.04
     permissions:
-      contents: write # create the release and upload assets
+      contents: write # upload assets
     steps:
       - uses: actions/checkout@v7
         with:
@@ -188,16 +248,20 @@ jobs:
           # the host toolchain cannot strip a foreign binary anyway.
           cargo deb --target aarch64-unknown-linux-musl --no-build --no-strip \
             --output ./pingap-linux-aarch64.deb
-      - name: Upload Assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pack
         run: |
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
           tar -czvf pingap-linux-musl-aarch64-full.tar.gz pingap-linux-musl-aarch64-full
           tar -czvf pingap-linux-musl-aarch64-rustls-full.tar.gz pingap-linux-musl-aarch64-rustls-full
 
           ls -lh pingap*.gz
-
+          # Not one this runner can start: what it is has to do.
+          file ./pingap-linux-musl-aarch64
+      - name: Upload Assets
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-full.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-rustls-full.tar.gz $GITHUB_TOKEN
@@ -211,10 +275,11 @@ jobs:
           fi
 
   linux-gnu:
+    needs: [draft]
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
     permissions:
-      contents: write # create the release and upload assets
+      contents: write # upload assets
     strategy:
       matrix:
         platform:
@@ -246,16 +311,19 @@ jobs:
           make release-rustls-full
           ldd target/release/pingap
           mv target/release/pingap ./pingap-linux-gnu-${{ matrix.platform.tag }}-rustls-full
-      - name: Upload Assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pack
         run: |
           tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}
           tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}-full
           tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}-rustls-full.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}-rustls-full
 
           ls -lh pingap*.gz
-
+          ./pingap-linux-gnu-${{ matrix.platform.tag }} --version
+      - name: Upload Assets
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}-rustls-full.tar.gz $GITHUB_TOKEN
@@ -263,8 +331,9 @@ jobs:
   windows:
     # Temporarily disabled
     if: false
+    needs: [draft]
     permissions:
-      contents: write # create the release and upload assets
+      contents: write # upload assets
     runs-on: windows-latest
     name: ${{ matrix.target }}
     env:
@@ -326,6 +395,7 @@ jobs:
         run: |
           Compress-Archive -Path pingap-windows.exe -Destination pingap-windows.exe.zip
       - name: Upload asset
+        if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -333,6 +403,16 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-windows.exe.zip $GITHUB_TOKEN
 
   docker:
+    # In a rehearsal the images are built and not pushed, without a login:
+    # test.yml builds the same Dockerfile on main, but only there, and
+    # only for a commit its tests have passed.
+    #
+    # The images of the two architectures are pushed under tags of this
+    # workflow's own (`release-amd64-full`), which `merge` puts together.
+    # They used to be the tags test.yml pushes for main (`amd64-full`), so
+    # an image of a commit on main that was pushed between the two jobs
+    # became a part of the version.
+    needs: [draft]
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
     strategy:
@@ -391,6 +471,7 @@ jobs:
       - name: Available platforms
         run: echo ${{ steps.buildx.outputs.platforms }}
       - name: Login to Docker Hub
+        if: github.event_name == 'push'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
@@ -420,8 +501,8 @@ jobs:
           platforms: ${{ matrix.platform.arch }}
           build-args: |
             BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
-          tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}-${{ matrix.features }}
-          push: true
+          tags: ${{ env.IMAGE_NAME }}:release-${{ matrix.platform.tag }}-${{ matrix.features }}
+          push: ${{ github.event_name == 'push' }}
       # Same build args as above, so the cargo build is a cache hit.
       - name: Build and push distroless
         id: docker_build_distroless
@@ -433,13 +514,14 @@ jobs:
           platforms: ${{ matrix.platform.arch }}
           build-args: |
             BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
-          tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}-${{ matrix.features }}-distroless
-          push: true
+          tags: ${{ env.IMAGE_NAME }}:release-${{ matrix.platform.tag }}-${{ matrix.features }}-distroless
+          push: ${{ github.event_name == 'push' }}
       - name: Image digest
         run: |
           echo "default: ${{ steps.docker_build.outputs.digest }}"
           echo "distroless: ${{ steps.docker_build_distroless.outputs.digest }}"
   merge:
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     strategy:
       matrix:
@@ -467,9 +549,28 @@ jobs:
           fi
           docker buildx imagetools create \
             $TAGS \
-            ${{ env.IMAGE_NAME }}:amd64-${{ matrix.features }} \
-            ${{ env.IMAGE_NAME }}:arm64-${{ matrix.features }}
+            ${{ env.IMAGE_NAME }}:release-amd64-${{ matrix.features }} \
+            ${{ env.IMAGE_NAME }}:release-arm64-${{ matrix.features }}
           docker buildx imagetools create \
             $DISTROLESS_TAGS \
-            ${{ env.IMAGE_NAME }}:amd64-${{ matrix.features }}-distroless \
-            ${{ env.IMAGE_NAME }}:arm64-${{ matrix.features }}-distroless
+            ${{ env.IMAGE_NAME }}:release-amd64-${{ matrix.features }}-distroless \
+            ${{ env.IMAGE_NAME }}:release-arm64-${{ matrix.features }}-distroless
+
+  # Last, and only when everything before it succeeded: the draft becomes
+  # the release, with every archive and every image it stands for in
+  # place. A job that failed leaves a draft behind, which nobody is
+  # pointed at; run the failed job again, and this one after it.
+  release:
+    if: github.event_name == 'push'
+    needs: [macos, linux-musl-x86, linux-musl-aarch64, linux-gnu, merge]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write # publish the release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/workflows/publish_release.sh "$GITHUB_REF_NAME"

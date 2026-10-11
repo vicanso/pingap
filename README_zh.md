@@ -9,7 +9,7 @@
 ## 特色
 
 - **管理后台内置在二进制里。** 每一项配置都有表单。保存前按 `pingap -t` 的标准校验，可以保留历史版本并恢复，支持只读账号和 API 令牌。
-- **变更不停机。** upstream、location、插件和证书在运行中的进程里直接替换（`--autoreload`）。需要重新监听的变更通过交接监听套接字的重启来完成（`--autorestart`，Linux）；新进程起不来时，旧进程继续服务。
+- **变更不停机。** upstream、location、插件和证书在运行中的进程里直接替换（`--autoreload`）。需要重新监听的变更通过交接监听套接字的重启来完成（`--autorestart`，Linux 上的守护进程）；新进程起不来时，旧进程继续服务。
 - **三十多个插件**，按 location 配置，按列出的顺序执行：认证（JWT、OIDC、Key、Basic、HMAC、forward auth）、访问控制（IP、Referer、User-Agent、路径屏蔽）、流量（限流、限速、缓存、流量镜像、流量切分）、内容（压缩、内容替换、重定向、静态文件、图片优化）、运维（维护模式、健康检查端点、错误页）。[全部插件](./pingap-plugin/README.md)
 - **证书自动管理。** Let's Encrypt 或其他 ACME CA，支持 HTTP-01 和 DNS-01（阿里云、Cloudflare、腾讯云、华为云），RSA 与 ECDSA 证书并存，OCSP stapling，面向客户端和面向上游的双向 TLS。
 - **配置在生效前检查。** `-t` 会把启动时要构建的东西全部构建一遍，`--strict` 拒绝不认识的键，`--diff` 预览一次变更的影响。支持 TOML、HCL、KDL，存放在文件或 etcd 里，密钥可以取自环境变量或文件。
@@ -116,7 +116,7 @@ locations = ["github-api", "static"]
 | | |
 | --- | --- |
 | `--autoreload` | 变更无需重启即可生效：文件存储在 10 秒内，etcd 立即生效。需要重启的变更会给出提示，并等到重启时生效。容器环境推荐使用 |
-| `-a`、`--autorestart` | 同上；热更新改不了的内容（比如监听地址）通过不丢请求的重启来生效 |
+| `-a`、`--autorestart` | 同上；热更新改不了的内容（比如监听地址）通过不丢请求的重启来生效。只对 Linux 上的守护进程（`-d`）有效；其他情况下只做热更新，并提示哪些变更在等重启 |
 | `-t` | 像启动时一样构建每个 upstream、location、插件、证书和 server，但不绑定端口 |
 | `--strict` | Pingap 不认识的键、当前构建没有对应 feature 的键是错误，否则只是告警。适合在 CI 里和 `-t` 一起用 |
 | `--diff <other>` | 输出用 `<other>` 替换当前配置后会发生的变化，密钥显示为校验值 |

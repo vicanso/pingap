@@ -15,7 +15,7 @@
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
 use crate::config_manager::get_config_manager;
-use crate::process::{get_start_time, restart_now};
+use crate::process::{get_start_time, no_restart, restart_now};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -329,6 +329,10 @@ struct BasicInfo {
     /// settled where a request that changes something is refused, not by
     /// what the page shows.
     read_only: bool,
+    /// Why this process cannot be restarted from here, where it cannot:
+    /// `container`, `foreground` or `platform`, for the page to say
+    /// instead of offering it. Nothing where it can.
+    restart_unsupported: String,
     git_hash: String,
     now: u64,
 }
@@ -1401,6 +1405,9 @@ async fn handle_request_admin(
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
             read_only: identity.read_only,
+            restart_unsupported: no_restart()
+                .map(|obstacle| obstacle.code().to_string())
+                .unwrap_or_default(),
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
         };

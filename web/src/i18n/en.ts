@@ -6,7 +6,16 @@ export default {
   restartTitle: "Confirm Restart",
   restartDescription:
     "The service will be restarted, please confirm whether to continue",
-  restartSuccess: "Restart Success, the program will be restarted in 1 minute",
+  restartSuccess: "Restarted: a new process has taken over",
+  restartPending: "Restarting: waiting for the new process to be ready",
+  restartFail: "Restart Fail",
+  restartUnsupportedTitle: "Restart is not available here",
+  restartUnsupportedContainer:
+    "Pingap is the first process of this container, which ends when it does. Restart the container to apply what only a restart applies.",
+  restartUnsupportedForeground:
+    "Pingap runs in the foreground: a restart from here would leave a daemon behind while the process that was started exits. Restart it where it was started, or run it with -d.",
+  restartUnsupportedPlatform:
+    "A restart hands the listening sockets to a new process, which is done on Linux only. Stop and start pingap instead.",
   save: "Save",
   readOnlyTips: "This account is read-only: nothing here can be changed.",
   remove: "Remove",

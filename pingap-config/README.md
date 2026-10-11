@@ -603,6 +603,17 @@ quit; `basic.restart_ready_timeout` (default 1m) bounds the wait, after which
 the restart is abandoned. `basic.working_directory` sets where the daemon
 `chdir`s.
 
+A restart is something a daemon does (`-d`, as `pingap.service` starts it), on
+Linux. It starts the replacement as a daemon and lets the running process
+exit, and for anything else that is the end of the service: a process in the
+foreground is what a container, a service manager or a shell started, and
+they see it exit. As the first process of a container it took the replacement
+with it, some minutes later. So a process that is no daemon makes no restart:
+the admin answers the request with the reason and its page says so instead
+of offering it, and `--autorestart` reloads like `--autoreload`, reporting
+what waits for a restart as described above. Restart the container, or the
+service, to apply that.
+
 Two things are settled before a replacement is started, because it only meets
 them after it has reported ready, when the running process is already on its
 way out:

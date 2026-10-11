@@ -241,10 +241,10 @@ A request body is read up to 8 MiB; a larger one is answered `413`.
 | `POST` | `/configs/import` | Import a whole configuration |
 | `DELETE` | `/configs/{category}/{name}` | Delete one entry |
 | `GET` | `/config-history/{category}/{name}` | Previous versions, when the storage backend supports history |
-| `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health |
+| `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health, and `restart_unsupported`: why this process cannot be restarted from here (`container`, `foreground`, `platform`), empty where it can |
 | `GET` | `/certificates` | The domains, issuer, validity and ACME source of the loaded certificates. Not the certificates themselves, nor their keys: both used to be in the response, the key read from its file where the configuration only names one. |
 | `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
-| `POST` | `/restart` | Trigger a graceful restart |
+| `POST` | `/restart` | Trigger a graceful restart. Answered `400` with the reason where none can be made: pingap in the foreground or as the first process of a container, anywhere but on Linux, a new listen address that cannot be bound, a replacement that does not come up |
 
 `/basic` describes the process: its `user`, `group` and `config_hash` are
 those of the configuration it is running, not of what is stored, and the UI,

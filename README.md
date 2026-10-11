@@ -9,7 +9,7 @@ A reverse proxy and application gateway built on [Cloudflare Pingora](https://gi
 ## What sets it apart
 
 - **A web admin in the binary.** Every setting has a form. A change is checked the way `pingap -t` checks it before it is stored, earlier versions can be kept and restored, and there are read-only accounts and API tokens.
-- **Changes without downtime.** Upstreams, locations, plugins and certificates are replaced in the running process (`--autoreload`). What needs new listeners is applied by a restart that hands the sockets over (`--autorestart`, Linux), and the running process keeps serving if its replacement does not come up.
+- **Changes without downtime.** Upstreams, locations, plugins and certificates are replaced in the running process (`--autoreload`). What needs new listeners is applied by a restart that hands the sockets over (`--autorestart`, for a daemon on Linux), and the running process keeps serving if its replacement does not come up.
 - **Over thirty plugins**, per location and in the order you list them: authentication (JWT, OIDC, key, basic, HMAC, forward auth), access rules (IP, referer, user agent, blocked paths), traffic (rate and bandwidth limits, cache, mirroring, traffic splitting), content (compression, body substitution, redirects, static files, image optimisation) and operations (maintenance mode, health endpoint, error pages). [All plugins](./pingap-plugin/README.md)
 - **Certificates without a cron job.** Let's Encrypt or any other ACME CA, by HTTP-01 or DNS-01 (Alibaba Cloud, Cloudflare, Tencent Cloud, Huawei Cloud), RSA and ECDSA side by side, OCSP stapling, and mutual TLS towards clients and towards upstreams.
 - **Configuration that is checked before it runs.** `-t` builds everything a start would, `--strict` refuses keys it does not know, `--diff` shows what a change would do. TOML, HCL or KDL, in files or in etcd, with secrets taken from the environment or from files.
@@ -116,7 +116,7 @@ The same can be written in HCL or KDL. Every key is described in the [configurat
 | | |
 | --- | --- |
 | `--autoreload` | A change is applied without a restart: within ten seconds from files, at once from etcd. What takes a restart is reported, and waits for one. The mode for containers |
-| `-a`, `--autorestart` | The same, and a restart that drops no request for what a reload cannot change, a listen address for one |
+| `-a`, `--autorestart` | The same, and a restart that drops no request for what a reload cannot change, a listen address for one. For a daemon (`-d`) on Linux; anywhere else it reloads, and reports what waits |
 | `-t` | Builds every upstream, location, plugin, certificate and server as a start does, and binds nothing |
 | `--strict` | A key Pingap does not know, or one this build has no feature for, is an error, where it is otherwise a warning. For `-t` in CI |
 | `--diff <other>` | Prints what would change if `<other>` took the place of the configuration, credentials shown as checksums |

@@ -5,7 +5,16 @@ export default {
   restart: "重启",
   restartTitle: "确认重启当前服务吗？",
   restartDescription: "重启后服务将重新启动，请确认是否继续",
-  restartSuccess: "重启成功，程序会在1分钟内成功重启",
+  restartSuccess: "已重启：新进程已接管",
+  restartPending: "正在重启：等待新进程就绪",
+  restartFail: "重启失败",
+  restartUnsupportedTitle: "这里不能重启",
+  restartUnsupportedContainer:
+    "Pingap 是这个容器的第一个进程，它一退出容器就结束。需要重启才能生效的变更，请重启容器。",
+  restartUnsupportedForeground:
+    "Pingap 在前台运行：从这里重启会留下一个守护进程，而原来启动的那个进程会退出。请在启动它的地方重启，或者用 -d 运行。",
+  restartUnsupportedPlatform:
+    "重启要把监听套接字交给新进程，只有 Linux 支持。请停止再启动 pingap。",
   save: "保存",
   readOnlyTips: "当前账号是只读的：这里的内容不能修改。",
   remove: "删除",

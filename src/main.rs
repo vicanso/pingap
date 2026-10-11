@@ -1082,6 +1082,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "perf")]
     info!(target: LOG_TARGET, "Enable feature perf");
 
+    // Whether a restart is something this process can do: what the admin
+    // and `--autorestart` go by.
+    process::set_restart_mode(args.daemon);
+
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = process::RestartProcessCommand {
             exec_path,
@@ -1421,7 +1425,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     if args.autorestart || args.autoreload {
-        let only_hot_reload = !args.autorestart;
+        // `--autorestart` where no restart can be made is `--autoreload`:
+        // what only a restart applies is said, and waits for one. Tried
+        // all the same, it ended the container this process is the first
+        // one of, the replacement included.
+        let no_restart = process::no_restart().filter(|_| args.autorestart);
+        if let Some(obstacle) = no_restart {
+            warn!(
+                target: LOG_TARGET,
+                reason = obstacle.reason(),
+                "--autorestart only reloads here: what a reload cannot apply is reported, and waits"
+            );
+        }
+        let only_hot_reload = !args.autorestart || no_restart.is_some();
         if config_manager.support_observer() {
             my_server.add_service(background_service(
                 "observer",
@@ -1462,12 +1478,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         webhook::WebhookFlushService,
     ));
 
+    // What it does, which is not what it was asked for where no restart
+    // can be made.
+    let only_reloads = args.autorestart && process::no_restart().is_some();
     info!(
         target: LOG_TARGET,
         daemon = args.daemon,
         upgrade = args.upgrade,
-        auto_restart = args.autorestart,
-        auto_reload = args.autoreload,
+        auto_restart = args.autorestart && !only_reloads,
+        auto_reload = args.autoreload || only_reloads,
         control_plane = args.cp,
         "server is running"
     );

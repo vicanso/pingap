@@ -98,6 +98,7 @@
 - `--autoreload` 下，只有重启才能生效的变更（server 的 `addr`、`[basic]` 的大部分键）现在会说出来：日志里一条 warning，外加一条 `reload_config_fail` 通知。以前是不声不响地略过。
 - 存储里的配置新增了一个绑不上的监听地址时，重启会被拒绝，运行中的进程继续服务。以前会照常重启，最后没有进程在服务。
 - 改了 `basic.upgrade_sock` 要等 pingap 停止再启动之后才生效。重启时沿用正在使用的路径；以前这样的重启会让服务中断。
+- **重启需要守护进程**（`-d`，Linux）。在前台运行时（容器、不带 `-d` 的 unit、终端），admin 的重启和 `--autorestart` 以前会把监听套接字交给一个守护进程，然后让原来启动的进程退出：容器在几分钟后结束，接替的进程也一起没了。现在 admin 会拒绝并说明原因；`--autorestart` 和 `--autoreload` 一样只做热更新，并报告哪些变更在等重启。要让这些变更生效，请重启容器或服务。
 - 没有 `tracing` 的构建会对 `prometheus_metrics`、`otlp_exporter`、`basic.sentry` 给出 warning，没有 `pyro` 的构建会对 `basic.pyroscope` 给出 warning：这些键在这样的构建里和以前一样不起作用。加了 `--strict` 时它们是错误。前三个请使用 `-full` 构建。
 
 ### Admin
@@ -111,6 +112,7 @@
 ### Docker、安装包与 systemd unit
 
 - 镜像改为基于 `debian:trixie-slim`（以前是 `ubuntu:24.04`）；entrypoint、命令和路径不变。每个 tag 都有对应的 `-distroless` 版本，里面没有 shell，也没有 entrypoint 脚本。
+- `:latest`、`:full`、`:rustls-full` 镜像在该提交的测试通过之后才推送；以前是和测试同时推送的。
 - `pingap.service` 由 systemd 自己发 `SIGTERM` 停止。
 - `pingap.service` 改为 `Type=forking`（以前是 `Type=simple`，它不适合用 `-d` 启动的守护进程：pid 文件还没写好时，服务可能被当成已经结束）。已经安装的 unit 不会随新的二进制更新：手工改这一行，或者重新安装 unit（`install.sh` 加 `PINGAP_SERVICE=1`），然后执行 `systemctl daemon-reload`。
 - 构建需要的 Rust 版本（1.96）和两种 TLS 后端都没有变化。

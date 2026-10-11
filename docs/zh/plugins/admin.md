@@ -144,10 +144,10 @@ readonly_tokens = ["monitor:9c2b...7d"]
 | `POST` | `/configs/import` | 导入整份配置 |
 | `DELETE` | `/configs/{category}/{name}` | 删除一条 |
 | `GET` | `/config-history/{category}/{name}` | 历史版本（存储后端支持时） |
-| `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康 |
+| `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康，以及 `restart_unsupported`：这个进程为什么不能从这里重启（`container`、`foreground`、`platform`），能重启时为空 |
 | `GET` | `/certificates` | 已加载证书的域名、颁发者、有效期和 ACME 来源。不包含证书本身和私钥：以前这两项都在响应里，配置里只写了文件路径的私钥也会从文件里读出来返回。 |
 | `POST` | `/aes` | UI 用于密钥的 AES 加解密辅助 |
-| `POST` | `/restart` | 触发优雅重启 |
+| `POST` | `/restart` | 触发优雅重启。做不了重启时返回 `400` 并说明原因：pingap 在前台运行或是容器的第一个进程、不是 Linux、新增的监听地址绑不上、接替的进程起不来 |
 
 `/basic` 描述的是进程本身：其中的 `user`、`group`、`config_hash` 取自运行中的配置，而不是存储里的；UI 每隔几秒请求一次，所以它不读存储。控制面板节点不运行配置：那里的 `user`、`group` 每次请求时从存储读取，`config_hash` 是空配置的哈希。
 

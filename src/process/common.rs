@@ -146,6 +146,83 @@ pub fn set_restart_process_command(data: RestartProcessCommand) {
     CMD.get_or_init(|| data);
 }
 
+/// Why a process is not one that can be restarted by handing its
+/// listening sockets to a new one.
+///
+/// A restart starts the replacement as a daemon and lets this process
+/// exit. That is a restart where this process is a daemon itself, found
+/// through its pid file. Anywhere else whoever started it - a container,
+/// a service manager, a shell - sees the process it started end, and
+/// takes the service for ended with it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NoRestart {
+    /// pingora hands sockets from one process to another on Linux only.
+    Platform,
+    /// The first process of a container. When it exits the container
+    /// does, and takes the replacement with it: the restart ended, some
+    /// minutes later, with nothing running.
+    Container,
+    /// In the foreground, under whatever started it.
+    Foreground,
+}
+
+impl NoRestart {
+    /// What it is called for the page of the admin, which says it in the
+    /// language of whoever is looking.
+    pub fn code(&self) -> &'static str {
+        match self {
+            NoRestart::Platform => "platform",
+            NoRestart::Container => "container",
+            NoRestart::Foreground => "foreground",
+        }
+    }
+    /// What it is, for the log and for the answer to a request.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            NoRestart::Platform => {
+                "a restart hands the listening sockets to a new process, which is done on Linux only: stop and start pingap instead"
+            },
+            NoRestart::Container => {
+                "pingap is the first process of a container, which ends when this process does: restart the container instead"
+            },
+            NoRestart::Foreground => {
+                "pingap runs in the foreground, and a restart would leave a daemon behind while this process exits: restart it where it was started (the service, the container), or run it as a daemon (-d)"
+            },
+        }
+    }
+}
+
+/// What keeps a process from being restarted by a hand-over, if anything
+/// does: one that runs on `linux` or not, as a `daemon` or not, with
+/// `pid`.
+fn restart_obstacle(linux: bool, daemon: bool, pid: u32) -> Option<NoRestart> {
+    if !linux {
+        return Some(NoRestart::Platform);
+    }
+    if daemon {
+        return None;
+    }
+    if pid == 1 {
+        return Some(NoRestart::Container);
+    }
+    Some(NoRestart::Foreground)
+}
+
+static NO_RESTART: OnceLock<Option<NoRestart>> = OnceLock::new();
+
+/// Notes whether this process can be restarted by a hand-over, from how
+/// it was started. Once, before anything asks.
+pub fn set_restart_mode(daemon: bool) {
+    NO_RESTART.get_or_init(|| {
+        restart_obstacle(cfg!(target_os = "linux"), daemon, std::process::id())
+    });
+}
+
+/// Why this process cannot be restarted by a hand-over, where it cannot.
+pub fn no_restart() -> Option<NoRestart> {
+    NO_RESTART.get().copied().flatten()
+}
+
 static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
     LazyLock::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: LazyLock<AtomicBool> =
@@ -401,6 +478,18 @@ const READY_POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// - The restart command fails to spawn
 #[cfg(unix)]
 pub async fn restart_now() -> io::Result<()> {
+    // Not started at all where it could only end with nothing running.
+    if let Some(obstacle) = no_restart() {
+        warn!(
+            target: LOG_TARGET,
+            reason = obstacle.reason(),
+            "a restart is not something this process can do"
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            obstacle.reason(),
+        ));
+    }
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
         error!(target: LOG_TARGET, "pingap is restarting now");
@@ -896,6 +985,38 @@ mod tests {
         assert_eq!(false, overlap("127.0.0.1:80", "127.0.0.2:80"));
         assert_eq!(false, overlap("127.0.0.1:80", "[::1]:80"));
         assert_eq!(false, overlap("0.0.0.0:80", "127.0.0.1:81"));
+    }
+
+    /// Regression: a restart asked of the first process of a container
+    /// handed the sockets to a daemon and exited, which ended the
+    /// container, the daemon included.
+    #[test]
+    fn test_restart_obstacle() {
+        // A daemon on Linux, whatever its pid.
+        assert_eq!(None, restart_obstacle(true, true, 4321));
+        assert_eq!(None, restart_obstacle(true, true, 1));
+        assert_eq!(
+            Some(NoRestart::Container),
+            restart_obstacle(true, false, 1)
+        );
+        assert_eq!(
+            Some(NoRestart::Foreground),
+            restart_obstacle(true, false, 4321)
+        );
+        // Nowhere else, as whatever.
+        assert_eq!(Some(NoRestart::Platform), restart_obstacle(false, true, 7));
+        assert_eq!(
+            Some(NoRestart::Platform),
+            restart_obstacle(false, false, 1)
+        );
+        for obstacle in [
+            NoRestart::Platform,
+            NoRestart::Container,
+            NoRestart::Foreground,
+        ] {
+            assert_eq!(false, obstacle.code().is_empty());
+            assert_eq!(false, obstacle.reason().is_empty());
+        }
     }
 
     /// Regression: a replacement went by the `basic.upgrade_sock` of the

@@ -203,6 +203,13 @@ entry that is not a trusted proxy, where they used to be the left-most one.
   ahead and end with no process serving.
 - A changed `basic.upgrade_sock` applies after pingap is stopped and started.
   A restart keeps the path in use, where it used to take the service down.
+- **A restart needs a daemon** (`-d`, on Linux). In the foreground - a
+  container, a unit without `-d`, a terminal - the admin's restart and
+  `--autorestart` used to hand the sockets to a daemon and let the process
+  that was started exit: the end of the container, the replacement
+  included, some minutes later. Now the admin refuses with the reason, and
+  `--autorestart` reloads like `--autoreload` and reports what waits for a
+  restart. Restart the container or the service to apply that.
 - A build without `tracing` warns about `prometheus_metrics`, `otlp_exporter`
   and `basic.sentry`, and one without `pyro` about `basic.pyroscope`: it does
   nothing with them, as before. With `--strict` they are an error. Use a
@@ -230,6 +237,8 @@ entry that is not a trusted proxy, where they used to be the left-most one.
 - The image is built on `debian:trixie-slim` (it was `ubuntu:24.04`);
   entrypoint, command and paths are the same. Every tag has a `-distroless`
   twin, which has no shell and no entrypoint script.
+- `:latest`, `:full` and `:rustls-full` are pushed once the tests of the
+  commit have passed; they used to be pushed alongside them.
 - `pingap.service` is stopped by systemd's own `SIGTERM`.
 - `pingap.service` is `Type=forking` (it was `Type=simple`, which does not
   fit a daemon started with `-d`: the service could be taken for ended while

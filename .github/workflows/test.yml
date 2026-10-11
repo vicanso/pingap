@@ -187,6 +187,12 @@ jobs:
     # Publishes vicanso/pingap:{amd64,arm64}-{latest,full,rustls-full}[-distroless].
     # Main only: a
     # pull_request or workflow_dispatch run must never push images.
+    #
+    # And only what `linux` has passed, on every toolchain of its matrix:
+    # `:latest` is what `docker compose pull` gets, and it used to be
+    # pushed while the tests of the same commit were still running, or
+    # had failed.
+    needs: [linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
