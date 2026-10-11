@@ -158,7 +158,7 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 A behaviour that only shows with a running process - a second process, a signal, another server on the wire - gets a case there, next to its unit tests.
 
-Nothing builds for Windows before a release does: `windows.yml` runs on a push to a `windows` branch or by hand (`gh workflow run windows.yml --ref <branch>`), and the `windows` job of `test.yml` is switched off.
+Windows has a workflow of its own, `windows.yml`: `cargo check --features=full` on a push to `main` and on a pull request (not for a change that is documentation alone), and the release build by hand (`gh workflow run windows.yml --ref <branch>`) or on a push to a `windows` branch. The `windows` jobs of `test.yml` and `publish.yml` are switched off, so no Windows binary is released. The three workflows are named `test`, `windows` and `publish` after their files.
 
 ### Release toolchain vs MSRV
 
