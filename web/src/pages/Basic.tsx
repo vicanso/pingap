@@ -39,6 +39,20 @@ export default function Basic() {
   };
 
   // Core + Logging shown by default; Process / Notify / Advanced behind "More Settings".
+  // The categories of notifications there are.
+  const webhookCategories = [
+    "backend_status",
+    "lets_encrypt",
+    "diff_config",
+    "restart",
+    "restart_fail",
+    "reload_config",
+    "reload_config_fail",
+    "tls_validity",
+    "parse_certificate_fail",
+    "service_discover_fail",
+    "upstream_status",
+  ].sort();
   const items: ExFormItem[] = [
     // ── Core ──────────────────────────────────────────────
     {
@@ -335,26 +349,15 @@ export default function Basic() {
       name: "webhook_notifications",
       label: basicI18n("webhookNotifications"),
       placeholder: basicI18n("webhookNotificationsPlaceholder"),
-      defaultValue: basic.webhook_notifications,
+      tips: basicI18n("webhookNotificationsTips"),
+      // `*` in the configuration is every category: all of them ticked.
+      defaultValue: basic.webhook_notifications?.includes("*")
+        ? webhookCategories
+        : basic.webhook_notifications,
       span: 3,
       section: sec.notify,
       category: ExFormItemCategory.MULTI_SELECT,
-      options: newStringOptions(
-        [
-          "backend_status",
-          "lets_encrypt",
-          "diff_config",
-          "restart",
-          "restart_fail",
-          "reload_config",
-          "reload_config_fail",
-          "tls_validity",
-          "parse_certificate_fail",
-          "service_discover_fail",
-          "upstream_status",
-        ].sort(),
-        true,
-      ),
+      options: newStringOptions(webhookCategories, true),
     },
     {
       name: "webhook",
@@ -524,9 +527,21 @@ export default function Basic() {
         // The form only carries the fields it shows, and the server replaces
         // the whole [basic] table with what it receives. Start from the loaded
         // config so settings the form has no field for survive a save.
-        onSave={async (value) =>
-          update("pingap", "basic", { ...basic, ...value })
-        }
+        onSave={async (value) => {
+          const data = { ...basic, ...value };
+          // All of them ticked is written as `*`: every category, the
+          // ones a later version adds included. With one unticked it is
+          // the list of the others again.
+          const chosen = data.webhook_notifications;
+          if (
+            chosen &&
+            (chosen.includes("*") ||
+              webhookCategories.every((item) => chosen.includes(item)))
+          ) {
+            data.webhook_notifications = ["*"];
+          }
+          return update("pingap", "basic", data);
+        }}
       />
     </PageShell>
   );

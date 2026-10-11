@@ -88,7 +88,9 @@
 # Available events: "backend_status" (upstream backend status changes), "lets_encrypt" (Let's Encrypt certificate operations),
 # "diff_config" (configuration changes), "restart" (application restarts), "restart_fail" (application restart fails),
 # "reload_config" (configuration reloads), "reload_config_fail" (configuration reload fails), "tls_validity" (TLS certificate validity changes),
-# "service_discover_fail" (service discovery failures). Default `none`
+# "service_discover_fail" (service discovery failures), "parse_certificate_fail" (a certificate that cannot be parsed),
+# "upstream_status" (an upstream as a whole becomes unhealthy or healthy). `["*"]` is all of them, the ones a later
+# version adds included. Default `none`
 # webhook_notifications = ["backend_status"]
 
 # Notifications no more than this far apart are merged into one webhook post;

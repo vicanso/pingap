@@ -31,7 +31,7 @@ webhook_notifications = [
 | --- | --- |
 | `webhook` | Destination URL. Empty disables notifications. |
 | `webhook_type` | `wecom`, `dingtalk`, `ntfy`, or anything else for a generic JSON POST. |
-| `webhook_notifications` | Categories to deliver. **A category not listed here is dropped.** |
+| `webhook_notifications` | Categories to deliver, or `["*"]` for all of them. **A category not listed here is dropped.** |
 | `webhook_batch_window` | Notifications no more than this far apart are merged into one post (default `10s`, `0s` disables merging). |
 | `webhook_batch_max_events` | Notifications per post at most (default `5`, `1` disables merging). |
 | `webhook_min_level` | Notifications below this level are not sent: `info` (default), `warn` or `error`. |
@@ -153,7 +153,11 @@ pick one that cannot be guessed, or use a topic that is protected.
 ## Filtering
 
 A notification is posted when its category is in `webhook_notifications`
-**and** its level is at least `webhook_min_level`. Both are applied to each
+**and** its level is at least `webhook_min_level`. `"*"` in the list stands
+for every category, the ones a later version adds included: a list that names
+each of them is complete until the next one comes, which is then dropped
+without a word. It is an entry of its own, not a pattern: `"reload_*"` names
+no category. In the admin, all categories selected is saved as `"*"`. Both are applied to each
 notification before it is merged with others, so one that is filtered out
 takes no place in a batch.
 
@@ -161,6 +165,12 @@ takes no place in a batch.
 [basic]
 webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
 webhook_min_level = "warn"      # a backend that is healthy again is `info`
+```
+
+```toml
+[basic]
+webhook_notifications = ["*"]   # everything...
+webhook_min_level = "warn"      # ...that is a warning or worse
 ```
 
 ## Templates
@@ -239,6 +249,7 @@ let sender = WebhookNotificationSender::new(
 
 - `webhook_notifications` is an allow-list. Leaving it empty silences everything
   even when `webhook` is set — a common cause of "why am I not getting alerts".
+  `["*"]` allows everything.
 - Every `webhook*` key is hot reloaded under `--autoreload` /
   `--autorestart`: a change applies without a restart, also to notifications
   from upstreams, discovery and certificate checks that were already running. A

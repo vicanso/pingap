@@ -280,6 +280,8 @@ export default {
     webhookTypePlaceholder: "选择webhook类型",
     webhookNotifications: "Webhook通知类型",
     webhookNotificationsPlaceholder: "选择webhook通知类型",
+    webhookNotificationsTips:
+      "要发送的通知类型；一个都不选则不发送任何通知。全部选中时保存为 *，表示全部类型，包括以后版本新增的。",
     webhook: "Webhook通知的Http链接",
     webhookPlaceholder: "输入webhook通知的http链接",
     webhookTips:

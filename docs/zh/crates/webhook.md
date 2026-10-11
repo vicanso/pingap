@@ -26,7 +26,7 @@ webhook_notifications = [
 | --- | --- |
 | `webhook` | 目标 URL。空则禁用通知。 |
 | `webhook_type` | `wecom`、`dingtalk`、`ntfy`，或其他值表示通用 JSON POST。 |
-| `webhook_notifications` | 要投递的类别。**未列出的类别会被丢弃。** |
+| `webhook_notifications` | 要投递的类别，`["*"]` 表示全部。**未列出的类别会被丢弃。** |
 | `webhook_batch_window` | 间隔不超过该时长的通知合并为一条（默认 `10s`，`0s` 关闭合并）。 |
 | `webhook_batch_max_events` | 一条消息最多合并的通知数（默认 `5`，`1` 关闭合并）。 |
 | `webhook_min_level` | 低于这个级别的通知不发送：`info`（默认）、`warn` 或 `error`。 |
@@ -108,12 +108,18 @@ webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
 
 ## 过滤
 
-通知的类别在 `webhook_notifications` 里，**并且**级别不低于 `webhook_min_level`，才会发送。两个条件都是在合并之前对每条通知单独判断的，被过滤掉的通知不占合并的名额。
+通知的类别在 `webhook_notifications` 里，**并且**级别不低于 `webhook_min_level`，才会发送。列表里的 `"*"` 代表全部类别，包括以后版本新增的：把每个类别都写出来的列表，只在下一个新类别出现之前是完整的，新类别会被不声不响地丢掉。它是单独的一项，不是通配模式：`"reload_*"` 不对应任何类别。在 admin 里把类别全部选中，保存下来的就是 `"*"`。两个条件都是在合并之前对每条通知单独判断的，被过滤掉的通知不占合并的名额。
 
 ```toml
 [basic]
 webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
 webhook_min_level = "warn"      # 后端恢复健康的通知是 `info`
+```
+
+```toml
+[basic]
+webhook_notifications = ["*"]   # 全部类别……
+webhook_min_level = "warn"      # ……里级别是 warn 及以上的
 ```
 
 ## 模板
@@ -161,7 +167,7 @@ let sender = WebhookNotificationSender::new(
 
 ## 说明
 
-- `webhook_notifications` 是允许列表。留空会静默一切，即使设了 `webhook`——这是“为什么收不到告警”的常见原因。
+- `webhook_notifications` 是允许列表。留空会静默一切，即使设了 `webhook`——这是“为什么收不到告警”的常见原因。`["*"]` 表示全部放行。
 - 所有 `webhook*` 键均支持热更新（`--autoreload` / `--autorestart`）：修改后无需重启即生效，已在运行的上游、服务发现与证书检查发出的通知也按新配置投递。此时尚在收集的一批仍按收集时的配置发出。
 - 证书过期警告（`tls_validity`）针对需要人工更换的证书：`certificates.<name>.buffer_days` 是提前多少天开始告警（不设置时为 7 天）。设置了 `acme` 的证书由 ACME 任务续期，出问题时发的是 `lets_encrypt` 通知；只有到期前一周仍未续上时才会收到这项告警。见 [pingap-acme](acme.md)。
 - 投递是尽力而为：失败会记日志，只按 `webhook_retries` 的次数重试，默认不重试。pingap 停止时还在重试中的通知会丢失。把 webhook 当作指标与日志之上的便利，而非唯一告警路径。

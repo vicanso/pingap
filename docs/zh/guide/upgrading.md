@@ -126,6 +126,7 @@
 - 用了 0.16 新增插件（`oidc`、`hmac_auth`、`uri_block`、`maintenance` 等）的 location 会在**没有**这个插件的情况下提供服务。回退前先把这些 location 下线。
 - `discovery = "srv"` 被当成静态地址。
 - `$ENV:` 和 `$FILE:` 的值被当成字面文本使用。
+- `webhook_notifications = ["*"]` 会被当成一个并不存在的类别：不发送任何通知。`webhook_type = "ntfy"` 又变回通用 JSON，直接发到 topic 的地址，订阅者看到的是一段原始 JSON。
 - 缓存再次从空开始。
 
 ### 使用这些 crate 的开发者

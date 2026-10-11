@@ -374,7 +374,7 @@ case_webhook() {
   run_bg "$DIR/hook.out" python3 "$HERE/hook.py" $hook "$DIR/hook.log"
   wait_port $hook || fail "the receiver listens on $hook"
   basic_conf "$DIR/c" "webhook = \"http://127.0.0.1:$hook/alerts?from=e2e\"" \
-    'webhook_type = "ntfy"' 'webhook_notifications = ["reload_config"]' \
+    'webhook_type = "ntfy"' 'webhook_notifications = ["*"]' \
     'webhook_batch_window = "0s"' 'webhook_headers = ["Authorization: Bearer tk_e2e"]'
   printf '[upstreams.b1]\naddrs = ["127.0.0.1:9"]\n' >"$DIR/c/upstreams.toml"
   printf '[locations.b1]\nupstream = "b1"\npath = "/"\n' >"$DIR/c/locations.toml"
@@ -397,6 +397,10 @@ case_webhook() {
     '"tags":\["information_source","reload_config"\]' "$out"
   wait_for 5 grep -q 'send webhook success' "$DIR/pingap.log"
   expect_match "and pingap takes it for sent" 'send webhook success' "$(plain <"$DIR/pingap.log")"
+  # `*` is every category: the difference of the reload came as well.
+  wait_for 5 grep -q '"title":"diff_config"' "$DIR/hook.log"
+  expect_match "webhook_notifications = [\"*\"] sends the other categories too" '^[1-9]' \
+    "$(grep -c '"title":"diff_config"' "$DIR/hook.log")"
 
   # the url of a server is no url of a topic
   mkdir -p "$DIR/bad" && cp "$DIR"/c/*.toml "$DIR/bad/"

@@ -267,6 +267,9 @@ reports as an error:
   locations out of service first.
 - `discovery = "srv"` is taken for static addresses.
 - `$ENV:` and `$FILE:` values are used as the literal text.
+- `webhook_notifications = ["*"]` names a category there is none of: no
+  notification is sent. `webhook_type = "ntfy"` is the generic JSON post
+  again, to the url of the topic, where it shows as a message of raw JSON.
 - The cache is cold again.
 
 ### For users of the crates

@@ -37,6 +37,10 @@ pub const DEFAULT_BATCH_WINDOW: Duration = Duration::from_secs(10);
 /// soon as it is full.
 pub const DEFAULT_BATCH_MAX_EVENTS: usize = 5;
 
+/// In the list of categories to send (`webhook_notifications`): every
+/// category there is, and every one a later version adds.
+pub const ALL_NOTIFICATIONS: &str = "*";
+
 /// Notifications waiting to be posted together.
 struct Batch {
     events: Vec<NotificationData>,
@@ -217,8 +221,9 @@ impl WebhookNotificationSender {
         if inner.url.is_empty() {
             return;
         }
-        let found = inner.notifications.contains(&params.category);
-        if !found || params.level < inner.options.min_level {
+        if !inner.wants(&params.category)
+            || params.level < inner.options.min_level
+        {
             return;
         }
         if inner.window.is_zero() || inner.max_events <= 1 {
@@ -350,6 +355,16 @@ fn merge(mut events: Vec<NotificationData>) -> Option<NotificationData> {
 }
 
 impl Inner {
+    /// Whether notifications of `category` are among the ones to send:
+    /// the category is listed, or `*` is. Naming every category did for
+    /// the ones there were, and the next version's new one was dropped
+    /// without a word.
+    fn wants(&self, category: &str) -> bool {
+        self.notifications
+            .iter()
+            .any(|item| item == ALL_NOTIFICATIONS || item == category)
+    }
+
     fn lock_pending(&self) -> MutexGuard<'_, Option<Batch>> {
         // A panic while the lock was held cannot have left a half-updated
         // batch worth protecting: at worst a notification is posted twice.
@@ -1384,6 +1399,41 @@ mod tests {
             ))
             .await;
         assert_eq!(true, posts.try_recv().is_ok());
+    }
+
+    /// The categories that are sent: the ones that are listed, every one
+    /// with `*`, and none with nothing.
+    #[tokio::test]
+    async fn test_notifications_filter() {
+        let (url, mut posts) = spawn_scripted(vec![(200, "")]).await;
+        let sender = |notifications: &[&str]| {
+            WebhookNotificationSender::new(
+                url.clone(),
+                "normal".to_string(),
+                notifications.iter().map(|item| item.to_string()).collect(),
+            )
+            .with_batch(Duration::ZERO, 1)
+        };
+        let mut posted = async |notifications: &[&str], category: &str| {
+            sender(notifications)
+                .send_notification(event(
+                    category,
+                    NotificationLevel::Info,
+                    "T",
+                    "m",
+                ))
+                .await;
+            posts.try_recv().is_ok()
+        };
+        assert_eq!(true, posted(&["a", "b"], "b").await);
+        assert_eq!(false, posted(&["a", "b"], "c").await);
+        assert_eq!(false, posted(&[], "a").await);
+        // Every category, one nobody has heard of yet included.
+        assert_eq!(true, posted(&["*"], "a").await);
+        assert_eq!(true, posted(&["*"], "a_category_of_later").await);
+        assert_eq!(true, posted(&["a", "*"], "c").await);
+        // A star in a name is a part of the name.
+        assert_eq!(false, posted(&["a*"], "ab").await);
     }
 
     /// A receiver of one's own: the headers it asks for, a body of one's

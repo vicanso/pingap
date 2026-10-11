@@ -298,6 +298,8 @@ export default {
     webhookTypePlaceholder: "Select webhook type",
     webhookNotifications: "Webhook Notifications",
     webhookNotificationsPlaceholder: "Select webhook notifications",
+    webhookNotificationsTips:
+      "The categories that are sent; with none selected nothing is sent. All of them selected is saved as *, which is every category, the ones a later version adds included.",
     webhook: "Webhook Http Url",
     webhookPlaceholder: "Input the url for webhook notification",
     webhookTips:
