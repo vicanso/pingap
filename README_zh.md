@@ -1,123 +1,77 @@
 # Pingap
 
-Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora) 框架驱动的高性能反向代理。它通过简洁的 TOML 文件和直观的 Web 管理界面，实现了动态、零停机的配置热更新，极大地简化了运维管理。
+基于 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 的反向代理和应用网关。通过 TOML 文件或内置在二进制里的 Web 管理后台配置，配置变更不需要重启，自带三十多个插件。
 
-其核心优势在于强大的插件体系，提供了三十多种开箱即用的插件，涵盖认证 (JWT, Key Auth, OIDC)、安全 (CSRF, IP/Referer/UA 限制)、流量控制 (限流、缓存)、内容修改 (重定向、内容替换) 和可观测性 (请求 ID)。
-
-这使得 Pingap 不仅仅是一个代理，更是一个灵活且可扩展的应用网关，旨在轻松应对从 API 保护到现代化 Web 应用部署的各类复杂场景。
-
-
-[详细文档](https://pingap.io/zh/) · [English](https://pingap.io/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md)
-
+[English](./README.md) | [详细文档](https://pingap.io/zh/) · [Documentation](https://pingap.io/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md) | [升级说明](https://pingap.io/zh/guide/upgrading)
 
 ![来自互联网的请求经 Pingap 按域名和路径转发到各组上游服务](./asset/pingap-flow-zh.svg)
 
-## 核心特性
+## 特色
 
-- 🚀 高性能与高可靠性
-  - 基于 `Rust` 构建，确保内存安全与顶尖性能。
-  - 由 `Cloudflare Pingora` 驱动，一个经过实战考验的异步网络库。
-  - 支持 HTTP/1.1、HTTP/2、WebSocket 和 gRPC-web 代理，监听端口和上游连接都支持 PROXY protocol。
+- **管理后台内置在二进制里。** 每一项配置都有表单。保存前按 `pingap -t` 的标准校验，可以保留历史版本并恢复，支持只读账号和 API 令牌。
+- **变更不停机。** upstream、location、插件和证书在运行中的进程里直接替换（`--autoreload`）。需要重新监听的变更通过交接监听套接字的重启来完成（`--autorestart`，Linux）；新进程起不来时，旧进程继续服务。
+- **三十多个插件**，按 location 配置，按列出的顺序执行：认证（JWT、OIDC、Key、Basic、HMAC、forward auth）、访问控制（IP、Referer、User-Agent、路径屏蔽）、流量（限流、限速、缓存、流量镜像、流量切分）、内容（压缩、内容替换、重定向、静态文件、图片优化）、运维（维护模式、健康检查端点、错误页）。[全部插件](./pingap-plugin/README.md)
+- **证书自动管理。** Let's Encrypt 或其他 ACME CA，支持 HTTP-01 和 DNS-01（阿里云、Cloudflare、腾讯云、华为云），RSA 与 ECDSA 证书并存，OCSP stapling，面向客户端和面向上游的双向 TLS。
+- **配置在生效前检查。** `-t` 会把启动时要构建的东西全部构建一遍，`--strict` 拒绝不认识的键，`--diff` 预览一次变更的影响。支持 TOML、HCL、KDL，存放在文件或 etcd 里，密钥可以取自环境变量或文件。
+- **便于观测。** Prometheus 指标（pull 和 push）、OpenTelemetry 链路追踪、三十多个字段的文本或 JSON 访问日志、客户端的 JA4 TLS 指纹。
 
-- 🔧 动态化与易用性
-  - 通过热更新实现零停机的配置变更。
-  - 简单且人类可读的 TOML 配置文件（也可以读取 HCL 和 KDL）。
-  - 功能齐全的 Web UI，提供直观的实时管理。
-  - 同时支持文件和 etcd 作为配置后端。
-  - 支持配置变更历史记录功能，可一键恢复到历史版本。
+反向代理该有的其余能力也都有：HTTP/1.1、HTTP/2、WebSocket 和 gRPC-web；按主机名、路径和正则路由；轮询、最少连接、一致性哈希和会话保持，带健康检查、重试和熔断；从 DNS（A/AAAA、SRV）或 Docker 标签发现后端；监听端和上游连接都支持 PROXY protocol；OpenSSL 或 rustls。
 
-- 🧩 强大的可扩展性
-  - 丰富的插件体系，用于处理常见的网关任务。
-  - 支持基于主机、路径和正则表达式的高级路由。
-  - 内置通过静态列表、DNS（A/AAAA 与 SRV 记录）或 Docker 标签的服务发现机制。
-  - 负载均衡支持轮询、最少连接、一致性哈希和会话保持，并带有主动健康检查、重试和熔断。
-  - 通过 Let's Encrypt 或其他 ACME CA 实现自动化 HTTPS（支持 HTTP-01 和 DNS-01 两种质询方式），可同时提供 RSA 与 ECDSA 证书，支持 OCSP stapling。
-
-- 📊 现代化的可观测性
-  - 原生的 Prometheus 指标监控（支持 pull 和 push 模式）。
-  - 集成 OpenTelemetry，支持分布式追踪。
-  - 超过 30 种变量的高度可定制的访问日志。
-  - JA4 TLS 客户端指纹（访问日志中的 `{:ja4}`、上游请求头中的 `$ja4`），按 TLS 实现区分客户端，OpenSSL 与 rustls 构建均支持。
-  - 包含上游连接、处理时间等详细的性能指标。
+指标、链路追踪和图片优化在 `-full` 构建里。
 
 ## 🚀 快速入门
 
-上手 `Pingap` 最简单的方式是使用 `Docker Compose`。
-
-1. 创建一个 `docker-compose.yml` 文件：
+### Docker Compose
 
 ```yaml
 # docker-compose.yml
 services:
   pingap:
-    image: vicanso/pingap:latest # 生产环境建议使用具体的版本号，如 vicanso/pingap:0.15.0-full
+    image: vicanso/pingap:latest # 生产环境请固定版本：vicanso/pingap:<版本>-full
     container_name: pingap-instance
     restart: always
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      # 挂载本地目录以持久化所有配置和数据
+      # Pingap 保存的所有内容：配置、证书、缓存
       - ./pingap_data:/opt/pingap
     environment:
-      # 使用环境变量进行配置
       - PINGAP_CONF=/opt/pingap/conf
       - PINGAP_ADMIN_ADDR=0.0.0.0:80/pingap
       - PINGAP_ADMIN_USER=pingap
-      - PINGAP_ADMIN_PASSWORD=<YourSecurePassword> # 修改此密码！
+      - PINGAP_ADMIN_PASSWORD=<YourSecurePassword> # 修改此密码
     command:
-      # 启动 pingap 并启用热更新
       - pingap
       - --autoreload
 ```
-
-2. 创建一个数据目录并运行：
 
 ```bash
 mkdir pingap_data
 docker compose up -d
 ```
 
-3. 访问管理后台：
+管理后台在 http://localhost/pingap。镜像标签有 `latest`、`full`、`rustls-full`，发布版本为 `<版本>`、`<版本>-full`、`<版本>-rustls-full`。每个标签都有对应的 `-distroless` 版本，里面没有 shell，`command` 必须像上面那样以 `pingap` 开头。
 
-您的 Pingap 实例现已运行！您可以使用您设置的凭证，通过 http://localhost/pingap 访问 Web 管理界面。
-
-0.15.0 之后构建的镜像都有对应的 distroless 变体，在标签后加上 `-distroless` 即可，如 `latest-distroless`、`full-distroless`、`rustls-full-distroless`，发布版本则为 `<版本>-distroless` 等。二进制与对应的普通镜像完全相同，只是基础镜像换成了 `gcr.io/distroless/cc-debian13`，其中没有 shell 和包管理器，因此 `command` 必须以 `pingap` 开头（如上例所示）。
-
-
-### 通过 curl 安装二进制
-
-Linux 与 macOS 用户可以用一条命令将最新的预编译二进制安装到 `/usr/local/bin/pingap`：
+### 二进制
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
 ```
 
-可选环境变量：
+把最新版本安装到 `/usr/local/bin/pingap`，支持 Linux 和 macOS（x86_64 与 arm64）。在 `sh` 前面加变量可以选择安装内容：
 
-- `PINGAP_FULL=1` —— 安装 `-full` 构建（启用所有可选特性）
-- `PINGAP_LIBC=gnu` —— Linux 上使用 glibc 构建（默认是静态链接的 musl 构建）
-- `PINGAP_TLS=rustls` —— Linux 上安装 `-rustls-full` 构建（rustls TLS 后端，启用所有可选特性，不含 OpenSSL），见 [TLS 后端](#tls-后端)
-- `PINGAP_SERVICE=1` —— 在有 systemd 的 Linux 上同时安装 `pingap` 服务：unit 文件 `/etc/systemd/system/pingap.service`，并在 `/etc/pingap/conf` 为空时放入一份初始的 `basic.toml`。服务不会被启用或启动，因为此时还没有可运行的 server
+| 变量 | 作用 |
+| --- | --- |
+| `PINGAP_FULL=1` | `-full` 构建，包含所有可选特性 |
+| `PINGAP_TLS=rustls` | Linux：`-rustls-full` 构建，不含 OpenSSL（见 [TLS 后端](#tls-后端)） |
+| `PINGAP_LIBC=gnu` | Linux：glibc 构建，默认是静态链接的 musl 构建 |
+| `PINGAP_SERVICE=1` | 有 systemd 的 Linux：同时安装 `pingap` 服务，并在 `/etc/pingap/conf` 放一份初始配置；不会启用或启动服务 |
+| `PINGAP_VERSION=0.15.0` | 安装指定版本，而不是最新版本 |
 
-```bash
-# 安装完整特性版本
-curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_FULL=1 sh
+所有构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。
 
-# 同时安装 systemd 服务：先把 server 配置放到 /etc/pingap/conf，再启动
-curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_SERVICE=1 sh
-sudo systemctl enable --now pingap
-```
-
-支持的平台：`Linux x86_64/arm64`、`Darwin x86_64/arm64`。所有可用的构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。
-
-要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/zh/)。
-
-
-
-### 不写配置文件直接启动代理
-
-一条命令即可把一个域名以 https 对外提供，并转发到后端：
+### 一条命令启动，不写配置文件
 
 ```bash
 # 证书向 Let's Encrypt 申请
@@ -127,98 +81,64 @@ pingap --domain=pingap.io --upstream=192.168.1.1:3000
 pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 ```
 
-不带 `--cert` 时，Pingap 通过 HTTP-01 质询向 Let's Encrypt 申请证书，因此 `pingap.io` 必须解析到本机，且 80 端口可从公网访问。签发的证书保存在 `~/.pingap/acme/<domains>.toml`，重启时复用——申请有速率限制，请勿删除。其余一切仍来自命令行：改动 `--upstream` 在下次启动时生效，不影响证书。
+- 不带 `--cert` 时通过 HTTP-01 申请证书：域名必须解析到本机，且 80 端口可从公网访问。证书保存在 `~/.pingap/acme/<domains>.toml`，下次启动时复用。申请有速率限制，请勿删除。
+- `--cert` 可以是证书文件或它所在的目录（自动识别 `fullchain.pem` / `privkey.pem`、`cert.pem` / `key.pem`、`tls.crt` / `tls.key`，其他命名用 `--key` 指定）。`--upstream` 和 `--domain` 是逗号分隔的列表，`--addr` 指定监听地址。
+- 配置在每次启动时重新生成，所以不能通过管理后台修改。超过一个 server 的需求请使用 `--conf`，它不能和这些参数同时使用。
 
-`--cert` 接受证书文件本身或其所在目录——常见的 `fullchain.pem` / `privkey.pem`、`cert.pem` / `key.pem` 与 `tls.crt` / `tls.key` 布局会自动识别，其他命名用 `--key` 指定。有证书时监听默认为 `0.0.0.0:443`，既无证书也无域名时为 `0.0.0.0:80`，`--addr` 可覆盖。`--upstream` 为逗号分隔的后端列表，`--domain` 为逗号分隔的主机名（省略则以明文 http 服务所有主机），未列出的主机的请求返回 404。
-
-配置在每次启动时生成，因此不能通过管理界面修改：超出单个 server 的需求请使用 `--conf`，它不能与这些参数同时使用。
-
-## 动态配置
-
-Pingap 的设计旨在无需停机即可适应配置变更。
-
-热更新 (--autoreload)：对于大多数变更——如更新上游服务、路由、插件或证书——Pingap 无需重启即可应用新配置：文件存储在 10 秒内生效，etcd 在变更写入后立即生效。这是容器化环境的推荐模式。
-
-平滑重启 (-a 或 --autorestart)：对于基础性变更（如修改服务器监听端口），此模式会执行一次完整的、零停机的重启，确保不丢失任何请求。
-
-严格模式 (--strict)：Pingap 不认识的键或分段，默认只打一条告警然后忽略。加上 `--strict` 后它是错误：`pingap -t --strict` 会因此失败（建议在 CI 里使用），运行中的 Pingap 也不会接受带有这种键的重载。
-
-检查与预览 (-t、--diff)：`pingap -c conf -t` 会走到启动流程里开始服务之前的那一步，构建每个 upstream、location、插件、证书和 server（包括 TLS 设置），不绑定端口。`pingap -c conf --diff new-conf` 输出用 `new-conf` 替换 `conf` 后会发生的变化，密钥显示为校验值。
-
-从环境变量和文件读取密钥：配置里任何文本值都可以整体写成 `$ENV:NAME` 或 `$FILE:/path`，在加载运行用的配置时被替换；admin、`--to-hcl`、`--sync` 保留原样。详见[配置文档](https://pingap.io/zh/crates/config)。
-
-交接以“就绪”而不是计时为准：新进程以 `-d -u` 拉起，一旦准备好接管监听就通过升级 socket 旁边的一个 unix socket 回报，旧进程此时才向自己发送 SIGQUIT。若新进程退出、其守护进程死亡，或先到了 `basic.restart_ready_timeout`（默认 1m），本次重启作废，旧进程继续服务。新进程在最初那个进程的启动目录下拉起，并带上同样的 `--autoreload` / `--autorestart`，所以相对路径（`--log=logs/pingap.log`、配置里的路径）的含义不变。
-
-
-## 🔧 开发
-
-```bash
-# 需要 bacon：cargo install bacon
-make dev
-```
-
-`make dev` 以 `full` 特性集构建，用 `~/tmp/pingap` 里的配置并带 `--autoreload` 运行 Pingap，管理界面在 `127.0.0.1:3018`（`pingap` / `123123`），源码有改动时自动重新构建。
-
-管理界面是从 `dist/` 嵌入二进制的。修改 `web/` 下的内容后需要重新构建（需要 Node.js）：
-
-```bash
-make build-web
-```
-
-提交改动之前：
-
-```bash
-make fmt     # cargo fmt
-make lint    # typos + clippy（警告视为错误）
-make test    # 整个 workspace 的测试
-```
-
-### TLS 后端
-
-默认构建使用 OpenSSL 终止 TLS（由 `openssl` crate 从源码编译）。若想改用 rustls（不再从源码编译 OpenSSL；但仍需要 C 编译器，rustls 的密码学库 ring 与 aws-lc-rs 含 C 和汇编代码）：
-
-```bash
-cargo build --release --no-default-features --features tls-rustls
-# 连同可选特性一起
-cargo build --release --no-default-features --features tls-rustls,full
-```
-
-rustls 构建会在配置校验阶段（启动、`--test`、auto-restart）拒绝 server 级的 `tls_min_version`、`tls_max_version`、`tls_cipher_list` 与 `tls_ciphersuites`：它固定提供 TLS 1.2 与 1.3，使用 rustls 默认密码套件。Admin UI 在当前二进制为 rustls 构建时会禁用这些字段。其余能力，包括按 SNI 动态选证书、自签名 CA 签发、ACME 与上游 `ca`，行为一致。预构建镜像也提供同一变体：`vicanso/pingap:rustls-full`（发布版本为 `:<版本>-rustls-full`），与 `:latest`、`:full` 并列。校验上游时有一点差异需要知道：rustls（webpki）会拒绝带 `CA:TRUE` 的服务端证书，而 OpenSSL 接受，所以后端若用 `openssl req -x509` 随手生成的自签名证书，需要换成由 CA 签发的叶子证书（或不带 CA 标记的自签名叶子），上游 `ca` 选项才能信任它。`--version` 长格式、启动日志与 Admin 首页都会标明二进制使用的后端。
-
-## 📝 应用配置
+## 📝 配置
 
 ```toml
-[upstreams.charts]
-addrs = ["127.0.0.1:5000"]
+[upstreams.api]
+addrs = ["api.github.com:443"]
+discovery = "dns"
+sni = "api.github.com"
 
-[locations.lo]
-upstream = "charts"
-path = "/"
+[plugins.staticServe]
+category = "directory"
+path = "~/Downloads"
+
+[locations.github-api]
+upstream = "api"
+path = "/api"
+proxy_set_headers = ["Host:api.github.com"]
+rewrite = "^/api/(?<path>.+)$ /$1"
+
+[locations.static]
+plugins = ["staticServe"]
 
 [servers.test]
-addr = "0.0.0.0:6188"
-locations = ["lo"]
+addr = "127.0.0.1:6118"
+locations = ["github-api", "static"]
 ```
 
-所有的 TOML 配置可以查阅：[https://pingap.io/zh/crates/config](https://pingap.io/zh/crates/config)。
+同样的配置也可以用 HCL 或 KDL 书写。每个配置项的说明见[配置文档](https://pingap.io/zh/crates/config)。
 
+| | |
+| --- | --- |
+| `--autoreload` | 变更无需重启即可生效：文件存储在 10 秒内，etcd 立即生效。容器环境推荐使用 |
+| `-a`、`--autorestart` | 同上；热更新改不了的内容（比如监听地址）通过不丢请求的重启来生效 |
+| `-t` | 像启动时一样构建每个 upstream、location、插件、证书和 server，但不绑定端口 |
+| `--strict` | Pingap 不认识的键是错误，否则只是告警。适合在 CI 里和 `-t` 一起用 |
+| `--diff <other>` | 输出用 `<other>` 替换当前配置后会发生的变化，密钥显示为校验值 |
+| `$ENV:NAME`、`$FILE:/path` | 作为整个值：加载配置时替换成环境变量或文件的内容 |
 
 ## 🔄 请求处理流程
 
 ![请求依次经过 server、location 及其请求插件到达上游服务；响应经响应插件返回并记录日志](./asset/pingap-steps-zh.svg)
 
-1. **server** 接受连接（TLS、HTTP/1.1 或 HTTP/2），并选出主机名和路径最匹配的 **location**。没有任何 location 匹配的请求返回 `404`。
-2. location 的**插件**按列出的顺序执行，各自在自己的阶段运行：请求方向是 `early_request`、`request` 或 `proxy_upstream`，响应方向是 `upstream_response` 或 `response`。插件可以直接应答请求——缓存命中、认证失败、重定向、静态文件——这时不会再请求上游。
-3. 否则由 location 的 **upstream** 选出一个健康的后端并转发请求。location 配置了 `max_retries` 时，连接失败的请求会换一个后端重试。
+1. **server** 接受连接，并选出主机名和路径最匹配的 **location**。没有任何 location 匹配的请求返回 `404`。
+2. location 的**插件**按列出的顺序执行，各自在自己的阶段运行：请求方向或响应方向。插件可以直接应答请求——缓存命中、认证失败、重定向、静态文件——这时不会再请求上游。
+3. 否则由 location 的 **upstream** 选出一个健康的后端并转发请求。配置了 `max_retries` 时，连接失败的请求会换一个后端重试。
 4. 响应经响应插件返回客户端，随后**记录**这次请求：访问日志、指标和链路追踪。
 
-## 📊 性能测试
+## 📊 性能
 
-CPU: M4 Pro, Thread: 1
+M4 Pro 单线程下 `/ping` 约每秒 14.7 万个请求，99 分位延迟 116µs（`wrk`，10 个连接，不写访问日志）。
 
-### Ping (无访问日志)
+<details>
+<summary>测试输出</summary>
 
-```bash
+```
 wrk 'http://127.0.0.1:6118/ping' --latency
 
 Running 10s test @ http://127.0.0.1:6118/ping
@@ -236,12 +156,27 @@ Requests/sec: 147260.15
 Transfer/sec:     19.24MB
 ```
 
+</details>
 
+## 🔧 开发
 
+```bash
+make dev         # 需要 bacon：cargo install bacon
+make build-web   # 修改 web/ 下的内容之后执行，需要 Node.js
+make fmt && make lint && make test
+```
 
-## 📦 最低支持rust版本
+`make dev` 以 `full` 特性集构建，用 `~/tmp/pingap` 里的配置并带 `--autoreload` 运行 Pingap，管理后台在 `127.0.0.1:3018`（`pingap` / `123123`），源码有改动时自动重新构建。管理后台是从 `dist/` 嵌入二进制的，`make build-web` 负责生成它。最低支持的 Rust 版本是 1.96。
 
-最低支持的rust版本为1.96
+### TLS 后端
+
+默认构建使用 OpenSSL（从源码编译）。改用 rustls：
+
+```bash
+cargo build --release --no-default-features --features tls-rustls,full
+```
+
+rustls 构建固定提供 TLS 1.2 和 1.3，使用 rustls 自己的密码套件，所以 server 级的 `tls_min_version`、`tls_max_version`、`tls_cipher_list`、`tls_ciphersuites` 会在检查配置时被拒绝。其余行为一致，差异列在 [certificate 文档](https://pingap.io/zh/crates/certificate)里。`pingap --version` 会标明二进制使用的后端。
 
 ## 🤝 参与贡献
 
@@ -254,4 +189,4 @@ Transfer/sec:     19.24MB
 
 ## 📄 开源协议
 
-本项目采用 [Apache License, Version 2.0](./LICENSE) 开源协议。
+[Apache License, Version 2.0](./LICENSE)。
