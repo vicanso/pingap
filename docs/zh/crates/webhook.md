@@ -2,7 +2,7 @@
 
 [Pingap](https://github.com/vicanso/pingap) 的出站通知。
 
-当发生有运维意义的事件时——证书即将过期、上游变不健康、配置重载成功或失败——Pingap 发出通知。本 crate 把这些通知投递到聊天室或 HTTP 端点，无需一直盯着日志。
+当发生有运维意义的事件时——证书即将过期、上游变不健康、配置重载成功或失败——Pingap 发出通知。本 crate 把这些通知投递到聊天室、通过 [ntfy](https://ntfy.sh/) 推送到手机，或者发到 HTTP 端点，无需一直盯着日志。
 
 它实现 `pingap_core::Notification`，因此工作区其余部分只依赖该 trait。
 
@@ -25,7 +25,7 @@ webhook_notifications = [
 | Key | Description |
 | --- | --- |
 | `webhook` | 目标 URL。空则禁用通知。 |
-| `webhook_type` | `wecom`、`dingtalk`，或其他值表示通用 JSON POST。 |
+| `webhook_type` | `wecom`、`dingtalk`、`ntfy`，或其他值表示通用 JSON POST。 |
 | `webhook_notifications` | 要投递的类别。**未列出的类别会被丢弃。** |
 | `webhook_batch_window` | 间隔不超过该时长的通知合并为一条（默认 `10s`，`0s` 关闭合并）。 |
 | `webhook_batch_max_events` | 一条消息最多合并的通知数（默认 `5`，`1` 关闭合并）。 |
@@ -74,9 +74,37 @@ webhook_notifications = [
 | --- | --- |
 | `wecom` | 企业微信 markdown 消息，按级别着色 |
 | `dingtalk` | 钉钉 markdown 消息 |
+| `ntfy` | [ntfy](https://ntfy.sh/) 的消息，按级别设置优先级和图标，见 [ntfy](#ntfy) |
 | 其他 | 通用 JSON POST：一个对象，包含 `name`（`pingap`）、`title`、`level`（`info`、`warn`、`error`）、`category`、`message`、`hostname` 和 `ip`（本机地址，以 `;` 分隔）。以前其中没有 `title`。 |
 
 `Warn` 与 `Error` 用警告色；`Info` 以评论样式渲染。
+
+## ntfy
+
+[ntfy](https://ntfy.sh/) 把消息推送到订阅了某个 topic 的手机和浏览器，可以用 ntfy.sh，也可以用自己部署的服务。`webhook` 填 topic 的地址：
+
+```toml
+[basic]
+webhook = "https://ntfy.sh/my-pingap-alerts"
+webhook_type = "ntfy"
+webhook_notifications = ["backend_status", "tls_validity", "reload_config_fail"]
+```
+
+在 ntfy.sh 上，知道 topic 名字的人都能读写它：取一个猜不到的名字，或者使用受保护的 topic。
+
+| 通知里的 | 在 ntfy 里 |
+| --- | --- |
+| 级别 `info` / `warn` / `error` | 优先级 `3`（默认）/ `4`（高）/ `5`（最高），以及第一个标签，ntfy 把它显示成标题前面的图标：ℹ️ / ⚠️ / 🚨 |
+| 标题 | 标题；通知本身没有标题时（大多数通知如此）用类别代替 |
+| 类别 | 标签；合并了多条通知的消息每个类别一个标签，订阅时可以只看其中几种 |
+| 消息 | 正文，后面跟主机名和本机地址 |
+
+- **受保护的 topic**：把令牌放在 `webhook_headers` 里（`"Authorization: Bearer tk_..."`），或者把用户名和密码写在 url 里（`https://user:password@ntfy.example.com/alerts`，字母和数字以外的字符要做百分号编码：`p@ss` 写成 `p%40ss`）。
+- **ntfy 支持的其他请求头**可以用同样的方式对所有消息设置：`"X-Markdown: yes"` 搭配用 markdown 写的 `webhook_template`，`"X-Click: https://..."`、`"X-Icon: ..."`、`"X-Email: ..."`。标题、优先级和标签始终是上表里的，不受请求头影响。
+- 正文超过 4000 字节会被截断，截断处有一个 `…`；正文里大部分是引号和换行时会截得更短。ntfy 的上限是 4096 字节，更长的会被变成附件或者被拒绝；配置重载的差异（`diff_config`）很容易超过这个长度。
+- 消息以 JSON 的形式发到服务地址（url 去掉 topic 的部分），ntfy 只在那里接受这种格式。url 里 `?` 后面的内容会一起带上，ntfy 会像读请求头一样读它：`?auth=...`、`?delay=30m`。
+- 不是 topic 地址的 url 在检查配置时就会被拒绝：没有 topic（`https://ntfy.sh`）、结尾是 ntfy 不接受的 topic 名或它自己保留的名字（`app`、`docs`、`v1` 等）、订阅用的地址（`.../mytopic/json`）、带 `#` 的地址。
+- ntfy 用它生成的那条消息作为回答时，才算投递成功。返回 `200` 但内容不是这样的，日志里记为失败：那是别的服务的页面，或者是 url 被重定向（比如跳到 `https`）之后得到的内容，这种情况下消息并没有送达。
 
 ## 过滤
 
@@ -98,6 +126,8 @@ webhook_min_level = "warn"      # 后端恢复健康的通知是 `info`
   webhook_template = "**{{title}}** ({{level}})\n\n{{message}}\n\n{{hostname}}"
   ```
 
+- `ntfy`：模板是消息的正文，按原样显示。标题、优先级和标签仍然是内置的。
+
 - 其他类型：模板是请求的**整个正文**，填入的内容按 JSON 字符串的文本转义——每个占位符要放在引号里（`{{count}}` 这样的数字可以不加引号）。这样可以把请求做成接收方要求的格式，比如 Slack：
 
   ```toml
@@ -109,12 +139,12 @@ webhook_min_level = "warn"      # 后端恢复健康的通知是 `info`
 ## 签名
 
 - **`dingtalk`**：`webhook_secret` 是开启了“加签”的机器人的密钥。每次请求的 url 上会带 `timestamp` 和 `sign`，算法和钉钉文档一致：用密钥对 `<timestamp>\n<secret>` 做 HMAC-SHA256，再 base64。
-- **自己的接收服务**（`wecom`、`dingtalk` 之外的类型）：对正文签名，请求带 `X-Pingap-Signature: sha256=<hex>`，值是用密钥对正文做的 HMAC-SHA256。接收方对收到的字节做同样的计算并比较。
-- **`wecom`** 没有签名机制，这个密钥在那里不起作用。
+- **自己的接收服务**（`wecom`、`dingtalk`、`ntfy` 之外的类型）：对正文签名，请求带 `X-Pingap-Signature: sha256=<hex>`，值是用密钥对正文做的 HMAC-SHA256。接收方对收到的字节做同样的计算并比较。
+- **`wecom`** 和 **`ntfy`** 没有签名机制，这个密钥在那里不起作用。
 
 ## 投递
 
-- 响应状态码小于 `400` 即算投递成功。`wecom` 和 `dingtalk` 还会读取响应内容：这两者不管怎么处理请求都返回 `200`，在正文里说明是否接受（`{"errcode":310000,"errmsg":"sign not match"}`）。`errcode` 不是 `0` 时按失败记日志，带上错误码和说明。以前这种情况被记成发送成功。
+- 响应状态码小于 `400` 即算投递成功。`wecom` 和 `dingtalk` 还会读取响应内容：这两者不管怎么处理请求都返回 `200`，在正文里说明是否接受（`{"errcode":310000,"errmsg":"sign not match"}`）。`errcode` 不是 `0` 时按失败记日志，带上错误码和说明。以前这种情况被记成发送成功。`ntfy` 用状态码回答，并在正文里说明原因，日志里会一起记下：`status 403 Forbidden: forbidden`。
 - 配了 `webhook_retries` 时，没有得到响应、或者响应是 `5xx` / `429` 的请求会重发这么多次：间隔 1 秒、2 秒、4 秒……最长 5 分钟。接收方明确拒绝的（其他 `4xx`、`errcode`）不重发。其中包括表示“消息太多”的 `errcode`：两种聊天机器人对这种情况同样返回 `200`，这里不区分错误码。重试在后台进行：发出通知的一方不等它，下一条消息也不等，所以正在重试的消息可能比后产生的消息晚到。每条失败的消息各有一个任务，直到投递成功或者放弃。
 
 ## 用法

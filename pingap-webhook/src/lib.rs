@@ -16,8 +16,8 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pingap_core::{
     Notification, NotificationData, NotificationLevel, get_hostname,
-    parse_notification_headers, parse_notification_level,
-    parse_notification_retries,
+    is_ntfy_notification, parse_notification_headers, parse_notification_level,
+    parse_notification_retries, parse_ntfy_url,
 };
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Map, Value};
@@ -57,16 +57,16 @@ pub struct WebhookOptions {
     pub headers: Vec<(HeaderName, HeaderValue)>,
     /// What a post is signed with. For `dingtalk` it is the secret of a
     /// robot with signing on, and adds `timestamp` and `sign` to the
-    /// url. For a receiver of its own (any type but the two chats) the
-    /// body is signed: `X-Pingap-Signature: sha256=<hex>`, the
-    /// HMAC-SHA256 of the body under the secret.
+    /// url. For a receiver of its own (any type but the two chats and
+    /// `ntfy`) the body is signed: `X-Pingap-Signature: sha256=<hex>`,
+    /// the HMAC-SHA256 of the body under the secret.
     pub secret: Option<String>,
     /// The text of the message in place of the built-in one, with
     /// `{{name}}`, `{{level}}`, `{{title}}`, `{{hostname}}`, `{{ip}}`,
     /// `{{category}}`, `{{message}}` and `{{count}}` in it. For the two
-    /// chats it is the markdown that is shown. For a receiver of its own
-    /// it is the whole body, and what is put into it is escaped as the
-    /// text of a JSON string.
+    /// chats it is the markdown that is shown, for `ntfy` the text of
+    /// the message. For a receiver of its own it is the whole body, and
+    /// what is put into it is escaped as the text of a JSON string.
     pub template: Option<String>,
     /// How many times a post that failed is tried again: one that was
     /// not answered, or answered with a `5xx` or a `429`.
@@ -375,7 +375,26 @@ impl Inner {
             count,
         };
         let kind = Kind::of(&self.category);
-        let body = message.body(kind, self.options.template.as_deref());
+        // ntfy is told the topic in the body, and the configuration has
+        // it in the url. The validation of the configuration has taken
+        // the url, so this does not fail there; an embedder may hand
+        // over anything.
+        let topic = match kind {
+            Kind::Ntfy => match parse_ntfy_url(&self.url) {
+                Ok(target) => target.topic,
+                Err(reason) => {
+                    error!(
+                        target: LOG_TARGET,
+                        count,
+                        reason,
+                        "send webhook fail"
+                    );
+                    return;
+                },
+            },
+            _ => String::new(),
+        };
+        let body = message.body(kind, self.options.template.as_deref(), &topic);
         let client = reqwest::Client::new();
         let Some(reason) = self.try_post(&client, kind, &body, count, 0).await
         else {
@@ -455,8 +474,16 @@ impl Inner {
     }
 
     /// The url of one post: for a `dingtalk` robot that asks for signed
-    /// posts, with the time and the signature of that time.
+    /// posts, with the time and the signature of that time. For `ntfy`
+    /// the server the topic is on: a message as JSON is taken there, and
+    /// not at the url of the topic.
     fn post_url(&self, kind: Kind, now_ms: u128) -> String {
+        if kind == Kind::Ntfy {
+            // Left to fail where it is sent, should it be no such url.
+            return parse_ntfy_url(&self.url)
+                .map(|target| target.url)
+                .unwrap_or_else(|_| self.url.clone());
+        }
         let Some(secret) = self
             .options
             .secret
@@ -526,21 +553,43 @@ impl Inner {
             Err(e) => return Outcome::Failed(e.without_url().to_string()),
         };
         let status = response.status();
-        if status.is_server_error() || status.as_u16() == 429 {
-            return Outcome::Failed(format!("status {status}"));
-        }
         if status.as_u16() >= 400 {
-            return Outcome::Refused(format!("status {status}"));
+            let mut reason = format!("status {status}");
+            // ntfy says what it did not like: a topic that is reserved,
+            // a token that is not taken, too many messages.
+            if kind == Kind::Ntfy
+                && let Some(error) =
+                    ntfy_error(&response.text().await.unwrap_or_default())
+            {
+                reason = format!("{reason}: {error}");
+            }
+            if status.is_server_error() || status.as_u16() == 429 {
+                return Outcome::Failed(reason);
+            }
+            return Outcome::Refused(reason);
         }
         if kind == Kind::Other {
             return Outcome::Sent;
+        }
+        let answer = response.text().await.unwrap_or_default();
+        // ntfy answers with the message it has made of the post. Anything
+        // else below `400` is not ntfy: the page of another server at
+        // that address, or the page ntfy has there itself, which is what
+        // a post gets that was redirected - the redirect is followed
+        // with a GET, and the message is lost on the way.
+        if kind == Kind::Ntfy {
+            if is_ntfy_message(&answer) {
+                return Outcome::Sent;
+            }
+            return Outcome::Refused(format!(
+                "status {status}, and the answer is not the one of ntfy to a message: the url is redirected, or is not one of an ntfy server"
+            ));
         }
         // The two chats answer `200` whatever they made of the post, and
         // say in the body whether they took it: a key that is wrong, a
         // signature that does not match, too many messages a minute. Read
         // as sent, a webhook that had never delivered anything looked
         // fine in the log.
-        let answer = response.text().await.unwrap_or_default();
         match chat_error(&answer) {
             Some(reason) => Outcome::Refused(reason),
             None => Outcome::Sent,
@@ -562,6 +611,50 @@ fn chat_error(answer: &str) -> Option<String> {
         .and_then(|message| message.as_str())
         .unwrap_or_default();
     Some(format!("errcode {code}: {message}"))
+}
+
+/// What ntfy answered a post it did not take with:
+/// `{"code":40301,"http":403,"error":"forbidden",...}`.
+fn ntfy_error(answer: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(answer).ok()?;
+    let error = value.get("error")?.as_str()?;
+    (!error.is_empty()).then(|| error.to_string())
+}
+
+/// Whether `answer` is what ntfy answers a message it has taken with:
+/// the message, `{"id":"...","event":"message",...}`.
+fn is_ntfy_message(answer: &str) -> bool {
+    serde_json::from_str::<Value>(answer)
+        .ok()
+        .and_then(|value| Some(!value.get("id")?.as_str()?.is_empty()))
+        .unwrap_or_default()
+}
+
+/// What a message for ntfy may be long, in bytes. ntfy takes 4096: a
+/// longer one is made an attachment where the server keeps those, and is
+/// refused where it does not, and the difference of a configuration
+/// that was reloaded is easily longer.
+const NTFY_MESSAGE_LIMIT: usize = 4000;
+
+/// What the body of a post to ntfy may be long. ntfy reads twice the
+/// length of a message and refuses what is longer (`413`); a text of
+/// quotes and line feeds is twice as long once it is JSON.
+const NTFY_BODY_LIMIT: usize = 8000;
+
+/// A title of ntfy may be 1024 bytes long.
+const NTFY_TITLE_LIMIT: usize = 250;
+
+/// `text` cut to `limit` bytes at most, between two characters, with
+/// what says that there was more.
+fn shortened(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
 }
 
 /// How long to wait before a post is tried for the `tried`th time more:
@@ -594,13 +687,18 @@ enum Outcome {
 enum Kind {
     WeCom,
     DingTalk,
+    /// A topic of ntfy (<https://ntfy.sh>, or a server of one's own).
+    Ntfy,
     /// A receiver of the user's own, which gets the fields as JSON.
     Other,
 }
 
 impl Kind {
     fn of(webhook_type: &str) -> Self {
-        match webhook_type.to_lowercase().as_str() {
+        if is_ntfy_notification(webhook_type) {
+            return Kind::Ntfy;
+        }
+        match webhook_type.trim().to_lowercase().as_str() {
             "wecom" => Kind::WeCom,
             "dingtalk" => Kind::DingTalk,
             _ => Kind::Other,
@@ -667,8 +765,72 @@ impl Message {
         text
     }
 
-    /// The body of the post for a webhook of `kind`.
-    fn body(&self, kind: Kind, template: Option<&str>) -> String {
+    /// The message as ntfy is given it, for `topic`.
+    ///
+    /// The level is the priority (default, high, the highest) and the
+    /// first tag, which ntfy shows as a sign in front of the title. The
+    /// categories are tags as well: a subscription can be told to show
+    /// some of them. The title is the one of the notification, or the
+    /// category where it has none, which is most of them.
+    fn ntfy(&self, template: Option<&str>, topic: &str) -> Map<String, Value> {
+        let (priority, sign) = match self.level {
+            NotificationLevel::Error => (5, "rotating_light"),
+            NotificationLevel::Warn => (4, "warning"),
+            NotificationLevel::Info => (3, "information_source"),
+        };
+        let rendered = template
+            .map(|template| self.render(template, |text| text.to_string()));
+        // The text, of `limit` bytes at most.
+        let text = |limit: usize| match &rendered {
+            Some(rendered) => shortened(rendered, limit),
+            None => {
+                // Who it is from goes last, and is kept when the
+                // message is cut.
+                let mut from = self.hostname.clone();
+                if !self.ip.is_empty() {
+                    from = format!("{from} ({})", self.ip);
+                }
+                let room = limit.saturating_sub(from.len() + 2);
+                format!("{}\n\n{from}", shortened(&self.message, room))
+            },
+        };
+        let title = if self.title.is_empty() {
+            &self.category
+        } else {
+            &self.title
+        };
+        let tags = std::iter::once(sign)
+            .chain(self.category.split(',').filter(|tag| !tag.is_empty()))
+            .map(|tag| Value::String(tag.to_string()))
+            .collect();
+        let mut data = Map::new();
+        data.insert("topic".to_string(), Value::String(topic.to_string()));
+        data.insert(
+            "title".to_string(),
+            Value::String(shortened(title, NTFY_TITLE_LIMIT)),
+        );
+        data.insert("priority".to_string(), Value::from(priority));
+        data.insert("tags".to_string(), Value::Array(tags));
+        // As much of the text as the body has room for: what the JSON
+        // is longer by than ntfy reads is taken off the text, which
+        // makes the JSON shorter by as much at least.
+        let mut limit = NTFY_MESSAGE_LIMIT;
+        loop {
+            data.insert("message".to_string(), Value::String(text(limit)));
+            let over = Value::Object(data.clone())
+                .to_string()
+                .len()
+                .saturating_sub(NTFY_BODY_LIMIT);
+            if over == 0 || limit == 0 {
+                return data;
+            }
+            limit = limit.saturating_sub(over);
+        }
+    }
+
+    /// The body of the post for a webhook of `kind`. `topic` is the one
+    /// of ntfy, and nothing to the others.
+    fn body(&self, kind: Kind, template: Option<&str>, topic: &str) -> String {
         // The markdown of a chat message: the template as it is filled
         // in, or the one that is built in.
         let markdown = || match template {
@@ -728,6 +890,7 @@ impl Message {
                     Value::Object(markdown_data),
                 );
             },
+            Kind::Ntfy => data = self.ntfy(template, topic),
             Kind::Other => {
                 // The body is the template's to say, whole: what goes
                 // into it is escaped for the JSON string it stands in.
@@ -1354,21 +1517,21 @@ mod tests {
             count: 1,
         };
         let template = inner.options.template.as_deref();
-        let body = message.body(Kind::DingTalk, template);
+        let body = message.body(Kind::DingTalk, template, "");
         let value: Value = serde_json::from_str(&body).expect("json");
         assert_eq!("markdown", field(&value, "msgtype"));
         assert_eq!(
             "**T**\n\nm \"quoted\"",
             value["markdown"]["text"].as_str().unwrap_or_default()
         );
-        let body = message.body(Kind::WeCom, template);
+        let body = message.body(Kind::WeCom, template, "");
         let value: Value = serde_json::from_str(&body).expect("json");
         assert_eq!(
             "**T**\n\nm \"quoted\"",
             value["markdown"]["content"].as_str().unwrap_or_default()
         );
         // Without a template, the text that is built in.
-        let body = message.body(Kind::WeCom, None);
+        let body = message.body(Kind::WeCom, None, "");
         assert_eq!(true, body.contains(">title: T"), "{body}");
         // A template is filled in once. What a part says is not looked
         // through for parts again, whichever part it is, and what is no
@@ -1407,6 +1570,208 @@ mod tests {
             Some("errcode 93000: invalid webhook url".to_string()),
             chat_error(r#"{"errcode":93000,"errmsg":"invalid webhook url"}"#)
         );
+    }
+
+    /// ntfy: the message goes to the server as JSON that names the topic,
+    /// with the level as its priority and its sign, and what the server
+    /// answers a post it does not take with is in the log.
+    #[tokio::test]
+    async fn test_ntfy() {
+        assert_eq!(Kind::Ntfy, Kind::of("ntfy"));
+        assert_eq!(Kind::Ntfy, Kind::of("Ntfy"));
+
+        // The url of the endpoint is the one of a topic `hook`.
+        let (url, mut posts) = spawn_scripted(vec![
+            (200, r#"{"id":"x","event":"message"}"#),
+            (200, "<!DOCTYPE html><html>ntfy web</html>"),
+            (403, r#"{"code":40301,"http":403,"error":"forbidden"}"#),
+            (429, r#"{"code":42901,"http":429,"error":"limit reached"}"#),
+            (500, "oops"),
+        ])
+        .await;
+        let sender = WebhookNotificationSender::new(
+            url.clone(),
+            "ntfy".to_string(),
+            vec!["backend_status".to_string()],
+        )
+        .with_options(
+            options(
+                None,
+                &["Authorization: Bearer tk_t0ken"],
+                Some("s3cret"),
+                None,
+                None,
+            )
+            .expect("valid"),
+        )
+        .with_batch(Duration::ZERO, 1);
+        sender
+            .send_notification(event(
+                "backend_status",
+                NotificationLevel::Error,
+                "",
+                "上游 api(10.0.0.1:8080) becomes unhealthy",
+            ))
+            .await;
+        let (head, body) = posts.try_recv().expect("posted");
+        // To the server, not to the topic, with what the url had after it.
+        assert_eq!(true, head.starts_with("POST /?key=k1 HTTP/1.1"), "{head}");
+        let head = head.to_lowercase();
+        assert_eq!(
+            true,
+            head.contains("authorization: bearer tk_t0ken"),
+            "{head}"
+        );
+        // Nothing of ntfy reads a signature.
+        assert_eq!(false, head.contains("x-pingap-signature"), "{head}");
+        let value: Value = serde_json::from_str(&body).expect("json");
+        assert_eq!("hook", field(&value, "topic"));
+        // No title of its own: the category stands for it.
+        assert_eq!("backend_status", field(&value, "title"));
+        assert_eq!(Some(5), value["priority"].as_i64());
+        assert_eq!(
+            serde_json::json!(["rotating_light", "backend_status"]),
+            value["tags"]
+        );
+        let text = field(&value, "message");
+        assert_eq!(
+            true,
+            text.starts_with("上游 api(10.0.0.1:8080) becomes unhealthy\n\n"),
+            "{text}"
+        );
+        assert_eq!(true, text.contains(get_hostname()), "{text}");
+
+        // What ntfy refuses says why, and is not asked again; too many
+        // messages and an error of the server are.
+        let inner = &sender.inner;
+        let client = reqwest::Client::new();
+        // Answered with `200`, and not as ntfy answers: its own page,
+        // which a post gets that was redirected, or another server.
+        assert_eq!(
+            Outcome::Refused(
+                "status 200 OK, and the answer is not the one of ntfy to a message: the url is redirected, or is not one of an ntfy server"
+                    .to_string()
+            ),
+            inner.post_once(&client, Kind::Ntfy, &body).await
+        );
+        assert_eq!(
+            Outcome::Refused("status 403 Forbidden: forbidden".to_string()),
+            inner.post_once(&client, Kind::Ntfy, &body).await
+        );
+        assert_eq!(
+            Outcome::Failed(
+                "status 429 Too Many Requests: limit reached".to_string()
+            ),
+            inner.post_once(&client, Kind::Ntfy, &body).await
+        );
+        assert_eq!(
+            Outcome::Failed("status 500 Internal Server Error".to_string()),
+            inner.post_once(&client, Kind::Ntfy, &body).await
+        );
+        // The url of the topic is the one of ntfy alone.
+        assert_eq!(url, inner.post_url(Kind::Other, 0));
+
+        let message = Message {
+            name: "pingap".to_string(),
+            level: NotificationLevel::Warn,
+            title: "2 notifications".to_string(),
+            hostname: "web-1".to_string(),
+            ip: "10.0.0.5".to_string(),
+            category: "backend_status,reload_config_fail".to_string(),
+            message: "1. [warn] a\n2. [info] b".to_string(),
+            count: 2,
+        };
+        let value: Value =
+            serde_json::from_str(&message.body(Kind::Ntfy, None, "alerts"))
+                .expect("json");
+        assert_eq!("alerts", field(&value, "topic"));
+        assert_eq!("2 notifications", field(&value, "title"));
+        assert_eq!(Some(4), value["priority"].as_i64());
+        // Each category of a post that merges several is a tag.
+        assert_eq!(
+            serde_json::json!([
+                "warning",
+                "backend_status",
+                "reload_config_fail"
+            ]),
+            value["tags"]
+        );
+        assert_eq!(
+            "1. [warn] a\n2. [info] b\n\nweb-1 (10.0.0.5)",
+            field(&value, "message")
+        );
+        // A template is the text, as it is written.
+        let value: Value = serde_json::from_str(&message.body(
+            Kind::Ntfy,
+            Some("{{count}} from {{hostname}}: \"{{message}}\""),
+            "alerts",
+        ))
+        .expect("json");
+        assert_eq!(
+            "2 from web-1: \"1. [warn] a\n2. [info] b\"",
+            field(&value, "message")
+        );
+        let info = Message {
+            level: NotificationLevel::Info,
+            ip: String::new(),
+            // Longer than ntfy takes, and cut between two characters.
+            message: "变".repeat(2000),
+            ..message
+        };
+        let value: Value =
+            serde_json::from_str(&info.body(Kind::Ntfy, None, "alerts"))
+                .expect("json");
+        assert_eq!(Some(3), value["priority"].as_i64());
+        assert_eq!("information_source", value["tags"][0]);
+        let text = field(&value, "message");
+        assert_eq!(true, text.len() <= 4096, "{}", text.len());
+        assert_eq!(true, text.len() > 3900, "{}", text.len());
+        // Who it is from is still there.
+        assert_eq!(true, text.ends_with("…\n\nweb-1"), "{text}");
+        // A text that is twice as long as JSON, with a topic and a
+        // title as long as they get: the body stays one ntfy reads.
+        let escaped = Message {
+            title: "t".repeat(300),
+            message: "\"\n".repeat(4000),
+            ..info
+        };
+        for template in [None, Some("{{message}}")] {
+            let body = escaped.body(Kind::Ntfy, template, &"a".repeat(64));
+            assert_eq!(true, body.len() <= 8192, "{}", body.len());
+            assert_eq!(true, body.len() > 7000, "{}", body.len());
+            let value: Value = serde_json::from_str(&body).expect("json");
+            assert_eq!(253, field(&value, "title").len());
+            assert_eq!(true, field(&value, "message").starts_with("\"\n\""));
+        }
+        assert_eq!("ab…", shortened("abc", 2));
+        assert_eq!("abc", shortened("abc", 3));
+        assert_eq!("变…", shortened("变化", 5));
+        assert_eq!("…", shortened("变化", 2));
+
+        assert_eq!(true, is_ntfy_message(r#"{"id":"x","event":"message"}"#));
+        assert_eq!(false, is_ntfy_message(""));
+        assert_eq!(false, is_ntfy_message("{}"));
+        assert_eq!(false, is_ntfy_message("<html>"));
+        assert_eq!(None, ntfy_error("oops"));
+        assert_eq!(None, ntfy_error(r#"{"id":"x"}"#));
+        assert_eq!(
+            Some("forbidden".to_string()),
+            ntfy_error(r#"{"code":40301,"http":403,"error":"forbidden"}"#)
+        );
+
+        // A url that names no topic: nothing is posted anywhere.
+        let (url, mut posts) = spawn_scripted(vec![(200, "")]).await;
+        let root = url.replace("/hook?key=k1", "/");
+        let sender = WebhookNotificationSender::new(
+            root,
+            "ntfy".to_string(),
+            vec!["a".to_string()],
+        )
+        .with_batch(Duration::ZERO, 1);
+        sender
+            .send_notification(event("a", NotificationLevel::Error, "T", "m"))
+            .await;
+        assert_eq!(true, posts.try_recv().is_err());
     }
 
     /// A post that failed is tried again as often as is asked for, when

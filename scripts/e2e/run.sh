@@ -23,7 +23,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy reload proxy_protocol daemon restart restart_guard upgrade systemd"
+CASES="samples proxy reload webhook proxy_protocol daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -357,6 +357,45 @@ case_reload() {
     "$(status -H 'Host: one.test' "http://127.0.0.1:$proxy/")"
   expect "and the process is still there" yes "$(alive "$pid" && echo yes || echo no)"
   expect_match "and the log says why" 'nowhere' "$(plain <"$DIR/pingap.log" | grep -i 'error\|invalid\|fail' | tail -5)"
+}
+
+# ---------------------------------------------------------------------------
+# webhook: a notification for ntfy is posted the way ntfy takes it, to a
+# receiver that writes down what it was sent.
+case_webhook() {
+  local proxy=$((PORT_BASE + 90)) hook=$((PORT_BASE + 91)) out
+  run_bg "$DIR/hook.out" python3 "$HERE/hook.py" $hook "$DIR/hook.log"
+  wait_port $hook || fail "the receiver listens on $hook"
+  basic_conf "$DIR/c" "webhook = \"http://127.0.0.1:$hook/alerts?from=e2e\"" \
+    'webhook_type = "ntfy"' 'webhook_notifications = ["reload_config"]' \
+    'webhook_batch_window = "0s"' 'webhook_headers = ["Authorization: Bearer tk_e2e"]'
+  printf '[upstreams.b1]\naddrs = ["127.0.0.1:9"]\n' >"$DIR/c/upstreams.toml"
+  printf '[locations.b1]\nupstream = "b1"\npath = "/"\n' >"$DIR/c/locations.toml"
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $proxy >"$DIR/c/servers.toml"
+  pingap "$DIR/pingap.log" -c "$DIR/c" --autoreload
+  wait_port $proxy || fail "pingap listens on $proxy"
+
+  # A change that is reloaded is one of the things that are told.
+  printf '[locations.b1]\nupstream = "b1"\npath = "/api"\n' >"$DIR/locations.next"
+  mv -f "$DIR/locations.next" "$DIR/c/locations.toml"
+  wait_for 15 grep -q reload_config "$DIR/hook.log"
+  out=$(grep reload_config "$DIR/hook.log" 2>/dev/null | head -1)
+  expect_match "ntfy: posted to the server, not to the topic, with what follows the ?" \
+    '^POST /\?from=e2e ' "$out"
+  expect_match "with the header it was given" ' auth=Bearer tk_e2e ' "$out"
+  expect_match "the topic is named in the body" '"topic":"alerts"' "$out"
+  expect_match "the category is the title where there is none" '"title":"reload_config"' "$out"
+  expect_match "the level is the priority" '"priority":3[,}]' "$out"
+  expect_match "and the first of the tags, ahead of the category" \
+    '"tags":\["information_source","reload_config"\]' "$out"
+  wait_for 5 grep -q 'send webhook success' "$DIR/pingap.log"
+  expect_match "and pingap takes it for sent" 'send webhook success' "$(plain <"$DIR/pingap.log")"
+
+  # the url of a server is no url of a topic
+  mkdir -p "$DIR/bad" && cp "$DIR"/c/*.toml "$DIR/bad/"
+  sed -i.orig 's#/alerts?from=e2e##' "$DIR/bad/basic.toml" && rm -f "$DIR/bad/basic.toml.orig"
+  expect_match "a url that names no topic is a configuration error" \
+    'the url of ntfy names no topic' "$("$BIN" -t -c "$DIR/bad" 2>&1 | plain)"
 }
 
 # ---------------------------------------------------------------------------

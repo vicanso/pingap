@@ -21,7 +21,7 @@
 | [pingap-otel](otel.md) | OpenTelemetry 分布式追踪 |
 | [pingap-sentry](sentry.md) | Sentry 错误上报 |
 | [pingap-pyroscope](pyroscope.md) | 持续 CPU 剖析 |
-| [pingap-webhook](webhook.md) | 运维通知到企业微信 / 钉钉 / HTTP |
+| [pingap-webhook](webhook.md) | 运维通知到企业微信 / 钉钉 / ntfy / HTTP |
 | [pingap-proxy](proxy.md) | 代理引擎：生命周期、路由、server 配置 |
 
 另见 [架构](../guide/modules.md)。

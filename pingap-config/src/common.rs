@@ -1651,7 +1651,7 @@ pub struct BasicConf {
     pub trusted_proxies: Option<Vec<String>>,
     /// Webhook URL for notifications
     pub webhook: Option<String>,
-    /// Type of webhook (e.g. "wecom", "dingtalk")
+    /// Type of webhook (e.g. "wecom", "dingtalk", "ntfy")
     pub webhook_type: Option<String>,
     /// List of events to send webhook notifications for
     pub webhook_notifications: Option<Vec<String>>,
@@ -1791,6 +1791,16 @@ impl Validate for BasicConf {
         .map_err(invalid)?;
         pingap_core::parse_notification_retries(self.webhook_retries)
             .map_err(invalid)?;
+        // A topic of ntfy has a url of a shape of its own. One that is
+        // still a reference is for another machine to read.
+        let webhook = self.webhook.as_deref().unwrap_or_default();
+        if pingap_core::is_ntfy_notification(
+            self.webhook_type.as_deref().unwrap_or_default(),
+        ) && !webhook.trim().is_empty()
+            && !crate::reference::is_reference(webhook)
+        {
+            pingap_core::parse_ntfy_url(webhook).map_err(invalid)?;
+        }
         Ok(())
     }
 }
@@ -4207,11 +4217,25 @@ restart_ready_timeout = "2m"
                 "webhook_retries = 11",
                 "webhook_retries(11) should be at most 10",
             ),
+            (
+                "webhook_type = \"ntfy\"\nwebhook = \"https://ntfy.sh\"",
+                "the url of ntfy names no topic",
+            ),
         ] {
             let error = basic(conf).unwrap_err();
             assert_eq!(true, error.contains(message), "{conf}: {error}");
             // the token of a header is not in what is reported
             assert_eq!(false, error.contains("t0ken"), "{conf}: {error}");
+        }
+        // ntfy: the url of a topic, a reference that another machine
+        // reads, or no webhook at all. Any other type takes any url.
+        for conf in [
+            "webhook_type = \"ntfy\"\nwebhook = \"https://ntfy.sh/alerts\"",
+            "webhook_type = \"ntfy\"\nwebhook = \"$ENV:NTFY_URL\"",
+            "webhook_type = \"ntfy\"",
+            "webhook_type = \"normal\"\nwebhook = \"https://example.com\"",
+        ] {
+            assert_eq!(Ok(()), basic(conf), "{conf}");
         }
     }
 

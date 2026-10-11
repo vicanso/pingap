@@ -44,7 +44,7 @@ configured and where it sits in the dependency graph.
 | [pingap-otel](../pingap-otel/README.md) | OpenTelemetry distributed tracing |
 | [pingap-sentry](../pingap-sentry/README.md) | Sentry error reporting |
 | [pingap-pyroscope](../pingap-pyroscope/README.md) | Continuous CPU profiling |
-| [pingap-webhook](../pingap-webhook/README.md) | Operational notifications to WeCom / DingTalk / HTTP |
+| [pingap-webhook](../pingap-webhook/README.md) | Operational notifications to WeCom / DingTalk / ntfy / HTTP |
 | [pingap-proxy](../pingap-proxy/README.md) | The proxy engine: lifecycle, routing, server configuration |
 
 ## Plugin documentation

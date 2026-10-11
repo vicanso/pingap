@@ -78,10 +78,11 @@
 # Keepalive pool size for client connections to upstream. Default `128`
 # upstream_keepalive_pool_size = 128
 
-# HTTP webhook URL for notifications, default `none`
+# HTTP webhook URL for notifications, default `none`. For ntfy the url of the
+# topic: "https://ntfy.sh/mytopic"
 # webhook = "https://example.com/webhook"
 
-# Webhook type, supports 'wecom', 'dingtalk' and 'normal' types. Default `none`
+# Webhook type, supports 'wecom', 'dingtalk', 'ntfy' and 'normal' types. Default `none`
 # webhook_type = "wecom"
 
 # Available events: "backend_status" (upstream backend status changes), "lets_encrypt" (Let's Encrypt certificate operations),
@@ -105,11 +106,12 @@
 # webhook_headers = ["Authorization: Bearer token"]
 
 # What a post is signed with: the secret of a dingtalk robot with signing on, or,
-# for a receiver of your own, the key of the `X-Pingap-Signature` of the body. Default `none`
+# for a receiver of your own, the key of the `X-Pingap-Signature` of the body.
+# Not used for wecom and ntfy. Default `none`
 # webhook_secret = "SECxxxx"
 
 # The text of the message in place of the built-in one: the markdown of a wecom or
-# dingtalk message, the whole JSON body for any other type. `{{title}}`, `{{message}}`,
+# dingtalk message, the text of an ntfy message, the whole JSON body for any other type. `{{title}}`, `{{message}}`,
 # `{{level}}`, `{{category}}`, `{{hostname}}`, `{{ip}}`, `{{name}}` and `{{count}}` are
 # filled in. Default `none`
 # webhook_template = "**{{title}}**\n\n{{message}}"

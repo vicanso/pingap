@@ -228,7 +228,7 @@ at build time.
 | [pingap-otel](./otel) | OpenTelemetry distributed tracing |
 | [pingap-sentry](./sentry) | Sentry error reporting |
 | [pingap-pyroscope](./pyroscope) | Continuous CPU profiling |
-| [pingap-webhook](./webhook) | Operational notifications to WeCom / DingTalk / HTTP |
+| [pingap-webhook](./webhook) | Operational notifications to WeCom / DingTalk / ntfy / HTTP |
 | [pingap-proxy](./proxy) | The proxy engine: lifecycle, routing, server configuration |
 
 Also see [Architecture](/guide/modules).

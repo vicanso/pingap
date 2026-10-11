@@ -329,7 +329,7 @@ export default function Basic() {
       span: 3,
       section: sec.notify,
       category: ExFormItemCategory.SELECT,
-      options: newStringOptions(["normal", "wecom", "dingtalk"], true),
+      options: newStringOptions(["normal", "wecom", "dingtalk", "ntfy"], true),
     },
     {
       name: "webhook_notifications",
@@ -360,6 +360,7 @@ export default function Basic() {
       name: "webhook",
       label: basicI18n("webhook"),
       placeholder: basicI18n("webhookPlaceholder"),
+      tips: basicI18n("webhookTips"),
       defaultValue: basic.webhook,
       span: 6,
       section: sec.notify,

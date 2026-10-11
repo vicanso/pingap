@@ -33,6 +33,7 @@
 | `--admin=user@addr`（没有密码）、格式不对的 `authorizations` 条目 | admin **无认证**运行 | 拒绝 |
 | 证书和私钥不配对 | 校验通过 | `-t` 和 admin 保存时拒绝 |
 | `log_compress_algorithm` 不是 `gzip` 或 `zstd`、`circuit_break_max_failure_percent` 大于 100、`auto_restart_check_interval` 小于 1 秒 | 接受 | 拒绝 |
+| `webhook_type = "ntfy"`，而 `webhook` 不是 topic 的地址（没有路径，或者最后一段不是 ntfy 能接受的 topic 名：`/hook.php`） | 和 0.15 不认识的其他类型一样，向这个地址发通用 JSON | 拒绝：`the url of ntfy names no topic`。想保留通用 JSON 的话，把类型改成别的名字 |
 
 **Pingap 不读取的键**（`trusted_proxy` 这类拼写错误，或从来不存在的键，比如 `basic.cache_directory`、server 上的 `tcp_fast_open`）以前被悄悄丢弃。现在在启动、`-t` 和重载时给出警告：`basic: unknown key "trusted_proxy", did you mean "trusted_proxies"?`。加上 `--strict`（或设置 `PINGAP_STRICT`）之后是错误。插件内部的键不做检查。
 
@@ -85,6 +86,7 @@
 - **日志输出位置**：`--log stdout` 和 `access_log = "stdout ..."` 是标准输出（`stderr` 同理）；0.15 会写到名为 `stdout.<日期>` 的文件里。`syslog://<host>` 现在是远程服务器，以前 host 被忽略。
 - **压缩后的日志归档**按它包含的文件命名（`access.log.2026-10-05.zst`），而且只压缩和删除这份日志自己滚动出来的文件；0.15 会遍历整个目录。
 - 文本格式的访问日志会转义请求所提供内容里的引号、反斜杠和控制字符。不含这些字符的行没有变化。
+- **Webhook**：`webhook_type = "ntfy"` 现在是一个独立的类型，对应 [ntfy](https://ntfy.sh/) 的 topic。0.15 把它和其他不认识的名字一样，当成发往 `webhook` 的通用 JSON POST。碰巧用了这个名字的配置，现在发送的是 ntfy 的 JSON，并且发到去掉最后一段（topic）之后的地址；`webhook` 不是 topic 地址时会被[拒绝](#现在会被拒绝的配置)。
 
 ### 重载、重启与配置文件
 

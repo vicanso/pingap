@@ -291,6 +291,8 @@ export default {
     webhookNotificationsPlaceholder: "Select webhook notifications",
     webhook: "Webhook Http Url",
     webhookPlaceholder: "Input the url for webhook notification",
+    webhookTips:
+      "ntfy: the url of the topic, e.g. https://ntfy.sh/mytopic. A token of ntfy goes into the headers: Authorization: Bearer tk_...",
     webhookBatchWindow: "Webhook Batch Window",
     webhookBatchWindowPlaceholder: "Input the batch window(e.g. 10s)",
     webhookBatchWindowTips:
@@ -310,7 +312,7 @@ export default {
     webhookSecret: "Webhook Secret",
     webhookSecretPlaceholder: "Input the secret posts are signed with",
     webhookSecretTips:
-      "dingtalk: the secret of a robot with signing on. Other types but wecom: the body is signed in the X-Pingap-Signature header.",
+      "dingtalk: the secret of a robot with signing on. Other types but wecom and ntfy: the body is signed in the X-Pingap-Signature header.",
     webhookHeaders: "Webhook Headers",
     webhookHeadersPlaceholder: "Name: value",
     webhookHeadersTips:
@@ -319,7 +321,7 @@ export default {
     webhookTemplatePlaceholder:
       "Input the message template, e.g. **{{title}}** {{message}}",
     webhookTemplateTips:
-      "Replaces the built-in text. wecom and dingtalk: the markdown of the message. Other types: the whole JSON body. {{title}}, {{message}}, {{level}}, {{category}}, {{hostname}}, {{ip}}, {{name}} and {{count}} are filled in.",
+      "Replaces the built-in text. wecom and dingtalk: the markdown of the message. ntfy: the text of the message. Other types: the whole JSON body. {{title}}, {{message}}, {{level}}, {{category}}, {{hostname}}, {{ip}}, {{name}} and {{count}} are filled in.",
     sentry: "Sentry Connect Url",
     sentryPlaceholder: "Input the connect url of sentry",
     pyroscope: "Pyroscope Connect Url",

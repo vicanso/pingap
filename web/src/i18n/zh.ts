@@ -273,6 +273,8 @@ export default {
     webhookNotificationsPlaceholder: "选择webhook通知类型",
     webhook: "Webhook通知的Http链接",
     webhookPlaceholder: "输入webhook通知的http链接",
+    webhookTips:
+      "ntfy：填 topic 的地址，如 https://ntfy.sh/mytopic。ntfy 的访问令牌放在请求头里：Authorization: Bearer tk_...",
     webhookBatchWindow: "Webhook合并窗口",
     webhookBatchWindowPlaceholder: "输入合并窗口(如10s)",
     webhookBatchWindowTips:
@@ -290,14 +292,14 @@ export default {
     webhookSecret: "Webhook签名密钥",
     webhookSecretPlaceholder: "输入用于签名的密钥",
     webhookSecretTips:
-      "dingtalk：开启了加签的机器人的密钥。wecom 之外的其他类型：对正文签名，放在 X-Pingap-Signature 请求头里。",
+      "dingtalk：开启了加签的机器人的密钥。wecom、ntfy 之外的其他类型：对正文签名，放在 X-Pingap-Signature 请求头里。",
     webhookHeaders: "Webhook请求头",
     webhookHeadersPlaceholder: "Name: value",
     webhookHeadersTips: "Webhook 请求带的请求头，如 Authorization: Bearer token。",
     webhookTemplate: "Webhook消息模板",
     webhookTemplatePlaceholder: "输入消息模板，如 **{{title}}** {{message}}",
     webhookTemplateTips:
-      "替换内置的文本。wecom 和 dingtalk：消息的 markdown。其他类型：整个 JSON 正文。可用 {{title}}、{{message}}、{{level}}、{{category}}、{{hostname}}、{{ip}}、{{name}}、{{count}}。",
+      "替换内置的文本。wecom 和 dingtalk：消息的 markdown。ntfy：消息的正文。其他类型：整个 JSON 正文。可用 {{title}}、{{message}}、{{level}}、{{category}}、{{hostname}}、{{ip}}、{{name}}、{{count}}。",
     sentry: "Sentry的连接串",
     sentryPlaceholder: "输入sentry的连接串",
     pyroscope: "Pyroscope的连接串",

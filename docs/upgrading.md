@@ -47,6 +47,7 @@ Refusals are an error at start and with `-t`, a reload that is not applied
 | `--admin=user@addr` (no password), a malformed `authorizations` entry | The admin ran **without authentication** | Refused |
 | A certificate whose key does not belong to it | Passed validation | Refused by `-t` and by an admin save |
 | `log_compress_algorithm` other than `gzip` or `zstd`, `circuit_break_max_failure_percent` above 100, `auto_restart_check_interval` under one second | Accepted | Refused |
+| `webhook_type = "ntfy"` with a `webhook` that is not the url of a topic (no path, or a last part ntfy takes for no topic: `/hook.php`) | A generic JSON post to that url, like any type 0.15 did not know | Refused: `the url of ntfy names no topic`. Name the type anything else to keep the generic post |
 
 **Keys Pingap does not read** (a typo such as `trusted_proxy`, a key that
 never existed such as `basic.cache_directory` or `tcp_fast_open` on a server)
@@ -173,6 +174,12 @@ entry that is not a trusted proxy, where they used to be the left-most one.
   compressed and removed; 0.15 walked the whole directory.
 - Text access logs escape quotes, backslashes and control characters in what
   a request supplies. Lines without those are unchanged.
+- **Webhook**: `webhook_type = "ntfy"` is a type of its own, for a topic of
+  [ntfy](https://ntfy.sh/). 0.15 read it like any name it did not know, as
+  the generic JSON post to `webhook`. A configuration that happened to use
+  that name now posts the JSON of ntfy, and posts it to the url without its
+  last part (the topic); a `webhook` that is not the url of a topic is
+  [refused](#configuration-that-is-now-refused).
 
 ### Reload, restart and the configuration files
 
