@@ -93,6 +93,10 @@
 - `--sync` 和 admin 的导入，在目标是 etcd 或带 `?separation` 的目录时，会**删除**目标里有而来源里没有的条目。
 - 配置历史每个条目只保留最新的 100 个版本；升级后的第一次保存会删掉更早的。
 - 同一个条目在目录的两个文件里都有定义时报错，并指出是哪两个文件。
+- `--autoreload` 下，只有重启才能生效的变更（server 的 `addr`、`[basic]` 的大部分键）现在会说出来：日志里一条 warning，外加一条 `reload_config_fail` 通知。以前是不声不响地略过。
+- 存储里的配置新增了一个绑不上的监听地址时，重启会被拒绝，运行中的进程继续服务。以前会照常重启，最后没有进程在服务。
+- 改了 `basic.upgrade_sock` 要等 pingap 停止再启动之后才生效。重启时沿用正在使用的路径；以前这样的重启会让服务中断。
+- 没有 `tracing` 的构建会对 `prometheus_metrics`、`otlp_exporter`、`basic.sentry` 给出 warning，没有 `pyro` 的构建会对 `basic.pyroscope` 给出 warning：这些键在这样的构建里和以前一样不起作用。加了 `--strict` 时它们是错误。前三个请使用 `-full` 构建。
 
 ### Admin
 
@@ -106,6 +110,7 @@
 
 - 镜像改为基于 `debian:trixie-slim`（以前是 `ubuntu:24.04`）；entrypoint、命令和路径不变。每个 tag 都有对应的 `-distroless` 版本，里面没有 shell，也没有 entrypoint 脚本。
 - `pingap.service` 由 systemd 自己发 `SIGTERM` 停止。
+- `pingap.service` 改为 `Type=forking`（以前是 `Type=simple`，它不适合用 `-d` 启动的守护进程：pid 文件还没写好时，服务可能被当成已经结束）。已经安装的 unit 不会随新的二进制更新：手工改这一行，或者重新安装 unit（`install.sh` 加 `PINGAP_SERVICE=1`），然后执行 `systemctl daemon-reload`。
 - 构建需要的 Rust 版本（1.96）和两种 TLS 后端都没有变化。
 
 ### 回退

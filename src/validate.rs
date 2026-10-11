@@ -183,15 +183,88 @@ fn refuse_unknown_keys(
     found: &[String],
     strict: bool,
 ) -> Result<(), Box<dyn Error>> {
+    refuse_keys(found, strict, "pingap")
+}
+
+/// The same for the keys only this build does not read.
+fn refuse_build_keys(
+    found: &[String],
+    strict: bool,
+) -> Result<(), Box<dyn Error>> {
+    refuse_keys(found, strict, "this build of pingap")
+}
+
+fn refuse_keys(
+    found: &[String],
+    strict: bool,
+    reader: &str,
+) -> Result<(), Box<dyn Error>> {
     if found.is_empty() || !strict {
         return Ok(());
     }
     Err(format!(
-        "the config has {} that pingap does not read, which --strict does not allow: {}",
+        "the config has {} that {reader} does not read, which --strict does not allow: {}",
         if found.len() == 1 { "a key" } else { "keys" },
         found.join("; ")
     )
     .into())
+}
+
+/// The cargo features this build was compiled with, as far as a key of
+/// the configuration depends on one.
+#[derive(Clone, Copy)]
+struct BuildFeatures {
+    tracing: bool,
+    pyro: bool,
+}
+
+const BUILD_FEATURES: BuildFeatures = BuildFeatures {
+    tracing: cfg!(feature = "tracing"),
+    pyro: cfg!(feature = "pyro"),
+};
+
+/// What `config` sets that a build with `features` has no code for: the
+/// metrics of a server, its traces, sentry and the pyroscope agent. Each
+/// is a key pingap knows, so it is no unknown one, and one this build
+/// does nothing with: a default build given `prometheus_metrics` started,
+/// passed `--test`, and answered 404 where the metrics were expected.
+fn keys_of_other_builds(
+    config: &PingapConfig,
+    features: BuildFeatures,
+) -> Vec<String> {
+    let set = |value: &Option<String>| {
+        value.as_deref().is_some_and(|v| !v.is_empty())
+    };
+    let needs = |owner: &str, key: &str, feature: &str, builds: &str| {
+        format!(
+            "{owner}: \"{key}\" needs a build with the {feature} feature{builds}, this one does nothing with it"
+        )
+    };
+    let full = " (the -full builds)";
+    let mut found = vec![];
+    if !features.tracing && set(&config.basic.sentry) {
+        found.push(needs("basic", "sentry", "tracing", full));
+    }
+    if !features.pyro && set(&config.basic.pyroscope) {
+        found.push(needs("basic", "pyroscope", "pyro", ""));
+    }
+    if !features.tracing {
+        let mut names: Vec<&String> = config.servers.keys().collect();
+        names.sort();
+        for name in names {
+            let server = &config.servers[name];
+            let owner = format!("server({name})");
+            for (key, value) in [
+                ("prometheus_metrics", &server.prometheus_metrics),
+                ("otlp_exporter", &server.otlp_exporter),
+            ] {
+                if set(value) {
+                    found.push(needs(&owner, key, "tracing", full));
+                }
+            }
+        }
+    }
+    found
 }
 
 /// Builds each location the way startup does, so `--test` reports what only
@@ -353,13 +426,52 @@ fn validate_stored_as(
         plugin::validate_plugin_names(&config)?;
         return validate_locations(&config);
     }
+    // Here it is this build that runs what is stored.
+    refuse_build_keys(&keys_of_other_builds(&config, BUILD_FEATURES), strict)?;
     plugin::validate_plugin_references(&config)?;
     validate_servers_tls_for_backend(&config.servers)?;
     pingap_cache::dry_run(|| validate_built(&config))
 }
 
+/// Takes out of `config` what [`keys_of_other_builds`] finds in it, for a
+/// comparison of what this build runs with: such a key is the same
+/// nothing whatever it is set to.
+pub fn clear_keys_of_other_builds(config: &mut PingapConfig) {
+    clear_keys_without(config, BUILD_FEATURES);
+}
+
+fn clear_keys_without(config: &mut PingapConfig, features: BuildFeatures) {
+    if !features.pyro {
+        config.basic.pyroscope = None;
+    }
+    if features.tracing {
+        return;
+    }
+    config.basic.sentry = None;
+    for server in config.servers.values_mut() {
+        server.prometheus_metrics = None;
+        server.otlp_exporter = None;
+    }
+}
+
 /// The hash of the unknown keys that were last reported.
 static UNKNOWN_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
+
+/// And of the keys of other builds.
+static BUILD_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
+
+/// Warns about each of `found`, unless they are what `reported` holds as
+/// told the last time.
+fn warn_once(reported: &AtomicU64, found: &[String]) {
+    let mut hasher = DefaultHasher::new();
+    found.hash(&mut hasher);
+    let hash = if found.is_empty() { 0 } else { hasher.finish() };
+    if reported.swap(hash, Ordering::Relaxed) != hash {
+        for message in found.iter() {
+            warn!(target: LOG_TARGET, "config: {message}");
+        }
+    }
+}
 
 /// Warns about what `document` has that pingap does not read, see
 /// [`PingapTomlConfig::unknown_keys`]. The same findings are reported
@@ -372,15 +484,19 @@ pub fn check_unknown_keys(
     document: &PingapTomlConfig,
 ) -> Result<(), Box<dyn Error>> {
     let found = document.unknown_keys();
-    let mut hasher = DefaultHasher::new();
-    found.hash(&mut hasher);
-    let hash = if found.is_empty() { 0 } else { hasher.finish() };
-    if UNKNOWN_KEYS_REPORTED.swap(hash, Ordering::Relaxed) != hash {
-        for message in found.iter() {
-            warn!(target: LOG_TARGET, "config: {message}");
-        }
-    }
+    warn_once(&UNKNOWN_KEYS_REPORTED, &found);
     refuse_unknown_keys(&found, is_strict())
+}
+
+/// Warns about what `config` sets that this build was compiled without,
+/// see [`keys_of_other_builds`]: once for the same findings, and as an
+/// error with `--strict`, like [`check_unknown_keys`] and at the same
+/// places. A configuration is often shared between builds, which is why
+/// it is no error by itself.
+pub fn check_build_keys(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    let found = keys_of_other_builds(config, BUILD_FEATURES);
+    warn_once(&BUILD_KEYS_REPORTED, &found);
+    refuse_build_keys(&found, is_strict())
 }
 
 /// The answer to a change the admin is about to store, for
@@ -516,6 +632,82 @@ weigth = 10
             validate_stored_as(&document, true).unwrap_err().to_string();
         assert_eq!(true, refused.contains("--strict"), "{refused}");
         assert_eq!(true, validate_stored_as(&toml_config(VALID), true).is_ok());
+    }
+
+    /// Regression: a key that needs a cargo feature was read by no code
+    /// in a build without it, and nothing said so.
+    #[test]
+    fn test_keys_of_other_builds() {
+        let config = toml_config(
+            r#"
+[basic]
+sentry = "https://key@sentry.io/1"
+pyroscope = "http://127.0.0.1:4040"
+
+[servers.web]
+addr = "127.0.0.1:6118"
+prometheus_metrics = "/metrics"
+otlp_exporter = "http://127.0.0.1:4317"
+
+[servers.plain]
+addr = "127.0.0.1:6119"
+prometheus_metrics = ""
+"#,
+        )
+        .to_running_config(MissingReference::Refuse)
+        .unwrap();
+        let found = |tracing: bool, pyro: bool| {
+            keys_of_other_builds(&config, BuildFeatures { tracing, pyro })
+        };
+        // Taken out, there is nothing left to find: the two go by the
+        // same keys.
+        for (tracing, pyro) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let features = BuildFeatures { tracing, pyro };
+            let mut cleared = config.clone();
+            clear_keys_without(&mut cleared, features);
+            assert_eq!(
+                Vec::<String>::new(),
+                keys_of_other_builds(&cleared, features)
+            );
+            // And nothing that the build does read.
+            assert_eq!(
+                tracing,
+                cleared.servers["web"].prometheus_metrics.is_some()
+            );
+            assert_eq!(pyro, cleared.basic.pyroscope.is_some());
+        }
+        // A build that has both reads all of it.
+        assert_eq!(Vec::<String>::new(), found(true, true));
+        assert_eq!(
+            vec![
+                "basic: \"pyroscope\" needs a build with the pyro feature, this one does nothing with it"
+                    .to_string()
+            ],
+            found(true, false)
+        );
+        // The default build. An empty value is no setting.
+        assert_eq!(
+            vec![
+                "basic: \"sentry\" needs a build with the tracing feature (the -full builds), this one does nothing with it",
+                "server(web): \"prometheus_metrics\" needs a build with the tracing feature (the -full builds), this one does nothing with it",
+                "server(web): \"otlp_exporter\" needs a build with the tracing feature (the -full builds), this one does nothing with it",
+            ],
+            found(false, true)
+        );
+        assert_eq!(4, found(false, false).len());
+
+        // A warning, and an error with `--strict`.
+        let found = found(false, false);
+        assert_eq!(true, refuse_build_keys(&found, false).is_ok());
+        let refused = refuse_build_keys(&found, true).unwrap_err().to_string();
+        assert_eq!(
+            true,
+            refused.starts_with("the config has keys that this build of pingap does not read, which --strict does not allow: basic: \"sentry\""),
+            "{refused}"
+        );
+        assert_eq!(true, refuse_build_keys(&[], true).is_ok());
     }
 
     /// What only building a server finds, and that building one for a

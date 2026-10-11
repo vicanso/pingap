@@ -8,17 +8,22 @@
 #   E2E_KEEP=1                  leave the working directory behind
 #   E2E_PORT_BASE=28100         the first of the ports that are used
 #
+#   E2E_SYSTEMD=1               also run `systemd`: installs a unit made
+#                               from pingap.service under /run, and so
+#                               needs systemd and a sudo that asks nothing
+#
 # Needs bash, curl, python3 and openssl. nginx is used where it is
 # installed, as a backend that reads the PROXY protocol. The cases that
 # hand listening sockets from one process to the next (`restart`,
-# `upgrade`) run on Linux only: pingora does not do it anywhere else.
+# `restart_guard`, `upgrade`, `systemd`) run on Linux only: pingora does
+# not do it anywhere else.
 #
 # Every check prints one line, `ok` or `FAIL`; the exit status is the
 # number of checks that failed. A case that fails prints the end of the
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy reload proxy_protocol daemon restart upgrade"
+CASES="samples proxy reload proxy_protocol daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -141,6 +146,7 @@ pingap() {
 cleanup() {
   local pid file
   for pid in "${PIDS[@]:-}"; do stop "$pid"; done
+  [ "${E2E_SYSTEMD:-0}" = 1 ] && systemd_cleanup
   # daemons are nobody's child: by their pid files, and by the directory
   # every one of them was started with
   for file in "$WORK"/*/pingap.pid; do
@@ -256,6 +262,30 @@ case_proxy() {
   expect "the admin serves the script the page names ($asset)" 200 \
     "$(status "http://127.0.0.1:$admin/$asset")"
   expect "the admin API answers" 200 "$(status "http://127.0.0.1:$admin/api/basic")"
+
+  # A key that takes a cargo feature. A build that has it reads the key;
+  # one that has not says so, and refuses it with --strict.
+  local features out strict
+  features=$(body "http://127.0.0.1:$admin/api/basic" |
+    python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["features"]))' 2>/dev/null)
+  mkdir -p "$DIR/m" && cp "$DIR"/c/*.toml "$DIR/m/"
+  printf 'prometheus_metrics = "/metrics"\n' >>"$DIR/m/servers.toml"
+  out=$("$BIN" -t -c "$DIR/m" 2>&1 | plain)
+  strict=$("$BIN" -t --strict -c "$DIR/m" 2>&1 | plain)
+  case " $features " in
+  *" tracing "*)
+    expect_match "prometheus_metrics, in a build with tracing: taken with --strict" \
+      'Validate config success' "$strict"
+    expect "and nothing is said about the build" 0 "$(printf '%s' "$out" | grep -c 'needs a build')"
+    ;;
+  *)
+    expect_match "prometheus_metrics, in a build without tracing: said" \
+      'server\(main\): "prometheus_metrics" needs a build with the tracing feature' "$out"
+    expect_match "as a warning: the configuration validates" 'Validate config success' "$out"
+    expect_match "and as an error with --strict" 'this build of pingap does not read' "$strict"
+    expect "which does not validate" 0 "$(printf '%s' "$strict" | grep -c 'Validate config success')"
+    ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -263,6 +293,7 @@ case_proxy() {
 # the process that runs, and one that is no configuration is left out.
 case_reload() {
   local proxy=$((PORT_BASE + 20)) up1=$((PORT_BASE + 21)) up2=$((PORT_BASE + 22))
+  local moved=$((PORT_BASE + 23))
   backend $up1 b1
   backend $up2 b2
   basic_conf "$DIR/c"
@@ -290,6 +321,34 @@ case_reload() {
   expect "by the same process" yes "$(alive "$pid" && echo yes || echo no)"
   expect_match "and said in the log, which has no level of its own any more" '^[1-9]' \
     "$(plain <"$DIR/pingap.log" | sed -n '/reload log level/,$p' | grep -c 'reload location success')"
+
+  # A change only a restart applies, in a process that never restarts by
+  # itself: it says so, and goes on as it was started. The files are put
+  # in place whole: a file read while it is written is another change.
+  put() { # <file of the configuration> <printf arguments>...
+    local file=$1
+    shift
+    # shellcheck disable=SC2059
+    printf "$@" >"$DIR/put.next" && mv -f "$DIR/put.next" "$DIR/c/$file"
+  }
+  put servers.toml '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["one", "two"]\n' $moved
+  wait_for 10 grep -q 'takes a restart to apply' "$DIR/pingap.log"
+  expect_match "a new addr of a server: the log says it takes a restart, and what" \
+    "takes a restart to apply.*127.0.0.1:$moved" "$(plain <"$DIR/pingap.log" | grep 'takes a restart to apply')"
+  expect "the address it was started with is still served" 200 \
+    "$(status -H 'Host: one.test' "http://127.0.0.1:$proxy/")"
+  expect "and the new one is not listened on" 000 "$(status "http://127.0.0.1:$moved/")"
+  # Another change that leaves the same waiting: not said a second time.
+  put locations.toml '%s\n[locations.four]\nupstream = "b1"\nhost = "four.test"\npath = "/"\n' \
+    "$(cat "$DIR/c/locations.toml")"
+  put servers.toml '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["one", "two", "four"]\n' $moved
+  wait_for 15 status_is 200 -H 'Host: four.test' "http://127.0.0.1:$proxy/"
+  expect "what a reload does apply is applied all the same" 200 \
+    "$(status -H 'Host: four.test' "http://127.0.0.1:$proxy/")"
+  expect "and the wait for a restart is said once" 1 \
+    "$(plain <"$DIR/pingap.log" | grep -c 'takes a restart to apply')"
+  put servers.toml '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["one", "two", "four"]\n' $proxy
+  sleep 2
 
   # A change that is no configuration: what runs stays as it is.
   printf '\n[locations.three]\nupstream = "nowhere"\nhost = "three.test"\npath = "/"\n' >>"$DIR/c/locations.toml"
@@ -665,6 +724,169 @@ case_restart() {
 }
 
 # ---------------------------------------------------------------------------
+# restart_guard: what the stored configuration asks for that a replacement
+# could not have does not cost the process that runs. A new address that
+# is taken is found before anything is started, and a changed upgrade
+# socket is not what the two processes meet on.
+case_restart_guard() {
+  if [ "$LINUX" != 1 ]; then
+    skip "the hand-over of listening sockets is Linux only"
+    return
+  fi
+  local proxy=$((PORT_BASE + 70)) admin=$((PORT_BASE + 71)) up=$((PORT_BASE + 72))
+  local taken=$((PORT_BASE + 73)) first out new
+  daemon_setup $proxy $up
+  # Without --autorestart: the restarts here are the ones asked for.
+  daemon_start $admin
+  wait_for 10 test -s "$DIR/pingap.pid"
+  wait_port $proxy || fail "the daemon listens on $proxy"
+  wait_port $admin || fail "the admin listens on $admin"
+  first=$(daemon_pid)
+
+  # Another program has the port a new server is given.
+  backend $taken squatter
+  cp "$DIR/c/servers.toml" "$DIR/servers.keep"
+  printf '\n[servers.taken]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $taken >>"$DIR/c/servers.toml"
+  out=$(restart_by_admin $admin)
+  expect_match "a new address another program listens on: the restart is refused" \
+    "127.0.0.1:$taken.*cannot be bound here.* 400\$" "$out"
+  expect "nothing was started for it" 0 \
+    "$(plain <"$DIR/pingap.log" | grep -c 'new pingap process spawned')"
+  sleep 6
+  expect "and the process that ran still serves" "$first 200" \
+    "$(serving_pid $admin) $(status "http://127.0.0.1:$proxy/")"
+  cp "$DIR/servers.keep" "$DIR/c/servers.toml"
+
+  # basic.upgrade_sock is changed while the process runs. The replacement
+  # waits on the path the running process sends to.
+  sed -i.orig "s#^upgrade_sock = .*#upgrade_sock = \"$DIR/other_upgrade.sock\"#" "$DIR/c/basic.toml"
+  rm -f "$DIR/c/basic.toml.orig"
+  hammer "http://127.0.0.1:$proxy/"
+  out=$(restart_by_admin $admin)
+  expect_match "a changed upgrade_sock: the restart is taken" ' 204$' "$out"
+  wait_for 30 daemon_pid_is_not "$first"
+  new=$(daemon_pid)
+  wait_for 30 gone "$first"
+  expect "the process before it has ended" yes "$(gone "$first" && echo yes || echo no)"
+  expect "and the new one serves" "$new" "$(serving_pid $admin)"
+  expect_match "which says that the socket in use is kept" \
+    'basic.upgrade_sock is not the one the running process hands its sockets over on' \
+    "$(plain <"$DIR/pingap.log")"
+  # And from that process to the next, which is told the same path.
+  first=$new
+  out=$(restart_by_admin $admin)
+  expect_match "the restart after that one is taken as well" ' 204$' "$out"
+  wait_for 30 daemon_pid_is_not "$first"
+  new=$(daemon_pid)
+  wait_for 30 gone "$first"
+  expect "and ends with the next process serving" "$new" "$(serving_pid $admin)"
+  sleep 1
+  hammer_stop
+  expect "no request failed during the two hand-overs ($HAMMERED made)" 0 "$HAMMER_FAILED"
+  expect "one process is left" 1 "$(pgrep -f "$DIR/c" | wc -l | tr -d ' ')"
+}
+
+# ---------------------------------------------------------------------------
+# systemd: the unit of the repository, with its paths pointed at this
+# case, starts the daemon, follows it through a restart and stops it.
+UNIT=pingap-e2e
+case_systemd() {
+  if [ "${E2E_SYSTEMD:-0}" != 1 ]; then
+    skip "not asked for: E2E_SYSTEMD=1 installs a unit, which takes systemd and sudo"
+    return
+  fi
+  if [ "$LINUX" != 1 ] || [ ! -d /run/systemd/system ] || ! sudo -n true 2>/dev/null; then
+    skip "no systemd here, or no sudo that asks nothing"
+    return
+  fi
+  local proxy=$((PORT_BASE + 80)) admin=$((PORT_BASE + 81)) up=$((PORT_BASE + 82))
+  local pid_file=/run/$UNIT.pid first new out started
+  unit() { systemctl show -p "$1" --value $UNIT; }
+  unit_pid_is_not() { [ "$(unit MainPID)" != "$1" ] && [ "$(unit MainPID)" != 0 ]; }
+  # The processes are root's: asked as anybody else, every one is gone.
+  root_gone() { ! sudo kill -0 "$1" 2>/dev/null; }
+
+  daemon_setup $proxy $up
+  # Where a service keeps them, and where root is the one who writes.
+  sed -i.orig -e "s#^pid_file = .*#pid_file = \"$pid_file\"#" \
+    -e "s#^upgrade_sock = .*#upgrade_sock = \"/run/${UNIT}_upgrade.sock\"#" "$DIR/c/basic.toml"
+  rm -f "$DIR/c/basic.toml.orig"
+  # The unit as it is installed, with the paths of this case in it.
+  sed -e "s#/usr/sbin/pingap#$DIR/pingap#g" \
+    -e "s#/etc/pingap/conf?separation#$DIR/c#g" \
+    -e "s#--log=/var/log/pingap#--log=$DIR/pingap.log?rolling=never#" \
+    -e "s#^PIDFile=.*#PIDFile=$pid_file#" "$ROOT/pingap.service" >"$DIR/$UNIT.service"
+  expect "the unit is one of a daemon that forks" "Type=forking" "$(grep '^Type=' "$DIR/$UNIT.service")"
+  sudo mkdir -p "/run/systemd/system/$UNIT.service.d"
+  sudo cp "$DIR/$UNIT.service" "/run/systemd/system/$UNIT.service"
+  printf '[Service]\nEnvironment=PINGAP_ADMIN_ADDR=127.0.0.1:%s?token=ci:%s\n' $admin "$TOKEN_SHA" |
+    sudo tee "/run/systemd/system/$UNIT.service.d/admin.conf" >/dev/null
+  sudo systemctl daemon-reload
+
+  sudo systemctl start $UNIT
+  expect "systemctl start comes back with 0" 0 $?
+  expect "the unit is active" active "$(systemctl is-active $UNIT)"
+  wait_port $proxy || fail "the service listens on $proxy"
+  wait_port $admin || fail "the admin listens on $admin"
+  first=$(sudo cat $pid_file 2>/dev/null)
+  expect "its main process is the one of the pid file" "$first" "$(unit MainPID)"
+  expect "which is the one that serves" "$first" "$(serving_pid $admin)"
+  expect "a request through the service" 200 "$(status "http://127.0.0.1:$proxy/")"
+
+  # A restart of pingap's own: the unit goes on with the new process.
+  hammer "http://127.0.0.1:$proxy/"
+  out=$(restart_by_admin $admin)
+  expect_match "a restart through the admin is taken" ' 204$' "$out"
+  wait_for 30 unit_pid_is_not "$first"
+  wait_for 30 root_gone "$first"
+  expect "the process before it has ended" yes "$(root_gone "$first" && echo yes || echo no)"
+  new=$(sudo cat $pid_file 2>/dev/null)
+  expect "the pid file names another process" yes \
+    "$([ -n "$new" ] && [ "$new" != "$first" ] && echo yes || echo no)"
+  expect "which systemd takes for the main process" "$new" "$(unit MainPID)"
+  expect "of a unit that is still active" active "$(systemctl is-active $UNIT)"
+  expect "and it is the one that serves" "$new" "$(serving_pid $admin)"
+  sleep 1
+  hammer_stop
+  expect "no request failed during the hand-over ($HAMMERED made)" 0 "$HAMMER_FAILED"
+  # Past the time the first process took to end: nothing of the unit is
+  # killed along with it.
+  sleep 6
+  expect "the unit is active after the old process is long gone" "active 200" \
+    "$(systemctl is-active $UNIT) $(status "http://127.0.0.1:$proxy/")"
+
+  started=$SECONDS
+  sudo systemctl stop $UNIT
+  expect "systemctl stop comes back with 0" 0 $?
+  expect_match "within the time the unit gives it ($((SECONDS - started))s)" '^yes$' \
+    "$([ $((SECONDS - started)) -le 15 ] && echo yes || echo no)"
+  expect "the unit is inactive, and did not fail" "inactive success" \
+    "$(systemctl is-active $UNIT) $(unit Result)"
+  expect "nothing listens any more" 000 "$(status "http://127.0.0.1:$proxy/")"
+  expect "and no process of it is left" 0 "$(pgrep -f "$DIR/c" | wc -l | tr -d ' ')"
+
+  if [ "$FAILED" -gt "${CASE_FAILED_BEFORE:-0}" ]; then
+    echo "---- systemctl status $UNIT"
+    systemctl status $UNIT --no-pager -l 2>&1 | tail -30
+    echo "---- journalctl -u $UNIT"
+    sudo journalctl -u $UNIT --no-pager -n 40 2>&1
+  fi
+  systemd_cleanup
+}
+
+systemd_cleanup() {
+  [ -e "/run/systemd/system/$UNIT.service" ] || return 0
+  sudo systemctl stop $UNIT 2>/dev/null
+  sudo rm -rf "/run/systemd/system/$UNIT.service" "/run/systemd/system/$UNIT.service.d" \
+    "/run/$UNIT.pid" "/run/$UNIT.pid.old" "/run/${UNIT}_upgrade.sock"
+  sudo systemctl daemon-reload
+  sudo systemctl reset-failed $UNIT 2>/dev/null
+  # what root wrote into the directory of the case
+  sudo chown -R "$(id -u)" "$WORK" 2>/dev/null
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # upgrade: a second process started with -u takes the sockets over when
 # the first is told to quit.
 case_upgrade() {
@@ -711,6 +933,7 @@ main() {
     PIDS=()
     LOGS=()
     before=$FAILED
+    CASE_FAILED_BEFORE=$FAILED
     if ! declare -F "case_$name" >/dev/null; then
       continue
     fi

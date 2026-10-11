@@ -260,7 +260,8 @@ export default {
     pidFilePlaceholder: "Input pid file path(e.g. /opt/pingap/pingap.pid)",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
-    upgradeSockTips: "Unix socket used for zero-downtime hot upgrade.",
+    upgradeSockTips:
+      "Unix socket used for zero-downtime hot upgrade. A change applies after pingap is stopped and started: a restart keeps the one in use.",
     errorLog: "Error Log",
     errorLogPlaceholder:
       "Input error log file path(e.g. /var/log/pingap_error.log)",

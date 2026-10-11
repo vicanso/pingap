@@ -42,6 +42,12 @@ config: location(api): unknown key "client_max_body_sizes", did you mean "client
 
 加上 `--strict`（或把 `PINGAP_STRICT` 设成任意非空值）后，上面每一处都变成错误：`pingap -t --strict` 以非零状态退出并列出全部问题，启动会失败，重载时运行中的配置保持不变并像其他重载失败一样上报，admin API 会拒绝引入未知键的修改。重启时这个开关会传给接替的进程。建议 CI 里的 `-t` 总是带上它：写错的键应该让流水线停下来，而不是被忽略过去。
 
+需要某个 cargo feature、而当前二进制编译时没有带上它的键，也按同样的方式、在同样的位置报告，加 `--strict` 时同样是错误：server 的 `prometheus_metrics`、`otlp_exporter` 和 `basic.sentry` 需要 `tracing`（`-full` 构建里有），`basic.pyroscope` 需要 `pyro`。这类键拼写没有问题，但在这个二进制里不起任何作用：默认构建配了 `prometheus_metrics`，访问指标路径得到的是 `404`。
+
+```
+config: server(web): "prometheus_metrics" needs a build with the tracing feature (the -full builds), this one does nothing with it
+```
+
 ## 存储后端
 
 由 `-c` / `PINGAP_CONF` 的值选择后端：
@@ -294,7 +300,12 @@ pingap -c /opt/pingap/conf --diff /tmp/new-conf       # what would change
 - **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。监听使用独立的连接；连接中断或被服务端结束后会重新建立，etcd 持续不可达时重试间隔从 500ms 逐步增加到一分钟，恢复后立即再比较一次配置。不论监听是否正常，存储里的配置每隔 `basic.auto_restart_check_interval` 也会重新读取一次。监听的只是前缀之下的键：`/pingap` 不会再因为 `/pingap2` 或者自己的 `/pingap-history` 有写入而被唤醒。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。热更新对“需要构建的部分”要么全部生效要么都不生效：upstream、location 或插件有变化时，先像 `pingap -t` 那样把它们全部构建一遍（不在工作线程上，也不影响正在运行的对象），失败时（正则编译不过、插件选项类型不对、地址解析不了）运行中的配置保持不变。失败只报告一次（日志和 `reload_config_fail` 通知），同一份文档每分钟重试一次，以便挡路的因素自己消失时（比如当时解析不了的域名）能恢复。以前各分类是依次替换的，其中一个失败时其他的已经生效，例如 location 指向了一个并不存在的 upstream。如果某个分类在替换过程中仍然失败，它在运行中的配置（以及 admin 展示的配置）里保持原样，server 的路由也不会用构建失败的 location 重建，文档下一次变化时会重试。被删除的 upstream 会保留到指向它的 location 换掉之后。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。以文件路径给出的证书按同样的周期检查：配置文档没有变化时，会对这类证书的文件计算 hash，文件被替换（例如 certbot 续期）的证书会重新加载。这和其他重载一样需要 `--autoreload` 或 `--autorestart`。配置里同时有 ACME 证书时同样有效：只会改动来自文件的证书。重载改了什么，会以两份配置的差异写入日志并发送到 webhook。差异里的凭据会替换成校验值（`secret = "crc32:8D9A1B2C"`），这样值变了仍然能看出来：包括 `secret`、`password`、`token`、`key`、`keys`、`authorizations` 这类键的值，任何 URL 里的用户名和密码，带密钥的 URL（`webhook`、`sentry`、`*_url`）的查询串或路径，`Authorization` 这类请求头的值，以及 storage 里保存的内容。插件在 debug 级别打印的配置同样处理。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+两者接入同一重载句柄；区别仅在投递机制。每次轮询先读取原始文档（`ConfigManager::load_all_raw`）并计算 hash；只有文档相对上一轮有变化，或上一轮只允许热更新而这一轮允许重启时，才会解析、校验（校验会解析每个静态 upstream 的地址）并 diff。用来接替的新进程如果加载不了配置，或者插件创建失败，会直接退出，原进程继续服务，带不带 `--admin` 都一样。热更新对“需要构建的部分”要么全部生效要么都不生效：upstream、location 或插件有变化时，先像 `pingap -t` 那样把它们全部构建一遍（不在工作线程上，也不影响正在运行的对象），失败时（正则编译不过、插件选项类型不对、地址解析不了）运行中的配置保持不变。失败只报告一次（日志和 `reload_config_fail` 通知），同一份文档每分钟重试一次，以便挡路的因素自己消失时（比如当时解析不了的域名）能恢复。以前各分类是依次替换的，其中一个失败时其他的已经生效，例如 location 指向了一个并不存在的 upstream。如果某个分类在替换过程中仍然失败，它在运行中的配置（以及 admin 展示的配置）里保持原样，server 的路由也不会用构建失败的 location 重建，文档下一次变化时会重试。被删除的 upstream 会保留到指向它的 location 换掉之后。只涉及 `storages` 的修改不会触发重启：存储条目本身不产生任何效果，其他条目通过 include 引用它时，变化体现在引用它的条目上。以文件路径给出的证书按同样的周期检查：配置文档没有变化时，会对这类证书的文件计算 hash，文件被替换（例如 certbot 续期）的证书会重新加载。这和其他重载一样需要 `--autoreload` 或 `--autorestart`。配置里同时有 ACME 证书时同样有效：只会改动来自文件的证书。重载改了什么，会以两份配置的差异写入日志并发送到 webhook。差异里的凭据会替换成校验值（`secret = "crc32:8D9A1B2C"`），这样值变了仍然能看出来：包括 `secret`、`password`、`token`、`key`、`keys`、`authorizations` 这类键的值，任何 URL 里的用户名和密码，带密钥的 URL（`webhook`、`sentry`、`*_url`）的查询串或路径，`Authorization` 这类请求头的值，以及 storage 里保存的内容。插件在 debug 级别打印的配置同样处理。`--autoreload` 就地交换配置，适合容器。location 的修改同时对路由生效：只要 location 有变化，server 用来匹配的域名和路径索引就会重建。热更新应用不了的变更（server 的 `addr`、线程数、TLS 设置，新增的 server，`[basic]` 的大部分键）要等重启才生效；不会自己重启的进程会把这件事说出来：日志里一条 warning，外加一条 `reload_config_fail` 通知，列出哪些变更在等重启，同一组变更只说一次。在重启之前，进程按启动时的配置继续运行。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
+
+有两件事在拉起新进程之前就要确定，因为新进程要到报告就绪之后才会碰到它们，那时旧进程已经在退出的路上：
+
+- **存储里的配置新增的监听地址。** 把它要监听的地址和运行中的进程已有的地址做比较，新增的地址在旧进程里按对应 server 的选项试绑一次，绑上就立刻放开。绑不上（端口被别的程序占用、地址不是本机的、当前用户无权绑定）时拒绝这次重启并给出原因（日志、`restart_fail` 通知，或 admin 接口的响应），运行中的进程继续服务。只试一次，而且这只是事先检查，不是预留。有一种情况不做判断：冲突发生在运行中的进程这次重启要放弃的地址上——端口相同，地址相同（或者其中一方是全部地址）。那可能是同一个 socket 的另一种写法（比如把 `0.0.0.0:80` 改成 `127.0.0.1:80`），新进程绑定时它已经被释放；如果那里同时还有别的程序占着地址，这种情况发现不了。
+- **`basic.upgrade_sock`。** 新旧进程在这个路径上交接，而旧进程只会往它启动时的路径发送。所以重启时会把正在使用的路径告诉新进程（环境变量 `PINGAP_UPGRADE_SOCK`），配置里写的是另一个路径时新进程会打一条 warning；改过的 `upgrade_sock` 要等 pingap 停止再启动之后才生效。手工升级（在 shell 里执行 `pingap -d -u`）得不到这个信息，按配置里的路径走。改过 `upgrade_sock` 之后，手工升级之前要先停止再启动 pingap，或者把正在使用的路径交给新进程（运行中的进程启动时会把它写进日志：`server configuration ... upgrade_sock=`）：`PINGAP_UPGRADE_SOCK=/正在使用的路径 pingap -d -u ...`。
 
 ## Includes
 

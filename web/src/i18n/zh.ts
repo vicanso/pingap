@@ -245,7 +245,8 @@ export default {
     pidFilePlaceholder: "输入pid文件路径(如/opt/pingap/pingap.pid)",
     upgradeSock: "更新配置使用的sock",
     upgradeSockPlaceholder: "输入后台服务更新配置使用的sock",
-    upgradeSockTips: "用于零停机热升级的 Unix socket。",
+    upgradeSockTips:
+      "用于零停机热升级的 Unix socket。修改后要停止再启动 pingap 才生效：重启时沿用正在使用的路径。",
     errorLog: "错误日志文件",
     errorLogPlaceholder: "输入错误日志文件路径(如/var/log/pingap_error.log)",
     errorLogTips:

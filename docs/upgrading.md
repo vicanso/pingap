@@ -188,6 +188,18 @@ entry that is not a trusted proxy, where they used to be the left-most one.
   first save after the upgrade removes older ones.
 - An entry that is defined in two files of a directory is an error that
   names both.
+- With `--autoreload`, a change that only a restart applies (a server's
+  `addr`, most of `[basic]`) is said: a warning in the log and a
+  `reload_config_fail` notification. It used to be passed over in silence.
+- A restart is refused, and the running process goes on, when the stored
+  configuration listens on a new address that cannot be bound. It used to go
+  ahead and end with no process serving.
+- A changed `basic.upgrade_sock` applies after pingap is stopped and started.
+  A restart keeps the path in use, where it used to take the service down.
+- A build without `tracing` warns about `prometheus_metrics`, `otlp_exporter`
+  and `basic.sentry`, and one without `pyro` about `basic.pyroscope`: it does
+  nothing with them, as before. With `--strict` they are an error. Use a
+  `-full` build for the first three.
 
 ### Admin
 
@@ -212,6 +224,11 @@ entry that is not a trusted proxy, where they used to be the left-most one.
   entrypoint, command and paths are the same. Every tag has a `-distroless`
   twin, which has no shell and no entrypoint script.
 - `pingap.service` is stopped by systemd's own `SIGTERM`.
+- `pingap.service` is `Type=forking` (it was `Type=simple`, which does not
+  fit a daemon started with `-d`: the service could be taken for ended while
+  the pid file was not written yet). A unit that was installed earlier is not
+  rewritten by a new binary: change the line, or install the unit again
+  (`PINGAP_SERVICE=1` with `install.sh`), then `systemctl daemon-reload`.
 - The Rust toolchain needed to build (1.96) and both TLS backends are
   unchanged.
 

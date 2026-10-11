@@ -78,7 +78,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::System;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod certificates;
 mod config_manager;
@@ -190,8 +190,9 @@ struct Args {
     /// Enable automatic config reload capability
     #[arg(long)]
     autoreload: bool,
-    /// Fail on config keys that are not known, instead of warning: at
-    /// start, with --test, and for a reload
+    /// Fail on config keys that are not known, or that this build has no
+    /// feature for, instead of warning: at start, with --test, and for a
+    /// reload
     #[arg(long)]
     strict: bool,
     /// Sync configuration to specified storage location
@@ -223,23 +224,109 @@ struct Args {
 
 const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
 
-/// pingora's upgrade socket for this deployment: `basic.upgrade_sock`, or the
-/// path pingap has always defaulted to.
-fn upgrade_sock_path(basic_conf: &pingap_config::BasicConf) -> String {
+/// pingora's upgrade socket as the configuration has it:
+/// `basic.upgrade_sock`, or the path pingap has always defaulted to.
+fn configured_upgrade_sock(basic_conf: &pingap_config::BasicConf) -> String {
     basic_conf
         .upgrade_sock
         .clone()
         .unwrap_or_else(|| DEFAULT_UPGRADE_SOCK.to_string())
 }
 
+/// pingora's upgrade socket for this process: the configured one, unless
+/// this process takes over from the one that started it (`-u`, with
+/// `handed_over` the path that one sends its sockets to).
+///
+/// The two halves of a hand-over meet on that path, and the running
+/// process sends to the one it was started with. A replacement that went
+/// by a `basic.upgrade_sock` changed since then waited on another path:
+/// it had reported ready by then, the running process had signalled
+/// itself, and both were gone. So the path in use is kept from one
+/// process to its replacement, and a changed one applies when pingap is
+/// stopped and started.
+fn upgrade_sock_path(
+    configured: String,
+    handed_over: Option<String>,
+    upgrade: bool,
+) -> String {
+    handed_over
+        .filter(|path| upgrade && !path.is_empty())
+        .unwrap_or(configured)
+}
+
+/// Every server a process on `config` listens with: the ones of the
+/// configuration, the admin where it has an address of its own, and the
+/// one that is added on port 80 for the http-01 challenge when no other
+/// server is there. In one place, because a restart asks it of the stored
+/// configuration before it starts a replacement (`process::restart_now`).
+fn servers_to_run(
+    config: &PingapConfig,
+    admin_addr: Option<&str>,
+) -> Result<Vec<ServerConf>, Box<dyn Error>> {
+    let mut servers: Vec<ServerConf> = parse_from_conf(config.clone());
+    if let Some(addr) = admin_addr {
+        let (admin, _, _) = plugin::parse_admin_plugin(addr)?;
+        if let Some(server) =
+            servers.iter_mut().find(|item| item.addr == admin.addr)
+        {
+            server.admin = true;
+        } else {
+            servers.push(admin);
+        }
+    }
+    let http_challenge = config
+        .certificates
+        .values()
+        .any(|certificate| certificate.is_acme_http_challenge());
+    // no server listen 80 and lets encrypt domains is not empty
+    if http_challenge
+        && !servers.iter().any(|item| listens_on_port_80(&item.addr))
+    {
+        servers.push(ServerConf {
+            name: "lets encrypt".to_string(),
+            addr: "0.0.0.0:80".to_string(),
+            ..Default::default()
+        });
+    }
+    Ok(servers)
+}
+
+/// The addresses `servers` listen on, each as pingora is given it and
+/// with what its socket is bound with.
+fn listen_addresses(servers: &[ServerConf]) -> Vec<process::ListenAddress> {
+    servers
+        .iter()
+        .flat_map(|server| {
+            server
+                .addr
+                .split(',')
+                .map(str::trim)
+                .filter(|addr| !addr.is_empty())
+                .map(|addr| process::ListenAddress {
+                    addr: addr.to_string(),
+                    reuse_port: server.reuse_port,
+                })
+        })
+        .collect()
+}
+
+/// What a process on `config` would listen on, for a restart to go by.
+fn planned_listen_addresses(
+    config: &PingapConfig,
+) -> Result<Vec<process::ListenAddress>, Box<dyn Error>> {
+    let servers = servers_to_run(config, get_admin_addr().as_deref())?;
+    Ok(listen_addresses(&servers))
+}
+
 fn new_server_config(
     args: &Args,
     conf: &PingapConfig,
+    upgrade_sock: &str,
 ) -> server::configuration::ServerConf {
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: basic_conf.get_pid_file(),
-        upgrade_sock: upgrade_sock_path(basic_conf),
+        upgrade_sock: upgrade_sock.to_string(),
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
         daemon: args.daemon,
@@ -939,6 +1026,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // does: the document is valid, and says something pingap does not read.
     validate::set_strict(args.strict);
     validate::check_unknown_keys(&config_as_stored)?;
+    validate::check_build_keys(&config)?;
 
     // TODO a better way
     // since the cache will be initialized in validate function
@@ -976,6 +1064,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         .auto_restart_check_interval
         .unwrap_or(Duration::from_secs(90));
 
+    let configured_sock = configured_upgrade_sock(basic_conf);
+    let upgrade_sock = upgrade_sock_path(
+        configured_sock.clone(),
+        process::handed_over_upgrade_sock(),
+        args.upgrade,
+    );
+    if upgrade_sock != configured_sock {
+        warn!(
+            target: LOG_TARGET,
+            configured = configured_sock,
+            in_use = upgrade_sock,
+            "basic.upgrade_sock is not the one the running process hands its sockets over on, which is kept: stop and start pingap to apply the new one"
+        );
+    }
+
     #[cfg(feature = "perf")]
     info!(target: LOG_TARGET, "Enable feature perf");
 
@@ -993,10 +1096,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         // The readiness channel for the hand-over: a unix socket next to the
         // upgrade socket, plus the pid file both generations share so that a
         // daemon dying before it reports is noticed.
-        cmd.ready_sock = std::path::PathBuf::from(format!(
-            "{}.ready",
-            upgrade_sock_path(&config.basic)
-        ));
+        cmd.ready_sock =
+            std::path::PathBuf::from(format!("{upgrade_sock}.ready"));
+        // And the upgrade socket itself, which the replacement is to wait
+        // on whatever the configuration says by then.
+        cmd.upgrade_sock.clone_from(&upgrade_sock);
         cmd.ready_timeout = config
             .basic
             .restart_ready_timeout
@@ -1024,7 +1128,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         test: false,
         conf: None,
     };
-    let server_conf = new_server_config(&args, &config);
+    let server_conf = new_server_config(&args, &config, &upgrade_sock);
     // The configuration has to be handed to the constructor, not assigned to
     // `my_server.configuration` afterwards. `Server::new` snapshots the
     // configuration it builds into a `Bootstrap`, and `Bootstrap` is what the
@@ -1122,7 +1226,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         error!(target: LOG_TARGET, error, "init plugins fail",);
     }
 
-    let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
+    let server_conf_list =
+        servers_to_run(&config, get_admin_addr().as_deref())?;
+    // What a restart compares the stored configuration with.
+    process::set_listen_addresses(
+        listen_addresses(&server_conf_list),
+        planned_listen_addresses,
+    );
 
     if let Some(addr) = &get_admin_addr() {
         let (server_conf, _, plugin_conf) = plugin::parse_admin_plugin(addr)?;
@@ -1140,22 +1250,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             &plugin_conf,
             &server_conf.addr,
         );
-        if let Some(server) = server_conf_list
-            .iter_mut()
-            .find(|item| item.addr == server_conf.addr)
-        {
-            server.admin = true;
-        } else {
-            server_conf_list.push(server_conf);
-        }
     }
 
-    let mut exits_80_server = false;
+    // One of them listens on port 80, where a CA asks for the answer to
+    // an http-01 challenge: a server of the configuration, or the one
+    // that was added for it.
+    let exits_80_server = server_conf_list
+        .iter()
+        .any(|item| listens_on_port_80(&item.addr));
+    #[cfg(feature = "tracing")]
     for serve_conf in server_conf_list.iter() {
-        if listens_on_port_80(&serve_conf.addr) {
-            exits_80_server = true;
-        }
-        #[cfg(feature = "tracing")]
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
             // What `--test` refuses is not started with: read as if it
@@ -1206,10 +1310,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_background_service.add_task("storage_clear", task);
     }
 
-    let enabled_http_challenge = certificates
-        .values()
-        .any(|certificate| certificate.is_acme_http_challenge());
-
     let acme_enabled = std::env::var("PINGAP_DISABLE_ACME")
         .unwrap_or_default()
         .is_empty();
@@ -1236,22 +1336,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         error!(target: LOG_TARGET, error = errors, "parse certificate fail");
     }
 
-    // no server listen 80 and lets encrypt domains is not empty
-    if !exits_80_server && enabled_http_challenge {
-        server_conf_list.push(ServerConf {
-            name: "lets encrypt".to_string(),
-            addr: "0.0.0.0:80".to_string(),
-            ..Default::default()
-        });
-    }
     // What a reload goes by when it is given a certificate of ACME:
     // whether the service above is there to hand it to, and whether a
-    // server is there for the http-01 challenge - it cannot add the one
-    // above.
-    process::set_acme_here(
-        acme_enabled,
-        exits_80_server || enabled_http_challenge,
-    );
+    // server is there for the http-01 challenge - it cannot add one.
+    process::set_acme_here(acme_enabled, exits_80_server);
 
     for server_conf in server_conf_list {
         let listen_80_port = listens_on_port_80(&server_conf.addr);
@@ -1415,6 +1503,91 @@ fn main() {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// Regression: a `basic.upgrade_sock` changed while pingap ran took
+    /// the service down at the next restart.
+    #[test]
+    fn test_upgrade_sock_path() {
+        let path = |handed_over: Option<&str>, upgrade: bool| {
+            upgrade_sock_path(
+                "/run/new.sock".to_string(),
+                handed_over.map(str::to_string),
+                upgrade,
+            )
+        };
+        // A start by itself goes by the configuration.
+        assert_eq!("/run/new.sock", path(None, false));
+        assert_eq!("/run/new.sock", path(None, true));
+        // A replacement waits where the running process sends to.
+        assert_eq!("/run/old.sock", path(Some("/run/old.sock"), true));
+        // Not a process that takes over from nobody, with the variable
+        // left in its environment.
+        assert_eq!("/run/new.sock", path(Some("/run/old.sock"), false));
+        assert_eq!("/run/new.sock", path(Some(""), true));
+    }
+
+    /// The servers a process listens with, which a restart compares with
+    /// the ones of the stored configuration.
+    #[test]
+    fn test_servers_to_run() {
+        let config = |text: &str| {
+            pingap_config::PingapTomlConfig::from_toml(text)
+                .unwrap()
+                .to_running_config(pingap_config::MissingReference::Refuse)
+                .unwrap()
+        };
+        let addrs = |text: &str, admin: Option<&str>| {
+            let mut addrs: Vec<String> = listen_addresses(
+                &servers_to_run(&config(text), admin).unwrap(),
+            )
+            .into_iter()
+            .map(|item| format!("{}/{:?}", item.addr, item.reuse_port))
+            .collect();
+            addrs.sort();
+            addrs
+        };
+        let servers = r#"
+[servers.web]
+addr = "127.0.0.1:6118, [::1]:6118"
+reuse_port = true
+
+[servers.api]
+addr = "127.0.0.1:6119"
+"#;
+        assert_eq!(
+            vec![
+                "127.0.0.1:6118/Some(true)",
+                "127.0.0.1:6119/None",
+                "[::1]:6118/Some(true)",
+            ],
+            addrs(servers, None)
+        );
+        // The admin has an address of its own, or shares a server's.
+        assert_eq!(4, addrs(servers, Some("127.0.0.1:3018")).len());
+        assert_eq!(3, addrs(servers, Some("127.0.0.1:6119")).len());
+
+        // A certificate ordered over http-01 adds a server on port 80,
+        // unless one is there.
+        let acme = r#"
+[certificates.site]
+acme = "lets_encrypt"
+domains = "example.com"
+"#;
+        assert_eq!(
+            true,
+            addrs(&format!("{servers}{acme}"), None)
+                .contains(&"0.0.0.0:80/None".to_string())
+        );
+        let on_80 = r#"
+[servers.http]
+addr = "127.0.0.1:80"
+"#;
+        assert_eq!(
+            false,
+            addrs(&format!("{servers}{on_80}{acme}"), None)
+                .contains(&"0.0.0.0:80/None".to_string())
+        );
+    }
 
     #[test]
     fn test_listens_on_port_80() {

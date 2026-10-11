@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::webhook::send_notification;
+use pingap_config::PingapConfig;
 use pingap_core::{NotificationData, NotificationLevel};
 use std::io;
 use std::path::PathBuf;
@@ -80,6 +81,10 @@ pub struct RestartProcessCommand {
     /// its pid there as soon as it has forked, which lets the wait notice a
     /// daemon that died before it could report.
     pub pid_file: String,
+    /// The upgrade socket this process hands its listening sockets over
+    /// on, which the replacement is told to wait on, see
+    /// [`UPGRADE_SOCK_ENV`].
+    pub upgrade_sock: String,
 }
 
 impl RestartProcessCommand {
@@ -117,6 +122,9 @@ impl RestartProcessCommand {
         if !self.log_level.trim().is_empty() {
             command.env("RUST_LOG", &self.log_level);
         }
+        if !self.upgrade_sock.is_empty() {
+            command.env(UPGRADE_SOCK_ENV, &self.upgrade_sock);
+        }
         // A directory that is gone by now cannot be started in; the
         // replacement then starts where this process is, as before.
         if let Some(dir) = self.current_dir.as_ref().filter(|dir| dir.is_dir())
@@ -148,8 +156,211 @@ static PROCESS_RESTARTING: LazyLock<AtomicBool> =
 /// [`restart_now`], read by [`new_ready_notify_service`] in the new one.
 pub const READY_SOCK_ENV: &str = "PINGAP_READY_SOCK";
 
+/// Environment variable through which a restarting pingap tells its
+/// replacement which upgrade socket it sends the listening sockets to.
+/// The replacement waits there, whatever `basic.upgrade_sock` is by then.
+pub const UPGRADE_SOCK_ENV: &str = "PINGAP_UPGRADE_SOCK";
+
+/// The upgrade socket of the process that started this one for a restart,
+/// `None` for a process that was started any other way.
+pub fn handed_over_upgrade_sock() -> Option<String> {
+    std::env::var(UPGRADE_SOCK_ENV)
+        .ok()
+        .filter(|path| !path.is_empty())
+}
+
 /// Default for `basic.restart_ready_timeout`.
 pub const DEFAULT_RESTART_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// An address a server listens on, as pingora is given it, and what
+/// decides whether its socket can be bound.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListenAddress {
+    pub addr: String,
+    /// `SO_REUSEPORT`, as the server sets it.
+    pub reuse_port: Option<bool>,
+}
+
+/// Works out what a process on a configuration listens on.
+pub type PlannedListenAddresses =
+    fn(&PingapConfig) -> Result<Vec<ListenAddress>, Box<dyn std::error::Error>>;
+
+/// What this process listens on, and how the same is worked out for the
+/// configuration its replacement would be started on.
+#[cfg(unix)]
+struct Listening {
+    held: Vec<ListenAddress>,
+    planned: PlannedListenAddresses,
+}
+
+#[cfg(unix)]
+static LISTENING: OnceLock<Listening> = OnceLock::new();
+
+/// Notes what this process listens on. Once, when its servers are made.
+/// For a restart to go by, which there is none of elsewhere.
+pub fn set_listen_addresses(
+    held: Vec<ListenAddress>,
+    planned: PlannedListenAddresses,
+) {
+    #[cfg(unix)]
+    LISTENING.get_or_init(|| Listening { held, planned });
+    #[cfg(not(unix))]
+    let _ = (held, planned);
+}
+
+/// Binds a socket to `addr` the way pingora does for a listener, and
+/// lets go of it at once. It never listens, so no connection reaches it.
+#[cfg(unix)]
+fn try_bind(
+    addr: std::net::SocketAddr,
+    reuse_port: Option<bool>,
+) -> io::Result<()> {
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()
+    } else {
+        tokio::net::TcpSocket::new_v6()
+    }?;
+    socket.set_reuseaddr(true)?;
+    if let Some(reuse_port) = reuse_port {
+        socket.set_reuseport(reuse_port)?;
+    }
+    socket.bind(addr)
+}
+
+/// Whether a socket on `released` can be what keeps `wanted` from being
+/// bound: the same port, and the same address or all of them on one side.
+#[cfg(unix)]
+fn overlaps(
+    released: &std::net::SocketAddr,
+    wanted: &std::net::SocketAddr,
+) -> bool {
+    let (ours, theirs) =
+        (released.ip().to_canonical(), wanted.ip().to_canonical());
+    released.port() == wanted.port()
+        && (ours == theirs || ours.is_unspecified() || theirs.is_unspecified())
+}
+
+/// The addresses among `wanted` that a replacement of the process which
+/// listens on `held` could not listen on, each with the reason.
+///
+/// An address this process has is handed over, by the text it is written
+/// as, and is not bound again. Every other one is bound by the
+/// replacement, which can be tried from here: the same socket options,
+/// the same user. One exception: an address that is in use where this
+/// process gives one up with the restart, on the same port and an address
+/// that overlaps. That may be this process itself, under another spelling
+/// of the address, and it lets go of its sockets before the replacement
+/// stops trying. What somebody else holds there as well is not seen.
+#[cfg(unix)]
+fn unbindable(held: &[ListenAddress], wanted: &[ListenAddress]) -> Vec<String> {
+    use std::net::ToSocketAddrs;
+    // The first one a name resolves to, which is the one pingora binds.
+    let resolve =
+        |name: &str| name.to_socket_addrs().map(|mut addrs| addrs.next());
+    let kept = |addr: &str| wanted.iter().any(|item| item.addr == addr);
+    let released: Vec<std::net::SocketAddr> = held
+        .iter()
+        .filter(|item| !kept(&item.addr))
+        .filter_map(|item| resolve(&item.addr).ok().flatten())
+        .collect();
+    let mut tried: Vec<&str> = vec![];
+    let mut failed = vec![];
+    for listen in wanted {
+        let name = listen.addr.as_str();
+        if held.iter().any(|item| item.addr == name) || tried.contains(&name) {
+            continue;
+        }
+        tried.push(name);
+        let addr = match resolve(name) {
+            Ok(Some(addr)) => addr,
+            Ok(None) => {
+                failed.push(format!("{name} (resolves to no address)"));
+                continue;
+            },
+            Err(e) => {
+                failed.push(format!("{name} ({e})"));
+                continue;
+            },
+        };
+        let Err(e) = try_bind(addr, listen.reuse_port) else {
+            continue;
+        };
+        let ours = e.kind() == io::ErrorKind::AddrInUse
+            && released.iter().any(|item| overlaps(item, &addr));
+        if !ours {
+            failed.push(format!("{name} ({e})"));
+        }
+    }
+    failed
+}
+
+/// What the stored configuration listens on: the configuration a
+/// replacement would be started on.
+#[cfg(unix)]
+async fn stored_listen_addresses(
+    planned: PlannedListenAddresses,
+) -> Result<Vec<ListenAddress>, String> {
+    let manager = crate::config_manager::get_config_manager()
+        .map_err(|e| e.to_string())?;
+    let document = manager.load_all().await.map_err(|e| e.to_string())?;
+    // Off this thread: a `$FILE:` reference is read from disk.
+    tokio::task::spawn_blocking(move || {
+        let config = document
+            .to_running_config(pingap_config::MissingReference::Refuse)
+            .map_err(|e| e.to_string())?;
+        planned(&config).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Refuses a restart whose replacement could not listen on an address the
+/// stored configuration adds: a port another program has, an address this
+/// machine does not have, a port this user may not bind.
+///
+/// The replacement only finds out when it builds its listeners, and that
+/// is after it has reported ready: this process had signalled itself by
+/// then and closed its own listeners a few seconds later, while the
+/// replacement gave up and exited. Nobody was left to serve, for one new
+/// `addr` that could not be had.
+///
+/// It is a check ahead of time, not a reservation: what takes the port
+/// between here and the replacement's own bind is still not seen.
+#[cfg(unix)]
+async fn check_listen_addresses() -> io::Result<()> {
+    let Some(listening) = LISTENING.get() else {
+        return Ok(());
+    };
+    let wanted = match stored_listen_addresses(listening.planned).await {
+        Ok(wanted) => wanted,
+        // The replacement reads the same and says what is wrong with it,
+        // before it reports ready.
+        Err(error) => {
+            warn!(
+                target: LOG_TARGET,
+                error,
+                "unable to read what the stored configuration listens on, restarting without that check"
+            );
+            return Ok(());
+        },
+    };
+    let held = listening.held.clone();
+    // Off this thread as well: an address given by name is looked up.
+    let failed =
+        tokio::task::spawn_blocking(move || unbindable(&held, &wanted))
+            .await
+            .map_err(io::Error::other)?;
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AddrNotAvailable,
+        format!(
+            "the stored configuration listens on {}, which cannot be bound here",
+            failed.join(", ")
+        ),
+    ))
+}
 
 /// How often the wait looks at the spawned process and the pid file.
 #[cfg(unix)]
@@ -205,6 +416,16 @@ pub async fn restart_now() -> io::Result<()> {
             "Command not found",
         ));
     };
+    // Before anything is announced or started.
+    if let Err(e) = check_listen_addresses().await {
+        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+        error!(
+            target: LOG_TARGET,
+            error = %e,
+            "a new listen address cannot be bound, not restarting"
+        );
+        return Err(e);
+    }
     info!(target: LOG_TARGET, "pingap will restart");
     send_notification(NotificationData {
         category: "restart".to_string(),
@@ -592,6 +813,112 @@ mod tests {
         let here = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(here, started_in(Some(dir.path().join("gone"))));
         assert_eq!(here, started_in(None));
+    }
+
+    /// Regression: a replacement that could not listen on a new address
+    /// was only found out after the running process had given up its own.
+    #[test]
+    fn test_unbindable() {
+        let listen = |addr: &str| ListenAddress {
+            addr: addr.to_string(),
+            reuse_port: None,
+        };
+        let none = Vec::<String>::new();
+        // Somebody else has this one.
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let taken_addr = format!("127.0.0.1:{port}");
+        // And any port is one that is free.
+        let free_addr = "127.0.0.1:0";
+
+        let held = [listen("127.0.0.1:6118")];
+        // What is handed over is not bound, in use as it is.
+        assert_eq!(
+            none,
+            unbindable(&[listen(&taken_addr)], &[listen(&taken_addr)])
+        );
+        assert_eq!(
+            none,
+            unbindable(&held, &[listen("127.0.0.1:6118"), listen(free_addr)])
+        );
+        // A port another program listens on, named once however often
+        // it is asked for.
+        let failed = unbindable(
+            &held,
+            &[listen(&taken_addr), listen(free_addr), listen(&taken_addr)],
+        );
+        assert_eq!(1, failed.len(), "{failed:?}");
+        assert_eq!(true, failed[0].starts_with(&taken_addr), "{failed:?}");
+        // An address this machine does not have (TEST-NET-1), and one
+        // that is none.
+        let failed =
+            unbindable(&held, &[listen("192.0.2.1:6200"), listen("nowhere")]);
+        assert_eq!(2, failed.len(), "{failed:?}");
+
+        // In use where this process gives an address up, all of them on
+        // that port here: that may be this process under another name,
+        // which lets go of it.
+        let every = listen(&format!("0.0.0.0:{port}"));
+        assert_eq!(
+            none,
+            unbindable(std::slice::from_ref(&every), &[listen(&taken_addr)])
+        );
+        // Not so when that address is kept: the socket stays as it is,
+        // and the new one next to it cannot be had.
+        let failed = unbindable(
+            std::slice::from_ref(&every),
+            &[every.clone(), listen(&taken_addr)],
+        );
+        assert_eq!(1, failed.len(), "{failed:?}");
+        // Nor when what is given up is another address on that port:
+        // it is not what is in the way.
+        let failed = unbindable(
+            &[listen(&format!("127.0.0.2:{port}"))],
+            &[listen(&taken_addr)],
+        );
+        assert_eq!(1, failed.len(), "{failed:?}");
+        // Nor for an address that fails another way on that port.
+        let failed = unbindable(
+            std::slice::from_ref(&every),
+            &[listen(&format!("192.0.2.1:{port}"))],
+        );
+        assert_eq!(1, failed.len(), "{failed:?}");
+    }
+
+    #[test]
+    fn test_overlaps() {
+        let addr = |text: &str| text.parse::<std::net::SocketAddr>().unwrap();
+        let overlap = |a: &str, b: &str| overlaps(&addr(a), &addr(b));
+        assert_eq!(true, overlap("127.0.0.1:80", "127.0.0.1:80"));
+        assert_eq!(true, overlap("0.0.0.0:80", "127.0.0.1:80"));
+        assert_eq!(true, overlap("127.0.0.1:80", "[::]:80"));
+        assert_eq!(true, overlap("[::ffff:127.0.0.1]:80", "127.0.0.1:80"));
+        assert_eq!(false, overlap("127.0.0.1:80", "127.0.0.2:80"));
+        assert_eq!(false, overlap("127.0.0.1:80", "[::1]:80"));
+        assert_eq!(false, overlap("0.0.0.0:80", "127.0.0.1:81"));
+    }
+
+    /// Regression: a replacement went by the `basic.upgrade_sock` of the
+    /// stored configuration, and waited on a path the running process
+    /// never sent to.
+    #[test]
+    fn test_replacement_is_told_the_upgrade_sock() {
+        let told = |upgrade_sock: &str| {
+            RestartProcessCommand {
+                exec_path: PathBuf::from("pwd"),
+                upgrade_sock: upgrade_sock.to_string(),
+                ..Default::default()
+            }
+            .command()
+            .get_envs()
+            .find(|(name, _)| *name == UPGRADE_SOCK_ENV)
+            .map(|(_, value)| value.map(|value| value.to_os_string()))
+        };
+        assert_eq!(None, told(""));
+        assert_eq!(
+            Some(Some("/run/pingap_upgrade.sock".into())),
+            told("/run/pingap_upgrade.sock")
+        );
     }
 
     #[tokio::test]

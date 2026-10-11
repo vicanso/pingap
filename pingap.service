@@ -8,7 +8,20 @@ Description=A high performance web server and a reverse proxy server
 After=network.target nss-lookup.target
 
 [Service]
-Type=simple
+# -d makes pingap fork into the background: what systemd starts exits, and
+# the daemon writes its pid to PIDFile a moment later. `forking` is the
+# type that waits for that file. With `simple` the exit of what was
+# started counted as the end of the service whenever the file was not
+# there yet, and everything was killed.
+#
+# PIDFile is `basic.pid_file`, which is /run/pingap.pid unless configured.
+# Change both together, and stop and start the service for it: a restart
+# of pingap's own would write the new file while systemd reads this one.
+#
+# Such a restart (--autorestart, or the admin) writes the pid of the new
+# process to the file, and systemd takes it for the main process once the
+# old one has exited, `basic.grace_period` after the hand-over.
+Type=forking
 User=root
 PIDFile=/run/pingap.pid
 ExecStartPre=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -t

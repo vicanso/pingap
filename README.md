@@ -115,10 +115,10 @@ The same can be written in HCL or KDL. Every key is described in the [configurat
 
 | | |
 | --- | --- |
-| `--autoreload` | A change is applied without a restart: within ten seconds from files, at once from etcd. The mode for containers |
+| `--autoreload` | A change is applied without a restart: within ten seconds from files, at once from etcd. What takes a restart is reported, and waits for one. The mode for containers |
 | `-a`, `--autorestart` | The same, and a restart that drops no request for what a reload cannot change, a listen address for one |
 | `-t` | Builds every upstream, location, plugin, certificate and server as a start does, and binds nothing |
-| `--strict` | A key Pingap does not know is an error, where it is otherwise a warning. For `-t` in CI |
+| `--strict` | A key Pingap does not know, or one this build has no feature for, is an error, where it is otherwise a warning. For `-t` in CI |
 | `--diff <other>` | Prints what would change if `<other>` took the place of the configuration, credentials shown as checksums |
 | `$ENV:NAME`, `$FILE:/path` | As a whole value: replaced by the variable or the file when the configuration is loaded |
 

@@ -255,6 +255,7 @@ async fn diff_and_update_config(
         })
         .await
         .map_err(|e| e.to_string())??;
+        crate::validate::check_build_keys(&new_config)?;
         let restart_requested =
             apply_config(config_manager, &new_config, hot_reload_only).await?;
         Ok::<_, Box<dyn std::error::Error>>((new_config, restart_requested))
@@ -349,12 +350,75 @@ static LEFT_REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// told the last time. Every change to the configuration is a pass that
 /// finds them still waiting.
 fn left_is_news(left: &[String]) -> bool {
-    let mut reported = LEFT_REPORTED.lock().unwrap_or_else(|e| e.into_inner());
-    if reported.as_slice() == left {
+    is_news(&LEFT_REPORTED, left)
+}
+
+/// Notes `now` as what was told last, and says whether it is worth
+/// telling: there is something, and it is not what was told the last time.
+fn is_news(reported: &Mutex<Vec<String>>, now: &[String]) -> bool {
+    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
+    if reported.as_slice() == now {
         return false;
     }
-    *reported = left.to_vec();
-    !left.is_empty()
+    *reported = now.to_vec();
+    !now.is_empty()
+}
+
+/// The changes that were last told to be waiting for a restart.
+static RESTART_NEEDED_REPORTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// What of `wanted` is not in `reloaded`, the configuration as a reload
+/// leaves it, and so takes a restart: the lines `PingapConfig::diff` gives
+/// for it. A listen address, the threads, the TLS settings of a server.
+///
+/// Three things a reload does not put into `reloaded` are no part of it.
+/// The log level is set on the running process by itself. The
+/// certificates are reloaded entry by entry: the one that waits, for a
+/// listener on port 80, is told as what it is. And a key this build has
+/// no code for is nothing a restart applies either, which the check of
+/// the configuration says.
+fn left_for_restart(
+    reloaded: &PingapConfig,
+    wanted: &PingapConfig,
+) -> Vec<String> {
+    let mut reloaded = reloaded.clone();
+    let mut wanted = wanted.clone();
+    reloaded.basic.log_level.clone_from(&wanted.basic.log_level);
+    reloaded.certificates.clone_from(&wanted.certificates);
+    crate::validate::clear_keys_of_other_builds(&mut reloaded);
+    crate::validate::clear_keys_of_other_builds(&mut wanted);
+    reloaded.diff(&wanted).1
+}
+
+/// Says what a reload left for a restart, in a process that never
+/// restarts by itself (`--autoreload`): somebody has to do it, and until
+/// then the process goes on with what it was started with. Such a change
+/// used to be dropped without a word - a new `addr` of a server was not
+/// listened on, the old one still was, and nothing in the log said why.
+///
+/// Told when it comes to wait, not with every later change that finds it
+/// still waiting.
+async fn report_left_for_restart(left: Vec<String>) {
+    // `diff` gives the entries in no fixed order: what is compared with
+    // the last time is the lines in theirs.
+    let mut seen = left.clone();
+    seen.sort();
+    if !is_news(&RESTART_NEEDED_REPORTED, &seen) {
+        return;
+    }
+    let changes = left.join("\n").trim().to_string();
+    warn!(
+        target: LOG_TARGET,
+        changes,
+        "a change of the configuration takes a restart to apply, and this process only reloads"
+    );
+    send_notification(NotificationData {
+        category: "reload_config_fail".to_string(),
+        level: NotificationLevel::Warn,
+        message: format!("Restart to apply these changes:\n{changes}"),
+        ..Default::default()
+    })
+    .await;
 }
 
 /// What a hot reload does with a change of the certificates.
@@ -539,8 +603,10 @@ async fn apply_config(
     // no update config
     if original_diff_result.is_empty() {
         // Nor a certificate that waits for a restart: one that waits is
-        // not in the running configuration as the storage has it.
+        // not in the running configuration as the storage has it. And
+        // nothing else waits for one either.
         left_is_news(&[]);
+        is_news(&RESTART_NEEDED_REPORTED, &[]);
         return Ok(false);
     }
 
@@ -956,6 +1022,13 @@ async fn apply_config(
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot reload config"
         );
+        if ONLY_HOT_RELOAD.load(Ordering::Relaxed) {
+            report_left_for_restart(left_for_restart(
+                &hot_reload_config,
+                new_config,
+            ))
+            .await;
+        }
         // no update config
         if original_diff_result.is_empty() {
             return Ok(false);
@@ -1608,6 +1681,60 @@ mod tests {
         // when it waits again.
         assert_eq!(false, super::left_is_news(&[]));
         assert_eq!(true, super::left_is_news(&names(&["a"])));
+    }
+
+    /// Regression: under `--autoreload` a change that only a restart
+    /// applies was dropped without a word. What is left for one is the
+    /// difference a reload does not take away.
+    #[test]
+    fn test_left_for_restart() {
+        use pingap_config::{MissingReference, PingapTomlConfig};
+        let config = |addr: &str, threads: usize, level: &str, path: &str| {
+            PingapTomlConfig::from_toml(&format!(
+                r#"
+[basic]
+threads = {threads}
+log_level = "{level}"
+
+[upstreams.api]
+addrs = ["127.0.0.1:9000"]
+
+[locations.api]
+upstream = "api"
+path = "{path}"
+
+[servers.web]
+addr = "{addr}"
+locations = ["api"]
+"#
+            ))
+            .unwrap()
+            .to_running_config(MissingReference::Refuse)
+            .unwrap()
+        };
+        let running = config("127.0.0.1:6118", 1, "info", "/api");
+        let wanted = config("127.0.0.1:6119", 2, "debug", "/v2");
+        // What a reload does: the locations are the new ones.
+        let mut reloaded = running.clone();
+        reloaded.locations.clone_from(&wanted.locations);
+
+        let left = super::left_for_restart(&reloaded, &wanted).join("\n");
+        assert_eq!(true, left.contains("[MODIFIED] server:web"), "{left}");
+        assert_eq!(true, left.contains("+ addr = \"127.0.0.1:6119\""));
+        assert_eq!(true, left.contains("[MODIFIED] basic"), "{left}");
+        assert_eq!(true, left.contains("+ threads = 2"), "{left}");
+        // Applied without a restart, both of them.
+        assert_eq!(false, left.contains("log_level"), "{left}");
+        assert_eq!(false, left.contains("location"), "{left}");
+
+        // The log level alone, or what a reload takes: nothing is left.
+        let wanted = config("127.0.0.1:6118", 1, "debug", "/v2");
+        let mut reloaded = running.clone();
+        reloaded.locations.clone_from(&wanted.locations);
+        assert_eq!(
+            Vec::<String>::new(),
+            super::left_for_restart(&reloaded, &wanted)
+        );
     }
 
     #[test]

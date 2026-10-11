@@ -69,6 +69,17 @@ unknown key in. A restart passes the flag on to the process that takes over.
 Use it for `-t` in CI, where a misspelt key should stop the pipeline rather
 than be read past.
 
+A key that takes a cargo feature the binary was built without is reported the
+same way, at the same places, and is an error with `--strict` as well:
+`prometheus_metrics` and `otlp_exporter` of a server and `basic.sentry` need
+`tracing`, which the `-full` builds have, and `basic.pyroscope` needs `pyro`.
+Such a key is spelt right and does nothing in that binary: a default build
+given `prometheus_metrics` answers `404` where the metrics are expected.
+
+```
+config: server(web): "prometheus_metrics" needs a build with the tracing feature (the -full builds), this one does nothing with it
+```
+
 ## Storage backends
 
 The backend is chosen from the value of `-c` / `PINGAP_CONF`:
@@ -578,13 +589,47 @@ urls that carry keys (`webhook`, `sentry`, `*_url`), the value of headers like
 plugin logs at debug level.
 `--autoreload` swaps the configuration in place, which is what you want in
 containers. A change to a location takes effect in routing as well: the hosts
-and paths a server routes by are rebuilt whenever its locations change. `--autorestart` performs a zero-downtime graceful restart, which is
+and paths a server routes by are rebuilt whenever its locations change. What a
+reload cannot apply - the `addr`, the threads or the TLS settings of a server,
+a server that is added, most of `[basic]` - waits for a restart, and a process
+that never restarts by itself says so: a warning in the log and a
+`reload_config_fail` notification name what is waiting, once for the same set
+of changes. Until then the process goes on with what it was started with.
+`--autorestart` performs a zero-downtime graceful restart, which is
 what listener-level changes need. That restart hands over on readiness: the
 replacement reports over `<upgrade_sock>.ready` the moment it is ready to take
 the listening sockets, and only then does the old process signal itself to
 quit; `basic.restart_ready_timeout` (default 1m) bounds the wait, after which
 the restart is abandoned. `basic.working_directory` sets where the daemon
 `chdir`s.
+
+Two things are settled before a replacement is started, because it only meets
+them after it has reported ready, when the running process is already on its
+way out:
+
+- **A listen address the stored configuration adds.** The addresses it listens
+  on are compared with the ones the running process has, and a new one is
+  bound once from there, with the options its server gives it, and let go of
+  at once. If that fails - the port belongs to another program, the address is
+  not one of this machine, the user may not bind it - the restart is refused
+  with the reason (in the log, as a `restart_fail` notification, or in the
+  answer of the admin) and the running process goes on. It is tried once, and
+  it is a check ahead of time, not a reservation. One case is not judged: an
+  address that is in use where the running process gives one up with this
+  restart, on the same port and the same address (or all addresses on either
+  side). That may be the same socket under another spelling, `127.0.0.1:80`
+  for `0.0.0.0:80`, which is free again by the time the replacement binds; if
+  another program holds an address there as well, it is not seen.
+- **`basic.upgrade_sock`.** The two processes meet on that path, and the
+  running one sends to the path it was started with. So a restart tells the
+  replacement which one that is (`PINGAP_UPGRADE_SOCK` in its environment),
+  the replacement logs a warning when the configuration names another, and a
+  changed `upgrade_sock` applies once pingap is stopped and started. An
+  upgrade by hand (`pingap -d -u` from a shell) is told nothing and goes by
+  the configuration. After `upgrade_sock` was changed, stop and start pingap
+  before such an upgrade, or give the new process the path in use, which the
+  running one logs at its start (`server configuration ... upgrade_sock=`):
+  `PINGAP_UPGRADE_SOCK=/path/in/use pingap -d -u ...`.
 
 ## Includes
 

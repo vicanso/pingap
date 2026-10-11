@@ -111,13 +111,15 @@ jobs:
       # before has built: the sample configurations validate, a request
       # goes through, a reload, the PROXY protocol towards nginx, and the
       # hand-over of the listening sockets by a restart and by an upgrade,
-      # which no other machine than a Linux one can be asked for.
+      # which no other machine than a Linux one can be asked for. And
+      # pingap.service under the systemd of the runner (E2E_SYSTEMD), with
+      # one of the two binaries: the unit is the same for both.
       - name: Run end-to-end checks
         if: matrix.toolchain == 'stable'
         run: |
           # both, also when the first has failures to show
           failed=0
-          ./scripts/e2e/run.sh target/release/pingap || failed=1
+          E2E_SYSTEMD=1 ./scripts/e2e/run.sh target/release/pingap || failed=1
           E2E_PORT_BASE=28300 ./scripts/e2e/run.sh target/release/pingap-full || failed=1
           exit $failed
   windows:
