@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.16.0](https://github.com/vicanso/pingap/compare/v0.15.0..v0.16.0) - 2026-10-12
+
+### ⛰️  Features
+
+- *(install)* Optional systemd service, stop the unit with SIGTERM - ([35caf86](https://github.com/vicanso/pingap/commit/35caf86188c2195082de3d42690d0eda5bf04f72))
+- *(logger)* JSON access log, stdout/stderr and remote syslog targets - ([7058b1c](https://github.com/vicanso/pingap/commit/7058b1ce7cbf769b5c026ea89030dae4ccfb89bf))
+- *(upstream)* Send the PROXY protocol header to backends - ([af17765](https://github.com/vicanso/pingap/commit/af177659658fb929b9a69f694a4178be6047675c))
+- *(webhook)* "*" in webhook_notifications is every category - ([424fd80](https://github.com/vicanso/pingap/commit/424fd8015ec7f2adf8c927ac3a698b9760fb6feb))
+- *(webhook)* Notifications to ntfy - ([98f2bff](https://github.com/vicanso/pingap/commit/98f2bfff5314fca56469b117e122598102f2a63d))
+- A name and labels for a deployment, in notifications, access log and traces - ([f803780](https://github.com/vicanso/pingap/commit/f803780ed25d4414c1601aa41504b3e3d0718990))
+- Add expect_body health checks, config history for every file layout, more accounts for --admin - ([d26b403](https://github.com/vicanso/pingap/commit/d26b4032cf2905e18e62710b939fb0c35ea8088c))
+- Add DNS SRV discovery, RSA+ECDSA certificate pairs, OCSP stapling and the oidc plugin - ([77ba8bf](https://github.com/vicanso/pingap/commit/77ba8bfebe658827a7bff92acfd05068eb8bb954))
+- Add PROXY protocol, least_conn and fail_open, ACME directory and EAB, etcd over TLS, admin roles and API tokens - ([688c6c6](https://github.com/vicanso/pingap/commit/688c6c6214292b19f91379d967123bf219ea1de5))
+- Add cache controls, hashed basic auth, access log filters, upstream and listener mTLS - ([9913d01](https://github.com/vicanso/pingap/commit/9913d01b8f24f009d42158a7315ca756e90ed7d5))
+- Add jwt claim rules, compression types and skip, $ENV/$FILE config references, --diff, more metrics - ([e058074](https://github.com/vicanso/pingap/commit/e058074a436dfeef1a81a8d786921450180f5c44))
+- Add maintenance and health plugins, redirect rules, cors origin list, forwarded headers behind trusted proxies - ([4b51d32](https://github.com/vicanso/pingap/commit/4b51d32de44a0cdee9f9693bb30535fe520023e1))
+- Add request_headers and uri_block plugins, directory fallback, limit quota headers, strict mode - ([7909f94](https://github.com/vicanso/pingap/commit/7909f94a4ead81fb518055d21d36b9201601427d))
+
+### 🐛 Bug Fixes
+
+- *(acme)* Go on with a challenge record that is already there - ([8852b92](https://github.com/vicanso/pingap/commit/8852b92a9e91562ba6895551519dda8dddd87017))
+- *(acme)* Bound CA requests, accept ready orders, fix DNS zones - ([b29acc1](https://github.com/vicanso/pingap/commit/b29acc179fb56fbc20687aa363821decc7c21583))
+- *(plugin)* Redirect port, jwt nbf, stacked limits and body filters - ([e034c14](https://github.com/vicanso/pingap/commit/e034c140e562ba7c10ea3a774ce6c4218c5508ae))
+- *(proxy)* Keep private responses out of the cache, harden error pages - ([ec13ba2](https://github.com/vicanso/pingap/commit/ec13ba29db739339c7052a2b75e44de154da2499))
+- No hand-over restart from a foreground process; releases start as drafts - ([e4bc1be](https://github.com/vicanso/pingap/commit/e4bc1bea03bbc873759005b086a37174815a8e71))
+- Say what waits for a restart, and keep a restart from ending with no process - ([598464b](https://github.com/vicanso/pingap/commit/598464b1aa1043ac69a4de0a56cd0c6192361def))
+- Compression and cache seams, in-flight gauge, client aborts, log level default - ([b7fe521](https://github.com/vicanso/pingap/commit/b7fe52110f6ff4c4db990d76b600294b0a131bd8))
+- Control panel trusted proxies, cache skip, stray config files, match_query, location metrics - ([f6070b3](https://github.com/vicanso/pingap/commit/f6070b3b48c9cd5c652be51a683178cc65bd3d9e))
+- Tighten jwt leeway, admin token and certificate listing, forward_auth headers - ([fc86a38](https://github.com/vicanso/pingap/commit/fc86a387652901298d781ea06a12f5ba8995d8d9))
+- Resolve suspected issues in acme, cache, reload and plugins - ([e3aeab2](https://github.com/vicanso/pingap/commit/e3aeab276a6f0a1e936604b3f3827d3993d47f85))
+- Harden metrics, rewrite, jwt expiry, admin and certificate reload - ([56ee9ed](https://github.com/vicanso/pingap/commit/56ee9ed9dcbede050d7d30cf0d0d53718ddbcaba))
+- Harden ip-based plugins, rate limit, config warnings and secrets - ([2e43876](https://github.com/vicanso/pingap/commit/2e43876269fb8f724d50c00dce468f541c0ee371))
+- Close bugs across admin, config, proxy and plugins - ([2d895b2](https://github.com/vicanso/pingap/commit/2d895b212a48ab70558dcdd07b7b584188249f50))
+- Close the last two access-control gaps - ([a8d8196](https://github.com/vicanso/pingap/commit/a8d8196cfad167b0cce99be227b349f3551ae32a))
+- Low-severity findings across plugins, logging and restart - ([8aa7f85](https://github.com/vicanso/pingap/commit/8aa7f8532333f46e4b2c9b5127cafbd8df3e386e))
+- Config storage, cache purge and upstream validation - ([4b40236](https://github.com/vicanso/pingap/commit/4b4023625fd2e30f00fed42e14158294eb971386))
+- Catch config values that only failed at runtime - ([dc2a540](https://github.com/vicanso/pingap/commit/dc2a540e142bd819306324847cf8e7447ad8a2bf))
+- Close three access control gaps - ([fd6fe1a](https://github.com/vicanso/pingap/commit/fd6fe1a32d0ef5758fcae2df0fa1008c9a464bba))
+- Follow-up fixes from the review of the severe findings - ([44e75ed](https://github.com/vicanso/pingap/commit/44e75ed594acebc96290a8ed8ae3d1cb8219ead2))
+- Close the 16 severe findings of the code review - ([cc2e68a](https://github.com/vicanso/pingap/commit/cc2e68a085238da67df5cfef596f61f5ab55425f))
+
+### 📚 Documentation
+
+- Shorter readme, lead with what sets pingap apart - ([26bb6ff](https://github.com/vicanso/pingap/commit/26bb6ff0428ea1a9763d068230cb587fa80156a2))
+- Upgrading from 0.15 to 0.16 - ([b36d34b](https://github.com/vicanso/pingap/commit/b36d34bfc9d37aee93c32b3e678d746faf3db18f))
+- Welcome pull requests, animated diagrams in the readme - ([24a2213](https://github.com/vicanso/pingap/commit/24a22135fcd379e84eb5198441196137a29d5d7b))
+
+### ⚡ Performance
+
+- Cut hot-path costs in error pages, cache eviction, access log, acme and reload - ([2a5ca4c](https://github.com/vicanso/pingap/commit/2a5ca4c03ef8d5bfdd025e11d95bd1bfbf7a3be9))
+- Cut per-request lookups and unblock health checks - ([5c04e35](https://github.com/vicanso/pingap/commit/5c04e357b84ba5ff87a4b26f201e255b118cbc03))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(cache)* Replace deprecated AtomicU64::fetch_update with update - ([624b7f1](https://github.com/vicanso/pingap/commit/624b7f13f1d094973229c74a078f7416346f27df))
+- Check the Windows build on every push and pull request - ([d808572](https://github.com/vicanso/pingap/commit/d80857244ceca9bb131f0b43af0d72bf3bd2e10b))
+- End-to-end checks, admin form coverage, i18n key parity - ([74250fa](https://github.com/vicanso/pingap/commit/74250fa5d4b4c74af74797107f05080b90317914))
+- Replace free-disk-space and docker-run-action with shell steps - ([f687924](https://github.com/vicanso/pingap/commit/f68792428c7c3e866e22ad096a8641787c7cc2e0))
+- Narrow where the GITHUB_TOKEN can be read - ([23710b9](https://github.com/vicanso/pingap/commit/23710b98cd02e5d630d5915ca9b2143760a62d99))
+- Require the CLA box to be ticked on pull requests - ([3743209](https://github.com/vicanso/pingap/commit/37432094d56604c344bfa8c303f70925fda0a368))
+
+### Build
+
+- Add a distroless image variant - ([65c10e8](https://github.com/vicanso/pingap/commit/65c10e8ebbe2832cb0de51a6a31763f21e3c6493))
+- Run the Docker image on the builder's Debian release - ([a47888f](https://github.com/vicanso/pingap/commit/a47888f4e75e95fea6efc698ada7e1e772e6a1f9))
+
 ## [0.15.0](https://github.com/vicanso/pingap/compare/v0.14.3..v0.15.0) - 2026-10-01
 
 ### ⛰️  Features
