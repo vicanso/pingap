@@ -37,6 +37,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 mod optimizer;
+mod quantize;
 
 const PLUGIN_ID: &str = "_image_optimize_";
 
@@ -90,9 +91,25 @@ impl ImageOptimizer {
             "jpeg" => optimize_jpeg(&info, self.jpeg_quality),
             "avif" => optimize_avif(&info, self.avif_quality, self.avif_speed),
             "webp" => optimize_webp(&info, self.webp_quality),
-            _ => optimize_png(&info, self.png_quality),
+            _ => optimize_png(info, self.png_quality),
         }
     }
+}
+
+/// What goes out for an image that was converted: the conversion, or the
+/// original where it was written again in the format it came in and is
+/// no smaller for it. An icon, a png that has a palette already, a jpeg
+/// of a lower quality than the one configured - what is small has little
+/// to give, and a palette alone is a kilobyte.
+fn worth_sending(
+    original: Bytes,
+    converted: Vec<u8>,
+    same_format: bool,
+) -> Bytes {
+    if same_format && converted.len() >= original.len() {
+        return original;
+    }
+    Bytes::from(converted)
 }
 
 impl ModifyResponseBody for ImageOptimizer {
@@ -127,8 +144,9 @@ impl ModifyResponseBody for ImageOptimizer {
         }
         let original = self.buffer.split().freeze();
         let optimized = run_blocking(|| self.optimize(&original));
+        let same_format = self.format_type == self.image_type;
         *body = Some(match optimized {
-            Ok(data) => Bytes::from(data),
+            Ok(data) => worth_sending(original, data, same_format),
             // The original is what there is to send. A failure used to
             // leave the body empty: a 200 with no image in it.
             Err(e) => {
@@ -785,6 +803,22 @@ png_quality = 90
         session
     }
 
+    /// Regression: an image that is no smaller for being written again in
+    /// its own format goes out as it came. It used to go out larger.
+    #[test]
+    fn test_original_is_sent_when_nothing_is_gained() {
+        let original = Bytes::from_static(b"12345678");
+        let run = |converted: &[u8], same_format| {
+            worth_sending(original.clone(), converted.to_vec(), same_format)
+        };
+        // the same format: only what is smaller replaces it
+        assert_eq!(Bytes::from_static(b"1234567"), run(b"1234567", true));
+        assert_eq!(original, run(b"abcdefgh", true));
+        assert_eq!(original, run(b"abcdefghi", true));
+        // another format is what was asked for, whatever its size
+        assert_eq!(Bytes::from_static(b"abcdefghi"), run(b"abcdefghi", false));
+    }
+
     fn sample_png() -> Vec<u8> {
         use image::ImageEncoder;
         let img = image::RgbaImage::from_fn(8, 6, |x, y| {
@@ -950,6 +984,47 @@ png_quality = 90
         let mut body = None;
         optimizer.handle(&session, &mut body, true).unwrap();
         assert_eq!(None, body);
+
+        // A png that gets smaller is replaced: grain no png packs well,
+        // of a few thousand colours.
+        let grainy = image::RgbaImage::from_fn(120, 80, |x, y| {
+            let grain = (x * 7919 + y * 104_729) % 61;
+            image::Rgba([
+                (x + grain) as u8,
+                (y * 2 + grain) as u8,
+                (90 + grain) as u8,
+                255,
+            ])
+        });
+        let mut large = Vec::new();
+        use image::ImageEncoder;
+        image::codecs::png::PngEncoder::new(&mut large)
+            .write_image(
+                grainy.as_raw(),
+                120,
+                80,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let mut optimizer = new_optimizer("png");
+        let mut body = Some(Bytes::from(large.clone()));
+        optimizer.handle(&session, &mut body, true).unwrap();
+        let small = body.unwrap();
+        assert_eq!(true, small.len() < large.len(), "{}", small.len());
+        assert_eq!(
+            Some(image::ImageFormat::Png),
+            image::guess_format(&small).ok()
+        );
+        // Another format is what was asked for, whatever its size.
+        let mut optimizer = new_optimizer("webp");
+        let mut body = Some(small.clone());
+        optimizer.handle(&session, &mut body, true).unwrap();
+        let webp = body.unwrap();
+        assert_eq!(
+            Some(image::ImageFormat::WebP),
+            image::guess_format(&webp).ok()
+        );
+        assert_eq!(true, webp.len() > small.len());
 
         // Regression: not an image after all. The body used to be empty.
         let mut optimizer = new_optimizer("webp");

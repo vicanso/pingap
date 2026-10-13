@@ -47,8 +47,8 @@ rewrite_links() {
   tmp="$(mktemp)"
 
   sed -E \
-    -e 's|\(\.\./\.\./pingap-plugin/docs/([a-z0-9_]+)\.md\)|(../plugins/\1)|g' \
-    -e 's|\(\.\./pingap-plugin/docs/([a-z0-9_]+)\.md\)|(../plugins/\1)|g' \
+    -e 's|\(\.\./\.\./pingap-plugin/docs/([a-z0-9_]+)\.md(#[^)]+)?\)|(../plugins/\1\2)|g' \
+    -e 's|\(\.\./pingap-plugin/docs/([a-z0-9_]+)\.md(#[^)]+)?\)|(../plugins/\1\2)|g' \
     -e 's|\(docs/([a-z0-9_]+)\.md\)|(../plugins/\1)|g' \
     -e 's|\(\.\./\.\./pingap-cache/README\.md\)|(../crates/cache)|g' \
     -e 's|\(\.\./pingap-cache/README\.md\)|(../crates/cache)|g' \

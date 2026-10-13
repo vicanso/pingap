@@ -281,7 +281,6 @@ derive_more = { version = "2.1.1", default-features = false, features = [
     "debug",
 ] }
 diff = "0.1.13"
-dirs = "7.0.0"
 # TLS by rustls with aws-lc-rs, the provider the rest of the process uses
 etcd-client = { version = "0.20.0", features = ["tls-aws-lc", "tls-roots"] }
 fancy-regex = "0.19.1"
@@ -430,6 +429,7 @@ zstd = "0.14.0"
 bytemuck = "1.25.2"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 filetime = "0.2.29"
+color_quant = "2.0.0"
 # imageoptim: keep the feature set here so members do not restate versions.
 image = { version = "0.25.10", default-features = false, features = [
     "rayon",
@@ -438,7 +438,6 @@ image = { version = "0.25.10", default-features = false, features = [
     "webp",
     "avif",
 ] }
-imagequant = { version = "4.4.1", default-features = false }
 lodepng = "3.12.2"
 mozjpeg = "0.10.13"
 pretty_assertions = "1.4.1"

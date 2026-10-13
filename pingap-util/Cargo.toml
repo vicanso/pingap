@@ -19,7 +19,6 @@ path = "src/lib.rs"
 aes-gcm-siv = { workspace = true }
 ahash = { workspace = true }
 base64 = { workspace = true }
-dirs = { workspace = true }
 ipnet = { workspace = true }
 itoa = { workspace = true }
 path-absolutize = { workspace = true }

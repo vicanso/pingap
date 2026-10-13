@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::quantize::quantize;
 use image::ImageEncoder;
 use image::codecs::avif;
 use image::codecs::webp;
@@ -40,12 +41,11 @@ pub enum ImageError {
         category: String,
         source: image::ImageError,
     },
-    #[snafu(display(
-        "Handle image fail, category:{category}, message:{source}"
-    ))]
-    ImageQuant {
-        category: String,
-        source: imagequant::Error,
+    #[snafu(display("Image of {width}x{height} has {pixels} pixels"))]
+    Size {
+        width: usize,
+        height: usize,
+        pixels: usize,
     },
     #[snafu(display(
         "Handle image fail, category:{category}, message:{source}"
@@ -133,32 +133,23 @@ pub(crate) fn load_image(data: &[u8], ext: &str) -> Result<ImageInfo> {
     Ok(di.to_rgba8().into())
 }
 
-pub(crate) fn optimize_png(info: &ImageInfo, quality: u8) -> Result<Vec<u8>> {
-    let mut liq = imagequant::new();
-    liq.set_quality(0, quality).context(ImageQuantSnafu {
-        category: "png_set_quality",
-    })?;
-
+/// Encodes the image as a png of a palette, 256 colours at most. The
+/// pixels are given up for it: they are premultiplied where they are.
+pub(crate) fn optimize_png(
+    mut info: ImageInfo,
+    quality: u8,
+) -> Result<Vec<u8>> {
     let width = info.width;
     let height = info.height;
-    let mut img = liq
-        .new_image(info.buffer.as_ref(), width, height, 0.0)
-        .context(ImageQuantSnafu {
-            category: "png_new_image",
+    let (palette, pixels) = quantize(&mut info.buffer, width, height, quality)
+        .ok_or(ImageError::Size {
+            width,
+            height,
+            pixels: info.buffer.len(),
         })?;
+    // Only the entries are needed from here on.
+    drop(info);
 
-    let mut res = liq.quantize(&mut img).context(ImageQuantSnafu {
-        category: "png_quantize",
-    })?;
-
-    res.set_dithering_level(1.0).context(ImageQuantSnafu {
-        category: "png_set_level",
-    })?;
-
-    let (palette, pixels) =
-        res.remapped(&mut img).context(ImageQuantSnafu {
-            category: "png_remapped",
-        })?;
     let mut enc = lodepng::Encoder::new();
     enc.set_palette(&palette).context(LodePNGSnafu {
         category: "png_encoder",
@@ -340,6 +331,60 @@ mod tests {
             }
         }
         !crc
+    }
+
+    /// The colours of an image that has few of them are the ones it had,
+    /// what was clear is clear, and an image of many colours comes out
+    /// with a palette.
+    #[test]
+    fn test_png_is_encoded_from_a_palette() {
+        let mut img = sample();
+        img.put_pixel(0, 0, image::Rgba([10, 20, 30, 0]));
+        img.put_pixel(1, 0, image::Rgba([200, 100, 50, 128]));
+        let out = optimize_png(img.clone().into(), 100).unwrap();
+
+        let back = load_image(&out, "png").unwrap();
+        assert_eq!((4, 3), (back.width, back.height));
+        for (at, (pixel, was)) in
+            back.buffer.iter().zip(img.pixels()).enumerate()
+        {
+            let [r, g, b, a] = was.0;
+            match at {
+                // nothing of it was seen, so its colour is not kept
+                0 => assert_eq!(RGBA8::new(0, 0, 0, 0), *pixel),
+                // half seen: as near as its alpha tells colours apart
+                1 => assert_eq!(RGBA8::new(199, 100, 50, 128), *pixel),
+                _ => assert_eq!(RGBA8::new(r, g, b, a), *pixel, "{at}"),
+            }
+        }
+
+        // An image of many colours, none of them twice in a row: smaller
+        // than with every colour kept, and of the same size.
+        let wide = RgbaImage::from_fn(320, 200, |x, y| {
+            let grain = (x * 7919 + y * 104_729) % 61;
+            image::Rgba([
+                (x * 190 / 320 + grain) as u8,
+                (y * 190 / 200 + grain) as u8,
+                (90 + grain) as u8,
+                255,
+            ])
+        });
+        let mut plain = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut plain)
+            .write_image(
+                wide.as_raw(),
+                320,
+                200,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        let out = optimize_png(wide.into(), 90).unwrap();
+        assert_eq!(true, out.len() < plain.len(), "{}", out.len());
+        // the colour type of the header: 3 is a palette
+        assert_eq!(b"IHDR", &out[12..16]);
+        assert_eq!(3, out[25]);
+        let back = load_image(&out, "png").unwrap();
+        assert_eq!((320, 200), (back.width, back.height));
     }
 
     /// avif is the encoder that keeps rav1e - and therefore paste

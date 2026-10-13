@@ -69,11 +69,12 @@ assert!(IpRules::try_new(&["10.0.0.1", "not-an-ip"]).is_err());
 ### 路径处理
 
 ```rust
-use pingap_util::{resolve_path, path_join};
+use pingap_util::{home_dir, resolve_path, path_join};
 
 // `~` 与 `~/...` 展开为用户主目录；`~name` 原样保留。
-// let home_path = dirs::home_dir().unwrap().to_string_lossy().to_string();
-// assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
+// `home_dir` 来自标准库：`HOME`，否则取系统里该用户的记录。
+let home_path = home_dir().unwrap().to_string_lossy().to_string();
+assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
 
 assert_eq!(path_join("/foo/", "/bar"), "/foo/bar");
 ```

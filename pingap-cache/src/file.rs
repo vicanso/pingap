@@ -171,6 +171,12 @@ impl TryFrom<&str> for FileCacheParams {
     }
 }
 
+/// The home directory of the user this process runs as, see
+/// `pingap_util::home_dir`: a home that is an empty path is none.
+fn home_dir() -> Option<PathBuf> {
+    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
+}
+
 /// Resolves a path string to its absolute form.
 /// If the path starts with '~', it will be expanded to the user's home directory.
 /// Returns an empty string if the input path is empty.
@@ -179,7 +185,7 @@ fn resolve_path(path_str: &str) -> String {
         return String::new();
     }
     let path = if let Some(stripped) = path_str.strip_prefix("~/") {
-        dirs::home_dir()
+        home_dir()
             .map(|home| home.join(stripped))
             .unwrap_or_else(|| PathBuf::from(path_str))
     } else {
@@ -1006,7 +1012,7 @@ mod tests {
         assert!(
             params
                 .directory
-                .starts_with(dirs::home_dir().unwrap().to_str().unwrap())
+                .starts_with(home_dir().unwrap().to_str().unwrap())
         );
     }
 
@@ -1754,7 +1760,7 @@ mod tests {
     #[test]
     fn test_resolve_path() {
         assert_eq!(
-            dirs::home_dir().unwrap().to_string_lossy().to_string(),
+            home_dir().unwrap().to_string_lossy().to_string(),
             resolve_path("~/")
         );
 

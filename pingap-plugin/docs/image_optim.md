@@ -19,7 +19,7 @@ cargo build --features=imageoptim
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `image_optim`. |
 | `output_types` | string | `""` | Comma-separated target formats in order of preference, e.g. `avif,webp`. Each is one of `avif`, `webp`, `jpeg`, `png`; anything else is a configuration error. |
-| `png_quality` | int | `90` | 1–100. Unset or `0` is the default; any other value outside the range is a configuration error, for this and the three below. (They used to be cast to a byte first, so `300` passed as `44`.) |
+| `png_quality` | int | `90` | 1–100: how close to the original the palette of a png has to be, see [PNG](#png). Unset or `0` is the default; any other value outside the range is a configuration error, for this and the three below. (They used to be cast to a byte first, so `300` passed as `44`.) |
 | `jpeg_quality` | int | `80` | 1–100. |
 | `avif_quality` | int | `75` | 1–100. |
 | `avif_speed` | int | `3` | 1–10. Higher is faster and larger. |
@@ -69,7 +69,10 @@ validator to revalidate with.
 At `upstream_response` the response is converted when the content type is
 `image/png` or `image/jpeg` and the request has an `Accept` header. The target
 is the first of `output_types` the client accepts, and the image's own format
-(re-encoded at the configured quality) when it accepts none of them.
+(re-encoded at the configured quality) when it accepts none of them. An image
+that is no smaller for being written again in its own format goes out as it
+came: an icon, a png that has a palette already, a jpeg of a lower quality
+than the one configured.
 `Content-Type` is set to the target, `image/avif` for example.
 
 The body is collected and converted once it is complete. What goes out is
@@ -86,6 +89,51 @@ In both cases the `Content-Type` has already been sent and names the target
 format, while the body is the original. Browsers go by the content of an image
 and display it; keep originals within the limits if something stricter reads
 them.
+
+### PNG
+
+The colours of a png are reduced to a palette: 256 at most, each with its
+alpha. `png_quality` is how close to the original that palette has to be.
+
+- An image of no more than 256 colours keeps the ones it has, pixel for
+  pixel, whatever the value.
+- An image of more colours gets a palette from
+  [NeuQuant](https://github.com/image-rs/color_quant), a net that is trained
+  on its colours, and is dithered: three quarters of what a pixel is off by
+  is carried on to its neighbours, which keeps a gradient from breaking into
+  bands.
+- At `100` the palette is as large as it can be. Below that it is halved -
+  128, 64, 32 colours - for as long as the error stays within what the value
+  allows: a peak signal-to-noise ratio of 44 dB at the default of `90`,
+  falling evenly to 30 dB at the lowest value. That is the palette against
+  the image, every pixel with the entry nearest to it; dithering comes after
+  and costs a decibel or two. An illustration or a screenshot with gradients
+  gets smaller with a lower value.
+- A palette is not halved either while one colour of the image would be more
+  than twenty times as far from its entry as that allows for the image as a
+  whole.
+- A colour that is so far from every entry - the mark on a chart, the pin on
+  a map: what a few pixels have and nothing else is near - is given an entry
+  to itself, where there is one the rest of the image loses less by giving
+  up, and for no more than one entry in sixteen. This is an effort and not a
+  promise: with more such colours than that, the rest come out as the
+  nearest colour there is.
+- An image that 256 colours cannot bring that close gets 256, whatever the
+  value. For most photographs a lower value changes nothing; send those as
+  `webp` or `avif`, or leave them as `jpeg`.
+
+Colours are compared as they are seen, multiplied by their alpha. A pixel
+that is fully transparent stays fully transparent and has no colour in what
+goes out; one that is seen faintly keeps its colour as exactly as its alpha
+tells colours apart. An image with transparent pixels has an entry of the
+palette for them.
+
+The same image gives the same bytes every time a build converts it.
+
+Up to 0.16 the palette came from `imagequant`, which is under
+GPL-3.0-or-later. `color_quant` is MIT: a `full` build no longer contains code
+under a copyleft license, and the png of an image is not the bytes it used
+to be.
 
 ## Usage notes
 

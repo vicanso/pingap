@@ -60,6 +60,18 @@ pub fn get_rustc_version() -> &'static str {
     RUSTC_VERSION.as_str()
 }
 
+/// The home directory of the user this process runs as: `HOME`, or what
+/// the system has for the user where that is not set or set to nothing.
+/// A home that is an empty path is none, and not the root of the file
+/// system that a path put after it would start at.
+///
+/// The standard library's own, which is no longer deprecated. It used to
+/// come from the `dirs` crate, whose other directories were not used and
+/// which brought a dependency under another license with it.
+pub fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
+}
+
 /// Resolves a path string to its absolute form.
 /// A leading `~` or `~/` is expanded to the user's home directory; `~name`
 /// is somebody else's home and is left alone.
@@ -76,7 +88,7 @@ pub fn resolve_path(path: &str) -> String {
     }
     let mut p = Cow::Borrowed(path);
     if (path == "~" || path.starts_with("~/"))
-        && let Some(home) = dirs::home_dir()
+        && let Some(home) = home_dir()
     {
         let mut expanded = home.to_string_lossy().into_owned();
         expanded.push_str(&path[1..]);
@@ -236,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_resolve_path() {
-        let home = dirs::home_dir().unwrap().to_string_lossy().to_string();
+        let home = home_dir().unwrap().to_string_lossy().to_string();
         assert_eq!(home, resolve_path("~/"));
         assert_eq!(home, resolve_path("~"));
         assert_eq!(format!("{home}/opt/pingap"), resolve_path("~/opt/pingap"));

@@ -23,7 +23,6 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
-dirs = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
 path-absolutize = { workspace = true }

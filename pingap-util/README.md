@@ -70,11 +70,12 @@ assert!(IpRules::try_new(&["10.0.0.1", "not-an-ip"]).is_err());
 ### Path Manipulation
 
 ```rust
-use pingap_util::{resolve_path, path_join};
+use pingap_util::{home_dir, resolve_path, path_join};
 
 // `~` and `~/...` expand to the home directory; `~name` is left alone.
-// let home_path = dirs::home_dir().unwrap().to_string_lossy().to_string();
-// assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
+// `home_dir` is the standard library's: `HOME`, or the user's entry.
+let home_path = home_dir().unwrap().to_string_lossy().to_string();
+assert_eq!(resolve_path("~/some/path"), format!("{}/some/path", home_path));
 
 assert_eq!(path_join("/foo/", "/bar"), "/foo/bar");
 ```

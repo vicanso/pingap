@@ -5,6 +5,44 @@ keeps its configuration. New features are in the
 [changelog](https://github.com/vicanso/pingap/blob/main/CHANGELOG.md); this
 page is about what can break or surprise.
 
+## After 0.16
+
+What is on `main` and in no release yet.
+
+### Plugins
+
+- **`image_optim` writes a png that is not the bytes it used to be.** The
+  palette of a png came from `imagequant`; it comes from `color_quant`
+  (NeuQuant) now, with the counting of the colours, the dithering and the
+  choice of how many colours done by Pingap. On the six images the two were
+  compared on at the default `png_quality`, five come out between 14% smaller
+  and 8% larger, and one - an icon `imagequant` made do with 20 colours for -
+  half as large again; the signal-to-noise ratio is within 2 dB on five and
+  4 dB higher on one. `png_quality` keeps its range and its direction, and
+  reads as a limit on the error of the palette: see
+  [image_optim](../pingap-plugin/docs/image_optim.md#png). An image of no
+  more than 256 colours keeps them at every value, where `imagequant` made
+  do with fewer at a lower one. What a cache holds was written by the old
+  encoder and stays until it expires.
+- **`image_optim` sends the original where writing it again gains nothing**:
+  a png answered as png, or a jpeg as jpeg, that would not be smaller. It
+  used to go out re-encoded, larger than it came.
+
+### Licenses
+
+- No build links code under a copyleft license any more. `imagequant`
+  (GPL-3.0-or-later) was in the `-full` and `-rustls-full` archives and in
+  the `:full` and `:rustls-full` images; `option-ext` (MPL-2.0, through
+  `dirs`) was in every build.
+- With `dirs` gone, `~/` at the start of a path is expanded from the standard
+  library's home directory, which is the same one on Linux and macOS: `HOME`,
+  or the user's entry where that is not set or set to nothing.
+
+### For users of the crates
+
+- **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`
+  with.
+
 ## From 0.15 to 0.16
 
 0.16 is a large release, and much of it is strictness: configuration that

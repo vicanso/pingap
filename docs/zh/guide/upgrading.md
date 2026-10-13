@@ -3,6 +3,24 @@
 用新版本替换旧版本、配置保持不变时会发生哪些变化。新增功能见
 [更新日志](https://github.com/vicanso/pingap/blob/main/CHANGELOG.md)；这一页只讲可能出问题或让人意外的地方。
 
+## 0.16 之后
+
+已经在 `main` 上、还没有发布的变化。
+
+### 插件
+
+- **`image_optim` 输出的 png 不再是原来的字节。** png 的调色板原来由 `imagequant` 生成，现在由 `color_quant`（NeuQuant）生成，颜色的统计、抖动以及用多少种颜色由 Pingap 自己完成。在用来对比的六张图片上，默认 `png_quality` 下有五张的体积在小 14% 到大 8% 之间，另一张（`imagequant` 只用了 20 种颜色的图标）大了一半；信噪比有五张相差在 2 dB 以内，一张高 4 dB。`png_quality` 的取值范围和方向不变，含义是对调色板误差的限制：见 [image_optim](../plugins/image_optim.md#png)。颜色不超过 256 种的图片在任何取值下都保留全部颜色，而 `imagequant` 在取值较低时会减少颜色。缓存里已有的内容是旧编码器写的，到期之前不会变。
+- **`image_optim` 重新编码没有收益时发送原图**：png 仍以 png 返回、jpeg 仍以 jpeg 返回，而结果并不更小的情况。以前会发出重新编码后的结果，比原图还大。
+
+### 许可证
+
+- 所有构建都不再链接 copyleft 许可证的代码。`imagequant`（GPL-3.0-or-later）原来在 `-full`、`-rustls-full` 压缩包以及 `:full`、`:rustls-full` 镜像里；`option-ext`（MPL-2.0，经 `dirs` 引入）原来在每一个构建里。
+- 去掉 `dirs` 之后，路径开头的 `~/` 用标准库的 home 目录展开，在 Linux 和 macOS 上与原来相同：`HOME`，没有设置或设置为空时取系统里该用户的记录。
+
+### 使用这些 crate 的开发者
+
+- **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。
+
 ## 从 0.15 升级到 0.16
 
 0.16 改动很大，其中很大一部分是“变严格”：0.15 接受了、但实际上没有生效的配置，现在会被拒绝；一些原来相信客户端所发内容的判断，现在不再相信。
