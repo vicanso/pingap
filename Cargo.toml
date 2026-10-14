@@ -442,7 +442,7 @@ lodepng = "3.12.2"
 mozjpeg = "0.10.13"
 pretty_assertions = "1.4.1"
 procfs = { version = "0.18.0", default-features = false }
-pyroscope = { version = "2.1.1", features = ["backend-pprof-rs"] }
+pyroscope = { version = "2.1.2", features = ["backend-pprof-rs"] }
 rgb = { version = "0.8.52", features = ["bytemuck"] }
 syslog = "7.0.0"
 tokio-test = "0.4.5"
