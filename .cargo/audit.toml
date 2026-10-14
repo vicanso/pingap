@@ -15,4 +15,12 @@ ignore = [
     # output. The `exr` path was removed by trimming image's default features.
     # Remove when rav1e moves to pastey or drops the dependency.
     "RUSTSEC-2024-0436",
+
+    # unsafe-libyaml 0.2.11 (unmaintained, not a vulnerability). Transitive
+    # only: unsafe-libyaml -> serde_yaml -> pingora-core 0.9 (ServerConf YAML
+    # load/dump). Pingap's own config is TOML/HCL/KDL and does not use this
+    # path. Cannot be replaced in-tree without forking pingora. Remove when
+    # pingora migrates off serde_yaml (e.g. to saphyr / serde-saphyr).
+    # https://github.com/vicanso/pingap/issues/246
+    "RUSTSEC-2024-0449",
 ]
