@@ -372,7 +372,7 @@ reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
     "default-tls",
 ] }
-rustls = "0.23.40"
+rustls = "0.23.46"
 rustls-pki-types = "1.15.1"
 rustc_version_runtime = "0.3.0"
 scopeguard = "1.2.0"

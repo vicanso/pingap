@@ -23,4 +23,10 @@ ignore = [
     # pingora migrates off serde_yaml (e.g. to saphyr / serde-saphyr).
     # https://github.com/vicanso/pingap/issues/246
     "RUSTSEC-2024-0449",
+
+    # rustls-pemfile 2.2 (unmaintained, not a vulnerability). Transitive via
+    # pingora-rustls 0.9 and rustls-native-certs 0.7; PEM loading has moved into
+    # rustls-pki-types. Cannot drop without forking pingora. Remove when
+    # pingora-rustls stops depending on rustls-pemfile.
+    "RUSTSEC-2025-0134",
 ]
