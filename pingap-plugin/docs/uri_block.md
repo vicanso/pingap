@@ -21,6 +21,7 @@ would otherwise reach the upstream, or need a location with a
 | `methods` | string[] | — | The methods that are let through, in any case (`GET`, `post`). Empty allows every method. |
 | `status` | int | `403` | Status of the refusal, `400` to `599`. |
 | `message` | string | `Request is blocked` | Body of the refusal. |
+| `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
 At least one of `paths`, `queries` and `methods` is required. A pattern that
 does not compile, a method that is not one, or a `status` outside the range is

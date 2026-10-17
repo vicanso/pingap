@@ -13,6 +13,7 @@
 | `referer_list` | string[] | `[]` | 要匹配的主机名，不区分大小写。以 `*` 开头的条目按后缀匹配。 |
 | `type` | string | `allow` | `deny` 拦截列表中的主机；其他值仅允许列表中的主机。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
+| `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
 条目与解析后的 `Referer` URL 的**主机**匹配，而非完整 URL。`*.example.com` 存为后缀 `.example.com`，匹配 `a.example.com` 但不匹配 `example.com` 本身——两者都需要时请都列出。
 

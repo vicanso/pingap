@@ -1030,8 +1030,12 @@ export default {
       "Headers of the auth response that are set on the request to the upstream when the auth succeeds.",
     limitCategory: "Type",
     limitTag: "Category",
+    limitTagTips:
+      "What a client is counted by. ja4 is the TLS fingerprint of the connection: every client with the same TLS stack shares one budget. ip_ja4 is the address and the fingerprint together, the address alone without one. Both need ja4 on the server.",
     limitKey: "Key",
     limitKeyPlaceholder: "Input the name of limit key",
+    limitKeyTips:
+      "The name of the header, cookie or query parameter; not used for ip, ja4 and ip_ja4.",
     limitMax: "Max",
     limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
@@ -1150,6 +1154,16 @@ export default {
     uaListPlaceholder: "Input the user agent for restriction",
     uaRestrictionMessage: "Message",
     uaRestrictionMessagePlaceholder: "Input the message for restriction",
+    ja4RestrictionMode: "Restriction Mode",
+    ja4List: "JA4 Fingerprints",
+    ja4ListPlaceholder: "e.g. t13d1516h2_8daaf6152771_e5627efa2ab1",
+    ja4ListTips:
+      "Regular expressions; a fingerprint written out in full matches itself. A request without a fingerprint (plain http, or a server without ja4) matches nothing: an allow list refuses it, a deny list lets it through.",
+    ja4RestrictionMessage: "Message",
+    ja4RestrictionMessagePlaceholder: "Input the message for restriction",
+    dryRun: "Dry Run",
+    dryRunTips:
+      "Let the requests this plugin would refuse go on, and log each refusal as a warning: a rule can be watched on real traffic before it turns anyone away.",
     csrfTokenPath: "Token Path",
     csrfTokenPathPlaceholder: "Input the token path for csrf",
     csrfName: "Name",

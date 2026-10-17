@@ -25,6 +25,7 @@ cargo build --features=geo
 | `database` | string | — | MaxMind DB 文件（`.mmdb`）的路径，用它代替内嵌数据来查询国家。 |
 | `database_refresh` | duration | `1m` | 每隔多久检查一次文件是否有变化。至少 `1s`。 |
 | `header` | string | — | 用哪个请求头把国家码告诉上游，如 `X-Geo-Country`。 |
+| `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
 代码会转为大写并校验为恰好两个 ASCII 字母，拼写错误在启动时失败，而不是静默永不匹配。
 

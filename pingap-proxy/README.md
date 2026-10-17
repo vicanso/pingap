@@ -439,6 +439,8 @@ proxy_set_headers = ["X-JA4: $ja4"]
 | Access log | `{:ja4_r}` | `JA4_r`: the sorted lists instead of their hashes |
 | Access log | `{:ja4_o}` | `JA4_o`: hashed over the lists in the order the client sent them |
 | Access log | `{:ja4_ro}` | `JA4_ro`: the lists in the order sent, unhashed |
+| [`limit`](../pingap-plugin/docs/limit.md#by-tls-fingerprint) plugin | `tag = "ja4"`, `tag = "ip_ja4"` | Requests counted by the fingerprint, or by it and the client address |
+| [`ja4_restriction`](../pingap-plugin/docs/ja4_restriction.md) plugin | `ja4_list` | Requests allowed or refused by the fingerprint |
 
 How it works:
 

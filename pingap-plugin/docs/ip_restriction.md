@@ -13,6 +13,7 @@ Allow- or deny-list access by client IP address or CIDR range.
 | `ip_list` | string[] | `[]` | IPv4/IPv6 addresses and CIDR ranges. An entry that is neither fails configuration validation. |
 | `type` | string | `allow` | `allow` permits **only** listed IPs; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
+| `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
 Leaving `type` unset means `allow`, so an empty `ip_list` blocks every request.
 Set it explicitly.

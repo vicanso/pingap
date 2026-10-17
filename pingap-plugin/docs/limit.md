@@ -6,7 +6,8 @@ Two limiters in one plugin:
 - **`inflight`** — concurrent in-progress requests, tracked with an atomic
   counter released automatically when the request finishes.
 
-Either one can be keyed by client IP, a header, a cookie or a query parameter.
+Either one can be keyed by client IP, a header, a cookie, a query parameter, or
+the [JA4 fingerprint](#by-tls-fingerprint) of the TLS connection.
 
 - **Step:** `request` (default) or `proxy_upstream` — configurable
 - **Registered as:** `limit`
@@ -17,8 +18,8 @@ Either one can be keyed by client IP, a header, a cookie or a query parameter.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `limit`. |
 | `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
-| `tag` | string | `ip` | `ip`, `header`, `cookie` or `query`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. |
-| `key` | string | — | Name of the header / cookie / query parameter. **Required** unless `tag = "ip"`. |
+| `tag` | string | `ip` | `ip`, `header`, `cookie`, `query`, `ja4` or `ip_ja4`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. `ja4` and `ip_ja4`: see [By TLS fingerprint](#by-tls-fingerprint). |
+| `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`. |
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
 | `interval` | duration | `10s` | Rate window, at least `1ms`. Ignored by `inflight`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
@@ -26,6 +27,7 @@ Either one can be keyed by client IP, a header, a cookie or a query parameter.
 | `status` | int | `429` | Status of the response to a request over the limit, `400` to `599`. |
 | `message` | string | — | Body of that response, in place of `Plugin limit, exceed limit <value>/<max>`. |
 | `missing_key` | string | `pass` | What becomes of a request that has no value for the key: `pass` lets it through, unlimited; `reject` answers it `400`. |
+| `dry_run` | bool | `false` | Let a request the limit would refuse - over it, or without a key under `missing_key = "reject"` - go on, and log what would have been answered instead. See [Dry run](#dry-run). |
 
 ### How `max` and `interval` interact
 
@@ -58,6 +60,66 @@ often as `max` says, and with `weight = 0` every time. A config that still has
 the key loads, logs a warning and ignores it. **Limits are stricter than they
 were**: what used to pass at up to `2 × max` per interval is now held to
 `max`.
+
+### By TLS fingerprint
+
+`tag = "ja4"` counts by the [JA4 fingerprint](../../pingap-proxy/README.md#ja4-fingerprint)
+of the connection: what the client's TLS stack is, whatever its
+`User-Agent` claims. Every client with the same stack shares one budget, from
+whatever address, so a scraper that spreads its requests over a pool of
+proxies is still counted as one. So are all the users of one browser version:
+use it on a location that serves scripts and not browsers, or with a `max`
+that is a ceiling for one kind of client.
+
+`tag = "ip_ja4"` counts by the address and the fingerprint together. Behind
+the one address of an office, the script that runs wild has a budget of its
+own and does not use up that of the browsers. A request without a fingerprint
+is counted by its address alone.
+
+The fingerprint is there only on a TLS connection to a server with `ja4 =
+true`. Without one, `tag = "ja4"` has no value for the key and `missing_key`
+decides; turning away whole kinds of clients is the job of
+[`ja4_restriction`](ja4_restriction.md).
+
+- Behind a proxy or a CDN that terminates TLS and connects to Pingap anew,
+  the fingerprint is the proxy's: with `tag = "ja4"` every request is one
+  client, and the whole location shares one budget. (`ip_ja4` behind a
+  proxy listed in `basic.trusted_proxies` counts by the client address.)
+- The client chooses its fingerprint. A tool built to look like a browser
+  copies the browser's, and uses up the budget of everyone with that
+  browser; one that changes its cipher or extension lists gets a new key,
+  and a new budget, each time; a ClientHello over 16 KiB gets no
+  fingerprint at all, and with `missing_key = "pass"` no limit. A JA4 limit
+  holds clients that take no such trouble, which is most scrapers; against
+  one that does, count by the address too.
+
+### Dry run
+
+With `dry_run = true` nothing is refused. A request that would be is let
+through, and a warning is logged in its place:
+
+```
+WARN pingap_plugin: dry run, the request would have been refused category="limit" location="api" status=429 reason=Plugin limit, exceed limit 11/10 matched="1.2.3.4" client_ip="1.2.3.4" method="GET" uri=/api/items request_id=""
+```
+
+`matched` is what of the request the refusal goes by: the value of the key
+for `limit`, the fingerprint for `ja4_restriction`, the `User-Agent` or the
+`Referer`, the country, the part of the uri for `uri_block`.
+`client_ip` is the address the address rules decide by (the peer's own
+without `basic.trusted_proxies`), and `request_id` the one of
+[`request_id`](request_id.md) where that plugin runs first. Each would-be
+refusal is a line: during a flood that is a line for every request.
+
+What is counted is what would have been: a refused request is taken off the
+`rate` count as it is when refused, and an `inflight` limit does not keep the
+place of a request it would have turned away. So the log shows the refusals
+the limit would make if it were on, and the limit can be switched on once
+they are the ones intended. The quota headers do not show a refusal that is
+not made: with `headers = true` a request within the limit reports its
+budget, one over it reports nothing, and the budget of another limit on the
+location is left as it was. The same option is on
+`ip_restriction`, `ua_restriction`, `referer_restriction`, `ja4_restriction`,
+`geo_restriction` and `uri_block`.
 
 ## Examples
 
@@ -96,11 +158,23 @@ max = 20
 step = "proxy_upstream"
 ```
 
+Throttle each TLS stack, wherever it connects from, on an API that browsers
+do not call (needs `ja4 = true` on the server):
+
+```toml
+[plugins.perClientKind]
+category = "limit"
+type = "rate"
+tag = "ja4"
+max = 300
+interval = "60s"
+```
+
 ## Behaviour
 
 | Situation | Result |
 | --- | --- |
-| Key value is missing or empty | **Not limited** — the request passes. With `missing_key = "reject"`: `400 Bad Request`, body `Plugin limit, the header X-API-Key is required` (or `the cookie …`, `the query parameter …`) |
+| Key value is missing or empty | **Not limited** — the request passes. With `missing_key = "reject"`: `400 Bad Request`, body `Plugin limit, the header X-API-Key is required` (or `the cookie …`, `the query parameter …`, `a TLS connection with a JA4 fingerprint …`) |
 | Within limit | `Continue` |
 | Over limit | `429 Too Many Requests` (or `status`), body `Plugin limit, exceed limit <value>/<max>` (or `message`); a `rate` limiter adds `Retry-After: <interval in seconds>` |
 

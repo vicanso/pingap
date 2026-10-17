@@ -275,6 +275,8 @@ proxy_set_headers = ["X-JA4: $ja4"]
 | 访问日志 | `{:ja4_r}` | `JA4_r`：排序后的列表本身而非哈希 |
 | 访问日志 | `{:ja4_o}` | `JA4_o`：按客户端发送顺序的列表计算哈希 |
 | 访问日志 | `{:ja4_ro}` | `JA4_ro`：按发送顺序的列表，不做哈希 |
+| [`limit`](../plugins/limit.md#按-tls-指纹) 插件 | `tag = "ja4"`、`tag = "ip_ja4"` | 按指纹，或按指纹加客户端地址计数 |
+| [`ja4_restriction`](../plugins/ja4_restriction.md) 插件 | `ja4_list` | 按指纹放行或拒绝请求 |
 
 实现说明：
 

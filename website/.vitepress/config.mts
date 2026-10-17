@@ -38,6 +38,7 @@ function pluginSidebar(prefix: string, labels: {
         { text: "ip_restriction", link: `${prefix}/plugins/ip_restriction` },
         { text: "referer_restriction", link: `${prefix}/plugins/referer_restriction` },
         { text: "ua_restriction", link: `${prefix}/plugins/ua_restriction` },
+        { text: "ja4_restriction", link: `${prefix}/plugins/ja4_restriction` },
         { text: "geo_restriction", link: `${prefix}/plugins/geo_restriction` },
         { text: "uri_block", link: `${prefix}/plugins/uri_block` },
       ],

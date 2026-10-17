@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_duration_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+    Error, get_bool_conf, get_duration_conf, get_hash_key, get_str_conf,
+    get_str_slice_conf, refuse,
 };
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -247,6 +248,8 @@ pub struct GeoRestriction {
     refresh: Refresh,
     /// The request header the upstream is told the country in.
     header: Option<HeaderName>,
+    /// Requests are let through and the refusal is only logged.
+    dry_run: bool,
     hash_value: String,
 }
 
@@ -326,6 +329,7 @@ impl TryFrom<&PluginConf> for GeoRestriction {
             database,
             refresh: Refresh::new(refresh),
             header,
+            dry_run: get_bool_conf(value, "dry_run"),
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from(message),
@@ -434,8 +438,13 @@ impl Plugin for GeoRestriction {
         };
 
         if !allow {
-            return Ok(RequestPluginResult::Respond(
+            return Ok(refuse(
+                self.dry_run,
+                CATEGORY,
+                session,
+                ctx,
                 self.forbidden_resp.clone(),
+                || country_code_str.to_string(),
             ));
         }
 

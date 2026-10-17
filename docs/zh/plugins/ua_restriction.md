@@ -13,6 +13,7 @@
 | `ua_list` | string[] | `[]` | 正则模式，启动时编译成一个集合，一次扫描完成匹配。 |
 | `type` | string | `allow` | `deny` 拦截匹配的 UA；其他值仅允许匹配的 UA。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
+| `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
 模式使用 [`regex`](https://docs.rs/regex/latest/regex/#syntax) crate 语法，且**不锚定**——`go-http-client` 可匹配头中任意位置。需要精确值时用 `^…$`。非法模式会导致启动错误，`pingap -t` 可捕获。
 

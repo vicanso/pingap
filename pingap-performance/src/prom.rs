@@ -180,6 +180,10 @@ pub struct Prometheus {
     /// Histogram of upstream response times in seconds, labeled by upstream
     upstream_response_time: HistogramVec,
 
+    /// Histogram of the times from the upstream connection to the first
+    /// chunk of the response body in seconds, labeled by upstream
+    upstream_first_body_time: HistogramVec,
+
     /// Histogram of cache lookup times in seconds
     cache_lookup_time: Histogram,
 
@@ -410,6 +414,7 @@ struct UpstreamSeries {
     reuses: OnceLock<IntCounter>,
     processing_time: OnceLock<Histogram>,
     response_time: OnceLock<Histogram>,
+    first_body_time: OnceLock<Histogram>,
     errors: OnceLock<IntCounter>,
     retries: OnceLock<IntCounter>,
 }
@@ -774,6 +779,15 @@ impl Prometheus {
                 })
                 .observe(upstream_response_time as f64 / SECOND);
         }
+        if let Some(first_body_time) = ctx.get_upstream_first_body_time() {
+            series
+                .first_body_time
+                .get_or_init(|| {
+                    self.upstream_first_body_time
+                        .with_label_values(upstream_labels)
+                })
+                .observe(first_body_time as f64 / SECOND);
+        }
     }
 
     /// Counts a request that failed because of its upstream: no connection
@@ -910,6 +924,7 @@ impl Prometheus {
             let _ = self.upstream_reuses.remove_label_values(&labels);
             let _ = self.upstream_processing_time.remove_label_values(&labels);
             let _ = self.upstream_response_time.remove_label_values(&labels);
+            let _ = self.upstream_first_body_time.remove_label_values(&labels);
             let _ = self.upstream_errors.remove_label_values(&labels);
             let _ = self.upstream_retries.remove_label_values(&labels);
             // After the series, not before: what is kept here points at
@@ -1486,6 +1501,17 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &["upstream"],
         &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
     )?;
+    // The first token of a model takes seconds, the first byte of a page
+    // milliseconds: buckets for both.
+    let upstream_first_body_time = register_metric!(
+        r,
+        new_histogram_vec,
+        server,
+        "pingap_upstream_first_body_time",
+        "pingap time from the upstream connection to the first chunk of the response body(second)",
+        &["upstream"],
+        &[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]
+    )?;
     let cache_lookup_time = register_metric!(
         r,
         new_histogram,
@@ -1774,6 +1800,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         upstream_reuses,
         upstream_processing_time,
         upstream_response_time,
+        upstream_first_body_time,
         cache_lookup_time,
         cache_lock_time,
         cache_reading,
@@ -1883,6 +1910,7 @@ mod tests {
                     upstream_tls_handshake: Some(3),
                     upstream_processing: Some(10),
                     upstream_response: Some(5),
+                    upstream_first_body: Some(1200),
                     cache_lookup: Some(11),
                     cache_lock: Some(12),
                     ..Default::default()
@@ -1949,6 +1977,15 @@ mod tests {
             metric_value(
                 &buf,
                 "pingap_upstream_response_time_count{",
+                &["upstream=\"upstream\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("1.2".to_string()),
+            metric_value(
+                &buf,
+                "pingap_upstream_first_body_time_sum{",
                 &["upstream=\"upstream\""]
             ),
             "{buf}"
@@ -2022,6 +2059,7 @@ mod tests {
                         created_at: Instant::now(),
                         upstream_processing: Some(processing),
                         upstream_response: Some(response),
+                        upstream_first_body: Some(response),
                         ..Default::default()
                     },
                     state: RequestState {
@@ -2053,6 +2091,7 @@ mod tests {
         for name in [
             "pingap_upstream_processing_time",
             "pingap_upstream_response_time",
+            "pingap_upstream_first_body_time",
         ] {
             assert_eq!(
                 Some("1".to_string()),

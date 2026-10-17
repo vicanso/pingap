@@ -78,6 +78,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `ip_restriction` | 按 IP 或 CIDR 允许/拒绝 | [ip_restriction](./ip_restriction.md) |
 | `referer_restriction` | 按 `Referer` 主机允许/拒绝 | [referer_restriction](./referer_restriction.md) |
 | `ua_restriction` | 按 `User-Agent` 正则允许/拒绝 | [ua_restriction](./ua_restriction.md) |
+| `ja4_restriction` | 按 TLS 连接的 JA4 指纹允许/拒绝 | [ja4_restriction](./ja4_restriction.md) |
 | `geo_restriction` | 按 GeoIP 国家允许/拒绝，内嵌数据或 `.mmdb` 文件；可把国家码传给上游（feature `geo`） | [geo_restriction](./geo_restriction.md) |
 | `uri_block` | 按路径、查询串的规则或请求方法拦截请求 | [uri_block](./uri_block.md) |
 | `maintenance` | 返回维护通知，白名单地址或带指定请求头的请求放行 | [maintenance](./maintenance.md) |

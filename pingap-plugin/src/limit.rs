@@ -14,7 +14,7 @@
 
 use super::{
     Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
-    get_str_conf,
+    get_str_conf, refuse,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -45,6 +45,13 @@ pub enum LimitTag {
     RequestHeader, // Use value from a specified HTTP request header
     Cookie, // Use value from a specified cookie
     Query, // Use value from a specified URL query parameter
+    /// The JA4 fingerprint of the TLS connection: every client with the
+    /// same TLS stack shares one budget.
+    Ja4,
+    /// The client ip and the JA4 fingerprint together, the ip alone where
+    /// there is no fingerprint: a script behind the address of an office
+    /// does not use up the budget of the browsers behind it.
+    IpJa4,
 }
 
 // Limiter implements rate limiting and concurrent request limiting
@@ -107,6 +114,9 @@ pub struct Limiter {
     /// Whether a request without a value for the key is refused. It is let
     /// through, unlimited, unless `missing_key = "reject"`.
     reject_missing_key: bool,
+
+    /// A request over the limit is let through and only logged.
+    dry_run: bool,
 }
 
 /// What became of a request at the limiter.
@@ -205,14 +215,20 @@ impl TryFrom<&PluginConf> for Limiter {
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
             "query" => LimitTag::Query,
+            "ja4" => LimitTag::Ja4,
+            "ip_ja4" => LimitTag::IpJa4,
             other => {
                 return Err(invalid(format!(
-                    "Invalid tag({other}), expect ip, header, cookie or query"
+                    "Invalid tag({other}), expect ip, header, cookie, query, ja4 or ip_ja4"
                 )));
             },
         };
         let key = get_str_conf(value, "key");
-        if tag != LimitTag::Ip && key.is_empty() {
+        let named = matches!(
+            tag,
+            LimitTag::RequestHeader | LimitTag::Cookie | LimitTag::Query
+        );
+        if named && key.is_empty() {
             return Err(invalid(
                 "key is required for a header, cookie or query tag".to_string(),
             ));
@@ -315,6 +331,7 @@ impl TryFrom<&PluginConf> for Limiter {
             status,
             message,
             reject_missing_key,
+            dry_run: get_bool_conf(value, "dry_run"),
         })
     }
 }
@@ -323,7 +340,10 @@ impl Limiter {
     /// What the key is, for the client that did not send it.
     fn key_description(&self) -> String {
         match self.tag {
-            LimitTag::Ip => "the client address".to_string(),
+            LimitTag::Ip | LimitTag::IpJa4 => "the client address".to_string(),
+            LimitTag::Ja4 => {
+                "a TLS connection with a JA4 fingerprint".to_string()
+            },
             LimitTag::RequestHeader => format!("the header {}", self.key),
             LimitTag::Cookie => format!("the cookie {}", self.key),
             LimitTag::Query => format!("the query parameter {}", self.key),
@@ -376,8 +396,14 @@ impl Limiter {
     /// The limit that refuses the request is the one the refusal is about:
     /// its budget is what is reported, whatever another limit noted before
     /// it, and nothing at all when it is not one that reports.
+    ///
+    /// In a dry run a refusal is not made, and the headers are not told of
+    /// it either: the client sees what it would see without this limit.
     fn note_quota(&self, ctx: &mut Ctx, value: f64, reset: Option<u64>) {
         let refused = value > self.max;
+        if refused && self.dry_run {
+            return;
+        }
         if !self.headers {
             if refused {
                 ctx.state.rate_limit = None;
@@ -399,11 +425,14 @@ impl Limiter {
         }
     }
 
-    /// Counts the request against its key and says what became of it.
-    fn check(&self, session: &Session, ctx: &mut Ctx) -> Verdict {
-        // Extract the key value based on configured tag type.
-        // Borrow where possible — Rate/Inflight only need `Hash`, not an owned String.
-        let key: Cow<'_, str> = match self.tag {
+    /// The value the request is counted by, empty where it has none.
+    /// Borrowed where possible: `Rate` and `Inflight` only need `Hash`.
+    fn key_of<'a>(
+        &self,
+        session: &'a Session,
+        ctx: &'a mut Ctx,
+    ) -> Cow<'a, str> {
+        match self.tag {
             LimitTag::Query => Cow::Borrowed(
                 get_query_value(session.req_header(), &self.key)
                     .unwrap_or_default(),
@@ -416,12 +445,35 @@ impl Limiter {
                 get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default(),
             ),
+            // Plain http, or a server without `ja4 = true`: no value.
+            LimitTag::Ja4 => Cow::Borrowed(
+                ctx.conn
+                    .ja4
+                    .as_ref()
+                    .map(|ja4| ja4.ja4())
+                    .unwrap_or_default(),
+            ),
+            LimitTag::IpJa4 => {
+                let ja4 = ctx.conn.ja4.clone();
+                let ip = ensure_verified_client_ip(session, ctx);
+                match ja4 {
+                    Some(ja4) if !ip.is_empty() => {
+                        Cow::Owned(format!("{ip} {}", ja4.ja4()))
+                    },
+                    _ => Cow::Borrowed(ip),
+                }
+            },
             // An address the client cannot choose: its own behind
             // trusted proxies, the peer's without them. By whatever
             // `X-Forwarded-For` said, a new value with every request was a
             // new client every time and nothing was ever limited.
             _ => Cow::Borrowed(ensure_verified_client_ip(session, ctx)),
-        };
+        }
+    }
+
+    /// Counts the request against its key and says what became of it.
+    fn check(&self, session: &Session, ctx: &mut Ctx) -> Verdict {
+        let key = self.key_of(session, ctx);
 
         // No value for the key (a missing header or cookie): unlimited,
         // unless told to refuse it.
@@ -532,8 +584,18 @@ impl Plugin for Limiter {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        match self.check(session, ctx) {
-            Verdict::Pass => Ok(RequestPluginResult::Continue),
+        let verdict = self.check(session, ctx);
+        // In a dry run the request goes on, and holding its place among
+        // those in flight would count it where a refused one is gone:
+        // what is logged would no longer be what would be refused.
+        if self.dry_run
+            && self.inflight.is_some()
+            && matches!(verdict, Verdict::Exceeded(_))
+        {
+            ctx.state.guards.pop();
+        }
+        let response = match verdict {
+            Verdict::Pass => return Ok(RequestPluginResult::Continue),
             // Over the limit: 429 Too Many Requests, unless set otherwise.
             Verdict::Exceeded(value) => {
                 let mut headers: Vec<HttpHeader> =
@@ -549,26 +611,38 @@ impl Plugin for Limiter {
                     .message
                     .clone()
                     .unwrap_or_else(|| self.exceeded(value).to_string().into());
-                Ok(RequestPluginResult::Respond(HttpResponse {
+                HttpResponse {
                     status: self.status,
                     headers: (!headers.is_empty()).then_some(headers),
                     body,
                     ..Default::default()
-                }))
+                }
             },
             // Not a request too many: one that does not say who it is from.
-            Verdict::MissingKey => {
-                Ok(RequestPluginResult::Respond(HttpResponse {
-                    status: StatusCode::BAD_REQUEST,
-                    body: format!(
-                        "Plugin limit, {} is required",
-                        self.key_description()
-                    )
-                    .into(),
-                    ..Default::default()
-                }))
+            Verdict::MissingKey => HttpResponse {
+                status: StatusCode::BAD_REQUEST,
+                body: format!(
+                    "Plugin limit, {} is required",
+                    self.key_description()
+                )
+                .into(),
+                ..Default::default()
             },
-        }
+        };
+        // What the request was counted by, for the log of a dry run.
+        let matched = if self.dry_run {
+            self.key_of(session, ctx).into_owned()
+        } else {
+            String::new()
+        };
+        Ok(refuse(
+            self.dry_run,
+            "limit",
+            session,
+            ctx,
+            response,
+            move || matched,
+        ))
     }
 
     /// Tells the client its budget on the response of the upstream.
@@ -1355,5 +1429,181 @@ interval = "1s"
         assert_eq!(5, admitted(&limiter, 30, "1.1.1.1", forged).await);
         let forged = |index: usize| format!("X-Real-IP: 9.9.8.{index}\r\n");
         assert_eq!(0, admitted(&limiter, 30, "1.1.1.1", forged).await);
+    }
+
+    /// `ctx` on a connection whose ClientHello was `hello`.
+    fn with_ja4(mut ctx: Ctx, hello: Vec<u8>) -> Ctx {
+        ctx.conn.ja4 = pingap_core::Ja4Fingerprint::from_client_hello(&hello)
+            .map(std::sync::Arc::new);
+        ctx
+    }
+
+    /// The hello of the JA4 specification's example, a browser.
+    fn browser() -> Vec<u8> {
+        pingap_core::ja4::testing::spec_example_body()
+    }
+
+    /// A hello with nothing in it, another TLS stack.
+    fn script() -> Vec<u8> {
+        pingap_core::ja4::testing::client_hello_body(0x9999, &[], Some(&[]))
+    }
+
+    /// `tag = "ja4"`: one budget for every client with the same TLS
+    /// stack, whatever its address.
+    #[tokio::test]
+    async fn test_limit_by_ja4() {
+        let limiter =
+            new_rate_limiter("tag = \"ja4\"\nmax = 1\ninterval = \"1m\"");
+        assert_eq!(LimitTag::Ja4, limiter.tag);
+        let session = new_session().await;
+        let mut first = with_ja4(from_peer("1.1.1.1"), browser());
+        assert_eq!(true, limiter.incr(&session, &mut first).is_ok());
+        let mut second = with_ja4(from_peer("2.2.2.2"), browser());
+        assert_eq!(true, limiter.incr(&session, &mut second).is_err());
+        // another stack has a budget of its own
+        let mut other = with_ja4(from_peer("2.2.2.2"), script());
+        assert_eq!(true, limiter.incr(&session, &mut other).is_ok());
+        // plain http, or a server without `ja4`: nothing to count by
+        for _ in 0..3 {
+            let mut plain = from_peer("1.1.1.1");
+            assert_eq!(true, limiter.incr(&session, &mut plain).is_ok());
+        }
+
+        // unless told to turn that away
+        let strict = new_rate_limiter(
+            "tag = \"ja4\"\nmax = 1\nmissing_key = \"reject\"",
+        );
+        let mut session = new_session().await;
+        let RequestPluginResult::Respond(resp) = strict
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut from_peer("1.1.1.1"),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("a request without a fingerprint is turned away");
+        };
+        assert_eq!(StatusCode::BAD_REQUEST, resp.status);
+        assert_eq!(
+            Bytes::from_static(
+                b"Plugin limit, a TLS connection with a JA4 fingerprint is required"
+            ),
+            resp.body
+        );
+    }
+
+    /// `tag = "ip_ja4"`: the address and the fingerprint together, the
+    /// address alone where there is no fingerprint.
+    #[tokio::test]
+    async fn test_limit_by_ip_and_ja4() {
+        let limiter =
+            new_rate_limiter("tag = \"ip_ja4\"\nmax = 1\ninterval = \"1m\"");
+        assert_eq!(LimitTag::IpJa4, limiter.tag);
+        let session = new_session().await;
+        // one address, two TLS stacks: two budgets
+        let mut browser_one = with_ja4(from_peer("1.1.1.1"), browser());
+        assert_eq!(true, limiter.incr(&session, &mut browser_one).is_ok());
+        let mut script_one = with_ja4(from_peer("1.1.1.1"), script());
+        assert_eq!(true, limiter.incr(&session, &mut script_one).is_ok());
+        let mut script_two = with_ja4(from_peer("1.1.1.1"), script());
+        assert_eq!(true, limiter.incr(&session, &mut script_two).is_err());
+        // the same stack at another address is another client
+        let mut elsewhere = with_ja4(from_peer("2.2.2.2"), script());
+        assert_eq!(true, limiter.incr(&session, &mut elsewhere).is_ok());
+        // no fingerprint: counted by the address
+        let mut plain = from_peer("3.3.3.3");
+        assert_eq!(true, limiter.incr(&session, &mut plain).is_ok());
+        let mut plain = from_peer("3.3.3.3");
+        assert_eq!(true, limiter.incr(&session, &mut plain).is_err());
+    }
+
+    /// In a dry run a request over the limit goes on, and what is counted
+    /// is what would have been let through.
+    #[tokio::test]
+    async fn test_limit_dry_run() {
+        let limiter = new_rate_limiter(
+            "max = 1\ninterval = \"1m\"\nmessage = \"slow down\"\ndry_run = true",
+        );
+        assert_eq!(true, limiter.dry_run);
+        // every one of them goes on, where one would without the dry run
+        let no_headers = |_: usize| String::new();
+        assert_eq!(5, admitted(&limiter, 5, "1.1.1.1", no_headers).await);
+        // the refused ones were taken off again: the count is at the limit,
+        // and the next request takes it one over, not five
+        let session = new_session().await;
+        assert_eq!(
+            "Plugin limit, exceed limit 2/1",
+            limiter
+                .incr(&session, &mut from_peer("1.1.1.1"))
+                .err()
+                .unwrap()
+                .to_string()
+        );
+
+        // An inflight limit does not keep the place of a request it would
+        // have refused: refused, it would be gone already.
+        let limiter = Limiter::new(
+            &toml::from_str::<PluginConf>(
+                "type = \"inflight\"\nmax = 1\ndry_run = true",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut ctx = from_peer("1.1.1.1");
+        let mut session = new_session().await;
+        let result = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(RequestPluginResult::Continue, result);
+        assert_eq!(1, ctx.state.guards.len());
+        let mut over = from_peer("1.1.1.1");
+        let result = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut over)
+            .await
+            .unwrap();
+        assert_eq!(RequestPluginResult::Continue, result);
+        assert_eq!(0, over.state.guards.len());
+        // so the next one is counted as the second in flight, not the third
+        let mut next = from_peer("1.1.1.1");
+        assert_eq!(
+            "Plugin limit, exceed limit 2/1",
+            limiter.incr(&session, &mut next).err().unwrap().to_string()
+        );
+    }
+
+    /// A refusal a dry run does not make is not shown to the client in
+    /// the quota headers, nor does it take away those of another limit.
+    #[tokio::test]
+    async fn test_dry_run_leaves_the_quota_headers_alone() {
+        let enforced =
+            new_rate_limiter("max = 5\ninterval = \"1m\"\nheaders = true");
+        let watched =
+            new_rate_limiter("max = 1\ninterval = \"1m\"\ndry_run = true");
+        let reporting = new_rate_limiter(
+            "max = 1\ninterval = \"1m\"\nheaders = true\ndry_run = true",
+        );
+        let session = new_session().await;
+        // the watched limits use up their one request
+        let mut first = from_peer("2.2.2.2");
+        let _ = watched.check(&session, &mut first);
+        let _ = reporting.check(&session, &mut first);
+
+        // and are over it with the next, which the enforced limit reports
+        let mut ctx = from_peer("2.2.2.2");
+        enforced.incr(&session, &mut ctx).unwrap();
+        let noted = ctx.state.rate_limit;
+        assert_eq!(Some(4), noted.map(|quota| quota.remaining));
+        assert_eq!(
+            true,
+            matches!(watched.check(&session, &mut ctx), Verdict::Exceeded(_))
+        );
+        assert_eq!(
+            true,
+            matches!(reporting.check(&session, &mut ctx), Verdict::Exceeded(_))
+        );
+        assert_eq!(noted, ctx.state.rate_limit);
     }
 }

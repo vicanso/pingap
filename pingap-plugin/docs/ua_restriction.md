@@ -13,6 +13,7 @@ Allow- or deny-list requests by `User-Agent`, matched with regular expressions.
 | `ua_list` | string[] | `[]` | Regex patterns, compiled at startup into one set that is matched in a single pass. |
 | `type` | string | `allow` | `allow` permits **only** matching agents; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
+| `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
 Patterns use the [`regex`] crate's syntax and are **unanchored** — `go-http-client`
 matches anywhere in the header. Anchor with `^…$` when you mean an exact value.

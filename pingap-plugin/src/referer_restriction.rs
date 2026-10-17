@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
+    Error, RestrictionCategory, get_bool_conf, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -59,6 +59,8 @@ pub struct RefererRestriction {
     restriction_category: RestrictionCategory,
     /// The HTTP response to return when access is forbidden
     forbidden_resp: HttpResponse,
+    /// Requests are let through and the refusal is only logged.
+    dry_run: bool,
     /// Unique identifier for this plugin instance
     hash_value: String,
 }
@@ -111,6 +113,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
+            dry_run: get_bool_conf(value, "dry_run"),
         };
 
         Ok(params)
@@ -177,7 +180,7 @@ impl Plugin for RefererRestriction {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
@@ -198,8 +201,20 @@ impl Plugin for RefererRestriction {
                 })
             });
         if !self.restriction_category.allows(found) {
-            return Ok(RequestPluginResult::Respond(
+            let session: &Session = session;
+            return Ok(refuse(
+                self.dry_run,
+                "referer_restriction",
+                session,
+                ctx,
                 self.forbidden_resp.clone(),
+                || {
+                    session
+                        .get_header(http::header::REFERER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string()
+                },
             ));
         }
         Ok(RequestPluginResult::Continue)

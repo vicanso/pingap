@@ -1316,8 +1316,9 @@ pub struct ServerConf {
     pub global_certificates: Option<bool>,
 
     /// Compute the JA4 fingerprint of every TLS client from its
-    /// ClientHello, for `$ja4` in headers and `{:ja4}` in the access log.
-    /// Needs a TLS listener (`global_certificates`).
+    /// ClientHello, for `$ja4` in headers, `{:ja4}` in the access log, and
+    /// the `limit` (`tag = "ja4"`) and `ja4_restriction` plugins. Needs a
+    /// TLS listener (`global_certificates`).
     pub ja4: Option<bool>,
 
     /// Read the PROXY protocol header (version 1 or 2) a load balancer

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
-    get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
+    get_str_conf, get_str_slice_conf, refuse,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -53,6 +53,8 @@ pub struct UriBlock {
     /// What a request that is turned away is answered with.
     status: StatusCode,
     message: Bytes,
+    /// Requests are let through and the refusal is only logged.
+    dry_run: bool,
     plugin_step: PluginStep,
     hash_value: String,
 }
@@ -137,6 +139,7 @@ impl TryFrom<&PluginConf> for UriBlock {
             methods,
             status,
             message,
+            dry_run: get_bool_conf(value, "dry_run"),
             plugin_step: step,
         })
     }
@@ -208,7 +211,7 @@ impl Plugin for UriBlock {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
@@ -217,18 +220,25 @@ impl Plugin for UriBlock {
         let Some(reason) = self.blocked(&header.method, &header.uri) else {
             return Ok(RequestPluginResult::Continue);
         };
-        debug!(
-            category = CATEGORY,
-            reason = ?reason,
-            path = header.uri.path(),
-            "request is blocked"
-        );
-        Ok(RequestPluginResult::Respond(
+        if !self.dry_run {
+            debug!(
+                category = CATEGORY,
+                reason = ?reason,
+                path = header.uri.path(),
+                "request is blocked"
+            );
+        }
+        Ok(refuse(
+            self.dry_run,
+            CATEGORY,
+            session,
+            ctx,
             HttpResponse::builder(self.status)
                 .header(HTTP_HEADER_CONTENT_TEXT.clone())
                 .body(self.message.clone())
                 .no_store()
                 .finish(),
+            || format!("{reason:?}").to_lowercase(),
         ))
     }
 }

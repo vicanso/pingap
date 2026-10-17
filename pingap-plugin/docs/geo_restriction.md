@@ -33,6 +33,7 @@ no restriction.
 | `database` | string | — | Path of a MaxMind DB file (`.mmdb`) to look countries up in, in place of the embedded data. |
 | `database_refresh` | duration | `1m` | How often the file is looked at for a change. At least `1s`. |
 | `header` | string | — | Request header the upstream is told the country in, e.g. `X-Geo-Country`. |
+| `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
 Codes are upper-cased and validated to be exactly two ASCII letters, so a typo
 fails at startup rather than silently never matching.

@@ -1896,6 +1896,8 @@ impl ProxyHttp for Server {
         // upstream start processing
         ctx.timing.upstream_processing =
             Some(get_start_time(&ctx.timing.created_at));
+        // and the time to the first of the body, from the same point
+        ctx.timing.upstream_first_body = ctx.timing.upstream_processing;
 
         Ok(())
     }
@@ -2420,6 +2422,25 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Option<std::time::Duration>> {
         debug!(target: LOG_TARGET, "--> upstream response body filter");
         defer!(debug!(target: LOG_TARGET, "<-- upstream response body filter"););
+
+        // The first of the body as the upstream sent it, before a plugin
+        // holds it back (one that buffers the whole of it leaves nothing
+        // here until the end). Taken once: a time that is still the
+        // negative start of the measure. After a 101 these bytes are the
+        // upgraded protocol, whose first frame may come hours later, and
+        // no body.
+        if !session.was_upgraded()
+            && body.as_ref().is_some_and(|body| !body.is_empty())
+            && ctx
+                .timing
+                .upstream_first_body
+                .is_some_and(|start| start < 0)
+        {
+            ctx.timing.upstream_first_body = get_latency(
+                &ctx.timing.created_at,
+                &ctx.timing.upstream_first_body,
+            );
+        }
 
         self.handle_upstream_response_body_plugin(
             session,
@@ -4437,6 +4458,95 @@ value = 'proxy_set_headers = ["name:value"]'
                 .is_err()
         );
         assert_eq!(true, ctx.plugins.is_some());
+    }
+
+    /// The time to the first chunk of the upstream's body is taken from
+    /// the connection, once, at the first chunk that has something in it,
+    /// and whatever a plugin does with that chunk after.
+    #[tokio::test]
+    async fn test_upstream_first_body_time() {
+        /// Holds every chunk back, as a plugin that converts the whole of
+        /// a body does.
+        struct HoldsBack;
+        impl Plugin for HoldsBack {
+            fn handle_upstream_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                body: &mut Option<Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<pingap_core::ResponseBodyPluginResult>
+            {
+                *body = Some(Bytes::new());
+                Ok(pingap_core::ResponseBodyPluginResult::FullyReplaced)
+            }
+        }
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /stream HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        let plugins: Vec<pingap_core::NamedPlugin> =
+            vec![("holds_back".into(), Arc::new(HoldsBack))];
+        ctx.plugins = Some(Arc::from(plugins));
+        let mut chunk = |ctx: &mut Ctx, data: &'static [u8]| {
+            let mut body = Some(Bytes::from_static(data));
+            server
+                .upstream_response_body_filter(
+                    &mut session,
+                    &mut body,
+                    false,
+                    ctx,
+                )
+                .unwrap();
+        };
+
+        // No upstream connection, nothing to measure from.
+        chunk(&mut ctx, b"data: 1\n\n");
+        assert_eq!(None, ctx.get_upstream_first_body_time());
+
+        // Connected: an empty chunk is not the first of the body.
+        ctx.timing.upstream_first_body =
+            Some(get_start_time(&ctx.timing.created_at));
+        chunk(&mut ctx, b"");
+        assert_eq!(None, ctx.get_upstream_first_body_time());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        chunk(&mut ctx, b"data: 1\n\n");
+        let first = ctx.get_upstream_first_body_time().unwrap();
+        assert_eq!(true, first >= 30, "{first}");
+        // taken once
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        chunk(&mut ctx, b"data: 2\n\n");
+        assert_eq!(Some(first), ctx.get_upstream_first_body_time());
+
+        // After a 101 what comes is the upgraded protocol, and no body.
+        let (mut session, _client) = new_duplex_session(
+            "GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        )
+        .await;
+        let mut switching = ResponseHeader::build(101, None).unwrap();
+        switching.insert_header("Upgrade", "websocket").unwrap();
+        switching.insert_header("Connection", "Upgrade").unwrap();
+        session
+            .write_response_header(Box::new(switching), false)
+            .await
+            .unwrap();
+        assert_eq!(true, session.was_upgraded());
+        let mut ctx = Ctx::default();
+        ctx.timing.upstream_first_body =
+            Some(get_start_time(&ctx.timing.created_at));
+        let mut frame = Some(Bytes::from_static(b"\x81\x02hi"));
+        server
+            .upstream_response_body_filter(
+                &mut session,
+                &mut frame,
+                false,
+                &mut ctx,
+            )
+            .unwrap();
+        assert_eq!(None, ctx.get_upstream_first_body_time());
     }
 
     /// What a `bandwidth_limit` plugin left in the context is kept by the

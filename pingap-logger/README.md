@@ -173,6 +173,7 @@ The same keys work in header values as `:<context_key>`, for example
 | `upstream_connection_time` | Age of the upstream connection |
 | `upstream_processing_time` | From the upstream connection to the upstream's response header |
 | `upstream_response_time` | From the upstream's response header to the end of its body |
+| `upstream_first_body_time` | From the upstream connection to the first chunk of its response body. For a stream (server-sent events, the tokens of a language model) the time to the first of it, which the response header, sent at once, does not tell. Nothing for a response without a body |
 | `compression_time` | Time spent compressing the response |
 | `compression_ratio` | Input bytes over output bytes, one decimal |
 | `cache_lookup_time` | Cache lookup |

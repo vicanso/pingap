@@ -149,6 +149,7 @@ let parser = Parser::from(format);
 | `upstream_connection_time` | 上游连接已存在的时长 |
 | `upstream_processing_time` | 从拿到上游连接到收到上游响应头 |
 | `upstream_response_time` | 从收到上游响应头到响应体结束 |
+| `upstream_first_body_time` | 从拿到上游连接到收到上游响应体的第一块数据。对流式响应（server-sent events、大模型逐个输出的 token）就是第一块内容到达的时间，这是立即返回的响应头反映不出来的。没有响应体的响应不输出 |
 | `compression_time` | 压缩响应的耗时 |
 | `compression_ratio` | 输入字节数除以输出字节数，保留一位小数 |
 | `cache_lookup_time` | 缓存查找耗时 |

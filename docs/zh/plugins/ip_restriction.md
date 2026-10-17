@@ -11,10 +11,11 @@
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `ip_restriction`。 |
 | `ip_list` | string[] | `[]` | IPv4/IPv6 地址与 CIDR 范围。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。 |
-| `type` | string | `allow` | `deny` 拦截列表中的 IP；其他值（含未设置）仅允许列表中的 IP。 |
+| `type` | string | `allow` | `allow` **仅**允许列表中的 IP；`deny` 拦截列表中的 IP。不区分大小写；其他值是配置错误。 |
 | `message` | string | `Request is forbidden` | 403 响应正文。 |
+| `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
-`type` 与 `"deny"` 做字面比较。其他任何值（含空）都视为允许列表模式，因此空 `ip_list` 且未设 `type` 会拦截所有请求。请显式设置 `type`。
+未设置 `type` 即为 `allow`，因此空 `ip_list` 会拦截所有请求。请显式设置 `type`。
 
 ## 示例
 

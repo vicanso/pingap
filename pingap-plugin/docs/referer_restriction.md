@@ -14,6 +14,7 @@ is hot-link protection for images and downloads.
 | `referer_list` | string[] | `[]` | Hosts to match, case-insensitively. An entry starting with `*` matches by suffix. |
 | `type` | string | `allow` | `allow` permits **only** listed hosts; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
+| `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
 Entries are matched against the **host** of the parsed `Referer` URL, not the
 full URL. `*.example.com` is stored as the suffix `.example.com`, so it matches

@@ -107,6 +107,7 @@ Each request-step plugin returns one of three results:
 | `ip_restriction` | Allow/deny by IP or CIDR | [docs/ip_restriction.md](docs/ip_restriction.md) |
 | `referer_restriction` | Allow/deny by `Referer` host | [docs/referer_restriction.md](docs/referer_restriction.md) |
 | `ua_restriction` | Allow/deny by `User-Agent` regex | [docs/ua_restriction.md](docs/ua_restriction.md) |
+| `ja4_restriction` | Allow/deny by the JA4 fingerprint of the TLS connection | [docs/ja4_restriction.md](docs/ja4_restriction.md) |
 | `geo_restriction` | Allow/deny by GeoIP country, embedded data or a `.mmdb` file; country header for the upstream (feature `geo`) | [docs/geo_restriction.md](docs/geo_restriction.md) |
 | `uri_block` | Block requests by path or query pattern, or by method | [docs/uri_block.md](docs/uri_block.md) |
 | `maintenance` | Answer with a maintenance notice, except for allowed addresses or a header | [docs/maintenance.md](docs/maintenance.md) |

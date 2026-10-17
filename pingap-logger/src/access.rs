@@ -436,6 +436,7 @@ fn context_json_kind(field: CtxLogField) -> JsonKind {
         | CtxLogField::UpstreamConnectTime
         | CtxLogField::UpstreamProcessingTime
         | CtxLogField::UpstreamResponseTime
+        | CtxLogField::UpstreamFirstBodyTime
         | CtxLogField::UpstreamTcpConnectTime
         | CtxLogField::UpstreamTlsHandshakeTime
         | CtxLogField::UpstreamConnectOffloadWaitTime

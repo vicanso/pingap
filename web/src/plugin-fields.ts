@@ -22,6 +22,24 @@ export type PluginFieldsBuilder = (
   t: Translate,
 ) => ExFormItem[];
 
+/**
+ * The `dry_run` of a plugin that turns requests away: what it would refuse
+ * goes on, and the refusal is logged.
+ */
+const dryRunField = (
+  conf: Record<string, unknown>,
+  t: Translate,
+): ExFormItem => ({
+  name: "dry_run",
+  label: t("dryRun"),
+  placeholder: "",
+  tips: t("dryRunTips"),
+  defaultValue: conf.dry_run as boolean,
+  span: 3,
+  category: ExFormItemCategory.RADIOS,
+  options: newBooleanOptions(),
+});
+
 export const PLUGIN_FIELDS: Partial<
   Record<PluginCategory, PluginFieldsBuilder>
 > = {
@@ -941,12 +959,17 @@ export const PLUGIN_FIELDS: Partial<
       defaultValue: conf.tag as string,
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["cookie", "header", "query", "ip"], true),
+      options: newStringOptions(
+        ["cookie", "header", "query", "ip", "ja4", "ip_ja4"],
+        true,
+      ),
+      tips: t("limitTagTips"),
     },
     {
       name: "key",
       label: t("limitKey"),
       placeholder: t("limitKeyPlaceholder"),
+      tips: t("limitKeyTips"),
       defaultValue: conf.key as string,
       span: 3,
       category: ExFormItemCategory.TEXT,
@@ -1003,6 +1026,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
   ],
   [PluginCategory.IP_RESTRICTION]: (conf, t) => [
     {
@@ -1030,6 +1054,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
   ],
   [PluginCategory.GEO_RESTRICTION]: (conf, t) => [
     {
@@ -1083,6 +1108,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
   ],
   [PluginCategory.REFERER_RESTRICTION]: (conf, t) => [
     {
@@ -1110,6 +1136,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
   ],
   [PluginCategory.UA_RESTRICTION]: (conf, t) => [
     {
@@ -1137,6 +1164,36 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
+  ],
+  [PluginCategory.JA4_RESTRICTION]: (conf, t) => [
+    {
+      name: "type",
+      label: t("ja4RestrictionMode"),
+      placeholder: "",
+      defaultValue: conf.type as string,
+      span: 6,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["allow", "deny"], true),
+    },
+    {
+      name: "ja4_list",
+      label: t("ja4List"),
+      placeholder: t("ja4ListPlaceholder"),
+      tips: t("ja4ListTips"),
+      defaultValue: conf.ja4_list as string[],
+      span: 6,
+      category: ExFormItemCategory.TEXTS,
+    },
+    {
+      name: "message",
+      label: t("ja4RestrictionMessage"),
+      placeholder: t("ja4RestrictionMessagePlaceholder"),
+      defaultValue: conf.message as string,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    dryRunField(conf, t),
   ],
   [PluginCategory.CSRF]: (conf, t) => [
     {
@@ -1487,6 +1544,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
+    dryRunField(conf, t),
   ],
   [PluginCategory.SUB_FILTER]: (conf, t) => [
     {

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
+    Error, RestrictionCategory, get_bool_conf, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -69,6 +69,8 @@ pub struct UaRestriction {
     ua_list: RegexSet,
     restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Custom HTTP response returned when request is blocked
+    /// Requests are let through and the refusal is only logged.
+    dry_run: bool,
     hash_value: String, // Unique identifier for plugin instance, used for caching/tracking
 }
 
@@ -120,6 +122,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
+            dry_run: get_bool_conf(value, "dry_run"),
         };
 
         Ok(params)
@@ -172,7 +175,7 @@ impl Plugin for UaRestriction {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         // Skip processing if not in request phase
         if step != self.plugin_step {
@@ -189,8 +192,20 @@ impl Plugin for UaRestriction {
         // - deny mode: block if UA matches any pattern
         // - allow mode: block if UA doesn't match any pattern
         if !self.restriction_category.allows(found) {
-            return Ok(RequestPluginResult::Respond(
+            let session: &Session = session;
+            return Ok(refuse(
+                self.dry_run,
+                "ua_restriction",
+                session,
+                ctx,
                 self.forbidden_resp.clone(),
+                || {
+                    session
+                        .get_header(http::header::USER_AGENT)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string()
+                },
             ));
         }
         Ok(RequestPluginResult::Continue) // Request allowed - continue normal processing

@@ -99,8 +99,9 @@ locations = ["lo"]
 # Default `false`
 # h1_pipelining = true
 
-# Compute the JA4 TLS fingerprint of each client, for `$ja4` in headers and
-# `{:ja4}` in the access log. Needs `global_certificates = true`.
+# Compute the JA4 TLS fingerprint of each client, for `$ja4` in headers,
+# `{:ja4}` in the access log, and the `limit` (`tag = "ja4"`) and
+# `ja4_restriction` plugins. Needs `global_certificates = true`.
 # ja4 = true
 
 # Read the PROXY protocol header (v1 or v2) of a load balancer that works on

@@ -14,7 +14,8 @@
 
 use humantime::parse_duration;
 use pingap_config::PluginConf;
-use pingap_core::PluginStep;
+use pingap_core::{Ctx, HttpResponse, PluginStep, RequestPluginResult};
+use pingora::proxy::Session;
 use snafu::Snafu;
 use std::cell::RefCell;
 use std::fmt::Write;
@@ -311,6 +312,53 @@ pub(crate) fn get_restriction_category_conf(
     }
 }
 
+/// The address a refusal is logged with: the one the plugins that go by
+/// an address decide by. Through trusted proxies that is the client's,
+/// without them the peer's own; `X-Forwarded-For` is then whatever the
+/// client wrote in it.
+fn verified_address(session: &Session, ctx: &Ctx) -> String {
+    if pingap_core::has_trusted_proxies() {
+        return ctx
+            .conn
+            .client_ip
+            .clone()
+            .unwrap_or_else(|| pingap_core::get_client_ip(session));
+    }
+    ctx.conn.remote_addr.clone().unwrap_or_default()
+}
+
+/// What a plugin that turns requests away does with one it would turn
+/// away: answers it with `response`, or - with `dry_run` on - lets it
+/// through and logs what it would have answered, with `matched`, what of
+/// the request it went by. A new rule can be watched on real traffic that
+/// way before it refuses anyone.
+pub(crate) fn refuse(
+    dry_run: bool,
+    category: &str,
+    session: &Session,
+    ctx: &Ctx,
+    response: HttpResponse,
+    matched: impl FnOnce() -> String,
+) -> RequestPluginResult {
+    if !dry_run {
+        return RequestPluginResult::Respond(response);
+    }
+    let header = session.req_header();
+    tracing::warn!(
+        category,
+        location = &*ctx.upstream.location,
+        status = response.status.as_u16(),
+        reason = %String::from_utf8_lossy(&response.body),
+        matched = matched(),
+        client_ip = verified_address(session, ctx),
+        method = header.method.as_str(),
+        uri = %header.uri,
+        request_id = ctx.state.request_id.as_deref().unwrap_or_default(),
+        "dry run, the request would have been refused"
+    );
+    RequestPluginResult::Continue
+}
+
 /// Whether the response is a part of a body and not the body: a `206`, or
 /// anything that says which bytes it is.
 ///
@@ -442,6 +490,7 @@ mod forward_auth;
 mod geo_restriction;
 mod hmac_auth;
 mod ip_restriction;
+mod ja4_restriction;
 mod jwt;
 mod key_auth;
 mod limit;
@@ -468,7 +517,81 @@ pub use plugin::get_plugin_factory;
 mod tests {
     use super::{accepts_encoding, get_plugin_factory, get_str_slice_conf};
     use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep, RequestPluginResult};
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+
+    /// Regression: the address a dry run logs is the one the decision is
+    /// made by. It was the first of `X-Forwarded-For`, which without
+    /// trusted proxies is whatever the client wrote.
+    #[tokio::test]
+    async fn test_dry_run_logs_the_verified_address() {
+        let input =
+            b"GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-For: 8.8.8.8\r\n\r\n";
+        let mock_io = tokio_test::io::Builder::new().read(input).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some("1.1.1.1".to_string());
+        assert_eq!("1.1.1.1", super::verified_address(&session, &ctx));
+    }
+
+    /// Every plugin that turns requests away has a dry run: the request
+    /// it refuses without one goes on with one.
+    #[tokio::test]
+    async fn test_dry_run_lets_the_request_through() {
+        let mut cases = vec![
+            (
+                "category = \"ip_restriction\"\nip_list = [\"1.1.1.1\"]\ntype = \"deny\"",
+                "",
+            ),
+            (
+                "category = \"ua_restriction\"\nua_list = [\"^curl\"]\ntype = \"deny\"",
+                "User-Agent: curl/8.0\r\n",
+            ),
+            (
+                "category = \"referer_restriction\"\nreferer_list = [\"bad.example\"]\ntype = \"deny\"",
+                "Referer: https://bad.example/page\r\n",
+            ),
+            ("category = \"uri_block\"\npaths = [\"^/admin\"]", ""),
+            ("category = \"limit\"\nmax = 0", ""),
+            // an allow list, and a plain http request: no fingerprint
+            ("category = \"ja4_restriction\"\nja4_list = [\"^t13\"]", ""),
+        ];
+        if cfg!(feature = "geo") {
+            cases.push((
+                "category = \"geo_restriction\"\ncountry_codes = [\"CN\"]\ntype = \"allow\"",
+                "",
+            ));
+        }
+        for (conf, headers) in cases {
+            for dry_run in [false, true] {
+                let conf = format!("{conf}\ndry_run = {dry_run}");
+                let plugin = get_plugin_factory()
+                    .create(&toml::from_str::<PluginConf>(&conf).unwrap())
+                    .unwrap();
+                let input = format!(
+                    "GET /admin/users HTTP/1.1\r\nHost: example.com\r\n{headers}\r\n"
+                );
+                let mock_io = tokio_test::io::Builder::new()
+                    .read(input.as_bytes())
+                    .build();
+                let mut session = Session::new_h1(Box::new(mock_io));
+                session.read_request().await.unwrap();
+                let mut ctx = Ctx::default();
+                ctx.conn.remote_addr = Some("1.1.1.1".to_string());
+                let result = plugin
+                    .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    dry_run,
+                    result == RequestPluginResult::Continue,
+                    "{conf}"
+                );
+            }
+        }
+    }
 
     /// Regression: a value of the wrong type was read as the default, and
     /// the plugin ran with a limit of 0, an empty list or a flag left off.

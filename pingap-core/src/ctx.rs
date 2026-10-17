@@ -217,6 +217,11 @@ pub struct Timing {
     pub upstream_processing: Option<i32>,
     /// The duration from sending the request to receiving the upstream response in milliseconds.
     pub upstream_response: Option<i32>,
+    /// From the upstream connection to the first chunk of the upstream's
+    /// response body, in milliseconds: for a stream (server-sent events,
+    /// the tokens of a model) the time to the first of it, which the
+    /// response header, sent at once, does not tell.
+    pub upstream_first_body: Option<i32>,
     /// The total duration of the upstream connection in milliseconds.
     pub upstream_connection_duration: Option<u64>,
     /// The duration of the cache lookup in milliseconds.
@@ -237,6 +242,7 @@ impl Default for Timing {
             upstream_connect_offload_wait: None,
             upstream_processing: None,
             upstream_response: None,
+            upstream_first_body: None,
             upstream_connection_duration: None,
             cache_lookup: None,
             cache_lock: None,
@@ -853,6 +859,8 @@ pub enum CtxLogField {
     UpstreamProcessingTimeHuman,
     UpstreamResponseTime,
     UpstreamResponseTimeHuman,
+    UpstreamFirstBodyTime,
+    UpstreamFirstBodyTimeHuman,
     UpstreamTcpConnectTime,
     UpstreamTcpConnectTimeHuman,
     UpstreamTlsHandshakeTime,
@@ -1247,6 +1255,14 @@ impl Ctx {
         self.get_time_field(self.timing.upstream_processing)
     }
 
+    /// From the upstream connection to the first chunk of the response
+    /// body, in milliseconds. None for a response without a body, and
+    /// for one that did not come from an upstream.
+    #[inline]
+    pub fn get_upstream_first_body_time(&self) -> Option<u32> {
+        self.get_time_field(self.timing.upstream_first_body)
+    }
+
     /// Adds a plugin processing time to the context.
     ///
     /// # Arguments
@@ -1353,6 +1369,12 @@ impl Ctx {
             },
             CtxLogField::UpstreamResponseTimeHuman => {
                 append_time!(self.get_upstream_response_time(), human)
+            },
+            CtxLogField::UpstreamFirstBodyTime => {
+                append_time!(self.get_upstream_first_body_time())
+            },
+            CtxLogField::UpstreamFirstBodyTimeHuman => {
+                append_time!(self.get_upstream_first_body_time(), human)
             },
             CtxLogField::UpstreamTcpConnectTime => {
                 append_time!(self.timing.upstream_tcp_connect)
@@ -2495,6 +2517,24 @@ mod tests {
         buf = BytesMut::new();
         ctx.append_log_value(&mut buf, "upstream_response_time_human");
         assert_eq!(b"3ms", buf.as_ref());
+
+        // never measured, or only begun (the start marker): no value
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_first_body_time");
+        assert_eq!(b"", buf.as_ref());
+        buf = BytesMut::new();
+        ctx.timing.upstream_first_body = Some(-5);
+        ctx.append_log_value(&mut buf, "upstream_first_body_time");
+        assert_eq!(b"", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.timing.upstream_first_body = Some(1250);
+        ctx.append_log_value(&mut buf, "upstream_first_body_time");
+        assert_eq!(b"1250", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_first_body_time_human");
+        assert_eq!(b"1.2s", buf.as_ref());
 
         buf = BytesMut::new();
         ctx.timing.upstream_tcp_connect = Some(100);

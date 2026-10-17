@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
-    get_str_conf, get_str_slice_conf,
+    Error, RestrictionCategory, get_bool_conf, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -38,6 +38,8 @@ pub struct IpRestriction {
     ip_rules: pingap_util::IpRules, // Contains parsed IP addresses and CIDR ranges for matching
     restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Customizable 403 response returned when access is denied
+    /// Requests are let through and the refusal is only logged.
+    dry_run: bool,
     hash_value: String, // Unique identifier used for plugin caching/tracking
 }
 
@@ -89,6 +91,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
+            dry_run: get_bool_conf(value, "dry_run"),
         };
 
         Ok(params)
@@ -159,11 +162,17 @@ impl Plugin for IpRestriction {
 
         // Check if IP matches any configured rules
         // Returns error if IP is malformed
-        let found = match self.ip_rules.is_match(ip) {
+        let found = match self.ip_rules.is_match(ip).map_err(|e| e.to_string())
+        {
             Ok(matched) => matched,
-            Err(e) => {
-                return Ok(RequestPluginResult::Respond(
-                    HttpResponse::bad_request(e.to_string()),
+            Err(message) => {
+                return Ok(refuse(
+                    self.dry_run,
+                    "ip_restriction",
+                    session,
+                    ctx,
+                    HttpResponse::bad_request(message),
+                    String::new,
                 ));
             },
         };
@@ -173,8 +182,14 @@ impl Plugin for IpRestriction {
         // - allow mode: block if IP is NOT found in rules
         if !self.restriction_category.allows(found) {
             // Return forbidden response with custom message if configured
-            return Ok(RequestPluginResult::Respond(
+            // the address is the one logged as the client's
+            return Ok(refuse(
+                self.dry_run,
+                "ip_restriction",
+                session,
+                ctx,
                 self.forbidden_resp.clone(),
+                String::new,
             ));
         }
         // Allow request to proceed

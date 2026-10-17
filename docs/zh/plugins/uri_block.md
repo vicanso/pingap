@@ -17,6 +17,7 @@
 | `methods` | string[] | — | 放行的请求方法，大小写不限（`GET`、`post`）。为空表示不限制方法。 |
 | `status` | int | `403` | 拦截时的状态码，`400` 到 `599`。 |
 | `message` | string | `Request is blocked` | 拦截时响应的正文。 |
+| `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
 `paths`、`queries`、`methods` 至少要配一项。编译不过的正则、不合法的方法名、范围之外的 `status` 都是配置错误，`pingap -t` 会报出来。
 
