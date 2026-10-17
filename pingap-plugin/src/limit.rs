@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
-    get_str_conf, refuse,
+    DryRun, Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
+    get_str_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -116,7 +116,7 @@ pub struct Limiter {
     reject_missing_key: bool,
 
     /// A request over the limit is let through and only logged.
-    dry_run: bool,
+    dry_run: DryRun,
 }
 
 /// What became of a request at the limiter.
@@ -210,7 +210,8 @@ impl TryFrom<&PluginConf> for Limiter {
         // not one of the documented ones is an error rather than a silent
         // fallback: a misspelt `tag` used to limit by ip, a misspelt `type`
         // rate-limited, and a forgotten `max` rejected almost everything.
-        let tag = match get_str_conf(value, "tag").as_str() {
+        let tag_name = get_str_conf(value, "tag");
+        let tag = match tag_name.as_str() {
             "" | "ip" => LimitTag::Ip,
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
@@ -232,6 +233,15 @@ impl TryFrom<&PluginConf> for Limiter {
             return Err(invalid(
                 "key is required for a header, cookie or query tag".to_string(),
             ));
+        }
+        // Left over from a header tag, say, in a form that keeps what it
+        // was given: the limit goes by the tag, and is told so.
+        if !named && !key.is_empty() {
+            warn!(
+                tag = if tag_name.is_empty() { "ip" } else { &tag_name },
+                key,
+                "the key of the limit plugin is only read with a header, cookie or query tag, not with this one"
+            );
         }
         let is_inflight = match get_str_conf(value, "type").as_str() {
             "" | "rate" => false,
@@ -331,7 +341,7 @@ impl TryFrom<&PluginConf> for Limiter {
             status,
             message,
             reject_missing_key,
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
         })
     }
 }
@@ -401,7 +411,7 @@ impl Limiter {
     /// it either: the client sees what it would see without this limit.
     fn note_quota(&self, ctx: &mut Ctx, value: f64, reset: Option<u64>) {
         let refused = value > self.max;
-        if refused && self.dry_run {
+        if refused && self.dry_run.is_on() {
             return;
         }
         if !self.headers {
@@ -588,7 +598,7 @@ impl Plugin for Limiter {
         // In a dry run the request goes on, and holding its place among
         // those in flight would count it where a refused one is gone:
         // what is logged would no longer be what would be refused.
-        if self.dry_run
+        if self.dry_run.is_on()
             && self.inflight.is_some()
             && matches!(verdict, Verdict::Exceeded(_))
         {
@@ -630,19 +640,10 @@ impl Plugin for Limiter {
             },
         };
         // What the request was counted by, for the log of a dry run.
-        let matched = if self.dry_run {
+        let session: &Session = session;
+        Ok(self.dry_run.refuse("limit", session, ctx, response, |ctx| {
             self.key_of(session, ctx).into_owned()
-        } else {
-            String::new()
-        };
-        Ok(refuse(
-            self.dry_run,
-            "limit",
-            session,
-            ctx,
-            response,
-            move || matched,
-        ))
+        }))
     }
 
     /// Tells the client its budget on the response of the upstream.
@@ -1526,7 +1527,7 @@ interval = "1s"
         let limiter = new_rate_limiter(
             "max = 1\ninterval = \"1m\"\nmessage = \"slow down\"\ndry_run = true",
         );
-        assert_eq!(true, limiter.dry_run);
+        assert_eq!(true, limiter.dry_run.is_on());
         // every one of them goes on, where one would without the dry run
         let no_headers = |_: usize| String::new();
         assert_eq!(5, admitted(&limiter, 5, "1.1.1.1", no_headers).await);

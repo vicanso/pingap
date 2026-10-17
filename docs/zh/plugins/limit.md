@@ -17,7 +17,7 @@
 | `category` | string | — | 必须为 `limit`。 |
 | `type` | string | `rate` | `rate` 或 `inflight`。其他值是配置错误。 |
 | `tag` | string | `ip` | `ip`、`header`、`cookie`、`query`、`ja4` 或 `ip_ja4`。其他值是配置错误。`ip` 指连接的对端地址；请求经过 `basic.trusted_proxies` 里的代理时，用转发头里的地址。`ja4` 和 `ip_ja4` 见[按 TLS 指纹](#按-tls-指纹)。 |
-| `key` | string | — | header / cookie / query 参数名。`tag` 为 `header`、`cookie`、`query` 时**必填**。 |
+| `key` | string | — | header / cookie / query 参数名。`tag` 为 `header`、`cookie`、`query` 时**必填**；其他 `tag` 不读取它，填了会在加载插件时打印告警。 |
 | `max` | int | — | **必填。**每个 `interval` 允许的请求数（rate），或并发数（inflight）。负数是配置错误。 |
 | `interval` | duration | `10s` | rate 的窗口，至少 `1ms`。`inflight` 忽略。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
@@ -48,20 +48,20 @@
 
 `tag = "ip_ja4"` 按地址和指纹的组合计数。同一个办公室出口地址后面，失控的脚本有自己的一份额度，不会把浏览器的额度用光。没有指纹的请求只按地址计数。
 
-只有 TLS 连接、且 server 开启了 `ja4 = true` 才有指纹。没有指纹时，`tag = "ja4"` 取不到键值，由 `missing_key` 决定；要整类拒绝某些客户端，用 [`ja4_restriction`](ja4_restriction.md)。
+只有 TLS 连接、且 server 开启了 `ja4 = true` 才有指纹。没有指纹时，`tag = "ja4"` 取不到键值，由 `missing_key` 决定；要整类拒绝某些客户端，用 [`ja4_restriction`](ja4_restriction.md)。带这类限流的 location 挂在没有开启 `ja4 = true` 的 server 上时，`pingap -t`、启动以及引入它的那次重载都会打印告警，重载里才设置的 `ja4 = true`（要等重启才生效）也算：这可能是有意的，比如同一个 location 也通过明文 http 提供。同样的告警只打印一次。
 
 - 在终结 TLS、再重新连接 Pingap 的代理或 CDN 后面，看到的是代理的指纹：`tag = "ja4"` 会把所有请求当成同一个客户端，整个 location 共用一份额度。（`ip_ja4` 在 `basic.trusted_proxies` 列出的代理后面会按客户端地址计数。）
-- 指纹由客户端决定。刻意伪装成浏览器的工具会复制浏览器的指纹，从而用光所有使用该浏览器的人的额度；每次改变 cipher 或扩展列表的工具，每次都会得到新的键、新的额度；超过 16 KiB 的 ClientHello 根本不计算指纹，在 `missing_key = "pass"` 下也就不受限制。JA4 限流能管住不费这些心思的客户端——大多数爬虫都是如此；对付刻意规避的，要同时按地址计数。
+- 指纹由客户端决定。刻意伪装成浏览器的工具会复制浏览器的指纹，从而用光所有使用该浏览器的人的额度；每次改变 cipher 或扩展列表的工具，每次都会得到新的键、新的额度；Pingap 没能完整读到的 ClientHello（超过 16 KiB，或拆成多个 record、合计超过 18 KiB）根本不计算指纹，在 `missing_key = "pass"` 下也就不受限制。JA4 限流能管住不费这些心思的客户端——大多数爬虫都是如此；对付刻意规避的，要同时按地址计数。
 
 ### 只记录不拦截
 
 `dry_run = true` 时不拒绝任何请求。本应被拒绝的请求照常放行，改为记录一条警告日志：
 
 ```
-WARN pingap_plugin: dry run, the request would have been refused category="limit" location="api" status=429 reason=Plugin limit, exceed limit 11/10 matched="1.2.3.4" client_ip="1.2.3.4" method="GET" uri=/api/items request_id=""
+WARN pingap_plugin: dry run, the request would have been refused category="limit" location="api" status=429 reason=Plugin limit, exceed limit 11/10 matched="1.2.3.4" client_ip="1.2.3.4" method="GET" uri=/api/items request_id="" skipped=0
 ```
 
-`matched` 是拒绝所依据的请求内容：`limit` 是键值，`ja4_restriction` 是指纹，还有 `User-Agent`、`Referer`、国家码，`uri_block` 是 uri 中命中的部分。`client_ip` 是按地址判断的规则所用的地址（未配置 `basic.trusted_proxies` 时是对端地址），`request_id` 是 [`request_id`](request_id.md) 插件生成的 ID（该插件先运行时才有）。每次本应拒绝都会记一行：遇到流量冲击时，每个请求都是一行。
+`matched` 是拒绝所依据的请求内容：`limit` 是键值，`ja4_restriction` 是指纹，还有 `User-Agent`、`Referer`、国家码，`uri_block` 是 uri 中命中的部分。`client_ip` 是按地址判断的规则所用的地址（未配置 `basic.trusted_proxies` 时是对端地址），`request_id` 是 [`request_id`](request_id.md) 插件生成的 ID（该插件先运行时才有）。每个插件每个时钟秒最多记 10 行，以免一条会拦下流量冲击的规则把冲击原样写进日志：超出的只计数不记录，下一行的 `skipped` 是自上一行以来没有记录的次数。之后没有新的一行时，这部分计数不会记录。
 
 计数按真正拦截时的情况进行：被拒绝的请求和拦截时一样从 `rate` 的计数里扣除，`inflight` 也不为本应拒绝的请求占位。所以日志里记录的正是开启拦截后会被拒绝的请求，确认无误后再关掉这个选项即可。额度响应头不体现没有真正执行的拒绝：`headers = true` 时，额度内的请求照常报告剩余额度，超限的请求不报告，location 上其他限流器的额度也保持不变。`ip_restriction`、`ua_restriction`、`referer_restriction`、`ja4_restriction`、`geo_restriction` 和 `uri_block` 也有同样的选项。
 

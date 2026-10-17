@@ -40,6 +40,12 @@ const dryRunField = (
   options: newBooleanOptions(),
 });
 
+const LIMIT_TAG_LABELS: Record<string, string> = {
+  ip: "IP",
+  ja4: "JA4",
+  ip_ja4: "IP + JA4",
+};
+
 export const PLUGIN_FIELDS: Partial<
   Record<PluginCategory, PluginFieldsBuilder>
 > = {
@@ -956,13 +962,18 @@ export const PLUGIN_FIELDS: Partial<
       name: "tag",
       label: t("limitTag"),
       placeholder: "",
-      defaultValue: conf.tag as string,
+      defaultValue: (conf.tag as string) || "",
       span: 3,
       category: ExFormItemCategory.RADIOS,
+      // pascal case would make "Ja4" and "IpJa4" of the last two
       options: newStringOptions(
         ["cookie", "header", "query", "ip", "ja4", "ip_ja4"],
         true,
-      ),
+        true,
+      ).map((item) => ({
+        ...item,
+        label: LIMIT_TAG_LABELS[item.option] || item.label,
+      })),
       tips: t("limitTagTips"),
     },
     {

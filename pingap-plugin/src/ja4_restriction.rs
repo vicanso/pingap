@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_bool_conf, get_hash_key,
-    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
+    DryRun, Error, RestrictionCategory, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -46,7 +46,7 @@ pub struct Ja4Restriction {
     restriction_category: RestrictionCategory,
     forbidden_resp: HttpResponse,
     /// Requests are let through and the refusal is only logged.
-    dry_run: bool,
+    dry_run: DryRun,
     hash_value: String,
 }
 
@@ -83,7 +83,7 @@ impl TryFrom<&PluginConf> for Ja4Restriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
         })
     }
 }
@@ -121,15 +121,14 @@ impl Plugin for Ja4Restriction {
             .as_ref()
             .is_some_and(|ja4| self.ja4_list.is_match(ja4.ja4()));
         if !self.restriction_category.allows(found) {
-            let fingerprint = || {
+            let fingerprint = |ctx: &mut Ctx| {
                 ctx.conn
                     .ja4
                     .as_ref()
                     .map(|ja4| ja4.ja4().to_string())
                     .unwrap_or_default()
             };
-            return Ok(refuse(
-                self.dry_run,
+            return Ok(self.dry_run.refuse(
                 CATEGORY,
                 session,
                 ctx,
@@ -201,7 +200,7 @@ mod tests {
         .unwrap();
         assert_eq!(RestrictionCategory::Deny, plugin.restriction_category);
         assert_eq!(2, plugin.ja4_list.len());
-        assert_eq!(false, plugin.dry_run);
+        assert_eq!(false, plugin.dry_run.is_on());
 
         // allow is the default, as for the other restrictions
         let plugin =
@@ -285,7 +284,7 @@ mod tests {
             "ja4_list = [\"{SCRIPT}\"]\ntype = \"deny\"\ndry_run = true\n"
         ))
         .unwrap();
-        assert_eq!(true, deny.dry_run);
+        assert_eq!(true, deny.dry_run.is_on());
         assert_eq!(
             RequestPluginResult::Continue,
             run(&deny, &mut ctx_of(script())).await

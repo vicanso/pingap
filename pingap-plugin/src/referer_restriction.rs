@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_bool_conf, get_hash_key,
-    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
+    DryRun, Error, RestrictionCategory, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -60,7 +60,7 @@ pub struct RefererRestriction {
     /// The HTTP response to return when access is forbidden
     forbidden_resp: HttpResponse,
     /// Requests are let through and the refusal is only logged.
-    dry_run: bool,
+    dry_run: DryRun,
     /// Unique identifier for this plugin instance
     hash_value: String,
 }
@@ -113,7 +113,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
         };
 
         Ok(params)
@@ -202,13 +202,12 @@ impl Plugin for RefererRestriction {
             });
         if !self.restriction_category.allows(found) {
             let session: &Session = session;
-            return Ok(refuse(
-                self.dry_run,
+            return Ok(self.dry_run.refuse(
                 "referer_restriction",
                 session,
                 ctx,
                 self.forbidden_resp.clone(),
-                || {
+                |_| {
                     session
                         .get_header(http::header::REFERER)
                         .and_then(|value| value.to_str().ok())

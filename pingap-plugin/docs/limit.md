@@ -19,7 +19,7 @@ the [JA4 fingerprint](#by-tls-fingerprint) of the TLS connection.
 | `category` | string | — | Must be `limit`. |
 | `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
 | `tag` | string | `ip` | `ip`, `header`, `cookie`, `query`, `ja4` or `ip_ja4`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. `ja4` and `ip_ja4`: see [By TLS fingerprint](#by-tls-fingerprint). |
-| `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`. |
+| `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`; not read with any other tag, where a value is warned about when the plugin is loaded. |
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
 | `interval` | duration | `10s` | Rate window, at least `1ms`. Ignored by `inflight`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
@@ -79,7 +79,11 @@ is counted by its address alone.
 The fingerprint is there only on a TLS connection to a server with `ja4 =
 true`. Without one, `tag = "ja4"` has no value for the key and `missing_key`
 decides; turning away whole kinds of clients is the job of
-[`ja4_restriction`](ja4_restriction.md).
+[`ja4_restriction`](ja4_restriction.md). A location with such a limit on a
+server without `ja4 = true` is warned about by `pingap -t`, at startup and by
+the reload that brings it in, also when that reload sets `ja4 = true` (which
+waits for a restart): it may be meant, for a location served over plain http
+as well. The same findings are warned about once.
 
 - Behind a proxy or a CDN that terminates TLS and connects to Pingap anew,
   the fingerprint is the proxy's: with `tag = "ja4"` every request is one
@@ -88,7 +92,8 @@ decides; turning away whole kinds of clients is the job of
 - The client chooses its fingerprint. A tool built to look like a browser
   copies the browser's, and uses up the budget of everyone with that
   browser; one that changes its cipher or extension lists gets a new key,
-  and a new budget, each time; a ClientHello over 16 KiB gets no
+  and a new budget, each time; a ClientHello Pingap cannot read whole (over
+  16 KiB, or spread over records that add up to more than 18 KiB) gets no
   fingerprint at all, and with `missing_key = "pass"` no limit. A JA4 limit
   holds clients that take no such trouble, which is most scrapers; against
   one that does, count by the address too.
@@ -99,7 +104,7 @@ With `dry_run = true` nothing is refused. A request that would be is let
 through, and a warning is logged in its place:
 
 ```
-WARN pingap_plugin: dry run, the request would have been refused category="limit" location="api" status=429 reason=Plugin limit, exceed limit 11/10 matched="1.2.3.4" client_ip="1.2.3.4" method="GET" uri=/api/items request_id=""
+WARN pingap_plugin: dry run, the request would have been refused category="limit" location="api" status=429 reason=Plugin limit, exceed limit 11/10 matched="1.2.3.4" client_ip="1.2.3.4" method="GET" uri=/api/items request_id="" skipped=0
 ```
 
 `matched` is what of the request the refusal goes by: the value of the key
@@ -107,8 +112,11 @@ for `limit`, the fingerprint for `ja4_restriction`, the `User-Agent` or the
 `Referer`, the country, the part of the uri for `uri_block`.
 `client_ip` is the address the address rules decide by (the peer's own
 without `basic.trusted_proxies`), and `request_id` the one of
-[`request_id`](request_id.md) where that plugin runs first. Each would-be
-refusal is a line: during a flood that is a line for every request.
+[`request_id`](request_id.md) where that plugin runs first. A plugin logs
+ten such lines in a second of the clock at most, so that a rule that would
+turn away a flood does not log one: the refusals past that are counted, not
+logged, and `skipped` on the next line says how many there were since the
+line before. A count that no line follows is not logged.
 
 What is counted is what would have been: a refused request is taken off the
 `rate` count as it is when refused, and an `inflight` limit does not keep the

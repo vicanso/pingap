@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf, get_step_conf_in,
-    get_str_conf, get_str_slice_conf, refuse,
+    DryRun, Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -54,7 +54,7 @@ pub struct UriBlock {
     status: StatusCode,
     message: Bytes,
     /// Requests are let through and the refusal is only logged.
-    dry_run: bool,
+    dry_run: DryRun,
     plugin_step: PluginStep,
     hash_value: String,
 }
@@ -139,7 +139,7 @@ impl TryFrom<&PluginConf> for UriBlock {
             methods,
             status,
             message,
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
             plugin_step: step,
         })
     }
@@ -220,7 +220,7 @@ impl Plugin for UriBlock {
         let Some(reason) = self.blocked(&header.method, &header.uri) else {
             return Ok(RequestPluginResult::Continue);
         };
-        if !self.dry_run {
+        if !self.dry_run.is_on() {
             debug!(
                 category = CATEGORY,
                 reason = ?reason,
@@ -228,8 +228,7 @@ impl Plugin for UriBlock {
                 "request is blocked"
             );
         }
-        Ok(refuse(
-            self.dry_run,
+        Ok(self.dry_run.refuse(
             CATEGORY,
             session,
             ctx,
@@ -238,7 +237,7 @@ impl Plugin for UriBlock {
                 .body(self.message.clone())
                 .no_store()
                 .finish(),
-            || format!("{reason:?}").to_lowercase(),
+            |_| format!("{reason:?}").to_lowercase(),
         ))
     }
 }

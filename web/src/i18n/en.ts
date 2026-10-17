@@ -1031,11 +1031,11 @@ export default {
     limitCategory: "Type",
     limitTag: "Category",
     limitTagTips:
-      "What a client is counted by. ja4 is the TLS fingerprint of the connection: every client with the same TLS stack shares one budget. ip_ja4 is the address and the fingerprint together, the address alone without one. Both need ja4 on the server.",
+      "What a client is counted by. JA4 is the TLS fingerprint of the connection: every client with the same TLS stack shares one budget. IP + JA4 is the address and the fingerprint together, the address alone without one. Both need ja4 on the server. Unset means IP.",
     limitKey: "Key",
     limitKeyPlaceholder: "Input the name of limit key",
     limitKeyTips:
-      "The name of the header, cookie or query parameter; not used for ip, ja4 and ip_ja4.",
+      "The name of the header, cookie or query parameter. Not read for IP, JA4 and IP + JA4: leave it empty there, a value is warned about.",
     limitMax: "Max",
     limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
@@ -1163,7 +1163,7 @@ export default {
     ja4RestrictionMessagePlaceholder: "Input the message for restriction",
     dryRun: "Dry Run",
     dryRunTips:
-      "Let the requests this plugin would refuse go on, and log each refusal as a warning: a rule can be watched on real traffic before it turns anyone away.",
+      "Let the requests this plugin would refuse go on, and log the refusals as warnings, ten in a second at most (the rest are counted): a rule can be watched on real traffic before it turns anyone away.",
     csrfTokenPath: "Token Path",
     csrfTokenPathPlaceholder: "Input the token path for csrf",
     csrfName: "Name",

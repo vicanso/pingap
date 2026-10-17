@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_bool_conf, get_hash_key,
-    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
+    DryRun, Error, RestrictionCategory, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -70,7 +70,7 @@ pub struct UaRestriction {
     restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Custom HTTP response returned when request is blocked
     /// Requests are let through and the refusal is only logged.
-    dry_run: bool,
+    dry_run: DryRun,
     hash_value: String, // Unique identifier for plugin instance, used for caching/tracking
 }
 
@@ -122,7 +122,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
         };
 
         Ok(params)
@@ -193,13 +193,12 @@ impl Plugin for UaRestriction {
         // - allow mode: block if UA doesn't match any pattern
         if !self.restriction_category.allows(found) {
             let session: &Session = session;
-            return Ok(refuse(
-                self.dry_run,
+            return Ok(self.dry_run.refuse(
                 "ua_restriction",
                 session,
                 ctx,
                 self.forbidden_resp.clone(),
-                || {
+                |_| {
                     session
                         .get_header(http::header::USER_AGENT)
                         .and_then(|value| value.to_str().ok())

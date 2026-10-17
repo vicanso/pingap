@@ -62,12 +62,19 @@ ja4_list = ["^t13"]
 | --- | --- | --- |
 | Matches a pattern | allowed | **403** |
 | Matches nothing | **403** | allowed |
-| None (plain http, or `ja4` off on the server) | **403** | allowed |
+| None (plain http, `ja4` off on the server, or a ClientHello Pingap could not read whole: over 16 KiB, spread over records that add up to more than 18 KiB, or not sent within 5 seconds) | **403** | allowed |
 
 ## Usage notes
 
 - Turn on `ja4 = true` on the server first. Without it no request has a
-  fingerprint, and an allow list turns every one of them away.
+  fingerprint, and an allow list turns every one of them away. `pingap -t`,
+  a start and the reload that brings it in warn about the plugin on a
+  location of a server without it, or whose `ja4 = true` waits for a
+  restart.
+- A deny list is passed by a client that sends no fingerprint: one that
+  pads its ClientHello past 16 KiB, or cuts it into many small records, has
+  none. It holds the clients that take no such trouble; to hold the rest,
+  use an allow list.
 - Find the fingerprints to list in the access log: `{:ja4}` prints the one of
   each request, next to `{user_agent}` to see which claim does not fit.
 - A fingerprint names a TLS stack, not a client: every user of one browser

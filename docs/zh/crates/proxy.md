@@ -278,11 +278,13 @@ proxy_set_headers = ["X-JA4: $ja4"]
 | [`limit`](../plugins/limit.md#按-tls-指纹) 插件 | `tag = "ja4"`、`tag = "ip_ja4"` | 按指纹，或按指纹加客户端地址计数 |
 | [`ja4_restriction`](../plugins/ja4_restriction.md) 插件 | `ja4_list` | 按指纹放行或拒绝请求 |
 
+这两个插件所在的 location 挂在没有开启 `ja4 = true` 的 server 上时，`pingap -t`、启动以及引入它们的那次重载都会打印告警：那里的请求都没有指纹。重载里才设置 `ja4 = true` 的也会告警，它要等重启才生效。
+
 实现说明：
 
 - 按 FoxIO 的 JA4 规范实现（TLS 客户端指纹，BSD 3-Clause 许可）。规范自带的样例就是四种形式的单元测试。JA4+ 的其他指纹未实现。
 - ClientHello 在 TLS 握手之前从 TCP 流读取，这段代码由 pingora 的各个 TLS 后端共用，因此 OpenSSL 与 rustls 构建对同一客户端算出的值相同。读取的每个字节都会放回给握手使用。
-- 除了读取握手本来就需要的 ClientHello，不会延迟或拒绝任何连接。5 秒内没有发完 ClientHello、超过 16 KiB 或格式错误的客户端只是没有指纹；明文 HTTP 连接永远没有指纹。没有指纹时访问日志字段为空，用 `$ja4` 设置的请求头会回退为字面文本，与其他无法解析的变量一致。
+- 除了读取握手本来就需要的 ClientHello，不会延迟或拒绝任何连接。5 秒内没有发完 ClientHello、超过 16 KiB、拆成多个 record 合计超过 18 KiB 或格式错误的客户端只是没有指纹；明文 HTTP 连接永远没有指纹。没有指纹时访问日志字段为空，用 `$ja4` 设置的请求头会回退为字面文本，与其他无法解析的变量一致。
 - 被拆进多个 TLS 记录的 ClientHello 会先重组。使用 Encrypted Client Hello 时，线路上的是外层 ClientHello，指纹也按它计算。
 - 指纹属于连接：keep-alive 或 HTTP/2 连接上的每个请求都带有它，连接关闭时释放。
 - 开销是每个新 TLS 连接一次 ClientHello 解析和两次 SHA-256，外加每个请求一次查表。默认关闭。

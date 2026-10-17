@@ -316,6 +316,8 @@ category = "limit"
 # - "cookie": Get value from cookie as limit key
 # - "header": Get value from header as limit key
 # - "query": Get value from query parameter as limit key
+# - "ja4": Use the JA4 TLS fingerprint as limit key (needs `ja4 = true` on the server)
+# - "ip_ja4": Use ip and the JA4 fingerprint together as limit key
 # Currently set to use query parameters for identifying requests
 tag = "query"
 

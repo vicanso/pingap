@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, RestrictionCategory, get_bool_conf, get_hash_key,
-    get_restriction_category_conf, get_str_conf, get_str_slice_conf, refuse,
+    DryRun, Error, RestrictionCategory, get_hash_key,
+    get_restriction_category_conf, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -39,7 +39,7 @@ pub struct IpRestriction {
     restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Customizable 403 response returned when access is denied
     /// Requests are let through and the refusal is only logged.
-    dry_run: bool,
+    dry_run: DryRun,
     hash_value: String, // Unique identifier used for plugin caching/tracking
 }
 
@@ -91,7 +91,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
                 body: Bytes::from(message),
                 ..Default::default()
             },
-            dry_run: get_bool_conf(value, "dry_run"),
+            dry_run: DryRun::new(value),
         };
 
         Ok(params)
@@ -166,13 +166,12 @@ impl Plugin for IpRestriction {
         {
             Ok(matched) => matched,
             Err(message) => {
-                return Ok(refuse(
-                    self.dry_run,
+                return Ok(self.dry_run.refuse(
                     "ip_restriction",
                     session,
                     ctx,
                     HttpResponse::bad_request(message),
-                    String::new,
+                    |_| String::new(),
                 ));
             },
         };
@@ -183,13 +182,12 @@ impl Plugin for IpRestriction {
         if !self.restriction_category.allows(found) {
             // Return forbidden response with custom message if configured
             // the address is the one logged as the client's
-            return Ok(refuse(
-                self.dry_run,
+            return Ok(self.dry_run.refuse(
                 "ip_restriction",
                 session,
                 ctx,
                 self.forbidden_resp.clone(),
-                String::new,
+                |_| String::new(),
             ));
         }
         // Allow request to proceed

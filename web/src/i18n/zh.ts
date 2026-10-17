@@ -956,11 +956,11 @@ export default {
     limitCategory: "类型",
     limitTag: "分类",
     limitTagTips:
-      "按什么区分客户端。ja4 是连接的 TLS 指纹：TLS 栈相同的客户端共用一份额度。ip_ja4 是地址和指纹的组合，没有指纹时只按地址。两者都需要 server 开启 ja4。",
+      "按什么区分客户端。JA4 是连接的 TLS 指纹：TLS 栈相同的客户端共用一份额度。IP + JA4 是地址和指纹的组合，没有指纹时只按地址。两者都需要 server 开启 ja4。不设置即按 IP。",
     limitKey: "Key",
     limitKeyPlaceholder: "输入限制key的名称",
     limitKeyTips:
-      "请求头、cookie 或 query 参数的名称；ip、ja4、ip_ja4 不使用它。",
+      "请求头、cookie 或 query 参数的名称。IP、JA4、IP + JA4 不读取它，请留空，填了会有警告日志。",
     limitMax: "最大值",
     limitMaxPlaceholder: "输入限制的最大值",
     limitInterval: "间隔",
@@ -1083,7 +1083,7 @@ export default {
     ja4RestrictionMessagePlaceholder: "请输入限制时的提示信息",
     dryRun: "只记录不拦截",
     dryRunTips:
-      "本插件要拒绝的请求照常放行，每次拒绝以警告日志记录：规则可以先在真实流量上观察，再真正拦截。",
+      "本插件要拒绝的请求照常放行，改为记录警告日志，每秒最多 10 条（其余计数）：规则可以先在真实流量上观察，再真正拦截。",
     csrfTokenPath: "token路径",
     csrfTokenPathPlaceholder: "输入crrf的token路径",
     csrfName: "名称",

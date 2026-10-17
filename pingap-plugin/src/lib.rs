@@ -20,7 +20,7 @@ use snafu::Snafu;
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Snafu)]
@@ -327,36 +327,110 @@ fn verified_address(session: &Session, ctx: &Ctx) -> String {
     ctx.conn.remote_addr.clone().unwrap_or_default()
 }
 
-/// What a plugin that turns requests away does with one it would turn
-/// away: answers it with `response`, or - with `dry_run` on - lets it
-/// through and logs what it would have answered, with `matched`, what of
-/// the request it went by. A new rule can be watched on real traffic that
-/// way before it refuses anyone.
-pub(crate) fn refuse(
-    dry_run: bool,
-    category: &str,
-    session: &Session,
-    ctx: &Ctx,
-    response: HttpResponse,
-    matched: impl FnOnce() -> String,
-) -> RequestPluginResult {
-    if !dry_run {
-        return RequestPluginResult::Respond(response);
+/// How many refusals one plugin logs in a dry run in a second of the
+/// clock. The others are counted, and the count goes with its next line:
+/// a rule that would turn away a flood does not log one.
+const DRY_RUN_LINES_PER_SECOND: u32 = 10;
+
+/// The `dry_run` of a plugin that turns requests away.
+#[derive(Default)]
+pub(crate) struct DryRun {
+    on: bool,
+    /// The second whose lines `logged` counts.
+    second: AtomicU64,
+    logged: AtomicU32,
+    /// The refusals not logged since the last line.
+    skipped: AtomicU64,
+}
+
+impl DryRun {
+    pub(crate) fn new(value: &PluginConf) -> Self {
+        Self {
+            on: get_bool_conf(value, "dry_run"),
+            ..Default::default()
+        }
     }
-    let header = session.req_header();
-    tracing::warn!(
-        category,
-        location = &*ctx.upstream.location,
-        status = response.status.as_u16(),
-        reason = %String::from_utf8_lossy(&response.body),
-        matched = matched(),
-        client_ip = verified_address(session, ctx),
-        method = header.method.as_str(),
-        uri = %header.uri,
-        request_id = ctx.state.request_id.as_deref().unwrap_or_default(),
-        "dry run, the request would have been refused"
-    );
-    RequestPluginResult::Continue
+
+    pub(crate) fn is_on(&self) -> bool {
+        self.on
+    }
+
+    /// Whether a refusal made in the second `now` is logged, and with the
+    /// number of those before it that were not. Under contention a second
+    /// may get a line or two more than its share.
+    fn take_line(&self, now: u64) -> Option<u64> {
+        let second = self.second.load(Ordering::Relaxed);
+        if second != now
+            && self
+                .second
+                .compare_exchange(
+                    second,
+                    now,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            self.logged.store(0, Ordering::Relaxed);
+        }
+        if self.logged.fetch_add(1, Ordering::Relaxed)
+            < DRY_RUN_LINES_PER_SECOND
+        {
+            return Some(self.skipped.swap(0, Ordering::Relaxed));
+        }
+        self.skipped.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    /// What the plugin does with a request it would turn away: answers it
+    /// with `response`, or - in a dry run - lets it through and logs what
+    /// it would have answered, with `matched`, what of the request it went
+    /// by. A new rule can be watched on real traffic that way before it
+    /// refuses anyone. `matched` is only worked out for a line that is
+    /// logged.
+    pub(crate) fn refuse(
+        &self,
+        category: &str,
+        session: &Session,
+        ctx: &mut Ctx,
+        response: HttpResponse,
+        matched: impl FnOnce(&mut Ctx) -> String,
+    ) -> RequestPluginResult {
+        if !self.on {
+            return RequestPluginResult::Respond(response);
+        }
+        let Some(skipped) = self.take_line(pingap_core::now_sec()) else {
+            return RequestPluginResult::Continue;
+        };
+        let matched = matched(ctx);
+        let header = session.req_header();
+        tracing::warn!(
+            category,
+            location = &*ctx.upstream.location,
+            status = response.status.as_u16(),
+            reason = %String::from_utf8_lossy(&response.body),
+            matched,
+            client_ip = verified_address(session, ctx),
+            method = header.method.as_str(),
+            uri = %header.uri,
+            request_id = ctx.state.request_id.as_deref().unwrap_or_default(),
+            skipped,
+            "dry run, the request would have been refused"
+        );
+        RequestPluginResult::Continue
+    }
+}
+
+/// Whether the plugin `conf` describes goes by the JA4 fingerprint of the
+/// connection, which only a server with `ja4 = true` collects.
+pub fn needs_ja4(conf: &PluginConf) -> bool {
+    match get_str_conf(conf, "category").as_str() {
+        "ja4_restriction" => true,
+        "limit" => {
+            matches!(get_str_conf(conf, "tag").as_str(), "ja4" | "ip_ja4")
+        },
+        _ => false,
+    }
 }
 
 /// Whether the response is a part of a body and not the body: a `206`, or
@@ -534,6 +608,39 @@ mod tests {
         let mut ctx = Ctx::default();
         ctx.conn.remote_addr = Some("1.1.1.1".to_string());
         assert_eq!("1.1.1.1", super::verified_address(&session, &ctx));
+    }
+
+    #[test]
+    fn test_needs_ja4() {
+        let needs = |conf: &str| {
+            super::needs_ja4(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        assert_eq!(true, needs("category = \"ja4_restriction\""));
+        assert_eq!(true, needs("category = \"limit\"\ntag = \"ja4\""));
+        assert_eq!(true, needs("category = \"limit\"\ntag = \"ip_ja4\""));
+        assert_eq!(false, needs("category = \"limit\""));
+        assert_eq!(false, needs("category = \"limit\"\ntag = \"header\""));
+        assert_eq!(false, needs("category = \"ip_restriction\""));
+    }
+
+    /// A dry run logs ten refusals a second at most, and the next line it
+    /// logs says how many it did not.
+    #[test]
+    fn test_dry_run_lines_per_second() {
+        let dry_run = super::DryRun::new(
+            &toml::from_str::<PluginConf>("dry_run = true").unwrap(),
+        );
+        assert_eq!(true, dry_run.is_on());
+        let lines =
+            |now| (0..15).map(|_| dry_run.take_line(now)).collect::<Vec<_>>();
+        let mut expected = vec![Some(0); 10];
+        expected.extend([None; 5]);
+        assert_eq!(expected, lines(100));
+        // the next second: its first line carries the five
+        expected[0] = Some(5);
+        assert_eq!(expected, lines(101));
+        assert_eq!(Some(5), dry_run.take_line(102));
+        assert_eq!(Some(0), dry_run.take_line(102));
     }
 
     /// Every plugin that turns requests away has a dry run: the request

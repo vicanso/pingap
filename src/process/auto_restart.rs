@@ -256,6 +256,11 @@ async fn diff_and_update_config(
         .await
         .map_err(|e| e.to_string())??;
         crate::validate::check_build_keys(&new_config)?;
+        // The servers as they run: a reload leaves their `ja4` as it was.
+        crate::validate::check_ja4_plugins(
+            &new_config,
+            &config_manager.get_current_config(),
+        );
         let restart_requested =
             apply_config(config_manager, &new_config, hot_reload_only).await?;
         Ok::<_, Box<dyn std::error::Error>>((new_config, restart_requested))
