@@ -8,7 +8,7 @@ A reverse proxy and application gateway built on [Cloudflare Pingora](https://gi
 
 ## What sets it apart
 
-- **A web admin in the binary.** Every setting has a form. A change is checked the way `pingap -t` checks it before it is stored, earlier versions can be kept and restored, and there are read-only accounts and API tokens.
+- **A web admin in the binary.** Every setting has a form. A change is checked the way `pingap -t` checks it before it is stored, earlier versions can be kept and restored, and there are read-only accounts and API tokens. Its home page charts the traffic of the last fifteen minutes - rate, status, latency, each upstream - without Prometheus.
 - **Changes without downtime.** Upstreams, locations, plugins and certificates are replaced in the running process (`--autoreload`). What needs new listeners is applied by a restart that hands the sockets over (`--autorestart`, for a daemon on Linux), and the running process keeps serving if its replacement does not come up.
 - **Over thirty plugins**, per location and in the order you list them: authentication (JWT, OIDC, key, basic, HMAC, forward auth), access rules (IP, referer, user agent, blocked paths), traffic (rate and bandwidth limits, cache, mirroring, traffic splitting), content (compression, body substitution, redirects, static files, image optimisation) and operations (maintenance mode, health endpoint, error pages). [All plugins](./pingap-plugin/README.md)
 - **Certificates without a cron job.** Let's Encrypt or any other ACME CA, by HTTP-01 or DNS-01 (Alibaba Cloud, Cloudflare, Tencent Cloud, Huawei Cloud), RSA and ECDSA side by side, OCSP stapling, and mutual TLS towards clients and towards upstreams.
@@ -128,7 +128,7 @@ The same can be written in HCL or KDL. Every key is described in the [configurat
 
 1. The **server** accepts the connection and picks the **location** whose host and path match best. A request that matches none is answered with `404`.
 2. The location's **plugins** run in the order they are listed, each at its own step: on the way in, or on the way back. A plugin can answer the request itself - a cache hit, a failed authentication, a redirect, a static file - and the upstream is then never asked.
-3. Otherwise the **upstream** of the location picks a healthy backend and the request is forwarded. With `max_retries`, a connection that cannot be made is tried on another backend.
+3. Otherwise the **upstream** of the location picks a healthy backend and the request is forwarded. With `max_retries`, a connection that cannot be made is tried on another backend; with `fallback_upstream`, a request the upstream cannot take goes to a second upstream.
 4. The response goes back through the response plugins to the client, and the request is **logged**: access log, metrics and traces.
 
 ## 📊 Performance

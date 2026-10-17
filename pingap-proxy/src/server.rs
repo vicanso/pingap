@@ -853,6 +853,8 @@ impl Server {
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
         if let Some(plugin) = self.plugin_provider.get("pingap:admin") {
+            // An error is the admin's answer as well.
+            ctx.state.admin = true;
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
@@ -861,6 +863,7 @@ impl Server {
                 resp.send(session).await?;
                 return Ok(true);
             }
+            ctx.state.admin = false;
         }
         Ok(false)
     }
@@ -1555,6 +1558,79 @@ fn get_upstream_with_variables(
     upstreams.get(key)
 }
 
+/// A peer of `upstream` for the request, which is then recorded as the
+/// one the request goes to; `None` when it has no backend for it, and
+/// nothing is recorded.
+///
+/// The request is counted as one in processing on an upstream once: on
+/// the first it is given a peer of, and again only on another instance it
+/// goes over to (the fallback, or the upstream a reload put in place of
+/// the one of the first attempt), which takes the count off the one
+/// before. `logging` takes it back from the one recorded last.
+async fn new_peer(
+    session: &Session,
+    ctx: &mut Ctx,
+    upstream: Arc<Upstream>,
+    location: Option<&dyn LocationInstance>,
+) -> Option<HttpPeer> {
+    let switching =
+        ctx.upstream
+            .upstream_instance
+            .as_ref()
+            .is_none_or(|current| {
+                !std::ptr::addr_eq(Arc::as_ptr(current), Arc::as_ptr(&upstream))
+            });
+    // Async: a transparent upstream resolves the request's host here.
+    // A retry goes to another backend than the ones that have just
+    // failed this request, where there is one.
+    let peer = upstream
+        .new_http_peer_for(
+            session,
+            PeerAttempt {
+                client_ip: &mut ctx.conn.client_ip,
+                count_processing: switching,
+                failed: &ctx.upstream.failed_addresses,
+                inflight: Some(&mut ctx.upstream.backend_inflight),
+                sticky_cookie: Some(&mut ctx.upstream.sticky_cookie),
+                // What this location waits for the upstream, where
+                // it says so.
+                location,
+            },
+        )
+        .await?;
+    // Recorded only now that there is a peer: `new_http_peer` counts
+    // the request once it has one, and `logging` takes that count back
+    // for the instance it finds here. Recorded earlier, a request that
+    // found no backend was uncounted without ever being counted.
+    if switching && let Some(previous) = ctx.upstream.upstream_instance.take() {
+        previous.completed();
+    }
+    ctx.upstream.connected_count = upstream.connected();
+    ctx.upstream.name = upstream.name.clone();
+    #[cfg(feature = "tracing")]
+    if let Some(features) = &ctx.features
+        && let Some(tracer) = &features.otel_tracer
+    {
+        let name = format!("upstream.{}", upstream.name);
+        let mut span = tracer.new_upstream_span(&name);
+        span.set_attribute(KeyValue::new(
+            "upstream.connected",
+            ctx.upstream.connected_count.unwrap_or_default() as i64,
+        ));
+        let features = ctx.features.get_or_insert_default();
+        features.upstream_span = Some(span);
+    }
+    ctx.upstream.upstream_instance = Some(upstream);
+    ctx.upstream.address = peer.address().to_string();
+    Some(peer)
+}
+
+/// The peer a request is sent to, from the moment the connect starts.
+fn start_connect(ctx: &mut Ctx, peer: HttpPeer) -> HttpPeer {
+    ctx.timing.upstream_connect = Some(get_start_time(&ctx.timing.created_at));
+    peer
+}
+
 /// Notes the backend of the attempt that has just failed, for the next
 /// one to go to another.
 fn remember_failed_backend(ctx: &mut Ctx) {
@@ -1756,42 +1832,13 @@ impl ProxyHttp for Server {
             )
         };
         let location = ctx.upstream.location_instance.clone();
-        let upstream = location.as_ref().and_then(|location| {
-            let name = if ctx.upstream.name.is_empty() {
-                location.upstream()
-            } else {
-                // override upstream by other plugin
-                &ctx.upstream.name
-            };
-            get_upstream_with_variables(
-                name,
-                ctx,
-                self.upstream_provider.as_ref(),
-            )
-        });
-        let Some(upstream) = upstream else {
-            return Err(no_available_upstream(ctx));
-        };
-        ctx.upstream.connected_count = upstream.connected();
-        ctx.upstream.name = upstream.name.clone();
-        #[cfg(feature = "tracing")]
-        if let Some(features) = &ctx.features
-            && let Some(tracer) = &features.otel_tracer
-        {
-            let name = format!("upstream.{}", upstream.name);
-            let mut span = tracer.new_upstream_span(&name);
-            span.set_attribute(KeyValue::new(
-                "upstream.connected",
-                ctx.upstream.connected_count.unwrap_or_default() as i64,
-            ));
-            let features = ctx.features.get_or_insert_default();
-            features.upstream_span = Some(span);
-        }
-        // Count processing only on the first attempt: pingora re-calls
-        // upstream_peer on every retry, and completed() runs once. Told by
-        // the upstream being recorded already, not by `retries`: that only
-        // counts failed connects, and a retry after a reused connection
-        // went stale came here looking like a first attempt.
+        let fallback = location
+            .as_ref()
+            .map(|location| location.fallback_upstream().to_string())
+            .filter(|name| !name.is_empty());
+        // Told by an upstream being recorded already, not by `retries`:
+        // that only counts failed connects, and a retry after a reused
+        // connection went stale came here looking like a first attempt.
         let first_attempt = ctx.upstream.upstream_instance.is_none();
         if !first_attempt {
             // The body kept for the retry is sent through
@@ -1809,40 +1856,78 @@ impl ProxyHttp for Server {
                 }
             }
         }
-        // Async: a transparent upstream resolves the request's host here.
-        // A retry goes to another backend than the ones that have just
-        // failed this request, where there is one.
-        let Some(peer) = upstream
-            .new_http_peer_for(
-                session,
-                PeerAttempt {
-                    client_ip: &mut ctx.conn.client_ip,
-                    count_processing: first_attempt,
-                    failed: &ctx.upstream.failed_addresses,
-                    inflight: Some(&mut ctx.upstream.backend_inflight),
-                    sticky_cookie: Some(&mut ctx.upstream.sticky_cookie),
-                    // What this location waits for the upstream, where
-                    // it says so.
-                    location: location.as_deref(),
-                },
+        // The upstream that was asked for a backend last, for the log of a
+        // request none had one for.
+        let mut asked = None;
+        // The backend of the upstream that has failed this request already,
+        // passed over for the fallback: better than none, where the
+        // fallback has none either.
+        let mut passed_over = None;
+        if !ctx.upstream.fallback {
+            let upstream = location.as_ref().and_then(|location| {
+                let name = if ctx.upstream.name.is_empty() {
+                    location.upstream()
+                } else {
+                    // override upstream by other plugin
+                    &ctx.upstream.name
+                };
+                get_upstream_with_variables(
+                    name,
+                    ctx,
+                    self.upstream_provider.as_ref(),
+                )
+            });
+            if let Some(upstream) = upstream {
+                asked = Some(upstream.name.clone());
+                if let Some(peer) =
+                    new_peer(session, ctx, upstream, location.as_deref()).await
+                {
+                    // A retry goes to a backend that has not failed this
+                    // request where there is one: one that has is all the
+                    // upstream has left, and the fallback is tried first.
+                    let address = peer.address().to_string();
+                    if fallback.is_none()
+                        || !ctx.upstream.failed_addresses.contains(&address)
+                    {
+                        return Ok(Box::new(start_connect(ctx, peer)));
+                    }
+                    passed_over = Some(peer);
+                }
+            }
+        }
+        if let Some(upstream) = fallback.and_then(|name| {
+            get_upstream_with_variables(
+                &name,
+                ctx,
+                self.upstream_provider.as_ref(),
             )
-            .await
-        else {
-            return Err(no_available_upstream(ctx));
-        };
-        // Recorded only now that there is a peer: `new_http_peer` counts
-        // the request once it has one, and `logging` takes that count back
-        // for the instance it finds here. Recorded earlier, a request that
-        // found no backend was uncounted without ever being counted.
-        ctx.upstream.upstream_instance = Some(upstream);
-        ctx.upstream.address = peer.address().to_string();
-
-        // start connect to upstream
-        ctx.timing.upstream_connect =
-            Some(get_start_time(&ctx.timing.created_at));
-
-        Ok(Box::new(peer))
+        }) {
+            let to = upstream.name.clone();
+            let from = ctx.upstream.name.clone();
+            asked = Some(to.clone());
+            if let Some(peer) =
+                new_peer(session, ctx, upstream, location.as_deref()).await
+            {
+                debug!(
+                    target: LOG_TARGET,
+                    location = &*ctx.upstream.location,
+                    from = &*from,
+                    to = &*to,
+                    "to the fallback upstream"
+                );
+                ctx.upstream.fallback = true;
+                return Ok(Box::new(start_connect(ctx, peer)));
+            }
+        }
+        if let Some(peer) = passed_over {
+            return Ok(Box::new(start_connect(ctx, peer)));
+        }
+        if let Some(name) = asked {
+            ctx.upstream.name = name;
+        }
+        Err(no_available_upstream(ctx))
     }
+
     /// Runs after `logging` when the downstream HTTP/1 connection stays open
     /// for another request. Whatever this returns reaches that request's
     /// `on_connection_reuse`, and returning `None` skips the hook entirely,
@@ -1976,16 +2061,28 @@ impl ProxyHttp for Server {
         // As in `error_while_proxy`: no cookie for a backend that could
         // not be reached.
         ctx.upstream.sticky_cookie = None;
-        let Some(max_retries) = ctx.upstream.max_retries else {
-            return e;
-        };
-        if ctx.upstream.retries >= max_retries {
+        let within_window = ctx
+            .upstream
+            .max_retry_window
+            .is_none_or(|window| ctx.timing.created_at.elapsed() <= window);
+        let may_retry = within_window
+            && ctx
+                .upstream
+                .max_retries
+                .is_some_and(|max_retries| ctx.upstream.retries < max_retries);
+        // With no retry of the upstream left, or none set, the fallback of
+        // the location, once: nothing of the request has been sent yet,
+        // whatever its method.
+        let may_fall_back = within_window
+            && !ctx.upstream.fallback
+            && ctx.upstream.location_instance.as_ref().is_some_and(
+                |location| !location.fallback_upstream().is_empty(),
+            );
+        if !may_retry && !may_fall_back {
             return e;
         }
-        if let Some(max_retry_window) = ctx.upstream.max_retry_window
-            && ctx.timing.created_at.elapsed() > max_retry_window
-        {
-            return e;
+        if !may_retry {
+            ctx.upstream.fallback = true;
         }
         ctx.upstream.retries += 1;
         remember_failed_backend(ctx);
@@ -2781,7 +2878,7 @@ impl ProxyHttp for Server {
     async fn logging(
         &self,
         session: &mut Session,
-        _e: Option<&pingora::Error>,
+        e: Option<&pingora::Error>,
         ctx: &mut Self::CTX,
     ) where
         Self::CTX: Send + Sync,
@@ -2833,6 +2930,12 @@ impl ProxyHttp for Server {
         #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {
             prom.after(session, ctx);
+        }
+        // Not the requests of the admin, nor the one the cache makes in
+        // the background to refresh what it serves stale: no client sent
+        // that one.
+        if !ctx.state.admin && session.subrequest_ctx.is_none() {
+            pingap_performance::record_traffic(ctx, e);
         }
 
         #[cfg(feature = "tracing")]
@@ -3021,14 +3124,16 @@ value = 'proxy_set_headers = ["name:value"]'
             Location::new("lo", pingap_conf.locations.get("lo").unwrap())
                 .unwrap(),
         );
-        let upstream = Arc::new(
-            Upstream::new(
-                "charts",
-                pingap_conf.upstreams.get("charts").unwrap(),
-                None,
-            )
-            .unwrap(),
-        );
+        let upstreams: AHashMap<String, Arc<Upstream>> = pingap_conf
+            .upstreams
+            .iter()
+            .map(|(name, conf)| {
+                (
+                    name.clone(),
+                    Arc::new(Upstream::new(name, conf, None).unwrap()),
+                )
+            })
+            .collect();
 
         // Every name resolves, to a plugin that does nothing: a name that
         // does not resolve fails the request.
@@ -3053,15 +3158,20 @@ value = 'proxy_set_headers = ["name:value"]'
                 HashMap::new()
             }
         }
+        // An upstream of the config by its name, and `charts` for any
+        // other name.
         struct TmpUpstreamLoader {
-            upstream: Arc<Upstream>,
+            upstreams: AHashMap<String, Arc<Upstream>>,
         }
         impl UpstreamProvider for TmpUpstreamLoader {
-            fn get(&self, _name: &str) -> Option<Arc<Upstream>> {
-                Some(self.upstream.clone())
+            fn get(&self, name: &str) -> Option<Arc<Upstream>> {
+                self.upstreams
+                    .get(name)
+                    .or_else(|| self.upstreams.get("charts"))
+                    .cloned()
             }
             fn list(&self) -> Vec<(String, Arc<Upstream>)> {
-                vec![("charts".to_string(), self.upstream.clone())]
+                vec![("charts".to_string(), self.upstreams["charts"].clone())]
             }
         }
         struct TmpServerLocationsLoader {
@@ -3109,7 +3219,7 @@ value = 'proxy_set_headers = ["name:value"]'
                     }
                 }),
                 location_provider: Arc::new(TmpLocationLoader { location }),
-                upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),
+                upstream_provider: Arc::new(TmpUpstreamLoader { upstreams }),
                 plugin_provider,
                 certificate_provider: Arc::new(TmpCertificateLoader {}),
             },
@@ -5118,6 +5228,168 @@ addr = "127.0.0.1:6188"
 
         server.logging(&mut session, None, &mut ctx).await;
         assert_eq!(0, upstream.stats().processing);
+    }
+
+    /// A request the upstream cannot take goes to the fallback of its
+    /// location: one it could not connect to with no retry set, one whose
+    /// retries have all failed, one that the upstream has no backend for.
+    /// It is counted in processing on the upstream it goes to, and taken
+    /// off the one it leaves.
+    #[tokio::test]
+    async fn test_fallback_upstream() {
+        use pingora::upstreams::peer::{HttpPeer, Peer};
+        use pingora::{Error, ErrorType};
+        let new_request = async |server: &Server| {
+            let mock_io = Builder::new()
+                .read(b"POST /vicanso/pingap HTTP/1.1\r\nContent-Length: 4\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+            (session, ctx)
+        };
+        let failed_connect =
+            |server: &Server, session: &mut Session, ctx: &mut Ctx| {
+                let peer = HttpPeer::new(
+                    ctx.upstream.address.as_str(),
+                    false,
+                    String::new(),
+                );
+                server
+                    .fail_to_connect(
+                        session,
+                        &peer,
+                        ctx,
+                        Error::new_up(ErrorType::ConnectRefused),
+                    )
+                    .retry()
+            };
+
+        let server = new_server_from(
+            &TEST_TOML.replace(
+                "upstream = \"charts\"",
+                "upstream = \"charts\"\nfallback_upstream = \"diving\"",
+            ),
+            None,
+        );
+        let charts = server.upstream_provider.get("charts").unwrap();
+        let diving = server.upstream_provider.get("diving").unwrap();
+        // The connection could not be made, and no retry is set: once to
+        // the fallback, whatever the method.
+        let (mut session, mut ctx) = new_request(&server).await;
+        let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!("127.0.0.1:5000", peer.address().to_string());
+        assert_eq!(
+            (1, 0),
+            (charts.stats().processing, diving.stats().processing)
+        );
+        assert_eq!(true, failed_connect(&server, &mut session, &mut ctx));
+        assert_eq!(true, ctx.upstream.fallback);
+        let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!("127.0.0.1:5001", peer.address().to_string());
+        assert_eq!("diving", &*ctx.upstream.name);
+        assert_eq!(
+            (0, 1),
+            (charts.stats().processing, diving.stats().processing)
+        );
+        // and no further: the fallback has no fallback
+        assert_eq!(false, failed_connect(&server, &mut session, &mut ctx));
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(
+            (0, 0),
+            (charts.stats().processing, diving.stats().processing)
+        );
+
+        // With a retry: the upstream's one backend has failed the request,
+        // and the retry goes to the fallback instead of to it again.
+        let server = new_server_from(
+            &TEST_TOML.replace(
+                "upstream = \"charts\"",
+                "upstream = \"charts\"\nfallback_upstream = \"diving\"\nmax_retries = 1",
+            ),
+            None,
+        );
+        let (mut session, mut ctx) = new_request(&server).await;
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(true, failed_connect(&server, &mut session, &mut ctx));
+        assert_eq!(false, ctx.upstream.fallback);
+        let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!("127.0.0.1:5001", peer.address().to_string());
+        assert_eq!(true, ctx.upstream.fallback);
+        assert_eq!(1, ctx.upstream.retries);
+
+        // The fallback has no backend either: the retry goes to the
+        // upstream's backend again, as without a fallback, and not to a 503.
+        let server = new_server_from(
+            &TEST_TOML
+                .replace(
+                    "upstream = \"charts\"",
+                    "upstream = \"charts\"\nfallback_upstream = \"diving\"\nmax_retries = 1",
+                )
+                .replace(
+                    "addrs = [\"127.0.0.1:5001\"]",
+                    "addrs = [\"127.0.0.1:5001\"]\nenable_backend_stats = true\ncircuit_break_max_consecutive_failures = 1",
+                ),
+            None,
+        );
+        let charts = server.upstream_provider.get("charts").unwrap();
+        let diving = server.upstream_provider.get("diving").unwrap();
+        pingap_core::UpstreamInstance::on_transport_failure(
+            diving.as_ref(),
+            "127.0.0.1:5001",
+        );
+        let (mut session, mut ctx) = new_request(&server).await;
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(true, failed_connect(&server, &mut session, &mut ctx));
+        let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!("127.0.0.1:5000", peer.address().to_string());
+        assert_eq!(
+            ("charts", false),
+            (&*ctx.upstream.name, ctx.upstream.fallback)
+        );
+        assert_eq!(
+            (1, 0),
+            (charts.stats().processing, diving.stats().processing)
+        );
+        server.logging(&mut session, None, &mut ctx).await;
+        assert_eq!(
+            (0, 0),
+            (charts.stats().processing, diving.stats().processing)
+        );
+
+        // No backend to be had: the circuit of the one there is is open.
+        let server = new_server_from(
+            &TEST_TOML
+                .replace(
+                    "upstream = \"charts\"",
+                    "upstream = \"charts\"\nfallback_upstream = \"diving\"",
+                )
+                .replace(
+                    "addrs = [\"127.0.0.1:5000\"]",
+                    "addrs = [\"127.0.0.1:5000\"]\nenable_backend_stats = true\ncircuit_break_max_consecutive_failures = 1",
+                ),
+            None,
+        );
+        let charts = server.upstream_provider.get("charts").unwrap();
+        pingap_core::UpstreamInstance::on_transport_failure(
+            charts.as_ref(),
+            "127.0.0.1:5000",
+        );
+        let (mut session, mut ctx) = new_request(&server).await;
+        let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!("127.0.0.1:5001", peer.address().to_string());
+        assert_eq!(0, charts.stats().processing);
+
+        // Without a fallback, as before: no retry set, none made.
+        let server = new_server();
+        let (mut session, mut ctx) = new_request(&server).await;
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(false, failed_connect(&server, &mut session, &mut ctx));
+        assert_eq!(false, ctx.upstream.fallback);
     }
 
     /// Regression: the ids of a request were set on the response in

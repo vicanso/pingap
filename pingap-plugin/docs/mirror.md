@@ -24,6 +24,7 @@ upstreams. `mirror` sends them to both.
 | `timeout` | duration | `5s` | How long a copy may take, the answer included. |
 | `max_inflight` | int | `100` | Copies that may be under way at one time. A copy that would be one more is not sent. |
 | `host` | string | — | The `Host` of the copy. Unset: the one of the request. |
+| `compare` | bool | `false` | Log a warning when the mirror answers a copy with another status than the upstream answered the request with. See [Comparing the answers](#comparing-the-answers). |
 | `step` | string | `request` | `request`, or `proxy_upstream` to copy only what is on its way to the upstream. |
 
 ## Examples
@@ -33,6 +34,12 @@ upstreams. `mirror` sends them to both.
 [plugins.shadow]
 category = "mirror"
 target = "http://10.0.0.2:8080"
+
+# the same, and say where the new version answers otherwise
+[plugins.shadowCompared]
+category = "mirror"
+target = "http://10.0.0.2:8080"
+compare = true
 
 # one write in ten too, bodies up to 64 kB
 [plugins.shadowWrites]
@@ -83,6 +90,35 @@ plugins = ["shadow"]
 - A copy that fails is counted, and reported in the log for the first, the
   second, the fourth, the eighth... of them, so that a target that is down
   does not write a line for every request.
+
+## Comparing the answers
+
+With `compare = true` the status of the mirror's answer is set against the
+upstream's, and a pair that differs is logged:
+
+```
+WARN pingap_plugin::mirror: the mirror answered with another status category="mirror" method=GET path="/api/items" status=200 mirror_status=500 request_id="" skipped=0
+```
+
+`status` is the upstream's, `mirror_status` the mirror's; `path` is the one
+of the request, without the query (the copy's has the path of `target` in
+front of it). The two are compared once both are in,
+whichever comes last, so a slow mirror is waited for up to `timeout`, and
+the client never is.
+
+- Only the status is compared, not the headers or the body.
+- A request the upstream did not answer - a plugin answered it, it came
+  from the cache, the upstream could not be reached - has nothing to
+  compare, nor has a copy that got no answer: it failed or timed out (and
+  is reported as above), or it was not sent.
+- A `304` of the upstream to a request that was not conditional is its
+  answer to the cache, which revalidates what it has, and is not compared:
+  the copy did not ask that. The request the cache makes in the background
+  to refresh what it serves stale (`stale-while-revalidate`) is not
+  mirrored.
+- A plugin logs ten such lines in a second of the clock at most, as a
+  [dry run](limit.md#dry-run) does: the others are counted, and `skipped`
+  on the next line says how many there were.
 
 ## Usage notes
 

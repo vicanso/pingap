@@ -139,6 +139,7 @@ let parser = Parser::from(format);
 | `ja4_o` | `JA4_o`：按客户端发送顺序的列表计算哈希 |
 | `ja4_ro` | `JA4_ro`：按发送顺序的列表，不做哈希；其他形式都能由它算出 |
 | `upstream_addr` | 上游后端地址 |
+| `upstream_name` | 请求最终发往的上游名称：location 的上游、插件选定的上游，或者它的 `fallback_upstream` |
 | `upstream_status` | 上游返回的状态码，没有时为 `-` |
 | `upstream_reused` | 上游连接来自 keep-alive 连接池时为 `true` |
 | `upstream_connected` | 到该上游的已建立连接数；需要上游开启 `enable_tracer` |

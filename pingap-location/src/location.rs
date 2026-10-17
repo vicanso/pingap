@@ -465,6 +465,10 @@ pub struct Location {
     /// Target upstream server where requests will be proxied to
     upstream: String,
 
+    /// Where a request goes that the upstream cannot take: see
+    /// [`LocationInstance::fallback_upstream`].
+    fallback_upstream: String,
+
     /// Compiled path matching rules (regex, prefix, exact or any)
     path_selector: PathSelector,
 
@@ -670,6 +674,10 @@ impl Location {
             query_conditions,
             cookie_conditions,
             upstream,
+            fallback_upstream: conf
+                .fallback_upstream
+                .clone()
+                .unwrap_or_default(),
             reg_rewrite,
             plugins: conf.plugins.as_ref().map(|list| {
                 list.iter().map(|name| Arc::from(name.as_str())).collect()
@@ -897,6 +905,9 @@ impl LocationInstance for Location {
     }
     fn upstream(&self) -> &str {
         self.upstream.as_ref()
+    }
+    fn fallback_upstream(&self) -> &str {
+        &self.fallback_upstream
     }
     fn on_response(&self) {
         self.processing.fetch_sub(1, Ordering::Relaxed);

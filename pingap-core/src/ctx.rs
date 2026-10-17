@@ -29,6 +29,7 @@ use pingora::protocols::Digest;
 use pingora::protocols::TimingDigest;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Guard;
+use std::any::Any;
 use std::borrow::Cow;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -267,6 +268,12 @@ pub trait LocationInstance: Send + Sync {
     fn name(&self) -> &str;
     /// Get the upstream of location
     fn upstream(&self) -> &str;
+    /// The upstream a request goes to when the upstream has no backend for
+    /// it, or one it could not connect to and no retry is left. Empty for
+    /// a location without one.
+    fn fallback_upstream(&self) -> &str {
+        ""
+    }
     /// Whether the location has a rewrite rule at all, so that the uri of
     /// a request is only kept (`Features::original_uri`) where it may be
     /// replaced.
@@ -327,6 +334,9 @@ pub struct UpstreamInfo {
     pub status: Option<StatusCode>,
     /// The number of retries for failed connections.
     pub retries: u8,
+    /// The request has gone over to the fallback upstream of its location,
+    /// or is to with its next attempt.
+    pub fallback: bool,
     /// Maximum number of retries for failed connections.
     pub max_retries: Option<u8>,
     /// The maximum total time window allowed for an operation and all of its subsequent retries.
@@ -405,6 +415,9 @@ pub struct RequestState {
     pub location_processing_count: i32,
     /// The total number of requests accepted for this location.
     pub location_accepted_count: u64,
+    /// The admin answered the request: it is no part of the traffic the
+    /// dashboard shows, which would otherwise be its own polling.
+    pub admin: bool,
     /// The request passed every filter and is on its way to an upstream.
     /// A failure from here on closes the client's connection, whatever
     /// the proxy says of it: pingora asks whether it may be kept only for
@@ -757,6 +770,9 @@ pub struct Features {
     /// at a later one, under a name of its own: see
     /// [`Ctx::set_plugin_note`].
     pub plugin_notes: Option<Vec<(String, &'static str)>>,
+    /// What a plugin keeps for a later step of a request that a note
+    /// cannot say, under a name of its own: see [`Ctx::set_plugin_value`].
+    pub plugin_values: Option<Vec<(String, Box<dyn Any + Send + Sync>)>>,
     /// What plugins do with the body of the request as it passes, see
     /// [`HandleRequestBody`].
     pub request_body_handlers: Option<Vec<Box<dyn HandleRequestBody>>>,
@@ -851,6 +867,7 @@ pub enum CtxLogField {
     UpstreamReused,
     UpstreamStatus,
     UpstreamAddr,
+    UpstreamName,
     Processing,
     UpstreamConnected,
     UpstreamConnectTime,
@@ -1126,6 +1143,39 @@ impl Ctx {
             .map(|(_, note)| *note)
     }
 
+    /// Keeps `value` for the plugin that calls itself `name`, until the
+    /// request ends: a [`Ctx::set_plugin_note`] that is not a text, such
+    /// as what the request step hands to the response step.
+    pub fn set_plugin_value<T: Any + Send + Sync>(
+        &mut self,
+        name: &str,
+        value: T,
+    ) {
+        let values = self
+            .features
+            .get_or_insert_default()
+            .plugin_values
+            .get_or_insert_default();
+        match values.iter_mut().find(|(key, _)| key == name) {
+            Some(found) => found.1 = Box::new(value),
+            None => values.push((name.to_string(), Box::new(value))),
+        }
+    }
+
+    /// What [`Ctx::set_plugin_value`] kept under `name`, if it is a `T`.
+    pub fn get_plugin_value<T: Any + Send + Sync>(
+        &self,
+        name: &str,
+    ) -> Option<&T> {
+        self.features
+            .as_ref()?
+            .plugin_values
+            .as_ref()?
+            .iter()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| value.downcast_ref::<T>())
+    }
+
     /// Says that a plugin reads the body of the answer to this request on
     /// its way to the client - signs it as a token, rewrites it by rules -
     /// and so has to have it as the upstream sends it.
@@ -1338,6 +1388,9 @@ impl Ctx {
             },
             CtxLogField::UpstreamAddr => {
                 buf.extend(self.upstream.address.as_bytes())
+            },
+            CtxLogField::UpstreamName => {
+                buf.extend(self.upstream.name.as_bytes())
             },
             CtxLogField::Processing => buf.extend(
                 itoa::Buffer::new()
@@ -2099,6 +2152,27 @@ mod tests {
     }
 
     #[test]
+    fn test_plugin_values() {
+        let mut ctx = Ctx::new();
+        assert_eq!(None, ctx.get_plugin_value::<u16>("a"));
+        ctx.set_plugin_value("a", Arc::new(200u16));
+        ctx.set_plugin_value("b", "text".to_string());
+        assert_eq!(
+            Some(&200),
+            ctx.get_plugin_value::<Arc<u16>>("a").map(|v| &**v)
+        );
+        assert_eq!(
+            Some("text"),
+            ctx.get_plugin_value::<String>("b").map(|v| v.as_str())
+        );
+        // Of another type: none.
+        assert_eq!(None, ctx.get_plugin_value::<u16>("a"));
+        // The last one kept is the one there.
+        ctx.set_plugin_value("a", 404u16);
+        assert_eq!(Some(&404), ctx.get_plugin_value::<u16>("a"));
+    }
+
+    #[test]
     fn test_plugin_notes() {
         let mut ctx = Ctx::new();
         assert_eq!(None, ctx.get_plugin_note("a"));
@@ -2475,6 +2549,11 @@ mod tests {
         ctx.upstream.address = "192.168.1.1:80".to_string();
         ctx.append_log_value(&mut buf, "upstream_addr");
         assert_eq!(b"192.168.1.1:80", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.upstream.name = "standby".into();
+        ctx.append_log_value(&mut buf, "upstream_name");
+        assert_eq!(b"standby", buf.as_ref());
 
         buf = BytesMut::new();
         ctx.upstream.status = Some(StatusCode::CREATED);

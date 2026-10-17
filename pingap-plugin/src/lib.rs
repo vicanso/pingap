@@ -327,38 +327,27 @@ fn verified_address(session: &Session, ctx: &Ctx) -> String {
     ctx.conn.remote_addr.clone().unwrap_or_default()
 }
 
-/// How many refusals one plugin logs in a dry run in a second of the
-/// clock. The others are counted, and the count goes with its next line:
-/// a rule that would turn away a flood does not log one.
-const DRY_RUN_LINES_PER_SECOND: u32 = 10;
+/// How many lines of one kind a plugin logs in a second of the clock: the
+/// refusals of a dry run, the answers a mirror gave otherwise. The others
+/// are counted, and the count goes with its next line: a rule that would
+/// turn away a flood does not log one.
+const LINES_PER_SECOND: u32 = 10;
 
-/// The `dry_run` of a plugin that turns requests away.
+/// What keeps the lines of one kind a plugin logs to [`LINES_PER_SECOND`].
 #[derive(Default)]
-pub(crate) struct DryRun {
-    on: bool,
+pub(crate) struct LineBudget {
     /// The second whose lines `logged` counts.
     second: AtomicU64,
     logged: AtomicU32,
-    /// The refusals not logged since the last line.
+    /// The lines not logged since the last one that was.
     skipped: AtomicU64,
 }
 
-impl DryRun {
-    pub(crate) fn new(value: &PluginConf) -> Self {
-        Self {
-            on: get_bool_conf(value, "dry_run"),
-            ..Default::default()
-        }
-    }
-
-    pub(crate) fn is_on(&self) -> bool {
-        self.on
-    }
-
-    /// Whether a refusal made in the second `now` is logged, and with the
-    /// number of those before it that were not. Under contention a second
-    /// may get a line or two more than its share.
-    fn take_line(&self, now: u64) -> Option<u64> {
+impl LineBudget {
+    /// Whether a line in the second `now` is logged, and with the number
+    /// of those before it that were not. Under contention a second may
+    /// get a line or two more than its share.
+    pub(crate) fn take_line(&self, now: u64) -> Option<u64> {
         let second = self.second.load(Ordering::Relaxed);
         if second != now
             && self
@@ -373,13 +362,31 @@ impl DryRun {
         {
             self.logged.store(0, Ordering::Relaxed);
         }
-        if self.logged.fetch_add(1, Ordering::Relaxed)
-            < DRY_RUN_LINES_PER_SECOND
-        {
+        if self.logged.fetch_add(1, Ordering::Relaxed) < LINES_PER_SECOND {
             return Some(self.skipped.swap(0, Ordering::Relaxed));
         }
         self.skipped.fetch_add(1, Ordering::Relaxed);
         None
+    }
+}
+
+/// The `dry_run` of a plugin that turns requests away.
+#[derive(Default)]
+pub(crate) struct DryRun {
+    on: bool,
+    lines: LineBudget,
+}
+
+impl DryRun {
+    pub(crate) fn new(value: &PluginConf) -> Self {
+        Self {
+            on: get_bool_conf(value, "dry_run"),
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn is_on(&self) -> bool {
+        self.on
     }
 
     /// What the plugin does with a request it would turn away: answers it
@@ -399,7 +406,7 @@ impl DryRun {
         if !self.on {
             return RequestPluginResult::Respond(response);
         }
-        let Some(skipped) = self.take_line(pingap_core::now_sec()) else {
+        let Some(skipped) = self.lines.take_line(pingap_core::now_sec()) else {
             return RequestPluginResult::Continue;
         };
         let matched = matched(ctx);
@@ -623,24 +630,25 @@ mod tests {
         assert_eq!(false, needs("category = \"ip_restriction\""));
     }
 
-    /// A dry run logs ten refusals a second at most, and the next line it
-    /// logs says how many it did not.
+    /// Ten lines a second at most, and the next line that is logged says
+    /// how many were not.
     #[test]
-    fn test_dry_run_lines_per_second() {
+    fn test_lines_per_second() {
         let dry_run = super::DryRun::new(
             &toml::from_str::<PluginConf>("dry_run = true").unwrap(),
         );
         assert_eq!(true, dry_run.is_on());
+        let budget = super::LineBudget::default();
         let lines =
-            |now| (0..15).map(|_| dry_run.take_line(now)).collect::<Vec<_>>();
+            |now| (0..15).map(|_| budget.take_line(now)).collect::<Vec<_>>();
         let mut expected = vec![Some(0); 10];
         expected.extend([None; 5]);
         assert_eq!(expected, lines(100));
         // the next second: its first line carries the five
         expected[0] = Some(5);
         assert_eq!(expected, lines(101));
-        assert_eq!(Some(5), dry_run.take_line(102));
-        assert_eq!(Some(0), dry_run.take_line(102));
+        assert_eq!(Some(5), budget.take_line(102));
+        assert_eq!(Some(0), budget.take_line(102));
     }
 
     /// Every plugin that turns requests away has a dry run: the request

@@ -98,6 +98,12 @@ upstream = "charts"
 # Default `none`
 # max_retry_window = "5s"
 
+# Another upstream for the requests the upstream cannot take: it has no
+# backend to give (none healthy, circuits open), or the connection failed
+# and no retry is left. Tried once; a response the upstream sent is never
+# sent there. Default `none`
+# fallback_upstream = "standby"
+
 # How long the requests of this location wait for the upstream: to connect,
 # for each read and for each write. Each takes the place of the upstream's
 # setting of the same name; what is not set here stays as the upstream has

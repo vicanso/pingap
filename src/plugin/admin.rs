@@ -1436,6 +1436,11 @@ async fn handle_request_admin(
 
         HttpResponse::try_from_json(&basic_info)
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+    } else if path == "/traffic" {
+        // The requests of the last fifteen minutes, for the charts of the
+        // home page: kept in memory, in any build.
+        HttpResponse::try_from_json(&pingap_performance::traffic_snapshot())
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/restart" && method == Method::POST {
         if let Err(e) = restart_now().await {
             error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");

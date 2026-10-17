@@ -13,24 +13,26 @@
 // limitations under the License.
 
 use super::{
-    Error, get_duration_conf, get_hash_key, get_int_conf_or_default,
-    get_step_conf_in, get_str_conf, get_str_slice_conf,
+    Error, LineBudget, get_bool_conf, get_duration_conf, get_hash_key,
+    get_int_conf_or_default, get_step_conf_in, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use http::header::{CONTENT_LENGTH, HOST};
-use http::{HeaderMap, HeaderName, HeaderValue, Method};
+use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HandleRequestBody, Plugin, PluginStep, RequestPluginResult,
-    ensure_client_ip,
+    ResponsePluginResult, ensure_client_ip,
 };
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{debug, warn};
@@ -95,6 +97,12 @@ pub struct Mirror {
     /// Copies that could not be sent or were not answered, for a line in
     /// the log now and then.
     failed: Arc<AtomicU64>,
+    /// The status of the mirror's answer is compared with the upstream's,
+    /// and another one is logged.
+    compare: bool,
+    /// The answers that were compared and were not the same.
+    differed: Arc<AtomicU64>,
+    lines: Arc<LineBudget>,
     hash_value: String,
 }
 
@@ -215,8 +223,55 @@ impl TryFrom<&PluginConf> for Mirror {
             max_body_size,
             inflight: Arc::new(Semaphore::new(max_inflight)),
             failed: Arc::new(AtomicU64::new(0)),
+            compare: get_bool_conf(value, "compare"),
+            differed: Arc::new(AtomicU64::new(0)),
+            lines: Arc::new(LineBudget::default()),
             hash_value,
         })
+    }
+}
+
+/// The status the upstream and the mirror answered one request with, for
+/// a mirror that compares them: each is set once, by the request and by
+/// the copy. They are compared when the last of the two lets go - the
+/// request when it ends, the copy when it is answered or given up - so
+/// whichever answer comes last. A request that the upstream did not answer
+/// (a plugin did, or the cache) or a copy that was not answered (it failed,
+/// or was not sent) has nothing to compare.
+struct Comparison {
+    method: Method,
+    path: String,
+    request_id: Option<String>,
+    upstream: OnceLock<StatusCode>,
+    mirror: OnceLock<StatusCode>,
+    differed: Arc<AtomicU64>,
+    lines: Arc<LineBudget>,
+}
+
+impl Drop for Comparison {
+    fn drop(&mut self) {
+        let (Some(upstream), Some(mirror)) =
+            (self.upstream.get(), self.mirror.get())
+        else {
+            return;
+        };
+        if upstream == mirror {
+            return;
+        }
+        self.differed.fetch_add(1, Ordering::Relaxed);
+        let Some(skipped) = self.lines.take_line(pingap_core::now_sec()) else {
+            return;
+        };
+        warn!(
+            category = CATEGORY,
+            method = %self.method,
+            path = self.path,
+            status = upstream.as_u16(),
+            mirror_status = mirror.as_u16(),
+            request_id = self.request_id.as_deref().unwrap_or_default(),
+            skipped,
+            "the mirror answered with another status"
+        );
     }
 }
 
@@ -230,6 +285,7 @@ struct Copy {
     /// The copies that are under way, of which this is one from the
     /// moment it is sent until it is answered.
     inflight: Arc<Semaphore>,
+    comparison: Option<Arc<Comparison>>,
 }
 
 impl Copy {
@@ -259,6 +315,9 @@ impl Copy {
             // is kept, however long it is.
             let result = async {
                 let mut response = request.send().await?;
+                if let Some(comparison) = &self.comparison {
+                    let _ = comparison.mirror.set(response.status());
+                }
                 while response.chunk().await?.is_some() {}
                 Ok::<(), reqwest::Error>(())
             }
@@ -412,8 +471,11 @@ impl Plugin for Mirror {
             return Ok(RequestPluginResult::Skipped);
         }
         let header = session.req_header();
+        // Nor the request the cache makes in the background to refresh
+        // what it serves stale: the client's request was copied already.
         if !self.methods.contains(&header.method)
             || header.headers.contains_key(MIRROR_HEADER)
+            || session.subrequest_ctx.is_some()
         {
             return Ok(RequestPluginResult::Skipped);
         }
@@ -439,6 +501,17 @@ impl Plugin for Mirror {
             .path_and_query()
             .map(|target| target.as_str())
             .unwrap_or("/");
+        let comparison = self.compare.then(|| {
+            Arc::new(Comparison {
+                method: header.method.clone(),
+                path: header.uri.path().to_string(),
+                request_id: ctx.state.request_id.clone(),
+                upstream: OnceLock::new(),
+                mirror: OnceLock::new(),
+                differed: self.differed.clone(),
+                lines: self.lines.clone(),
+            })
+        });
         let copy = Copy {
             client: self.client.clone(),
             method: header.method.clone(),
@@ -446,7 +519,11 @@ impl Plugin for Mirror {
             headers: self.copy_headers(session, ctx),
             failed: self.failed.clone(),
             inflight: self.inflight.clone(),
+            comparison: comparison.clone(),
         };
+        if let Some(comparison) = comparison {
+            ctx.set_plugin_value(&self.hash_value, comparison);
+        }
         // A body is not kept for a mirror that has all it can take: the
         // copy would be made, held for as long as the upload lasts, and
         // dropped when it is to be sent.
@@ -463,6 +540,31 @@ impl Plugin for Mirror {
             copy.send(None);
         }
         Ok(RequestPluginResult::Continue)
+    }
+
+    /// The status of the upstream's answer, for the comparison with the
+    /// mirror's.
+    fn handle_upstream_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        // A 304 to a request that asked for none is the answer to the
+        // cache, which revalidates what it has: the copy did not ask that.
+        let header = &session.req_header().headers;
+        let revalidated = upstream_response.status == StatusCode::NOT_MODIFIED
+            && !header.contains_key(http::header::IF_NONE_MATCH)
+            && !header.contains_key(http::header::IF_MODIFIED_SINCE);
+        if self.compare
+            && !upstream_response.status.is_informational()
+            && !revalidated
+            && let Some(comparison) =
+                ctx.get_plugin_value::<Arc<Comparison>>(&self.hash_value)
+        {
+            let _ = comparison.upstream.set(upstream_response.status);
+        }
+        Ok(ResponsePluginResult::Unchanged)
     }
 }
 
@@ -635,6 +737,99 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(DEFAULT_MAX_INFLIGHT, plugin.inflight.available_permits());
+    }
+
+    /// With `compare`, an answer of the mirror with another status than
+    /// the upstream's is counted (and logged); the same status, an
+    /// upstream that did not answer and a mirror that does not compare are
+    /// not. The target answers 500.
+    #[tokio::test]
+    async fn test_mirror_compares_the_status() {
+        let run = async |compare: bool, upstream: Option<u16>| {
+            let (addr, received) = target().await;
+            let plugin = new_plugin(&format!(
+                "target = \"http://{addr}\"\ncompare = {compare}"
+            ))
+            .unwrap();
+            assert_eq!(compare, plugin.compare);
+            let mut session =
+                new_session("GET /a?b=1 HTTP/1.1\r\nHost: app.test\r\n\r\n")
+                    .await;
+            let mut ctx = Ctx::default();
+            plugin
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            if let Some(status) = upstream {
+                // what comes before the answer is not it
+                let mut early = ResponseHeader::build(100, None).unwrap();
+                plugin
+                    .handle_upstream_response(
+                        &mut session,
+                        &mut ctx,
+                        &mut early,
+                    )
+                    .unwrap();
+                let mut resp = ResponseHeader::build(status, None).unwrap();
+                plugin
+                    .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+                    .unwrap();
+            }
+            // the request ends, and the copy is answered after it
+            drop(ctx);
+            tokio::time::timeout(Duration::from_secs(5), received)
+                .await
+                .expect("the copy is sent")
+                .unwrap();
+            for _ in 0..100 {
+                if plugin.inflight.available_permits() == DEFAULT_MAX_INFLIGHT {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            plugin.differed.load(Ordering::Relaxed)
+        };
+        assert_eq!(1, run(true, Some(200)).await);
+        assert_eq!(0, run(true, Some(500)).await);
+        // the cache's revalidation, which the client did not ask for
+        assert_eq!(0, run(true, Some(304)).await);
+        assert_eq!(0, run(true, None).await);
+        assert_eq!(0, run(false, Some(200)).await);
+    }
+
+    /// Whichever answer comes last, the two are compared: here the copy
+    /// is answered before the upstream.
+    #[tokio::test]
+    async fn test_mirror_compares_a_late_upstream() {
+        let (addr, received) = target().await;
+        let plugin =
+            new_plugin(&format!("target = \"http://{addr}\"\ncompare = true"))
+                .unwrap();
+        let mut session = new_session("GET /a HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        plugin
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), received)
+            .await
+            .expect("the copy is sent")
+            .unwrap();
+        for _ in 0..100 {
+            if plugin.inflight.available_permits() == DEFAULT_MAX_INFLIGHT {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(0, plugin.differed.load(Ordering::Relaxed));
+        let mut resp = ResponseHeader::build(204, None).unwrap();
+        plugin
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        drop(ctx);
+        assert_eq!(1, plugin.differed.load(Ordering::Relaxed));
     }
 
     /// Which requests are not copied.

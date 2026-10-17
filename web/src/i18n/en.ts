@@ -173,6 +173,24 @@ export default {
     backendsDown: "{{count}} unreachable",
     attention: "Needs attention",
     allClear: "Every upstream is healthy and every certificate is in date.",
+    traffic: "Traffic",
+    trafficWindow: "The last 15 minutes, by 10 seconds",
+    noTraffic: "No requests in the last 15 minutes.",
+    trafficRate: "Req/s",
+    traffic5xx: "5xx",
+    traffic4xx: "4xx",
+    trafficLatencyAvg: "Avg latency",
+    trafficLatencyP95: "p95 latency",
+    trafficRequests: "Requests per second",
+    trafficLatency: "Latency",
+    trafficAll: "All",
+    trafficAverage: "Average",
+    trafficUpstream: "Upstream",
+    trafficErrors: "Errors",
+    trafficWait: "Wait",
+    trafficTrend: "15 min",
+    trafficNote:
+      "The figures are of the last minute, the charts of the last 15 (the 10 seconds under way are left out). Kept in memory by this process since it started; the requests of the admin are not counted. Upgraded connections (WebSocket) are counted, not timed. Upstream errors are 5xx answers and requests without one; the wait is up to the response header. p95 is an upper estimate.",
     upstreamAllDown: "All {{total}} backends unreachable",
     upstreamDegraded: "{{healthy}} of {{total}} backends healthy",
     certExpired: "Certificate expired {{days}} days ago",
@@ -478,6 +496,11 @@ export default {
     upstream: "Upstream",
     upstreamPlaceholder:
       "Select the upstream for location : Input the upstream name",
+    fallbackUpstream: "Fallback Upstream",
+    fallbackUpstreamPlaceholder:
+      "Select the fallback upstream : Input the upstream name",
+    fallbackUpstreamTips:
+      "Where a request goes when the upstream has no backend for it (none healthy, circuits open), or could not be connected to and no retry is left. Never for a response the upstream sent.",
     rewrite: "Path Rewrite",
     rewritePlaceholder: "Input the rewrite for path(e.g. ^/api/ /)",
     matchHeaders: "Match Headers",
@@ -1110,6 +1133,9 @@ export default {
     mirrorMaxInflightPlaceholder: "Copies under way at one time, e.g. 100",
     mirrorMaxInflightTips:
       "A request that comes while this many copies are under way is not mirrored.",
+    mirrorCompare: "Compare",
+    mirrorCompareTips:
+      "Log a warning when the mirror answers with another status than the upstream, ten a second at most.",
     oidcIssuer: "Issuer",
     oidcIssuerPlaceholder:
       "The url of the provider, e.g. https://accounts.example.com",

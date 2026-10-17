@@ -15,12 +15,17 @@
 mod events;
 mod metrics;
 mod process;
+mod traffic;
 
 pub use events::{ConfigReloads, config_reloads, record_config_reload};
 pub use metrics::*;
 pub use process::*;
 #[cfg(feature = "tracing")]
 use snafu::Snafu;
+pub use traffic::{
+    TRAFFIC_INTERVAL, TrafficSnapshot, UpstreamTraffic, record_traffic,
+    traffic_snapshot,
+};
 #[cfg(feature = "tracing")]
 #[derive(Debug, Snafu)]
 pub enum Error {

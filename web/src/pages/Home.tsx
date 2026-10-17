@@ -27,6 +27,7 @@ import {
   type PathHealth,
   type PathStage,
 } from "@/components/traffic-path";
+import { TrafficPanel } from "@/components/traffic-panel";
 
 interface Summary {
   name: string;
@@ -585,6 +586,8 @@ export default function Home() {
         health={health}
         meters={meters}
       />
+
+      <TrafficPanel />
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
         <div className="border-b border-border px-4 py-2.5 sm:px-5">

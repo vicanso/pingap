@@ -163,6 +163,7 @@ The same keys work in header values as `:<context_key>`, for example
 | `ja4_o` | `JA4_o`: hashed over the lists in the order the client sent them |
 | `ja4_ro` | `JA4_ro`: the lists in the order sent, unhashed; every other form can be computed from it |
 | `upstream_addr` | Address of the upstream backend |
+| `upstream_name` | Name of the upstream the request went to: the location's, one a plugin chose, or its `fallback_upstream` |
 | `upstream_status` | Status the upstream answered with, `-` when there was none |
 | `upstream_reused` | `true` when the upstream connection came from the keep-alive pool |
 | `upstream_connected` | Open connections to the upstream; needs `enable_tracer` on it |

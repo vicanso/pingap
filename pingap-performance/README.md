@@ -178,6 +178,39 @@ At startup the binary feeds `pingap_cache::update_available_memory()` with the
 memory that is available, bounded by the container's limit, so the memory cache
 sizes itself against where it runs instead of a fixed default.
 
+## Recent traffic
+
+```rust
+use pingap_performance::{record_traffic, traffic_snapshot};
+
+record_traffic(&ctx); // once a request has ended
+let snapshot = traffic_snapshot();
+```
+
+What the requests of the last fifteen minutes came to, in memory and in every
+build, for the home page of the admin (`/api/traffic`): a deployment without
+Prometheus sees its traffic there. The proxy counts each request when it ends,
+except those the admin answers itself, whose polling would otherwise be all
+an idle process shows, and the requests the cache makes in the background to
+refresh what it serves stale.
+
+The time is cut into buckets of ten seconds, ninety of them in a ring; a
+bucket is started anew when it comes round again. Each holds the requests,
+the class of the status the client was sent (2xx to 5xx), and their latency
+(not of an upgraded connection, a WebSocket, whose time is that of the tunnel):
+the sum, the maximum and a coarse histogram for a p95 that is an upper
+estimate (the bound of the part of the histogram it falls in). For each
+upstream a request was sent on to, the same ring holds the requests, the
+errors (a 5xx answer, or none at all, a request that found no backend there
+included, but not a client that went away first) and the wait for the
+response header, averaged over the requests that got one. A request answered by a plugin
+or from the cache is no upstream's. An upstream with no request in the window
+is let go.
+
+A request is counted with a few atomic additions, without a lock. Counts that
+come in while a bucket is being started anew can be lost: the figures are for
+a look, not an account. They start at zero with the process.
+
 ## License
 
 Apache-2.0.

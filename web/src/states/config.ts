@@ -58,6 +58,7 @@ export interface Upstream {
 
 export interface Location {
   upstream: string;
+  fallback_upstream?: string;
   path?: string;
   host?: string;
   weight?: number;

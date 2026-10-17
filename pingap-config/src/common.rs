@@ -1072,6 +1072,11 @@ pub struct LocationConf {
     /// Name of the upstream service to proxy requests to
     pub upstream: Option<String>,
 
+    /// The upstream a request goes to when the upstream has no backend to
+    /// give it, or one it could not connect to and no retry is left: see
+    /// the proxy's `upstream_peer`.
+    pub fallback_upstream: Option<String>,
+
     /// URL path pattern to match requests against
     /// Can start with:
     /// - "=" for exact match
@@ -1200,15 +1205,28 @@ impl LocationConf {
 
         // Validate upstream exists if specified
         if let Some(upstream_names) = upstream_names {
-            let upstream = self.upstream.clone().unwrap_or_default();
-            if !upstream.is_empty()
-                && !upstream.starts_with("$")
-                && !upstream_names.contains(&upstream)
-            {
-                return Err(Error::Invalid {
-                    message: format!("upstream({upstream}) is not found"),
-                });
+            for upstream in [&self.upstream, &self.fallback_upstream] {
+                let upstream = upstream.clone().unwrap_or_default();
+                if !upstream.is_empty()
+                    && !upstream.starts_with("$")
+                    && !upstream_names.contains(&upstream)
+                {
+                    return Err(Error::Invalid {
+                        message: format!("upstream({upstream}) is not found"),
+                    });
+                }
             }
+        }
+        // A fallback that is the upstream itself is no other place to go.
+        if let Some(fallback) = self.fallback_upstream.as_deref()
+            && !fallback.is_empty()
+            && self.upstream.as_deref() == Some(fallback)
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "fallback_upstream({fallback}) is the upstream itself"
+                ),
+            });
         }
 
         // Validate headers
@@ -3593,6 +3611,30 @@ h1_upgrade = "preserve"
             "Invalid error upstream(upstream2) is not found",
             result.expect_err("").to_string()
         );
+
+        // The fallback is an upstream there is, and another one.
+        let upstream_names = vec!["upstream1".to_string(), "spare".to_string()];
+        conf.upstream = Some("upstream1".to_string());
+        conf.fallback_upstream = Some("missing".to_string());
+        assert_eq!(
+            "Invalid error upstream(missing) is not found",
+            conf.validate_with_upstream(Some(&upstream_names))
+                .expect_err("")
+                .to_string()
+        );
+        conf.fallback_upstream = Some("upstream1".to_string());
+        assert_eq!(
+            "Invalid error fallback_upstream(upstream1) is the upstream itself",
+            conf.validate_with_upstream(Some(&upstream_names))
+                .expect_err("")
+                .to_string()
+        );
+        conf.fallback_upstream = Some("spare".to_string());
+        assert_eq!(
+            true,
+            conf.validate_with_upstream(Some(&upstream_names)).is_ok()
+        );
+        conf.fallback_upstream = None;
 
         conf.upstream = Some("upstream1".to_string());
         conf.proxy_set_headers = Some(vec!["X-Request-Id".to_string()]);

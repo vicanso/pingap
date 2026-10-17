@@ -19,6 +19,7 @@
 | `timeout` | duration | `5s` | 一个副本最多花多长时间，包括读取响应。 |
 | `max_inflight` | int | `100` | 同时在途的副本数量上限。超出上限的副本不发送。 |
 | `host` | string | — | 副本的 `Host`。不设置时用请求自己的。 |
+| `compare` | bool | `false` | 镜像对副本返回的状态码和上游对请求返回的不一致时，记一条警告日志。见[对比响应](#对比响应)。 |
 | `step` | string | `request` | `request`，或者 `proxy_upstream`（只复制即将发往上游的请求）。 |
 
 ## 示例
@@ -28,6 +29,12 @@
 [plugins.shadow]
 category = "mirror"
 target = "http://10.0.0.2:8080"
+
+# 同上，并且记下新版本返回不一致的请求
+[plugins.shadowCompared]
+category = "mirror"
+target = "http://10.0.0.2:8080"
+compare = true
 
 # 再加上十分之一的写请求，请求体不超过 64 kB
 [plugins.shadowWrites]
@@ -52,6 +59,21 @@ plugins = ["shadow"]
 - **请求体。** 没有请求体的请求在插件执行时立即复制。带请求体的在请求体传完之后复制，用的是它在发往上游的过程中留下的那一份：每个正在上传的请求最多 `max_body_size`，放在内存里；在途副本已经达到 `max_inflight` 时不再保留请求体。请求体更大的（按 `Content-Length` 判断，或者实际传下来才发现）完全不镜像；请求体没传完就失败的请求也不镜像。
 - **`max_inflight`** 限制了一个不应答的目标能占住多少资源：它的每个副本都要等到 `timeout`，同时最多等这么多个。副本从发出的那一刻起才计入在途数量——带请求体的请求是在请求体传完之后。超出的请求照常服务，只是不镜像。
 - 失败的副本会计数，并在第 1、2、4、8……次失败时写一行日志，这样目标挂掉时不会每个请求都写一行。
+
+## 对比响应
+
+`compare = true` 时，镜像响应的状态码会和上游的对比，不一致的记一条日志：
+
+```
+WARN pingap_plugin::mirror: the mirror answered with another status category="mirror" method=GET path="/api/items" status=200 mirror_status=500 request_id="" skipped=0
+```
+
+`status` 是上游的，`mirror_status` 是镜像的；`path` 是请求的路径，不含查询串（副本的路径前面还加了 `target` 的路径）。两边都有结果时才对比，哪边后到就在哪边到时对比：慢的镜像最多等到 `timeout`，客户端从来不用等。
+
+- 只对比状态码，不对比响应头和响应体。
+- 上游没有响应的请求——被插件直接响应、来自缓存、连不上上游——没有可对比的；没有得到响应的副本也没有：发送失败或超时（按上文记录），或者根本没发。
+- 客户端请求本身不是条件请求时，上游返回的 `304` 是它对缓存重新验证的回答，不参与对比：副本并没有发出这样的请求。缓存在后台刷新过期内容的请求（`stale-while-revalidate`）不会被镜像。
+- 和[只记录不拦截](limit.md#只记录不拦截)一样，每个插件每个时钟秒最多记 10 行：其余计数，下一行的 `skipped` 是没有记录的次数。
 
 ## 使用说明
 

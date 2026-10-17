@@ -195,6 +195,17 @@ export default function Locations() {
       options: newStringOptions(upstreams, false, true),
     },
     {
+      name: "fallback_upstream",
+      section: sec.upstream,
+      label: locationI18n("fallbackUpstream"),
+      placeholder: locationI18n("fallbackUpstreamPlaceholder"),
+      tips: locationI18n("fallbackUpstreamTips"),
+      defaultValue: locationConfig.fallback_upstream || "",
+      span: 3,
+      category: ExFormItemCategory.INPUT_SELECT,
+      options: newStringOptions(upstreams, false, true),
+    },
+    {
       name: "rewrite",
       section: sec.match,
       label: locationI18n("rewrite"),

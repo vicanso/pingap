@@ -1768,6 +1768,16 @@ export const PLUGIN_FIELDS: Partial<
       span: 2,
       category: ExFormItemCategory.NUMBER,
     },
+    {
+      name: "compare",
+      label: t("mirrorCompare"),
+      placeholder: "",
+      tips: t("mirrorCompareTips"),
+      defaultValue: conf.compare as boolean,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
   ],
   [PluginCategory.OIDC]: (conf, t) => [
     {
