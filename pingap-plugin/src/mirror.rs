@@ -103,6 +103,10 @@ pub struct Mirror {
     /// The answers that were compared and were not the same.
     differed: Arc<AtomicU64>,
     lines: Arc<LineBudget>,
+    /// What the comparison of a request is kept under in its context: of
+    /// this instance, and not of its configuration, which another mirror
+    /// of the location may have the same of.
+    comparison_key: String,
     hash_value: String,
 }
 
@@ -226,6 +230,7 @@ impl TryFrom<&PluginConf> for Mirror {
             compare: get_bool_conf(value, "compare"),
             differed: Arc::new(AtomicU64::new(0)),
             lines: Arc::new(LineBudget::default()),
+            comparison_key: crate::new_body_handler_id("mirror-comparison-"),
             hash_value,
         })
     }
@@ -522,7 +527,7 @@ impl Plugin for Mirror {
             comparison: comparison.clone(),
         };
         if let Some(comparison) = comparison {
-            ctx.set_plugin_value(&self.hash_value, comparison);
+            ctx.set_plugin_value(&self.comparison_key, comparison);
         }
         // A body is not kept for a mirror that has all it can take: the
         // copy would be made, held for as long as the upload lasts, and
@@ -560,7 +565,7 @@ impl Plugin for Mirror {
             && !upstream_response.status.is_informational()
             && !revalidated
             && let Some(comparison) =
-                ctx.get_plugin_value::<Arc<Comparison>>(&self.hash_value)
+                ctx.get_plugin_value::<Arc<Comparison>>(&self.comparison_key)
         {
             let _ = comparison.upstream.set(upstream_response.status);
         }
@@ -796,6 +801,17 @@ mod tests {
         assert_eq!(0, run(true, Some(304)).await);
         assert_eq!(0, run(true, None).await);
         assert_eq!(0, run(false, Some(200)).await);
+    }
+
+    /// Two mirrors of one configuration on a location keep a comparison
+    /// each: one kept under the configuration replaced the other's.
+    #[test]
+    fn test_mirror_comparison_key() {
+        let conf = "target = \"http://127.0.0.1:9\"\ncompare = true";
+        let first = new_plugin(conf).unwrap();
+        let second = new_plugin(conf).unwrap();
+        assert_eq!(first.hash_value, second.hash_value);
+        assert_ne!(first.comparison_key, second.comparison_key);
     }
 
     /// Whichever answer comes last, the two are compared: here the copy

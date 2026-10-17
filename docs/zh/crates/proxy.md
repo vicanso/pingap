@@ -278,7 +278,7 @@ proxy_set_headers = ["X-JA4: $ja4"]
 | [`limit`](../plugins/limit.md#按-tls-指纹) 插件 | `tag = "ja4"`、`tag = "ip_ja4"` | 按指纹，或按指纹加客户端地址计数 |
 | [`ja4_restriction`](../plugins/ja4_restriction.md) 插件 | `ja4_list` | 按指纹放行或拒绝请求 |
 
-这两个插件所在的 location 挂在没有开启 `ja4 = true` 的 server 上时，`pingap -t`、启动以及引入它们的那次重载都会打印告警：那里的请求都没有指纹。重载里才设置 `ja4 = true` 的也会告警，它要等重启才生效。
+在没有开启 `ja4 = true` 的 server 上用到指纹的配置，`pingap -t`、启动以及引入它的那次重载都会打印告警：这两个插件、用 `$ja4` 设置的请求头或响应头（`proxy_set_headers`、`proxy_add_headers`、请求头/响应头插件），以及访问日志里的 `{:ja4}`。那里的请求都没有指纹。重载里才设置 `ja4 = true` 的也会告警，它要等重启才生效。
 
 实现说明：
 

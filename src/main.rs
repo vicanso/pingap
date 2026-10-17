@@ -1027,7 +1027,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     validate::set_strict(args.strict);
     validate::check_unknown_keys(&config_as_stored)?;
     validate::check_build_keys(&config)?;
-    validate::check_ja4_plugins(&config, &config);
+    validate::check_settings_without_effect(&config, &config);
 
     // TODO a better way
     // since the cache will be initialized in validate function

@@ -34,7 +34,7 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -210,8 +210,7 @@ impl TryFrom<&PluginConf> for Limiter {
         // not one of the documented ones is an error rather than a silent
         // fallback: a misspelt `tag` used to limit by ip, a misspelt `type`
         // rate-limited, and a forgotten `max` rejected almost everything.
-        let tag_name = get_str_conf(value, "tag");
-        let tag = match tag_name.as_str() {
+        let tag = match get_str_conf(value, "tag").as_str() {
             "" | "ip" => LimitTag::Ip,
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
@@ -233,15 +232,6 @@ impl TryFrom<&PluginConf> for Limiter {
             return Err(invalid(
                 "key is required for a header, cookie or query tag".to_string(),
             ));
-        }
-        // Left over from a header tag, say, in a form that keeps what it
-        // was given: the limit goes by the tag, and is told so.
-        if !named && !key.is_empty() {
-            warn!(
-                tag = if tag_name.is_empty() { "ip" } else { &tag_name },
-                key,
-                "the key of the limit plugin is only read with a header, cookie or query tag, not with this one"
-            );
         }
         let is_inflight = match get_str_conf(value, "type").as_str() {
             "" | "rate" => false,
@@ -319,15 +309,6 @@ impl TryFrom<&PluginConf> for Limiter {
                 },
             };
 
-        // `weight` blended the previous window into the estimate by a fixed
-        // share. It has no part in the sliding window that replaced that,
-        // and a config that still has it is told so instead of refused.
-        if value.contains_key("weight") {
-            warn!(
-                "the weight of the limit plugin is no longer used: max is the number of requests in any one interval"
-            );
-        }
-
         Ok(Self {
             hash_value,
             tag,
@@ -344,6 +325,35 @@ impl TryFrom<&PluginConf> for Limiter {
             dry_run: DryRun::new(value),
         })
     }
+}
+
+/// What the configuration of a limit has that the limit does not read,
+/// for the check of a configuration to say once, where building the plugin
+/// said it at every reload and every save of the admin.
+pub(crate) fn unread_keys(value: &PluginConf) -> Vec<String> {
+    let mut found = vec![];
+    // Left over from a header tag, say, in a form that keeps what it was
+    // given: the limit goes by the tag. A tag that is none of them is an
+    // error of its own, said when the plugin is built.
+    let tag = get_str_conf(value, "tag");
+    if matches!(tag.as_str(), "" | "ip" | "ja4" | "ip_ja4")
+        && !get_str_conf(value, "key").is_empty()
+    {
+        let tag = if tag.is_empty() { "ip" } else { &tag };
+        found.push(format!(
+            "key is only read with a header, cookie or query tag, not with tag {tag}"
+        ));
+    }
+    // `weight` blended the previous window into the estimate by a fixed
+    // share. It has no part in the sliding window that replaced that, and
+    // a config that still has it is told so instead of refused.
+    if value.contains_key("weight") {
+        found.push(
+            "weight is no longer used: max is the number of requests in any one interval"
+                .to_string(),
+        );
+    }
+    found
 }
 
 impl Limiter {
@@ -1447,6 +1457,37 @@ interval = "1s"
     /// A hello with nothing in it, another TLS stack.
     fn script() -> Vec<u8> {
         pingap_core::ja4::testing::client_hello_body(0x9999, &[], Some(&[]))
+    }
+
+    #[test]
+    fn test_unread_keys() {
+        let unread = |conf: &str| {
+            unread_keys(&toml::from_str::<PluginConf>(conf).unwrap())
+        };
+        assert_eq!(Vec::<String>::new(), unread("max = 1"));
+        assert_eq!(
+            Vec::<String>::new(),
+            unread("tag = \"header\"\nkey = \"X-User\"\nmax = 1")
+        );
+        assert_eq!(
+            vec![
+                "key is only read with a header, cookie or query tag, not with tag ip"
+                    .to_string()
+            ],
+            unread("key = \"X-User\"\nmax = 1")
+        );
+        // a misspelt tag is the error of the plugin, not this
+        assert_eq!(
+            Vec::<String>::new(),
+            unread("tag = \"Header\"\nkey = \"X-User\"\nmax = 1")
+        );
+        assert_eq!(
+            vec![
+                "key is only read with a header, cookie or query tag, not with tag ja4".to_string(),
+                "weight is no longer used: max is the number of requests in any one interval".to_string(),
+            ],
+            unread("tag = \"ja4\"\nkey = \"X-User\"\nweight = 50\nmax = 1")
+        );
     }
 
     /// `tag = "ja4"`: one budget for every client with the same TLS

@@ -239,6 +239,16 @@ impl Traffic {
             bucket.latency_histogram[slot].fetch_add(1, Ordering::Relaxed);
         }
 
+        if let Some(name) = &request.fallback_from {
+            self.with_upstream(name, epoch, |ring| {
+                if ring.last.load(Ordering::Relaxed) != epoch {
+                    ring.last.store(epoch, Ordering::Relaxed);
+                }
+                let bucket = ring.ring.current(epoch);
+                bucket.requests.fetch_add(1, Ordering::Relaxed);
+                bucket.errors.fetch_add(1, Ordering::Relaxed);
+            });
+        }
         let Some((name, upstream)) = &request.upstream else {
             return;
         };
@@ -371,6 +381,9 @@ struct Request {
     /// connection (a WebSocket), which ends when the tunnel closes.
     latency: Option<u64>,
     upstream: Option<(Arc<str>, UpstreamRequest)>,
+    /// The upstream that could not take the request and left it to the
+    /// fallback: an error of that one as well.
+    fallback_from: Option<Arc<str>>,
 }
 
 struct UpstreamRequest {
@@ -412,6 +425,11 @@ impl Request {
             latency: (status != Some(101))
                 .then(|| ctx.timing.created_at.elapsed().as_millis() as u64),
             upstream,
+            fallback_from: ctx
+                .upstream
+                .fallback_from
+                .clone()
+                .filter(|_| ctx.state.proxying),
         }
     }
 }
@@ -496,6 +514,7 @@ mod tests {
             status: Some(status),
             latency: Some(latency),
             upstream: None,
+            fallback_from: None,
         }
     }
 
@@ -504,6 +523,7 @@ mod tests {
             status: Some(if error { 502 } else { 200 }),
             latency,
             upstream: Some((name.into(), UpstreamRequest { error, latency })),
+            fallback_from: None,
         }
     }
 
@@ -523,6 +543,7 @@ mod tests {
                 status: None,
                 latency: Some(7),
                 upstream: None,
+                fallback_from: None,
             },
         );
         // a WebSocket of an hour: counted, its time not
@@ -532,6 +553,7 @@ mod tests {
                 status: Some(101),
                 latency: None,
                 upstream: None,
+                fallback_from: None,
             },
         );
 
@@ -579,12 +601,22 @@ mod tests {
         traffic.record(now, &to_upstream("standby", false, Some(10)));
         // a request no upstream had a part in
         traffic.record(now, &request(200, 1));
+        // one `down` could not take, which went to `standby`: an error of
+        // `down` as well
+        let mut rescued = to_upstream("standby", false, Some(10));
+        rescued.fallback_from = Some("down".into());
+        traffic.record(now, &rescued);
         let snapshot = traffic.snapshot(now);
-        assert_eq!(4, *snapshot.requests.last().unwrap());
+        assert_eq!(5, *snapshot.requests.last().unwrap());
         assert_eq!(
-            vec!["api", "standby"],
+            vec!["api", "down", "standby"],
             snapshot.upstreams.keys().collect::<Vec<_>>()
         );
+        let down = &snapshot.upstreams["down"];
+        assert_eq!(1, *down.requests.last().unwrap());
+        assert_eq!(1, *down.errors.last().unwrap());
+        assert_eq!(0, *down.latency_count.last().unwrap());
+        assert_eq!(2, *snapshot.upstreams["standby"].requests.last().unwrap());
         let api = &snapshot.upstreams["api"];
         assert_eq!(90, api.requests.len());
         assert_eq!(2, *api.requests.last().unwrap());

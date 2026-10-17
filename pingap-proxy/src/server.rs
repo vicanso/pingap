@@ -1903,19 +1903,32 @@ impl ProxyHttp for Server {
             )
         }) {
             let to = upstream.name.clone();
-            let from = ctx.upstream.name.clone();
+            // The upstream of this attempt, or the one of the attempt
+            // that failed to connect, when it is that which sent the
+            // request here.
+            let from =
+                asked.take().unwrap_or_else(|| ctx.upstream.name.clone());
             asked = Some(to.clone());
             if let Some(peer) =
                 new_peer(session, ctx, upstream, location.as_deref()).await
             {
-                debug!(
-                    target: LOG_TARGET,
-                    location = &*ctx.upstream.location,
-                    from = &*from,
-                    to = &*to,
-                    "to the fallback upstream"
-                );
                 ctx.upstream.fallback = true;
+                // Once, when the request goes over: a retry on the
+                // fallback finds its own name here. Nor where a plugin
+                // chose the fallback as the upstream.
+                if ctx.upstream.fallback_from.is_none()
+                    && !from.is_empty()
+                    && from != to
+                {
+                    debug!(
+                        target: LOG_TARGET,
+                        location = &*ctx.upstream.location,
+                        from = &*from,
+                        to = &*to,
+                        "to the fallback upstream"
+                    );
+                    ctx.upstream.fallback_from = Some(from);
+                }
                 return Ok(Box::new(start_connect(ctx, peer)));
             }
         }
@@ -5289,9 +5302,20 @@ addr = "127.0.0.1:6188"
         );
         assert_eq!(true, failed_connect(&server, &mut session, &mut ctx));
         assert_eq!(true, ctx.upstream.fallback);
+        assert_eq!(None, ctx.upstream.fallback_from);
         let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
         assert_eq!("127.0.0.1:5001", peer.address().to_string());
         assert_eq!("diving", &*ctx.upstream.name);
+        // the upstream it left, for the dashboard
+        assert_eq!(Some("charts"), ctx.upstream.fallback_from.as_deref());
+        // and still that one when the attempt on the fallback is retried
+        // (a kept connection it had closed)
+        server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(Some("charts"), ctx.upstream.fallback_from.as_deref());
+        assert_eq!(
+            (0, 1),
+            (charts.stats().processing, diving.stats().processing)
+        );
         assert_eq!(
             (0, 1),
             (charts.stats().processing, diving.stats().processing)
@@ -5383,6 +5407,7 @@ addr = "127.0.0.1:6188"
         let peer = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
         assert_eq!("127.0.0.1:5001", peer.address().to_string());
         assert_eq!(0, charts.stats().processing);
+        assert_eq!(Some("charts"), ctx.upstream.fallback_from.as_deref());
 
         // Without a fallback, as before: no retry set, none made.
         let server = new_server();

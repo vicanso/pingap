@@ -27,7 +27,7 @@ use crate::plugin;
 use async_trait::async_trait;
 use pingap_certificate::{TlsCertificate, validate_servers_tls_for_backend};
 use pingap_config::{
-    ConfigManager, MissingReference, PingapConfig, PingapTomlConfig,
+    ConfigManager, MissingReference, PingapConfig, PingapTomlConfig, PluginConf,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -267,18 +267,60 @@ fn keys_of_other_builds(
     found
 }
 
-/// Where a plugin of `config` that goes by the JA4 fingerprint runs on a
-/// server that does not collect it. No request there has one: an allow
-/// list turns every one away, a deny list lets every one through, a limit
-/// by `ja4` goes by its `missing_key` and one by `ip_ja4` by the address
-/// alone. That can be meant - one location served over plain http and
-/// over TLS - so it is said, not refused.
+/// Whether a header value is the JA4 fingerprint: `$ja4`, or one of its
+/// forms as a field of the access log, `:ja4` and the like.
+fn reads_ja4(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "$ja4" | ":ja4" | ":ja4_r" | ":ja4_o" | ":ja4_ro"
+    )
+}
+
+/// Whether one of `headers`, each `name: value`, is set from the JA4
+/// fingerprint.
+fn sets_ja4_header<'a>(headers: impl IntoIterator<Item = &'a String>) -> bool {
+    headers.into_iter().any(|header| {
+        header
+            .split_once(':')
+            .is_some_and(|(_, value)| reads_ja4(value))
+    })
+}
+
+/// The texts of a plugin's configuration, those of lists included: where
+/// a plugin of headers has them.
+fn plugin_texts(conf: &PluginConf) -> Vec<&String> {
+    conf.values()
+        .flat_map(|value| -> Vec<&String> {
+            match value {
+                toml::Value::String(text) => vec![text],
+                toml::Value::Array(items) => items
+                    .iter()
+                    .filter_map(|item| match item {
+                        toml::Value::String(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => vec![],
+            }
+        })
+        .collect()
+}
+
+/// Where `config` goes by the JA4 fingerprint on a server that does not
+/// collect it: a plugin that limits or turns requests away by it, a
+/// header set from it (of a location or of a plugin), the access log of
+/// the server. No request there has one: an allow list turns every one
+/// away, a deny list lets every one through, a limit by `ja4` goes by its
+/// `missing_key` and one by `ip_ja4` by the address alone, a header is the
+/// literal text and a field of the log empty. That can be meant - one
+/// location served over plain http and over TLS - so it is said, not
+/// refused.
 ///
 /// `running` is what the servers were started with. A reload puts the
 /// plugins and the locations to use at once and the `ja4` of a server
 /// only with a restart: until then the server collects what `running`
 /// says. A server that is not in it does not listen yet.
-fn plugins_without_ja4(
+fn ja4_without_fingerprint(
     config: &PingapConfig,
     running: &PingapConfig,
 ) -> Vec<String> {
@@ -287,34 +329,81 @@ fn plugins_without_ja4(
     let mut found = vec![];
     for name in names {
         let server = &config.servers[name];
-        let why = match (
+        let running_server = running.servers.get(name);
+        // The access log of a server, like its `ja4`, changes with a
+        // restart: one that waits for it is judged by the log it has now.
+        let (why, access_log) = match (
             server.ja4.unwrap_or_default(),
-            running.servers.get(name).map(|s| s.ja4.unwrap_or_default()),
+            running_server.map(|s| s.ja4.unwrap_or_default()),
         ) {
-            (false, _) => "which the server does not collect (ja4 = true)",
-            (true, Some(false)) => {
-                "which the server collects only after a restart (ja4 = true is not in effect yet)"
-            },
+            (false, _) => (
+                "which the server does not collect (ja4 = true)",
+                &server.access_log,
+            ),
+            (true, Some(false)) => (
+                "which the server collects only after a restart (ja4 = true is not in effect yet)",
+                &running_server.and_then(|s| s.access_log.clone()),
+            ),
             (true, _) => continue,
         };
+        if access_log.as_deref().is_some_and(|format| {
+            ["{:ja4}", "{:ja4_r}", "{:ja4_o}", "{:ja4_ro}"]
+                .iter()
+                .any(|field| format.contains(field))
+        }) {
+            found.push(format!(
+                "server({name}): the access log prints the JA4 fingerprint, {why}"
+            ));
+        }
         for location in server.locations.iter().flatten() {
             let Some(location_conf) = config.locations.get(location) else {
                 continue;
             };
+            if sets_ja4_header(
+                location_conf
+                    .proxy_set_headers
+                    .iter()
+                    .chain(location_conf.proxy_add_headers.iter())
+                    .flatten(),
+            ) {
+                found.push(format!(
+                    "server({name}): location({location}) sets a header from the JA4 fingerprint, {why}"
+                ));
+            }
             for plugin in location_conf.plugins.iter().flatten() {
-                if config
-                    .plugins
-                    .get(plugin)
-                    .is_some_and(pingap_plugin::needs_ja4)
-                {
-                    found.push(format!(
-                        "server({name}): plugin({plugin}) of location({location}) goes by the JA4 fingerprint, {why}"
-                    ));
-                }
+                let Some(conf) = config.plugins.get(plugin) else {
+                    continue;
+                };
+                let what = if pingap_plugin::needs_ja4(conf) {
+                    "goes by"
+                } else if sets_ja4_header(plugin_texts(conf)) {
+                    "sets a header from"
+                } else {
+                    continue;
+                };
+                found.push(format!(
+                    "server({name}): plugin({plugin}) of location({location}) {what} the JA4 fingerprint, {why}"
+                ));
             }
         }
     }
     found
+}
+
+/// What the plugins of `config` have that they do not read, by their own
+/// account (`pingap_plugin::unread_keys`): a `key` the tag of a limit does
+/// not use, a setting that is no longer read.
+fn unread_plugin_keys(config: &PingapConfig) -> Vec<String> {
+    let mut names: Vec<&String> = config.plugins.keys().collect();
+    names.sort();
+    names
+        .into_iter()
+        .flat_map(|name| {
+            pingap_plugin::unread_keys(&config.plugins[name])
+                .into_iter()
+                .map(move |message| format!("plugin({name}): {message}"))
+        })
+        .collect()
 }
 
 /// Builds each location the way startup does, so `--test` reports what only
@@ -549,15 +638,26 @@ pub fn check_build_keys(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     refuse_build_keys(&found, is_strict())
 }
 
-/// And of the plugins that look for a fingerprint where there is none.
-static JA4_PLUGINS_REPORTED: AtomicU64 = AtomicU64::new(0);
+/// And of what goes by a fingerprint where there is none.
+static JA4_REPORTED: AtomicU64 = AtomicU64::new(0);
 
-/// Warns about what [`plugins_without_ja4`] finds, once for the same
-/// findings, at the places of [`check_build_keys`]: `running` is `config`
-/// itself at a start, the configuration in use at a reload. Never an
-/// error, with `--strict` neither: no key goes unread.
-pub fn check_ja4_plugins(config: &PingapConfig, running: &PingapConfig) {
-    warn_once(&JA4_PLUGINS_REPORTED, &plugins_without_ja4(config, running));
+/// And of what plugins have and do not read.
+static UNREAD_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
+
+/// Warns about the settings of `config` that have no effect - what
+/// [`ja4_without_fingerprint`] and [`unread_plugin_keys`] find - once for
+/// the same findings, at the places of [`check_build_keys`]: `running` is
+/// `config` itself at a start, the configuration in use at a reload. Said
+/// there and not where a plugin is built, which is every reload and every
+/// save of the admin. Never an error, with `--strict` neither: they are
+/// keys pingap knows.
+pub fn check_settings_without_effect(
+    config: &PingapConfig,
+    running: &PingapConfig,
+) {
+    // Each list on its own: a change of one does not say the other again.
+    warn_once(&JA4_REPORTED, &ja4_without_fingerprint(config, running));
+    warn_once(&UNREAD_KEYS_REPORTED, &unread_plugin_keys(config));
 }
 
 /// The answer to a change the admin is about to store, for
@@ -771,11 +871,13 @@ prometheus_metrics = ""
         assert_eq!(true, refuse_build_keys(&[], true).is_ok());
     }
 
-    /// A plugin that goes by the JA4 fingerprint on a server that does not
-    /// collect it is said, by server and location; the same plugin on a
-    /// server that does is not, nor is a limit by anything else.
+    /// What goes by the JA4 fingerprint on a server that does not collect
+    /// it is said, by server and location: a plugin that limits or turns
+    /// away by it, a header of the location or of a plugin set from it,
+    /// the access log. The same on a server that does is not, nor is a
+    /// limit by anything else or a header of another value.
     #[test]
-    fn test_plugins_without_ja4() {
+    fn test_ja4_without_fingerprint() {
         let config = toml_config(
             r#"
 [upstreams.app]
@@ -787,7 +889,21 @@ plugins = ["noScripts", "perKind", "perIp", "pingap:requestId"]
 
 [locations.web]
 upstream = "app"
-plugins = ["perKind"]
+plugins = ["perKind", "tagged", "plainHeaders"]
+proxy_set_headers = ["X-Ja4: $ja4", "X-Host: $host"]
+
+[plugins.tagged]
+category = "response_headers"
+add_headers = ["X-Client:ja4", "X-Ja4-R: :ja4_r"]
+
+[plugins.plainHeaders]
+category = "response_headers"
+add_headers = ["X-Client: :ja4x"]
+
+[servers.other]
+addr = "127.0.0.1:6081"
+locations = ["missing"]
+access_log = "{method} {:ja4x}"
 
 [plugins.noScripts]
 category = "ja4_restriction"
@@ -811,38 +927,76 @@ locations = ["api"]
 [servers.plain]
 addr = "127.0.0.1:6080"
 locations = ["api", "web", "missing"]
+access_log = "{method} {uri} {:ja4}"
 "#,
         )
         .to_running_config(MissingReference::Refuse)
         .unwrap();
         assert_eq!(
             vec![
+                "server(plain): the access log prints the JA4 fingerprint, which the server does not collect (ja4 = true)",
                 "server(plain): plugin(noScripts) of location(api) goes by the JA4 fingerprint, which the server does not collect (ja4 = true)",
                 "server(plain): plugin(perKind) of location(api) goes by the JA4 fingerprint, which the server does not collect (ja4 = true)",
+                "server(plain): location(web) sets a header from the JA4 fingerprint, which the server does not collect (ja4 = true)",
                 "server(plain): plugin(perKind) of location(web) goes by the JA4 fingerprint, which the server does not collect (ja4 = true)",
+                "server(plain): plugin(tagged) of location(web) sets a header from the JA4 fingerprint, which the server does not collect (ja4 = true)",
             ],
-            plugins_without_ja4(&config, &config)
+            ja4_without_fingerprint(&config, &config)
         );
         let mut config = config;
         config.servers.remove("plain");
-        assert_eq!(Vec::<String>::new(), plugins_without_ja4(&config, &config));
+        assert_eq!(
+            Vec::<String>::new(),
+            ja4_without_fingerprint(&config, &config)
+        );
 
         // A reload that turns ja4 on: the plugins run at once, the
         // fingerprint comes with a restart. A server that a restart will
         // start is not said.
         let mut running = config.clone();
         running.servers.get_mut("tls").unwrap().ja4 = None;
+        // A `{:ja4}` that comes with the same reload comes with the same
+        // restart: the log as it runs is what is looked at.
+        config.servers.get_mut("tls").unwrap().access_log =
+            Some("{:ja4}".to_string());
         assert_eq!(
             vec![
                 "server(tls): plugin(noScripts) of location(api) goes by the JA4 fingerprint, which the server collects only after a restart (ja4 = true is not in effect yet)",
                 "server(tls): plugin(perKind) of location(api) goes by the JA4 fingerprint, which the server collects only after a restart (ja4 = true is not in effect yet)",
             ],
-            plugins_without_ja4(&config, &running)
+            ja4_without_fingerprint(&config, &running)
         );
         running.servers.remove("tls");
         assert_eq!(
             Vec::<String>::new(),
-            plugins_without_ja4(&config, &running)
+            ja4_without_fingerprint(&config, &running)
+        );
+    }
+
+    /// What a plugin does not read, by its own account, said by name.
+    #[test]
+    fn test_unread_plugin_keys() {
+        let config = toml_config(
+            r#"
+[plugins.byIp]
+category = "limit"
+key = "X-User"
+max = 10
+
+[plugins.byUser]
+category = "limit"
+tag = "header"
+key = "X-User"
+max = 10
+"#,
+        )
+        .to_running_config(MissingReference::Refuse)
+        .unwrap();
+        assert_eq!(
+            vec![
+                "plugin(byIp): key is only read with a header, cookie or query tag, not with tag ip"
+            ],
+            unread_plugin_keys(&config)
         );
     }
 

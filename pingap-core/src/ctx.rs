@@ -337,6 +337,9 @@ pub struct UpstreamInfo {
     /// The request has gone over to the fallback upstream of its location,
     /// or is to with its next attempt.
     pub fallback: bool,
+    /// The upstream the request left for the fallback: it could not take
+    /// it, which the dashboard counts as its error.
+    pub fallback_from: Option<Arc<str>>,
     /// Maximum number of retries for failed connections.
     pub max_retries: Option<u8>,
     /// The maximum total time window allowed for an operation and all of its subsequent retries.

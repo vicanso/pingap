@@ -17,7 +17,7 @@
 | `category` | string | — | 必须为 `limit`。 |
 | `type` | string | `rate` | `rate` 或 `inflight`。其他值是配置错误。 |
 | `tag` | string | `ip` | `ip`、`header`、`cookie`、`query`、`ja4` 或 `ip_ja4`。其他值是配置错误。`ip` 指连接的对端地址；请求经过 `basic.trusted_proxies` 里的代理时，用转发头里的地址。`ja4` 和 `ip_ja4` 见[按 TLS 指纹](#按-tls-指纹)。 |
-| `key` | string | — | header / cookie / query 参数名。`tag` 为 `header`、`cookie`、`query` 时**必填**；其他 `tag` 不读取它，填了会在加载插件时打印告警。 |
+| `key` | string | — | header / cookie / query 参数名。`tag` 为 `header`、`cookie`、`query` 时**必填**；其他 `tag` 不读取它，填了会在 `pingap -t`、启动和重载时打印告警（同样的告警只打印一次）。 |
 | `max` | int | — | **必填。**每个 `interval` 允许的请求数（rate），或并发数（inflight）。负数是配置错误。 |
 | `interval` | duration | `10s` | rate 的窗口，至少 `1ms`。`inflight` 忽略。 |
 | `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
@@ -40,7 +40,7 @@
 - 被拒绝的请求不计数。超限的客户端每个 interval 仍然能得到 `max` 个请求，不会因为不断重试而一直被拒绝。
 - 这是估算，不是逐条记录：估算时假设上一窗口的请求是均匀分布的。如果客户端把 `max` 个请求全压在一个窗口的末尾，随着这个窗口的权重衰减，它在下一个窗口里还能再通过几个，最坏情况下在一个 interval 长度的时间段内接近 `2 × max`。长期平均下来速率被限制在 `max`。反过来，`max` 很小（1 或 2）时，恰好按 `max` 的速率发送的客户端会有一部分请求被拒绝，这类限制请留一点余量。
 
-`weight` 已废弃。它按固定比例（默认 `50`）混合两个窗口，对限流器来说是新面孔的客户端因此能发出两倍于 `max` 的请求，`weight = 0` 时则完全不受限。配置里仍然写着这个键时可以正常加载，会打印一条告警并忽略它。**限额比以前严格**：以前每个 interval 最多能放行 `2 × max`，现在是 `max`。
+`weight` 已废弃。它按固定比例（默认 `50`）混合两个窗口，对限流器来说是新面孔的客户端因此能发出两倍于 `max` 的请求，`weight = 0` 时则完全不受限。配置里仍然写着这个键时可以正常加载，`pingap -t`、启动和重载时会打印一条告警，并忽略它。**限额比以前严格**：以前每个 interval 最多能放行 `2 × max`，现在是 `max`。
 
 ### 按 TLS 指纹
 

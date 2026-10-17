@@ -151,7 +151,9 @@ pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
     duration
 }
 
-/// The name one plugin instance keeps its response body handler under.
+/// The name one plugin instance keeps something of a request under: its
+/// response body handler, or the value it hands to a later step
+/// (`Ctx::set_plugin_value`).
 ///
 /// The handlers of a request are kept by name, and the name used to be the
 /// plugin's category. Two plugins of one category on a location then shared
@@ -425,6 +427,16 @@ impl DryRun {
             "dry run, the request would have been refused"
         );
         RequestPluginResult::Continue
+    }
+}
+
+/// What the plugin `conf` describes has that the plugin does not read: a
+/// setting that has no effect, by the plugin's own account. For the check
+/// of a configuration, which says it once.
+pub fn unread_keys(conf: &PluginConf) -> Vec<String> {
+    match get_str_conf(conf, "category").as_str() {
+        "limit" => limit::unread_keys(conf),
+        _ => vec![],
     }
 }
 

@@ -442,10 +442,12 @@ proxy_set_headers = ["X-JA4: $ja4"]
 | [`limit`](../pingap-plugin/docs/limit.md#by-tls-fingerprint) plugin | `tag = "ja4"`, `tag = "ip_ja4"` | Requests counted by the fingerprint, or by it and the client address |
 | [`ja4_restriction`](../pingap-plugin/docs/ja4_restriction.md) plugin | `ja4_list` | Requests allowed or refused by the fingerprint |
 
-The two plugins on a location of a server without `ja4 = true` are warned
-about by `pingap -t`, at startup and by the reload that brings them in: no
-request there has a fingerprint. So are they where a reload set `ja4 = true`,
-which only a restart puts to use.
+What goes by the fingerprint on a server without `ja4 = true` is warned about
+by `pingap -t`, at startup and by the reload that brings it in: the two
+plugins, a header set from `$ja4` (`proxy_set_headers`, `proxy_add_headers`,
+the header plugins) and `{:ja4}` in the access log. No request there has a
+fingerprint. So is it where a reload set `ja4 = true`, which only a restart
+puts to use.
 
 How it works:
 

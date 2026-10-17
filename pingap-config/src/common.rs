@@ -1216,6 +1216,21 @@ impl LocationConf {
                     });
                 }
             }
+            // Without an upstream every request would go to the "fallback",
+            // which is the upstream then, by another name. Only said of the
+            // whole configuration, where what a location includes from a
+            // storage is a part of it: an entry saved on its own may have
+            // its upstream there.
+            if let Some(fallback) = self.fallback_upstream.as_deref()
+                && !fallback.is_empty()
+                && self.upstream.as_deref().is_none_or(str::is_empty)
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "fallback_upstream({fallback}) needs an upstream"
+                    ),
+                });
+            }
         }
         // A fallback that is the upstream itself is no other place to go.
         if let Some(fallback) = self.fallback_upstream.as_deref()
@@ -3634,6 +3649,16 @@ h1_upgrade = "preserve"
             true,
             conf.validate_with_upstream(Some(&upstream_names)).is_ok()
         );
+        conf.upstream = None;
+        assert_eq!(
+            "Invalid error fallback_upstream(spare) needs an upstream",
+            conf.validate_with_upstream(Some(&upstream_names))
+                .expect_err("")
+                .to_string()
+        );
+        // An entry saved on its own, whose upstream may come with what it
+        // includes, is not refused for it.
+        assert_eq!(true, conf.validate_with_upstream(None).is_ok());
         conf.fallback_upstream = None;
 
         conf.upstream = Some("upstream1".to_string());

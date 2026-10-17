@@ -257,7 +257,7 @@ async fn diff_and_update_config(
         .map_err(|e| e.to_string())??;
         crate::validate::check_build_keys(&new_config)?;
         // The servers as they run: a reload leaves their `ja4` as it was.
-        crate::validate::check_ja4_plugins(
+        crate::validate::check_settings_without_effect(
             &new_config,
             &config_manager.get_current_config(),
         );

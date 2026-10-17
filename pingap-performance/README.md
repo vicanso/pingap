@@ -203,7 +203,9 @@ estimate (the bound of the part of the histogram it falls in). For each
 upstream a request was sent on to, the same ring holds the requests, the
 errors (a 5xx answer, or none at all, a request that found no backend there
 included, but not a client that went away first) and the wait for the
-response header, averaged over the requests that got one. A request answered by a plugin
+response header, averaged over the requests that got one. A request that its
+upstream could not take and that went to the location's `fallback_upstream`
+is an error of its upstream as well. A request answered by a plugin
 or from the cache is no upstream's. An upstream with no request in the window
 is let go.
 

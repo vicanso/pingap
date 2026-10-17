@@ -190,7 +190,7 @@ export default {
     trafficWait: "Wait",
     trafficTrend: "15 min",
     trafficNote:
-      "The figures are of the last minute, the charts of the last 15 (the 10 seconds under way are left out). Kept in memory by this process since it started; the requests of the admin are not counted. Upgraded connections (WebSocket) are counted, not timed. Upstream errors are 5xx answers and requests without one; the wait is up to the response header. p95 is an upper estimate.",
+      "The figures are of the last minute, the charts of the last 15 (the 10 seconds under way are left out). Kept in memory by this process since it started; the requests of the admin are not counted. Upgraded connections (WebSocket) are counted, not timed. Upstream errors are 5xx answers and requests without one, and those that went to the fallback; the wait is up to the response header. p95 is an upper estimate.",
     upstreamAllDown: "All {{total}} backends unreachable",
     upstreamDegraded: "{{healthy}} of {{total}} backends healthy",
     certExpired: "Certificate expired {{days}} days ago",

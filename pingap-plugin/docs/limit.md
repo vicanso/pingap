@@ -19,7 +19,7 @@ the [JA4 fingerprint](#by-tls-fingerprint) of the TLS connection.
 | `category` | string | — | Must be `limit`. |
 | `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
 | `tag` | string | `ip` | `ip`, `header`, `cookie`, `query`, `ja4` or `ip_ja4`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. `ja4` and `ip_ja4`: see [By TLS fingerprint](#by-tls-fingerprint). |
-| `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`; not read with any other tag, where a value is warned about when the plugin is loaded. |
+| `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`; not read with any other tag, where a value is warned about by `pingap -t`, at startup and on a reload (once for the same findings). |
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
 | `interval` | duration | `10s` | Rate window, at least `1ms`. Ignored by `inflight`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
@@ -57,7 +57,8 @@ once and then holds it to about 10 per second.
 `weight` is gone. It blended the two windows by a fixed share (`50` by
 default), which let a client that was new to the limiter through twice as
 often as `max` says, and with `weight = 0` every time. A config that still has
-the key loads, logs a warning and ignores it. **Limits are stricter than they
+the key loads, is warned about by `pingap -t`, at startup and on a reload, and
+the key is ignored. **Limits are stricter than they
 were**: what used to pass at up to `2 × max` per interval is now held to
 `max`.
 
