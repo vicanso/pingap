@@ -15,7 +15,9 @@
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
 use crate::config_manager::get_config_manager;
-use crate::process::{get_start_time, no_restart, restart_now};
+use crate::process::{
+    Mark, abnormal_exit, get_start_time, no_restart, restart_now,
+};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -335,6 +337,9 @@ struct BasicInfo {
     restart_unsupported: String,
     git_hash: String,
     now: u64,
+    /// The run before this one, where it did not end cleanly: it crashed,
+    /// panicked or was killed, and was started again.
+    abnormal_exit: Option<Mark>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1410,6 +1415,7 @@ async fn handle_request_admin(
                 .unwrap_or_default(),
             git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
+            abnormal_exit: abnormal_exit(),
         };
         basic_info.features.push("default".to_string());
         // TLS backend name (`openssl` or `rustls`) so the admin UI can disable

@@ -1207,6 +1207,24 @@ fn run() -> Result<(), Box<dyn Error>> {
             my_server.add_service(background_service("ready_notify", service));
         bootstrap_handle.add_dependency(&notify_handle);
     }
+    // Whether the run before ended cleanly, and the mark of this one: once
+    // the process has its sockets, a daemon after the fork that gives it
+    // its pid. Where it is is worked out here, before the daemon changes
+    // its directory.
+    process::install_panic_hook();
+    let exit_mark = process::ExitMark::new(
+        &args.conf.clone().unwrap_or_default(),
+        &config.basic.get_pid_file(),
+    );
+    my_server
+        .add_service(background_service(
+            "exit_mark",
+            process::ExitMarkService {
+                mark: exit_mark,
+                upgrade: args.upgrade,
+            },
+        ))
+        .add_dependency(&bootstrap_handle);
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &config.basic.pyroscope {
@@ -1525,6 +1543,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     // service, so the webhook gets one more chance to post its last batch
     // before the process goes.
     my_server.run(server::RunArgs::default());
+    // The end of a fast stop (SIGINT), which says nothing as it begins:
+    // the mark goes now. A graceful one took it away as it began.
+    process::remove_on_clean_exit();
     webhook::flush_pending_before_exit();
     // `exit` runs no destructors, so a buffered application log would keep
     // its last lines.

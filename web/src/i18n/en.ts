@@ -194,6 +194,12 @@ export default {
     upstreamAllDown: "All {{total}} backends unreachable",
     upstreamDegraded: "{{healthy}} of {{total}} backends healthy",
     certExpired: "Certificate expired {{days}} days ago",
+    abnormalExit:
+      "The run before this one (pid {{pid}}, started {{started}}) did not end cleanly: it crashed or was killed (out of memory, SIGKILL), and was started again",
+    abnormalExitUnknown:
+      "The run before this one did not end cleanly, and its mark could not be read",
+    abnormalExitPanic:
+      "The run before this one (pid {{pid}}, started {{started}}) ended with a panic: {{panic}}",
     certExpiresToday: "Certificate expires today",
     certExpiring: "Certificate expires in {{days}} days",
     runtime: "Runtime",

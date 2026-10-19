@@ -17,6 +17,10 @@
 - 所有构建都不再链接 copyleft 许可证的代码。`imagequant`（GPL-3.0-or-later）原来在 `-full`、`-rustls-full` 压缩包以及 `:full`、`:rustls-full` 镜像里；`option-ext`（MPL-2.0，经 `dirs` 引入）原来在每一个构建里。
 - 去掉 `dirs` 之后，路径开头的 `~/` 用标准库的 home 目录展开，在 Linux 和 macOS 上与原来相同：`HOME`，没有设置或设置为空时取系统里该用户的记录。
 
+### 通知
+
+- **崩溃后的启动会报出来。** 进程启动时发现上一次运行没有结束——崩溃、panic，或者因内存不足被结束——会以 error 级别写日志，并发出 `Error` 级别的 `abnormal_exit` 通知，管理后台首页也会显示。配置了 `webhook_notifications = ["*"]` 的部署不用改配置就会收到；不想要的话请逐项列出类别。为此进程会在 pid 文件所在目录留下一个小文件 `pingap-<hash>.state`：见[异常退出](../crates/webhook.md#异常退出)。
+
 ### 使用这些 crate 的开发者
 
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。

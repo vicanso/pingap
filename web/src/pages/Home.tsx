@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
   CERTIFICATES,
+  HOME,
   LOCATIONS,
   PLUGINS,
   SERVERS,
@@ -58,6 +59,8 @@ interface Alert {
   name: string;
   message: string;
   to: string;
+  /** The whole of a message that may be longer than the line shows. */
+  title?: string;
 }
 
 export default function Home() {
@@ -410,6 +413,30 @@ export default function Home() {
       to: `${CERTIFICATES}?name=${name}`,
     });
   });
+  // The run before this one did not end: it crashed, panicked or was
+  // killed, and was started again. Said for as long as this one runs.
+  const abnormalExit = basicInfo.abnormal_exit;
+  if (abnormalExit) {
+    const started = new Date(abnormalExit.started * 1000).toLocaleString();
+    // A mark that could not be read says nothing of the run: no pid.
+    const message = !abnormalExit.pid
+      ? homeI18n("abnormalExitUnknown")
+      : abnormalExit.panic
+        ? homeI18n("abnormalExitPanic", {
+            pid: abnormalExit.pid,
+            started,
+            panic: abnormalExit.panic,
+          })
+        : homeI18n("abnormalExit", { pid: abnormalExit.pid, started });
+    alerts.push({
+      key: "abnormal-exit",
+      tone: "down",
+      name: "pingap",
+      message,
+      title: message,
+      to: HOME,
+    });
+  }
   alerts.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "down" ? -1 : 1));
 
   const entityCards: EntityCard[] = [
@@ -618,7 +645,10 @@ export default function Home() {
                   <span className="machine shrink-0 text-[13px] font-semibold">
                     {alert.name}
                   </span>
-                  <span className="truncate text-[13px] text-muted-foreground">
+                  <span
+                    className="truncate text-[13px] text-muted-foreground"
+                    title={alert.title}
+                  >
                     {alert.message}
                   </span>
                   <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground/50" />

@@ -23,7 +23,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy reload webhook foreground proxy_protocol daemon restart restart_guard upgrade systemd"
+CASES="samples proxy reload webhook abnormal_exit foreground proxy_protocol daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -439,6 +439,91 @@ case_webhook() {
     'takes a restart to apply.*env:prod' \
     "$(plain <"$DIR/pingap.log" | grep 'takes a restart to apply')"
   unset E2E_CLUSTER
+}
+
+# ---------------------------------------------------------------------------
+# abnormal_exit: a process that was killed is told of by the next start, in
+# the log and to the webhook; one that was stopped is not, and two
+# instances of one machine have marks of their own.
+case_abnormal_exit() {
+  local proxy=$((PORT_BASE + 100)) hook=$((PORT_BASE + 101)) other=$((PORT_BASE + 102))
+  local pid mark third
+  run_bg "$DIR/hook.out" python3 "$HERE/hook.py" $hook "$DIR/hook.log"
+  wait_port $hook || fail "the receiver listens on $hook"
+  basic_conf "$DIR/c" "webhook = \"http://127.0.0.1:$hook/alerts\"" 'webhook_type = "ntfy"' \
+    'webhook_notifications = ["abnormal_exit"]' 'webhook_batch_window = "0s"' \
+    'grace_period = "1s"' 'graceful_shutdown_timeout = "1s"'
+  printf '[upstreams.b1]\naddrs = ["127.0.0.1:9"]\n' >"$DIR/c/upstreams.toml"
+  printf '[locations.b1]\nupstream = "b1"\npath = "/"\n' >"$DIR/c/locations.toml"
+  printf '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["b1"]\n' $proxy >"$DIR/c/servers.toml"
+
+  pingap "$DIR/first.log" -c "$DIR/c"
+  pid=$LAST_PID
+  wait_port $proxy || fail "pingap listens on $proxy"
+  wait_for 10 sh -c "ls '$DIR'/pingap-*.state"
+  mark=$(ls "$DIR"/pingap-*.state 2>/dev/null | head -1)
+  expect_match "the process leaves a mark beside its pid file" "\"pid\":$pid[,}]" \
+    "$(cat "$mark" 2>/dev/null)"
+
+  # Stopped: the mark is taken away, and the next start tells nothing.
+  kill -TERM "$pid"
+  wait_for 20 gone "$pid"
+  expect "a stop takes the mark away" no "$([ -e "$mark" ] && echo yes || echo no)"
+  pingap "$DIR/second.log" -c "$DIR/c"
+  pid=$LAST_PID
+  wait_port $proxy || fail "pingap listens on $proxy again"
+  wait_for 10 test -e "$mark"
+  expect "a start after a stop tells nothing" 0 \
+    "$(plain <"$DIR/second.log" | grep -c 'did not end cleanly')"
+
+  # Killed, as by the kernel out of memory: the next start tells it.
+  kill -9 "$pid"
+  wait "$pid" 2>/dev/null
+  expect "a kill leaves the mark" yes "$([ -e "$mark" ] && echo yes || echo no)"
+  pingap "$DIR/third.log" -c "$DIR/c"
+  third=$LAST_PID
+  wait_port $proxy || fail "pingap listens on $proxy after the kill"
+  wait_for 10 grep -q 'did not end cleanly' "$DIR/third.log"
+  expect_match "the start after a kill tells it, with the pid of the run" \
+    "the last run of pingap \(pid $pid, started [^)]+\) did not end cleanly" \
+    "$(plain <"$DIR/third.log")"
+  wait_for 10 grep -q abnormal_exit "$DIR/hook.log"
+  expect_match "and posts an abnormal_exit notification, as an error" \
+    '"priority":5,"tags":\["rotating_light","abnormal_exit"\],"title":"abnormal_exit"' \
+    "$(cat "$DIR/hook.log" 2>/dev/null)"
+
+  # A stop that takes longer than the supervisor waits, which ends it with
+  # a SIGKILL during the grace period (pingora waits the whole of it): a
+  # stop all the same, since the mark goes as it begins.
+  kill -TERM "$third"
+  wait_for 20 gone "$third"
+  sed 's/^grace_period = .*/grace_period = "30s"/' "$DIR/c/basic.toml" >"$DIR/basic.next"
+  mv -f "$DIR/basic.next" "$DIR/c/basic.toml"
+  pingap "$DIR/fourth.log" -c "$DIR/c"
+  pid=$LAST_PID
+  wait_port $proxy || fail "pingap listens on $proxy with a grace period of 30s"
+  wait_for 10 test -e "$mark"
+  kill -TERM "$pid"
+  wait_for 5 sh -c "! test -e '$mark'"
+  expect "a stop that has begun has taken the mark away" "no yes" \
+    "$([ -e "$mark" ] && echo yes || echo no) $(alive "$pid" && echo yes || echo no)"
+  kill -9 "$pid"
+  wait "$pid" 2>/dev/null
+  pingap "$DIR/fifth.log" -c "$DIR/c"
+  wait_port $proxy || fail "pingap listens on $proxy after the stop that was cut short"
+  wait_for 10 test -e "$mark"
+  expect "a start after a stop that was cut short tells nothing" 0 \
+    "$(plain <"$DIR/fifth.log" | grep -c 'did not end cleanly')"
+
+  # Another instance of the machine, on a configuration of its own.
+  mkdir -p "$DIR/d" && cp "$DIR"/c/*.toml "$DIR/d/"
+  sed "s/$proxy/$other/" "$DIR/c/servers.toml" >"$DIR/d/servers.toml"
+  pingap "$DIR/other.log" -c "$DIR/d"
+  wait_port $other || fail "the second instance listens on $other"
+  wait_for 10 sh -c "[ \$(ls '$DIR'/pingap-*.state | wc -l) -eq 2 ]"
+  expect "two instances, a mark each" 2 "$(ls "$DIR"/pingap-*.state 2>/dev/null | wc -l | tr -d ' ')"
+  expect "and the second tells nothing" 0 \
+    "$(plain <"$DIR/other.log" | grep -c 'did not end cleanly')"
 }
 
 # ---------------------------------------------------------------------------
@@ -876,6 +961,12 @@ case_restart() {
   hammer_stop
   expect "no request failed during that hand-over either ($HAMMERED made)" 0 "$HAMMER_FAILED"
   expect "one process is left" 1 "$(pgrep -f "$DIR/c" | wc -l | tr -d ' ')"
+  # A restart is no abnormal exit: the process that took over has the
+  # mark, the ones before took none of theirs along with it and left none.
+  expect "after the restarts one mark is left" 1 \
+    "$(ls "$DIR"/pingap-*.state 2>/dev/null | wc -l | tr -d ' ')"
+  expect "and it is of the process that serves" "$new" \
+    "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$DIR"/pingap-*.state 2>/dev/null)"
 }
 
 # ---------------------------------------------------------------------------

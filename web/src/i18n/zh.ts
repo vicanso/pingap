@@ -191,6 +191,11 @@ export default {
     upstreamAllDown: "{{total}} 个后端全部不可达",
     upstreamDegraded: "{{total}} 个后端中仅 {{healthy}} 个健康",
     certExpired: "证书已过期 {{days}} 天",
+    abnormalExit:
+      "上一次运行（pid {{pid}}，启动于 {{started}}）没有正常退出：崩溃或被强制结束（内存不足、SIGKILL），之后被重新拉起",
+    abnormalExitUnknown: "上一次运行没有正常退出，它的标记无法读取",
+    abnormalExitPanic:
+      "上一次运行（pid {{pid}}，启动于 {{started}}）因 panic 退出：{{panic}}",
     certExpiresToday: "证书今天过期",
     certExpiring: "证书将在 {{days}} 天后过期",
     runtime: "运行时",

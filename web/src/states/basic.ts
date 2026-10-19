@@ -39,6 +39,17 @@ interface Basic {
   // "container", "foreground" or "platform". Empty where it can.
   restart_unsupported: string;
   upstream_healthy_status: Record<string, UpstreamHealthyStatus>;
+  // The run before this one, where it did not end cleanly: it crashed,
+  // panicked or was killed, and was started again.
+  abnormal_exit?: AbnormalExit | null;
+}
+
+interface AbnormalExit {
+  pid: number;
+  // When that process started, in seconds since the epoch.
+  started: number;
+  // What it panicked with, and where.
+  panic?: string;
 }
 
 interface ConfigState {

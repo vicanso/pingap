@@ -38,6 +38,17 @@ What is on `main` and in no release yet.
   library's home directory, which is the same one on Linux and macOS: `HOME`,
   or the user's entry where that is not set or set to nothing.
 
+### Notifications
+
+- **A start after a crash says so.** A process that finds the run before it
+  did not end - it crashed, panicked or was killed out of memory - logs it as
+  an error and sends an `abnormal_exit` notification at level `Error`; the
+  home page of the admin shows it. A deployment with
+  `webhook_notifications = ["*"]` gets these without a change; list the
+  categories to leave it out. A process leaves a small file for this,
+  `pingap-<hash>.state`, in the directory of its pid file: see
+  [Abnormal exits](../pingap-webhook/README.md#abnormal-exits).
+
 ### For users of the crates
 
 - **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`

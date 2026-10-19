@@ -53,10 +53,44 @@ webhook_notifications = [
 | `diff_config` | A configuration change is detected |
 | `reload_config` / `reload_config_fail` | Hot reload outcome. `reload_config_fail` is also sent when the stored configuration does not validate, when the storage can not be read at all (an etcd that is away, a file that lost its permissions): once when it starts, not at every pass; and, with level `warn`, when `--autoreload` is given a certificate to order with the HTTP-01 challenge and the process has no server on port 80, or any other change that only a restart applies (the `addr` of a server, most of `[basic]`): the message lists what is waiting, once for the same set of changes |
 | `restart` / `restart_fail` | Graceful restart outcome |
+| `abnormal_exit` | The run before this one did not end cleanly - it crashed, panicked or was killed - and the process was started again by whoever watches it; see [Abnormal exits](#abnormal-exits) |
 
 Each notification carries a category, a level (`Info`, `Warn`, `Error`), a title
 and a message. The payload also includes the hostname and the local IP list, so
 in a multi-instance deployment you can tell which node reported.
+
+## Abnormal exits
+
+A process that serves leaves a mark, a small file with its pid and when it
+started, and takes it away when it is stopped: the moment a graceful stop
+(SIGTERM, what `docker stop` and `systemctl stop` send) begins, so a stop that
+the supervisor ends with a SIGKILL before the grace period is over is still a
+stop; or at the end of a fast one (SIGINT). A start that finds a mark is a
+start after a run that did not end: the process crashed, panicked or was
+killed (out of memory), and docker, systemd or whoever watches it started it
+again. That start says so, with level
+`Error`: in the log, as an `abnormal_exit` notification, and on the home
+page of the admin for as long as it runs. A panic is told with its message
+and where it happened; a process that was killed could write nothing more.
+
+- A restart to apply a change of the configuration, or an upgrade with
+  `-u`, is no abnormal exit: the new process takes over from one that is
+  still there, and writes its own mark over that one's. A process only takes
+  away its own mark, so the new one crashing afterwards - a configuration
+  that brings it down - is told by the start after it.
+- Each instance of a machine has a mark of its own, named after where its
+  configuration is (`-c`), in the directory of its pid file
+  (`basic.pid_file`; unset, the first of `/run`, `/var/run` and `/tmp` that
+  can be written), or in the temporary directory where that cannot be
+  written. Another process that runs and has the same mark is warned about
+  and not taken for a crash, and leaves no mark of its own.
+- The mark has to outlive the process. Docker's restart policy starts the
+  same container again, and keeps its files; a container that is created
+  anew (`docker compose up` after a change, a container Kubernetes
+  restarts) needs `basic.pid_file` on a volume (`emptyDir` in Kubernetes),
+  or nothing is told. A reboot of the machine empties `/run`: a crash just
+  before it is not told either.
+- Not on a control panel node (`--cp`).
 
 ## Which deployment it is from
 

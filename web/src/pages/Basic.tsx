@@ -41,6 +41,7 @@ export default function Basic() {
   // Core + Logging shown by default; Process / Notify / Advanced behind "More Settings".
   // The categories of notifications there are.
   const webhookCategories = [
+    "abnormal_exit",
     "backend_status",
     "lets_encrypt",
     "diff_config",
