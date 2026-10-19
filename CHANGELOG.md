@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.16.1](https://github.com/vicanso/pingap/compare/v0.16.0..v0.16.1) - 2026-10-19
+
+### ⛰️  Features
+
+- *(plugin)* Bound dry-run logging, warn about JA4 plugins without ja4 - ([4d7354f](https://github.com/vicanso/pingap/commit/4d7354fccbd4473795bd1d9649530bbfc8eb7b04))
+- *(plugin)* Limit by JA4 fingerprint, ja4_restriction, dry_run mode; upstream first body time - ([bf4a89c](https://github.com/vicanso/pingap/commit/bf4a89c825d2a791fe9dd92fca15d8cbb2853b1e))
+- Tell a start after an abnormal exit - ([1158043](https://github.com/vicanso/pingap/commit/1158043236933e12c7bf9e6411de221ed5537ebc))
+- Mirror status comparison, fallback upstream, traffic dashboard - ([f1d3d86](https://github.com/vicanso/pingap/commit/f1d3d866057e97811f6d8121a67528214053bad7))
+
+### 🐛 Bug Fixes
+
+- *(deps)* Pyroscope 2.1.2, for ruzstd 0.9.1 ([#249](https://github.com/vicanso/pingap/issues/249)) - ([e7bbe0f](https://github.com/vicanso/pingap/commit/e7bbe0fb1c89d0bad3ab647197e007ea4a6f7ace))
+- Follow-ups of the fallback upstream, mirror compare and JA4 checks - ([fe23121](https://github.com/vicanso/pingap/commit/fe2312116e50e2d20507aafd5774ac69583eebb6))
+
+### 🚜 Refactor
+
+- Drop the copyleft dependencies imagequant and dirs ([#248](https://github.com/vicanso/pingap/issues/248)) - ([ee19a67](https://github.com/vicanso/pingap/commit/ee19a675bcbcd2f0399ced453df2192b0d989be4))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(security)* Rustls 0.23.46 and audit-ignore RUSTSEC-2025-0134 - ([12f67c3](https://github.com/vicanso/pingap/commit/12f67c34edf3235fac27698116bfd3ba7be47952))
+- *(security)* Audit ignore RUSTSEC-2024-0449; bump quinn-proto to 0.11.18 - ([3bf09ee](https://github.com/vicanso/pingap/commit/3bf09ee149834fac7cdf811243b5d8716c0707f4))
+- Version 0.16.1 - ([695538b](https://github.com/vicanso/pingap/commit/695538b2745dcf9df812d2fa8f2e4ad8c7cbb1fb))
+
 ## [0.16.0](https://github.com/vicanso/pingap/compare/v0.15.0..v0.16.0) - 2026-10-12
 
 ### ⛰️  Features
