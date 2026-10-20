@@ -1,22 +1,31 @@
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;
-const MOBILE_QUERY = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`;
+/** Below this the navigation folds into the top bar: a tablet's width is
+ * the page's, not the page's and a 256px sidebar's. */
+const COMPACT_BREAKPOINT = 1024;
 
-let mediaQuery: MediaQueryList | null = null;
-
-function getMediaQuery() {
-  if (!mediaQuery) {
-    mediaQuery = window.matchMedia(MOBILE_QUERY);
-  }
-  return mediaQuery;
+/** A media query as an external store, its list made when first asked. */
+function mediaStore(query: string) {
+  let list: MediaQueryList | null = null;
+  const get = () => {
+    if (!list) {
+      list = window.matchMedia(query);
+    }
+    return list;
+  };
+  return {
+    subscribe(onStoreChange: () => void) {
+      const mql = get();
+      mql.addEventListener("change", onStoreChange);
+      return () => mql.removeEventListener("change", onStoreChange);
+    },
+    matches: () => get().matches,
+  };
 }
 
-function subscribe(onStoreChange: () => void) {
-  const mql = getMediaQuery();
-  mql.addEventListener("change", onStoreChange);
-  return () => mql.removeEventListener("change", onStoreChange);
-}
+const mobile = mediaStore(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+const compact = mediaStore(`(max-width: ${COMPACT_BREAKPOINT - 1}px)`);
 
 /**
  * A media query is an external store, so read it as one. The upstream shadcn
@@ -27,8 +36,18 @@ function subscribe(onStoreChange: () => void) {
  */
 export function useIsMobile() {
   return React.useSyncExternalStore(
-    subscribe,
-    () => getMediaQuery().matches,
+    mobile.subscribe,
+    mobile.matches,
+    () => false,
+  );
+}
+
+/** A phone or a tablet: the width where the sidebar is a sheet behind the
+ * menu button and the page is the whole screen. */
+export function useIsCompact() {
+  return React.useSyncExternalStore(
+    compact.subscribe,
+    compact.matches,
     () => false,
   );
 }

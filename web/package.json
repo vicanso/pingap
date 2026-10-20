@@ -12,6 +12,8 @@
     "shadcn": "npx shadcn@latest add -o alert-dialog badge button card checkbox command dialog dropdown-menu form input label popover radio-group select separator sheet sidebar skeleton sonner switch tabs textarea tooltip item scroll-area"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "@hookform/resolvers": "^5.9.1",
     "axios": "^1.20.0",
     "class-variance-authority": "^0.7.1",

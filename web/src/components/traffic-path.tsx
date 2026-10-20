@@ -59,24 +59,21 @@ function HealthStrip({ health }: { health: PathHealth }) {
 function Stage({
   stage,
   health,
-  index,
 }: {
   stage: PathStage;
   health?: PathHealth;
-  index: number;
 }) {
   return (
     <Link
       to={stage.to}
-      className="group -mx-1 flex animate-rise flex-col gap-1.5 rounded-md px-3 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring md:mx-0 md:flex-1 md:px-4"
-      style={{ animationDelay: `${index * 70}ms` }}
+      className="group -mx-1 flex flex-col gap-1.5 rounded-md px-3 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring lg:mx-0 lg:flex-1 lg:px-4"
     >
-      <span className="eyebrow group-hover:text-foreground">{stage.label}</span>
+      <span className="region-label group-hover:text-foreground">{stage.label}</span>
       <span className="flex items-baseline gap-1.5">
-        <span className="machine text-[30px] leading-none font-semibold">
+        <span className="figure text-[28px] leading-none font-normal">
           {stage.value}
         </span>
-        <span className="truncate text-[12.5px] text-muted-foreground">
+        <span className="truncate text-[13px] text-muted-foreground">
           {stage.unit}
         </span>
       </span>
@@ -89,7 +86,7 @@ function Stage({
         {health && <HealthStrip health={health} />}
         <span
           className={cn(
-            "truncate text-[12px]",
+            "truncate text-[13px]",
             toneClass[stage.detailTone ?? "muted"],
           )}
         >
@@ -124,30 +121,30 @@ export function TrafficPath({
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-border px-4 py-2.5 sm:px-5">
-        <h2 className="eyebrow">{title}</h2>
-        <p className="machine text-[11.5px] text-muted-foreground">{meta}</p>
+        <h2 className="region-label">{title}</h2>
+        <p className="figure text-[12px] text-muted-foreground">{meta}</p>
       </div>
 
       {/*
-        Phones: horizontal strip with chevrons so the path still reads left→right.
-        Desktop: flex row that fills the card width.
+        Phones: two by two, in the order of the path; a strip that scrolled
+        sideways cut the third stage off at the screen's edge.
+        Desktop: one row with the connectors, filling the card width.
       */}
-      <div className="flex items-stretch gap-0 overflow-x-auto px-3 py-5 sm:px-4 md:overflow-visible md:py-6">
+      <div className="grid grid-cols-2 gap-y-3 px-3 py-4 sm:px-4 lg:flex lg:items-stretch lg:gap-0 lg:py-6">
         {stages.map((stage, index) => (
           <Fragment key={stage.key}>
             {index > 0 && (
               <div
-                className="flex shrink-0 items-center"
+                className="hidden shrink-0 items-center lg:flex"
                 aria-hidden="true"
               >
-                <span className="hidden h-px w-4 bg-muted-foreground/25 md:block lg:w-8" />
-                <ChevronRight className="size-3.5 text-muted-foreground/55 md:-ml-1.5" />
+                <span className="h-px w-4 bg-muted-foreground/25 lg:w-8" />
+                <ChevronRight className="-ml-1.5 size-3.5 text-muted-foreground/55" />
               </div>
             )}
-            <div className="min-w-[42%] shrink-0 md:min-w-0 md:flex-1">
+            <div className="min-w-0 lg:flex-1">
               <Stage
                 stage={stage}
-                index={index}
                 health={index === stages.length - 1 ? health : undefined}
               />
             </div>
@@ -162,10 +159,10 @@ export function TrafficPath({
             className="bg-card px-4 py-3 sm:px-5"
             title={meter.title}
           >
-            <p className="eyebrow">{meter.label}</p>
+            <p className="region-label">{meter.label}</p>
             <p
               className={cn(
-                "machine mt-1.5 truncate text-[15px] font-semibold",
+                "figure mt-1 truncate text-[16px] font-medium",
                 meter.muted && "text-muted-foreground",
               )}
             >

@@ -331,7 +331,7 @@ export function ExForm({
             fields.length > 0 && "mt-3 border-t border-border/50 pt-5",
           )}
         >
-          <h3 className="eyebrow">{item.section}</h3>
+          <h3 className="region-label">{item.section}</h3>
         </div>,
       );
     }
@@ -714,7 +714,7 @@ export function ExForm({
         {(onSave || onRemove || showButton) && (
           <div
             className={cn(
-              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/95 p-3 backdrop-blur supports-backdrop-filter:bg-card/85 sm:gap-3",
+              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 sm:gap-3",
               // Keep the bar clear of the home indicator on notched phones.
               "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
               updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",

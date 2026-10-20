@@ -18,7 +18,7 @@ export default function NotFound() {
           <FileQuestion className="size-5" strokeWidth={1.8} />
         </div>
         <div className="space-y-1.5">
-          <p className="eyebrow text-muted-foreground">{i18n("code")}</p>
+          <p className="region-label text-muted-foreground">{i18n("code")}</p>
           <h1 className="text-lg font-semibold tracking-tight">
             {i18n("title")}
           </h1>

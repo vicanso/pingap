@@ -151,7 +151,7 @@ export function MainHeader({
   // Compact padding on small screens so the bar stays one row.
   const languageSwitch = (
     <div
-      className="flex gap-0.5 rounded-lg border border-border bg-muted/60 p-[3px]"
+      className="flex gap-0.5 rounded-lg bg-accent p-[3px]"
       role="group"
       aria-label="Language"
     >
@@ -160,7 +160,7 @@ export function MainHeader({
         className={cn(
           "cursor-pointer rounded-md px-2 py-1 text-[12.5px] font-medium transition-colors sm:px-3",
           isZh
-            ? "bg-background text-foreground shadow-sm"
+            ? "bg-card text-foreground"
             : "text-muted-foreground hover:text-foreground",
         )}
         aria-pressed={isZh}
@@ -175,7 +175,7 @@ export function MainHeader({
         className={cn(
           "cursor-pointer rounded-md px-2 py-1 text-[12.5px] font-medium transition-colors sm:px-3",
           !isZh
-            ? "bg-background text-foreground shadow-sm"
+            ? "bg-card text-foreground"
             : "text-muted-foreground hover:text-foreground",
         )}
         aria-pressed={!isZh}
@@ -196,14 +196,10 @@ export function MainHeader({
   // still up and still taking traffic.
   const uptime = formatUptime(basicInfo.start_time);
   const liveReadout = initialized && basicInfo.start_time > 0 && (
-    <div className="machine flex min-w-0 items-center gap-2 text-[11.5px] text-muted-foreground">
-      <span className="relative flex size-1.5 shrink-0">
-        <span className="absolute inline-flex size-full animate-live-ping rounded-full bg-ok opacity-60" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-ok" />
-      </span>
-      <span className="font-semibold tracking-wider text-foreground">
-        {t("header.live")}
-      </span>
+    <div className="figure flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
+      {/* Still: a state, not an alarm that pulses on every page. */}
+      <span className="inline-flex size-1.5 shrink-0 rounded-full bg-ok" />
+      <span className="font-medium text-foreground">{t("header.live")}</span>
       <span className="hidden text-border sm:inline">/</span>
       <span className="hidden sm:inline">{uptime}</span>
       <span className="hidden text-border md:inline">/</span>
@@ -471,7 +467,7 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "flex h-12 shrink-0 items-center gap-1.5 border-b border-border bg-background/85 px-3 backdrop-blur-md transition-[width,height] ease-linear supports-backdrop-filter:bg-background/70 sm:gap-2 sm:px-5",
+        "flex h-12 shrink-0 items-center gap-1.5 bg-background px-3 transition-[width,height] ease-linear sm:gap-2 sm:px-5",
         className,
       )}
     >

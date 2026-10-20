@@ -22,6 +22,7 @@ import {
   STORAGES,
 } from "@/routers.tsx";
 import useConfigState from "@/states/config";
+import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
 import { Input } from "@/components/ui/input";
 import React from "react";
@@ -319,6 +320,7 @@ export function MainSidebar({
   const [config, initialized] = useConfigState(
     useShallow((state) => [state.data, state.initialized]),
   );
+  const basicInfo = useBasicState((state) => state.data);
 
   // Read straight from the router instead of mirroring it into state via an
   // effect: it is derived, so the copy only added a render behind the URL.
@@ -338,33 +340,17 @@ export function MainSidebar({
   const plugins = Object.keys(config.plugins || {}).sort();
   const certificates = Object.keys(config.certificates || {}).sort();
   const storages = Object.keys(config.storages || {}).sort();
+  // A count only on what needs doing: the upstreams with a backend that
+  // does not answer. How many of each entry there are is the list's own
+  // business, one click away.
+  const upstreamsDown = Object.values(
+    basicInfo.upstream_healthy_status || {},
+  ).filter((status) => status.healthy < status.total).length;
   const getLabel = (category: string) => {
-    if (!initialized) {
-      return "--";
+    if (!initialized || category !== "upstream" || upstreamsDown === 0) {
+      return "";
     }
-    switch (category) {
-      case "server": {
-        return servers.length.toString();
-      }
-      case "location": {
-        return locations.length.toString();
-      }
-      case "upstream": {
-        return upstreams.length.toString();
-      }
-      case "plugin": {
-        return plugins.length.toString();
-      }
-      case "certificate": {
-        return certificates.length.toString();
-      }
-      case "storage": {
-        return storages.length.toString();
-      }
-      default: {
-        return "--";
-      }
-    }
+    return upstreamsDown.toString();
   };
 
   // Expanded: only expand children for the active route (or when searching).
@@ -544,7 +530,10 @@ export function MainSidebar({
             <SidebarGroupContent key={group.key}>
               {expanded ? (
                 <p
-                  className={cn("eyebrow px-3 pb-1.5", groupIdx > 0 && "pt-4")}
+                  className={cn(
+                    "region-label px-3 pb-1.5",
+                    groupIdx > 0 && "pt-4",
+                  )}
                 >
                   {group.label}
                 </p>
@@ -581,12 +570,10 @@ export function MainSidebar({
                               </span>
                               {item.label && (
                                 <span
-                                  className={cn(
-                                    // Fixed min width so badges line up even when counts differ (0 vs 10).
-                                    "machine ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-accent px-1.5 text-[11px] text-muted-foreground",
-                                    isActive &&
-                                      "bg-sidebar-primary/15 text-sidebar-primary",
-                                  )}
+                                  className="figure ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-down/10 px-1.5 text-[12px] font-medium text-down"
+                                  title={navI18n("upstreamsDown", {
+                                    count: Number(item.label),
+                                  })}
                                 >
                                   {item.label}
                                 </span>

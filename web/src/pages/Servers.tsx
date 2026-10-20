@@ -522,7 +522,6 @@ export default function Servers() {
 
   return (
     <PageShell
-      eyebrow="servers"
       title={serverI18n("title")}
       description={serverI18n("description")}
       width="narrow"

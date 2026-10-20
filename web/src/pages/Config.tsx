@@ -43,7 +43,7 @@ function CodePanel({
         </Button>
       )}
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
-        <pre className="h-full min-h-[min(60vh,480px)] overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
+        <pre className="h-full min-h-[min(60vh,480px)] overflow-auto p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap sm:text-sm">
           {content || <span className="text-muted-foreground">—</span>}
         </pre>
       </CardContent>
@@ -155,12 +155,7 @@ export default function Config() {
     "mt-0 absolute inset-0 flex flex-col data-[state=inactive]:hidden";
 
   return (
-    <PageShell
-      eyebrow="config"
-      title={t("tomlTitle")}
-      description={t("tomlDescription")}
-      fill
-    >
+    <PageShell title={t("tomlTitle")} description={t("tomlDescription")} fill>
       <Tabs
         defaultValue="original"
         className="flex min-h-0 flex-1 flex-col overflow-hidden"

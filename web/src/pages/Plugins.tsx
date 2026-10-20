@@ -238,7 +238,6 @@ export default function Plugins() {
 
   return (
     <PageShell
-      eyebrow="plugins"
       title={pluginI18n("title")}
       description={pluginI18n("description")}
       width="narrow"

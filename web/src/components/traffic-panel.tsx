@@ -118,7 +118,7 @@ export function TrafficPanel() {
 
   const header = (
     <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-2.5 sm:px-5">
-      <h2 className="eyebrow">{homeI18n("traffic")}</h2>
+      <h2 className="region-label">{homeI18n("traffic")}</h2>
       <span className="text-[12px] text-muted-foreground">
         {homeI18n("trafficWindow")}
       </span>
@@ -196,12 +196,12 @@ export function TrafficPanel() {
       <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-b border-border px-4 py-3 sm:grid-cols-3 sm:px-5 lg:grid-cols-5">
         {meters.map((meter) => (
           <div key={meter.label} className="flex flex-col gap-0.5">
-            <span className="text-[11.5px] text-muted-foreground">
+            <span className="text-[12px] text-muted-foreground">
               {meter.label}
             </span>
             <span
               className={cn(
-                "machine text-[18px] leading-tight font-semibold",
+                "figure text-[24px] leading-8 font-normal",
                 meter.tone === "down" && "text-down",
               )}
             >
@@ -262,7 +262,7 @@ export function TrafficPanel() {
         <div className="overflow-x-auto border-t border-border">
           <table className="w-full text-[12.5px]">
             <thead>
-              <tr className="text-left text-[11.5px] text-muted-foreground">
+              <tr className="text-left text-[12px] text-muted-foreground">
                 <th className="px-4 py-2 font-normal sm:px-5">
                   {homeI18n("trafficUpstream")}
                 </th>
@@ -283,7 +283,7 @@ export function TrafficPanel() {
             <tbody className="divide-y divide-border/60">
               {upstreams.map((upstream) => (
                 <tr key={upstream.name}>
-                  <td className="px-4 py-1.5 sm:px-5">
+                  <td className="px-4 py-2.5 sm:px-5">
                     <Link
                       to={`${UPSTREAMS}?name=${encodeURIComponent(upstream.name)}`}
                       className="font-medium hover:text-primary hover:underline"
@@ -291,21 +291,21 @@ export function TrafficPanel() {
                       {upstream.name}
                     </Link>
                   </td>
-                  <td className="machine px-3 py-1.5 text-right">
+                  <td className="figure px-3 py-2.5 text-right">
                     {formatRate(upstream.rate)}
                   </td>
                   <td
                     className={cn(
-                      "machine px-3 py-1.5 text-right",
+                      "figure px-3 py-2.5 text-right",
                       upstream.errors > 0 && "font-medium text-down",
                     )}
                   >
                     {formatShare(upstream.errors, upstream.requests)}
                   </td>
-                  <td className="machine px-3 py-1.5 text-right">
+                  <td className="figure px-3 py-2.5 text-right">
                     {upstream.timed ? formatMs(upstream.latency) : "—"}
                   </td>
-                  <td className="px-4 py-1.5 sm:px-5">
+                  <td className="px-4 py-2.5 sm:px-5">
                     <Sparkline
                       values={upstream.trend}
                       className="ml-auto text-chart-1"
@@ -317,7 +317,7 @@ export function TrafficPanel() {
           </table>
         </div>
       )}
-      <p className="border-t border-border px-4 py-2 text-[11.5px] text-muted-foreground sm:px-5">
+      <p className="border-t border-border px-4 py-2 text-[12px] text-muted-foreground sm:px-5">
         {homeI18n("trafficNote")}
       </p>
     </section>

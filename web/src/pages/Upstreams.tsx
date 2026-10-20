@@ -726,7 +726,6 @@ export default function Upstreams() {
 
   return (
     <PageShell
-      eyebrow="upstreams"
       title={upstreamI18n("title")}
       description={upstreamI18n("description")}
       width="narrow"

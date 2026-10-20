@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Inbox, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -84,9 +84,6 @@ export function ConfigEntityList<T>({
     <PageShell
       title={title}
       description={summary}
-      // The route is also the config section this page edits — `/servers` is
-      // `[servers.*]` in the TOML — so the eyebrow needs no separate label.
-      eyebrow={basePath.replace(/^\//, "")}
       // One create CTA only: empty state owns it when the list is empty;
       // the header button appears once there is already something to browse.
       actions={
@@ -101,11 +98,10 @@ export function ConfigEntityList<T>({
       }
     >
       {names.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-14 text-center">
-          <div className="mb-3 flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Inbox className="size-5" strokeWidth={1.8} />
-          </div>
-          <p className="max-w-xs text-sm text-muted-foreground">{emptyText}</p>
+        // The frame of the list stays, with one sentence and the way to
+        // the first entry; no picture.
+        <div className="flex flex-col items-start rounded-lg border border-dashed border-border px-5 py-6">
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
           {!readOnly && (
             <Button asChild className="mt-4 cursor-pointer">
               <Link to={entityUrl(newValue)}>
@@ -134,7 +130,9 @@ export function ConfigEntityList<T>({
               {i18n("listFilterEmpty")}
             </div>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-border bg-card">
+            // On the sheet itself, no card around it: the rule under the
+            // header and the row rules are the table's only lines.
+            <div className="-mx-4 md:-mx-2">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -153,7 +151,7 @@ export function ConfigEntityList<T>({
                       className="cursor-pointer transition-colors hover:bg-accent/50"
                       onClick={() => navigate(entityUrl(name))}
                     >
-                      <TableCell className="py-2.5 font-medium">
+                      <TableCell className="py-3 font-medium">
                         {/* Link (not just the row handler) so the row is keyboard reachable. */}
                         <Link
                           to={entityUrl(name)}
@@ -169,7 +167,7 @@ export function ConfigEntityList<T>({
                           className={cn(
                             // Machine track: every cell but the name holds a
                             // value pingap reported or a value from the config.
-                            "machine max-w-[320px] truncate py-2.5 text-[12.5px] text-muted-foreground",
+                            "machine max-w-[320px] truncate py-3 text-[13px] text-muted-foreground",
                             column.className,
                           )}
                         >

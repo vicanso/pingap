@@ -6,20 +6,19 @@
 
 @theme {
   /*
-   * Two type tracks, and the split is the rule the whole console is built on:
-   * `font-sans` for what a person wrote (names, labels, prose) and `font-mono`
-   * for what the machine reports (addresses, ports, counts, durations, hashes).
-   * The sans stack names CJK faces explicitly — the UI ships in English and
-   * Chinese, and leaving 中文 to the browser default was the one place the
-   * type fell apart.
+   * One face for the interface, IBM Plex Sans, with tabular figures wherever
+   * a number is read or compared (`.figure`). The mono has one job: what is
+   * copied into a config or a terminal - addresses, ports, hosts, paths,
+   * hashes (`.machine`). The sans stack names CJK faces explicitly: the UI
+   * ships in English and Chinese, and Plex has no Chinese.
    */
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI Variable Text",
-    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono",
-    Menlo, Consolas, "Liberation Mono", monospace;
+    "IBM Plex Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
 
   /* Whole radius scale derives from --radius so one value tunes the app. */
   --radius-sm: calc(var(--radius) - 4px);
@@ -57,8 +56,8 @@
   --color-ring: hsl(var(--ring));
 
   /*
-   * Health semantics, kept apart from the brand accent on purpose: the accent
-   * is azure so it can never be mistaken for up/degraded/down at a glance.
+   * Health semantics, kept apart from the data hue on purpose: the teal of
+   * the charts can never be mistaken for up/degraded/down at a glance.
    */
   --color-ok: hsl(var(--ok));
   --color-warn: hsl(var(--warn));
@@ -81,28 +80,6 @@
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
-  /* Slower and fainter than Tailwind's `ping` — a heartbeat, not an alarm. */
-  --animate-live-ping: live-ping 2.6s cubic-bezier(0, 0, 0.2, 1) infinite;
-  --animate-rise: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-
-  @keyframes live-ping {
-    70%,
-    100% {
-      transform: scale(2.4);
-      opacity: 0;
-    }
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
 
   @keyframes accordion-down {
     from {
@@ -146,92 +123,93 @@
   }
 
   /*
-   * Palette: a cool, slightly blue-grey neutral rather than zinc, so the whole
-   * console reads as network equipment rather than as paper. Three planes are
-   * kept distinct at all times — sidebar (deepest) < ground < card (lightest) —
-   * which is what carries structure now that shadows are gone.
+   * A framed sheet: the sidebar and the top bar are one tinted frame (a
+   * low-chroma blue-grey, the colour of an operations tool) with no rule
+   * between them, and every page sits on a white sheet inset from the
+   * window's right and bottom edges. Depth is that one tone step; nothing
+   * at rest has a shadow.
    *
-   * Accent is a deep azure (#1171B0), not the royal blue every admin console
-   * defaults to: it stays 5.2:1 on white for link text, and sits far enough
-   * from green/amber/red that it can never read as a health state.
+   * Colour goes on data, not on chrome: the one hue (a teal, --chart-1) is
+   * on the charts and on the focus ring, the one primary action is
+   * near-black, and health keeps its own green, amber and red.
    */
   :root {
-    --background: 202 20% 95%;
-    --foreground: 210 30% 8%;
+    --background: 204 25% 97%;
+    --foreground: 220 6% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 210 30% 8%;
+    --card-foreground: 220 6% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 210 30% 8%;
-    --primary: 204 82% 38%;
+    --popover-foreground: 220 6% 8%;
+    --primary: 200 4% 12%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 204 20% 93%;
-    --secondary-foreground: 210 25% 14%;
-    --muted: 204 22% 91%;
-    --muted-foreground: 206 14% 41%;
-    --accent: 204 24% 92%;
-    --accent-foreground: 210 25% 14%;
-    --destructive: 358 58% 45%;
+    --secondary: 210 14% 95%;
+    --secondary-foreground: 220 6% 8%;
+    --muted: 210 14% 96%;
+    --muted-foreground: 200 1% 37%;
+    --accent: 200 5% 93%;
+    --accent-foreground: 220 6% 8%;
+    --destructive: 358 69% 45%;
     --destructive-foreground: 0 0% 100%;
-    --border: 205 21% 88%;
-    --input: 205 21% 86%;
-    --ring: 204 82% 38%;
-    --ok: 161 68% 28%;
-    --warn: 26 90% 37%;
-    --down: 358 58% 45%;
-    --chart-1: 204 82% 38%;
-    --chart-2: 185 70% 32%;
-    --chart-3: 161 68% 28%;
-    --chart-4: 26 90% 37%;
-    --chart-5: 358 58% 45%;
-    /* 6px: crisp enough to read as an instrument, not so square it reads brutalist. */
-    --radius: 0.375rem;
-    --sidebar-background: 203 22% 92%;
-    --sidebar-foreground: 206 16% 32%;
-    --sidebar-primary: 204 82% 38%;
+    --border: 210 8% 92%;
+    --input: 225 3% 81%;
+    --ring: 192 65% 30%;
+    --ok: 152 61% 30%;
+    --warn: 26 83% 31%;
+    --down: 358 69% 45%;
+    --chart-1: 192 65% 30%;
+    --chart-2: 212 60% 46%;
+    --chart-3: 38 87% 35%;
+    --chart-4: 26 83% 31%;
+    --chart-5: 358 69% 45%;
+    /* 8px cards and controls; the sheet itself takes 16px. */
+    --radius: 0.5rem;
+    --sidebar-background: 204 25% 97%;
+    --sidebar-foreground: 200 2% 31%;
+    --sidebar-primary: 200 4% 12%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 204 26% 89%;
-    --sidebar-accent-foreground: 210 25% 14%;
-    --sidebar-border: 205 21% 86%;
-    --sidebar-ring: 204 82% 38%;
+    --sidebar-accent: 200 5% 92%;
+    --sidebar-accent-foreground: 220 6% 8%;
+    --sidebar-border: 210 8% 90%;
+    --sidebar-ring: 192 65% 30%;
   }
 
   .dark {
-    /* Deep blue-black rather than neutral: the same equipment, powered down. */
-    --background: 204 33% 6%;
-    --foreground: 204 37% 92%;
-    --card: 206 32% 9%;
-    --card-foreground: 204 37% 92%;
-    --popover: 206 32% 10%;
-    --popover-foreground: 204 37% 92%;
-    --primary: 204 72% 56%;
-    --primary-foreground: 204 60% 8%;
-    --secondary: 206 25% 16%;
-    --secondary-foreground: 204 37% 92%;
-    --muted: 206 25% 15%;
-    --muted-foreground: 206 19% 63%;
-    --accent: 206 27% 18%;
-    --accent-foreground: 204 37% 92%;
-    --destructive: 358 62% 52%;
+    /* True neutrals: the frame a step darker than the sheet, no navy. */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 7%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 11%;
+    --muted-foreground: 0 0% 68%;
+    --accent: 0 0% 13%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 350 73% 62%;
     --destructive-foreground: 0 0% 100%;
-    --border: 206 27% 16%;
-    --input: 206 27% 20%;
-    --ring: 204 72% 56%;
-    --ok: 160 55% 45%;
-    --warn: 36 85% 55%;
-    --down: 358 70% 65%;
-    --chart-1: 204 72% 56%;
-    --chart-2: 185 65% 48%;
-    --chart-3: 160 55% 45%;
-    --chart-4: 36 85% 55%;
-    --chart-5: 358 70% 65%;
-    --sidebar-background: 205 34% 5%;
-    --sidebar-foreground: 206 19% 63%;
-    --sidebar-primary: 204 72% 56%;
-    --sidebar-primary-foreground: 204 60% 8%;
-    --sidebar-accent: 206 27% 15%;
-    --sidebar-accent-foreground: 204 37% 92%;
-    --sidebar-border: 206 27% 14%;
-    --sidebar-ring: 204 72% 56%;
+    --border: 0 0% 15%;
+    --input: 0 0% 24%;
+    --ring: 191 47% 52%;
+    --ok: 149 50% 50%;
+    --warn: 38 80% 58%;
+    --down: 350 73% 66%;
+    --chart-1: 191 47% 52%;
+    --chart-2: 212 65% 62%;
+    --chart-3: 38 80% 58%;
+    --chart-4: 38 80% 58%;
+    --chart-5: 350 73% 66%;
+    --sidebar-background: 0 0% 4%;
+    --sidebar-foreground: 0 0% 68%;
+    --sidebar-primary: 0 0% 95%;
+    --sidebar-primary-foreground: 0 0% 7%;
+    --sidebar-accent: 0 0% 13%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 0 0% 14%;
+    --sidebar-ring: 191 47% 52%;
   }
 }
 
@@ -243,7 +221,7 @@
   }
 
   ::selection {
-    background-color: hsl(var(--primary) / 0.18);
+    background-color: hsl(var(--chart-1) / 0.2);
   }
 
   /*
@@ -278,24 +256,26 @@
 
 @layer components {
   /*
-   * The console's one repeated typographic device: a small uppercase mono
-   * label that names a region. Used for section eyebrows and for the stage
-   * names on the traffic path, so both read as machine nomenclature.
+   * The label that names a region or a figure: sentence case, at a size
+   * that reads, in the muted ink.
    */
-  .eyebrow {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+  .region-label {
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 20px;
     color: hsl(var(--muted-foreground));
   }
 
-  /* Machine-reported values: mono, tabular, tightened so columns line up. */
+  /* What is copied into a config or a terminal: addresses, hosts, hashes. */
   .machine {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.01em;
+  }
+
+  /* A number that is read or compared: the text face, with digits that
+     line up. */
+  .figure {
+    font-variant-numeric: tabular-nums;
   }
 }
 

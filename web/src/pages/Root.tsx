@@ -22,7 +22,7 @@ import HTTPError from "@/helpers/http-error";
 import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsCompact } from "@/hooks/use-mobile";
 
 /** Brand row lives under SidebarProvider so it can close the mobile sheet. */
 function BrandHeader({
@@ -110,7 +110,7 @@ export default function Root() {
   const sidebarOpen = window.localStorage.getItem(key);
   const [open, setOpen] = useState(sidebarOpen == "true" || !sidebarOpen);
   // The mobile sheet is always full width; ignore the desktop collapse state there.
-  const isMobile = useIsMobile();
+  const isMobile = useIsCompact();
   const showBrand = open || isMobile;
   const { t } = useTranslation();
   const [fetchBasicInfo, basicInfo] = useBasicState(
@@ -144,7 +144,9 @@ export default function Root() {
         setOpen(open);
       }}
     >
-      <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      {/* The sidebar and the top bar are one frame, with no rule between
+          them and the sheet the page sits on. */}
+      <Sidebar collapsible="icon" className="border-r-0">
         {/* h-12 matches MainHeader so brand row and top bar share one baseline */}
         <BrandHeader
           showBrand={showBrand}
@@ -156,7 +158,10 @@ export default function Root() {
 
       <SidebarInset className="min-h-0 overflow-hidden bg-background">
         <MainHeader />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* The sheet: inset 8px from the window's right and bottom edges,
+            a 1px edge, 16px corners, no shadow. On a phone or a tablet the
+            frame goes and the sheet is the screen. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card lg:mr-2 lg:mb-2 lg:rounded-2xl lg:border lg:border-border">
           <Outlet />
         </div>
       </SidebarInset>

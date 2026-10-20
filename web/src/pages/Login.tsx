@@ -5,7 +5,6 @@ import {
   CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,13 +57,13 @@ export default function Login() {
           <span className="text-[15px] font-semibold tracking-tight">
             Pingap
           </span>
-          <span className="eyebrow ml-0.5">admin</span>
+          <span className="region-label ml-0.5">admin</span>
         </div>
         <Card className="w-full border-border">
           <CardHeader className="space-y-0 px-5 pt-5 pb-4">
-            <CardTitle className="text-xl tracking-tight">
+            <h1 className="text-xl leading-7 font-semibold tracking-tight">
               {loginI18n("title")}
-            </CardTitle>
+            </h1>
             <CardDescription className="mt-1.5 text-[13px]">
               {loginI18n("description")}
             </CardDescription>
@@ -76,7 +75,7 @@ export default function Login() {
                 id="account"
                 autoFocus
                 autoComplete="username"
-                className="machine h-10"
+                className="h-10"
                 onChange={(e) => {
                   setAccount(e.target.value.trim());
                 }}
@@ -88,7 +87,7 @@ export default function Login() {
                 id="password"
                 type="password"
                 autoComplete="current-password"
-                className="machine h-10"
+                className="h-10"
                 onChange={(e) => {
                   setPassword(e.target.value.trim());
                 }}

@@ -519,7 +519,6 @@ export default function Basic() {
 
   return (
     <PageShell
-      eyebrow="basic"
       title={basicI18n("title")}
       description={basicI18n("description")}
       width="narrow"

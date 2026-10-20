@@ -387,7 +387,6 @@ export default function Certificates() {
 
   return (
     <PageShell
-      eyebrow="certificates"
       title={certificateI18n("title")}
       description={certificateI18n("description")}
       width="narrow"

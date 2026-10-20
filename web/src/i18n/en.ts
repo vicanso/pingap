@@ -87,7 +87,7 @@ export default {
     openConfig: "Open config",
   },
   header: {
-    live: "LIVE",
+    live: "Live",
     active: "active",
   },
   nav: {
@@ -102,6 +102,7 @@ export default {
     groupPath: "Traffic path",
     groupPolicy: "Policy",
     groupSystem: "System",
+    upstreamsDown: "{{count}} with a backend that does not answer",
     searchEmpty: "No matches",
     searchPlaceholder: "Search…",
   },

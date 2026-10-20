@@ -15,7 +15,6 @@ import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
 import { listify } from "radash";
-import { Badge } from "@/components/ui/badge";
 import { useAsync } from "react-async-hook";
 import React from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -484,6 +483,18 @@ export default function Home() {
     },
   ];
 
+  const buildLine = [
+    basicInfo.features?.includes("rustls")
+      ? "rustls"
+      : basicInfo.features?.includes("openssl")
+        ? "openssl"
+        : "",
+    basicInfo.features?.includes("tracing") ? "tracing" : "",
+    basicInfo.features?.includes("full") ? "full" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   let git_hash = basicInfo.git_hash;
   if (git_hash.length > 7) {
     git_hash = git_hash.slice(0, 7);
@@ -564,46 +575,21 @@ export default function Home() {
 
   return (
     <PageShell
-      // No eyebrow here on purpose: every other page names the config section
-      // it edits, and the dashboard is the one page that edits nothing.
       title={homeI18n("dashboard")}
       description={config.basic?.name || undefined}
       actions={
-        <>
-          {(basicInfo.features?.includes("openssl") ||
-            basicInfo.features?.includes("rustls")) && (
-            <Badge
-              variant="secondary"
-              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
-            >
-              {basicInfo.features.includes("rustls") ? "rustls" : "openssl"}
-            </Badge>
-          )}
-          {basicInfo.features?.includes("tracing") && (
-            <Badge
-              variant="secondary"
-              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
-            >
-              tracing
-            </Badge>
-          )}
-          {basicInfo.features?.includes("full") && (
-            <Badge
-              variant="secondary"
-              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
-            >
-              full
-            </Badge>
-          )}
-          {git_hash && (
-            <Badge
-              variant="outline"
-              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
-            >
-              {git_hash}
-            </Badge>
-          )}
-        </>
+        // What this binary was built with: one quiet line, not four pills.
+        buildLine && (
+          <p className="text-[13px] text-muted-foreground">
+            {buildLine}
+            {git_hash && (
+              <>
+                {" · "}
+                <span className="machine">{git_hash}</span>
+              </>
+            )}
+          </p>
+        )
       }
     >
       <TrafficPath
@@ -614,14 +600,13 @@ export default function Home() {
         meters={meters}
       />
 
-      <TrafficPanel />
-
+      {/* What needs doing comes before what is only read. */}
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
         <div className="border-b border-border px-4 py-2.5 sm:px-5">
-          <h2 className="eyebrow">{homeI18n("attention")}</h2>
+          <h2 className="region-label">{homeI18n("attention")}</h2>
         </div>
         {alerts.length === 0 ? (
-          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[13px] text-muted-foreground sm:px-5">
+          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-muted-foreground sm:px-5">
             <CheckCircle2 className="size-4 shrink-0 text-ok" strokeWidth={2} />
             {homeI18n("allClear")}
           </p>
@@ -642,11 +627,11 @@ export default function Home() {
                       alert.tone === "down" ? "bg-down" : "bg-warn",
                     )}
                   />
-                  <span className="machine shrink-0 text-[13px] font-semibold">
+                  <span className="shrink-0 text-[14px] font-medium">
                     {alert.name}
                   </span>
                   <span
-                    className="truncate text-[13px] text-muted-foreground"
+                    className="truncate text-[14px] text-muted-foreground"
                     title={alert.title}
                   >
                     {alert.message}
@@ -659,6 +644,8 @@ export default function Home() {
         )}
       </section>
 
+      <TrafficPanel />
+
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {entityCards.map((item) => (
           <div
@@ -668,12 +655,12 @@ export default function Home() {
             <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
               <Link
                 to={item.path}
-                className="eyebrow transition-colors hover:text-foreground"
+                className="region-label transition-colors hover:text-foreground"
               >
                 {item.title}
               </Link>
-              <span className="machine text-[12.5px] text-muted-foreground">
-                <span className="font-semibold text-foreground">
+              <span className="figure text-[13px] text-muted-foreground">
+                <span className="font-medium text-foreground">
                   {item.count}
                 </span>{" "}
                 {item.unit}
@@ -684,7 +671,7 @@ export default function Home() {
                 {item.summary.slice(0, 4).map((entry) => (
                   <li
                     key={entry.name}
-                    className="flex items-baseline gap-2 py-2 text-[12.5px]"
+                    className="flex items-baseline gap-2 py-2 text-[13px]"
                   >
                     <Link
                       to={entry.link}
@@ -722,7 +709,7 @@ export default function Home() {
                   <li className="py-2">
                     <Link
                       to={item.path}
-                      className="machine text-[12px] text-muted-foreground hover:text-primary"
+                      className="figure text-[13px] text-muted-foreground hover:text-primary"
                     >
                       +{item.summary.length - 4}
                     </Link>
@@ -733,7 +720,7 @@ export default function Home() {
               <div className="flex flex-1 items-center px-4 py-4">
                 <Link
                   to={item.path}
-                  className="text-[12.5px] text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                  className="text-[13px] text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
                 >
                   {homeI18n("configureHint")}
                 </Link>
@@ -745,16 +732,16 @@ export default function Home() {
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
         <div className="border-b border-border px-4 py-2.5 sm:px-5">
-          <h2 className="eyebrow">{homeI18n("runtime")}</h2>
+          <h2 className="region-label">{homeI18n("runtime")}</h2>
         </div>
-        <div className="grid gap-x-10 px-4 py-1 text-[12.5px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
+        <div className="grid gap-x-10 px-4 py-1 text-[13px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
           {runtimeColumns.map((column, columnIndex) => (
-            <div key={columnIndex}>
+            <div key={columnIndex} className="min-w-0">
               {column.map((item, rowIndex) => (
                 <div
                   key={item.name}
                   className={cn(
-                    "flex items-center justify-between gap-3 py-[7px]",
+                    "flex items-center justify-between gap-3 py-2",
                     rowIndex !== column.length - 1 &&
                       "border-b border-border/50",
                   )}
@@ -764,7 +751,7 @@ export default function Home() {
                   </span>
                   <span
                     className={cn(
-                      "machine min-w-0 truncate text-right",
+                      "figure min-w-0 truncate text-right",
                       item.value === "—" && "text-muted-foreground",
                     )}
                   >

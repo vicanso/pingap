@@ -7,12 +7,6 @@ import type { ReactNode } from "react";
 interface PageShellProps {
   title: string;
   description?: string;
-  /**
-   * Small mono label above the title naming the config section this page
-   * edits — `servers`, `upstreams` — in the vocabulary of the config file
-   * rather than the vocabulary of the UI.
-   */
-  eyebrow?: string;
   /** Rendered at the top right, e.g. a create button or the history control. */
   actions?: ReactNode;
   /** Shown next to the title — the entity name, a `new` marker, feature pills. */
@@ -41,7 +35,6 @@ interface PageShellProps {
 export function PageShell({
   title,
   description,
-  eyebrow,
   actions,
   badge,
   backTo,
@@ -60,7 +53,7 @@ export function PageShell({
     >
       <div
         className={cn(
-          "mx-auto flex w-full flex-col px-3 py-4 sm:px-4 sm:py-5 md:px-6 md:py-6",
+          "mx-auto flex w-full flex-col px-4 py-5 md:px-6 md:py-6",
           width === "narrow" ? "max-w-[1100px]" : "max-w-[1400px]",
           fill ? "min-h-0 flex-1 overflow-hidden" : "pb-10",
           className,
@@ -80,15 +73,14 @@ export function PageShell({
             </Button>
           )}
           <div className="mr-auto min-w-0">
-            {eyebrow && <p className="eyebrow mb-1.5">{eyebrow}</p>}
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-[26px] leading-none font-semibold tracking-[-0.02em]">
+              <h1 className="text-[22px] leading-7 font-semibold tracking-[-0.01em]">
                 {title}
               </h1>
               {badge}
             </div>
             {description && (
-              <p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
+              <p className="mt-1 max-w-2xl text-[14px] leading-5 text-muted-foreground">
                 {description}
               </p>
             )}

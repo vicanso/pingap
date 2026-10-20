@@ -64,10 +64,8 @@ export function TimeChart({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h3 className="eyebrow">{title}</h3>
-        <span className="machine text-[11.5px] text-muted-foreground">
-          {time}
-        </span>
+        <h3 className="region-label">{title}</h3>
+        <span className="figure text-[12px] text-muted-foreground">{time}</span>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
         {series.map((item) => (
@@ -76,7 +74,7 @@ export function TimeChart({
               className={cn("size-2 rounded-full bg-current", item.className)}
             />
             <span className="text-muted-foreground">{item.label}</span>
-            <span className="machine font-semibold">
+            <span className="figure font-medium">
               {format(item.values[index] ?? 0)}
             </span>
           </span>
@@ -87,7 +85,9 @@ export function TimeChart({
         onPointerMove={onMove}
         onPointerLeave={() => setHovered(null)}
       >
-        <span className="machine absolute top-0 left-0 text-[10.5px] text-muted-foreground">
+        {/* The top of the scale in a lane of its own: laid over the plot,
+            it sat on the line whenever the line was high at the left. */}
+        <span className="figure mb-1 block text-[11px] leading-4 text-muted-foreground">
           {format(max)}
         </span>
         <svg

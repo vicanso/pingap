@@ -21,7 +21,9 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("bg-muted/40 [&_tr]:border-b", className)}
+      // No band behind the header: the one rule under it is the table's
+      // strongest line.
+      className={cn("[&_tr]:border-b [&_tr]:border-border", className)}
       {...props}
     />
   );
@@ -57,7 +59,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
       className={cn(
         // Hover is applied by the caller: some tables are navigable rows and
         // some are read-only readouts, and only the first should react.
-        "border-b border-border/60 transition-colors has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b border-border/70 transition-colors has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
         className,
       )}
       {...props}
@@ -70,9 +72,8 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        // Column names are the console's eyebrow treatment: small uppercase mono,
-        // so a table header reads as machine nomenclature like every other label.
-        "h-9 px-4 text-left align-middle font-mono text-[10.5px] font-semibold tracking-[0.14em] whitespace-nowrap text-muted-foreground uppercase [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        // Column names as labels: sentence case, grey, quieter than the data.
+        "h-10 px-4 text-left align-middle text-[12px] font-normal whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className,
       )}
       {...props}
