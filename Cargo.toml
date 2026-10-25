@@ -395,7 +395,13 @@ sysinfo = { version = "0.39.6", features = [
 tempfile = "3.27.0"
 time = { version = "0.3.55", features = ["local-offset"] }
 TinyUFO = "0.9.0"
-tokio = { version = "1.53.1", default-features = false, features = ["fs"] }
+# At least 1.53.3, which has the fix of RUSTSEC-2026-0386, and below 1.54:
+# tokio 1.54 refuses a buffer of no capacity, which pingora 0.9.0 gives every
+# connection, and the first connection panics (cloudflare/pingora#1059). 1.53
+# is an LTS line. See "Workarounds waiting on pingora" in CLAUDE.md.
+tokio = { version = ">=1.53.3, <1.54", default-features = false, features = [
+    "fs",
+] }
 toml = "1.1.6"
 hcl-rs = "0.19"
 kdl = "6.7.1"
