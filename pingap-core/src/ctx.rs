@@ -84,9 +84,18 @@ pub fn format_duration(buf: &mut BytesMut, ms: u64) {
     }
 }
 
+/// Where a plugin that changes the response does it: on the response as
+/// the upstream sent it, or on the response as it goes to the client.
 #[derive(PartialEq)]
 pub enum ModifiedMode {
+    /// In the upstream response filter, before the response is cached: a
+    /// response served from the cache has the change stored with it.
     Upstream,
+    /// In the response filter, on the response of the upstream or of the
+    /// cache as it goes to the client; nothing of it is stored in the
+    /// cache. Whether a response a plugin wrote, or the proxy's error
+    /// page, gets it too is the plugin's to say (`always` of
+    /// `response_headers`).
     Response,
 }
 
@@ -253,7 +262,19 @@ impl Default for Timing {
 
 /// Trait for upstream instance, used to handle the upstream instance lifecycle.
 pub trait UpstreamInstance: Send + Sync {
+    /// The backend at `address` failed the request before it answered:
+    /// the connection could not be made, or broke before a response
+    /// header came. A pooled connection the backend had already closed
+    /// does not count. Counted against the backend in its stats and by
+    /// its circuit breaker; nothing happens for an upstream that keeps no
+    /// stats of its backends.
     fn on_transport_failure(&self, address: &str);
+    /// The backend at `address` answered with `status`. Counted in its
+    /// stats and fed to its circuit breaker, as a failure when the status
+    /// is a 5xx or one of the upstream's `failure_status_codes`, as a
+    /// success otherwise (which is what closes a half-open breaker).
+    /// Nothing happens for an upstream that keeps no stats of its
+    /// backends.
     fn on_response(&self, address: &str, status: StatusCode);
     /// Marks the request as finished on this upstream.
     ///
@@ -371,6 +392,8 @@ pub struct UpstreamInfo {
 pub struct InflightGuard(Arc<AtomicU32>);
 
 impl InflightGuard {
+    /// Counts a request in on `count`; it is counted out when the guard
+    /// is dropped.
     pub fn new(count: Arc<AtomicU32>) -> Self {
         count.fetch_add(1, Ordering::Relaxed);
         Self(count)
@@ -863,59 +886,128 @@ pub type NamedPlugin = (Arc<str>, Arc<dyn Plugin>);
 /// parses into one of these once, when the format is read, so writing a
 /// log line dispatches on an enum instead of comparing the name against
 /// every key on every request.
+///
+/// Each is written in a format as its name in snake case
+/// (`{:upstream_addr}`). Times are milliseconds, and every `*Time` has a
+/// `*TimeHuman` twin that prints the same time readably.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum CtxLogField {
+    /// `connection_id`: the id of the downstream connection.
     ConnectionId,
+    /// `upstream_reused`: `true` when the upstream connection came from
+    /// the keep-alive pool.
     UpstreamReused,
+    /// `upstream_status`: the status the upstream answered with, `-` when
+    /// there was none.
     UpstreamStatus,
+    /// `upstream_addr`: the address of the upstream backend.
     UpstreamAddr,
+    /// `upstream_name`: the name of the upstream the request went to.
     UpstreamName,
+    /// `processing`: the requests the server was processing when this one
+    /// arrived, itself included.
     Processing,
+    /// `upstream_connected`: the open connections to the upstream; needs
+    /// `enable_tracer` on it.
     UpstreamConnected,
+    /// `upstream_connect_time`: getting an upstream connection, pooled or
+    /// new.
     UpstreamConnectTime,
+    /// [`Self::UpstreamConnectTime`], readably.
     UpstreamConnectTimeHuman,
+    /// `upstream_processing_time`: from the upstream connection to the
+    /// upstream's response header.
     UpstreamProcessingTime,
+    /// [`Self::UpstreamProcessingTime`], readably.
     UpstreamProcessingTimeHuman,
+    /// `upstream_response_time`: from the upstream's response header to the
+    /// end of its body.
     UpstreamResponseTime,
+    /// [`Self::UpstreamResponseTime`], readably.
     UpstreamResponseTimeHuman,
+    /// `upstream_first_body_time`: from the upstream connection to the first
+    /// chunk of its response body.
     UpstreamFirstBodyTime,
+    /// [`Self::UpstreamFirstBodyTime`], readably.
     UpstreamFirstBodyTimeHuman,
+    /// `upstream_tcp_connect_time`: the TCP connect to the upstream.
     UpstreamTcpConnectTime,
+    /// [`Self::UpstreamTcpConnectTime`], readably.
     UpstreamTcpConnectTimeHuman,
+    /// `upstream_tls_handshake_time`: the TLS handshake with the upstream.
     UpstreamTlsHandshakeTime,
+    /// [`Self::UpstreamTlsHandshakeTime`], readably.
     UpstreamTlsHandshakeTimeHuman,
+    /// `upstream_connect_offload_wait_time`: the wait for an offload thread
+    /// before connecting.
     UpstreamConnectOffloadWaitTime,
+    /// [`Self::UpstreamConnectOffloadWaitTime`], readably.
     UpstreamConnectOffloadWaitTimeHuman,
+    /// `upstream_connection_time`: the age of the upstream connection.
     UpstreamConnectionTime,
+    /// [`Self::UpstreamConnectionTime`], readably.
     UpstreamConnectionTimeHuman,
+    /// `connection_time`: the age of the downstream connection.
     ConnectionTime,
+    /// [`Self::ConnectionTime`], readably.
     ConnectionTimeHuman,
+    /// `location`: the name of the matched location.
     Location,
+    /// `connection_reused`: `true` when the downstream connection already
+    /// served an earlier request.
     ConnectionReused,
+    /// `tls_version`: the downstream TLS version.
     TlsVersion,
+    /// `tls_cipher`: the downstream TLS cipher.
     TlsCipher,
+    /// `tls_client_subject`: the subject of the certificate the client
+    /// showed.
     TlsClientSubject,
+    /// `tls_client_fingerprint`: the SHA-256 of the certificate the client
+    /// showed.
     TlsClientFingerprint,
+    /// `tls_client_serial`: the serial number of the certificate the client
+    /// showed.
     TlsClientSerial,
+    /// `tls_client_verified`: `true` or `false`, whether the client showed a
+    /// certificate.
     TlsClientVerified,
+    /// `ja4`: the client's JA4 fingerprint.
     Ja4,
+    /// `ja4_r`: JA4_r, the sorted cipher and extension lists instead of
+    /// their hashes.
     #[strum(serialize = "ja4_r")]
     Ja4R,
+    /// `ja4_o`: JA4_o, hashed over the lists in the order the client sent
+    /// them.
     #[strum(serialize = "ja4_o")]
     Ja4O,
+    /// `ja4_ro`: JA4_ro, the lists in the order sent, unhashed.
     #[strum(serialize = "ja4_ro")]
     Ja4Ro,
+    /// `tls_handshake_time`: the downstream TLS handshake, on the first
+    /// request of a connection.
     TlsHandshakeTime,
+    /// [`Self::TlsHandshakeTime`], readably.
     TlsHandshakeTimeHuman,
+    /// `compression_time`: the time spent compressing the response.
     CompressionTime,
+    /// [`Self::CompressionTime`], readably.
     CompressionTimeHuman,
+    /// `compression_ratio`: input bytes over output bytes, one decimal.
     CompressionRatio,
+    /// `cache_lookup_time`: the cache lookup.
     CacheLookupTime,
+    /// [`Self::CacheLookupTime`], readably.
     CacheLookupTimeHuman,
+    /// `cache_lock_time`: the wait for a cache lock.
     CacheLockTime,
+    /// [`Self::CacheLockTime`], readably.
     CacheLockTimeHuman,
+    /// `service_time`: from the start of the request to the log line.
     ServiceTime,
+    /// [`Self::ServiceTime`], readably.
     ServiceTimeHuman,
 }
 

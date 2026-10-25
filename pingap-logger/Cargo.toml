@@ -18,6 +18,7 @@ flate2 = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
 itoa = { workspace = true }
+parking_lot = { workspace = true }
 pingap-core = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }

@@ -18,14 +18,15 @@ use async_trait::async_trait;
 use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptions};
 use futures::StreamExt;
 use http::Extensions;
+use parking_lot::Mutex;
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
@@ -292,19 +293,13 @@ impl Docker {
     }
 
     fn read_cache(&self) -> Option<CachedAddrs> {
-        self.cached
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        self.cached.lock().clone()
     }
 
     /// Spawns the background event watcher on the first call. Must run
     /// inside a Tokio runtime.
     fn ensure_watcher_started(&self) {
-        let mut watcher = self
-            .watcher
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut watcher = self.watcher.lock();
         if watcher.is_none() {
             *watcher = Some(tokio::spawn(watch_docker_events(
                 self.state.clone(),
@@ -316,12 +311,7 @@ impl Docker {
 
 impl Drop for Docker {
     fn drop(&mut self) {
-        if let Some(watcher) = self
-            .watcher
-            .get_mut()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
+        if let Some(watcher) = self.watcher.get_mut().take() {
             watcher.abort();
         }
     }
@@ -340,9 +330,7 @@ async fn refresh_cache(
         Ok(addrs) => {
             state.report_working();
             let changed = {
-                let mut guard = cached
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut guard = cached.lock();
                 let changed = guard.as_ref() != Some(&addrs);
                 *guard = Some(addrs.clone());
                 changed
@@ -483,11 +471,7 @@ impl ServiceDiscovery for Docker {
         match self.state.resolve_addrs().await {
             Ok(addrs) => {
                 self.state.report_working();
-                *self
-                    .cached
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    Some(addrs.clone());
+                *self.cached.lock() = Some(addrs.clone());
                 let result = addrs_to_backends(&addrs);
                 let addr_strs: Vec<String> =
                     result.0.iter().map(|b| b.addr.to_string()).collect();
@@ -579,7 +563,7 @@ mod tests {
         #[async_trait]
         impl pingap_core::Notification for Recorder {
             async fn notify(&self, data: NotificationData) {
-                self.0.lock().unwrap().push(data.category);
+                self.0.lock().push(data.category);
             }
         }
         let notified = Arc::new(Mutex::new(vec![]));
@@ -601,10 +585,7 @@ mod tests {
         for _ in 0..3 {
             refresh_cache(&state, &cached).await;
         }
-        assert_eq!(
-            vec!["service_discover_fail".to_string()],
-            *notified.lock().unwrap()
-        );
+        assert_eq!(vec!["service_discover_fail".to_string()], *notified.lock());
         assert_eq!(true, state.failing.load(Ordering::Relaxed));
     }
 

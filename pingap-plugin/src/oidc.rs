@@ -730,11 +730,12 @@ impl Oidc {
 
         // What is kept of the user: who it is, and what goes upstream.
         let mut kept = ClaimMap::new();
-        for name in std::iter::once("sub").chain(
+        let names = std::iter::once("sub").chain(
             self.claims_to_headers
                 .iter()
                 .map(|(claim, _)| claim.as_str()),
-        ) {
+        );
+        for name in names {
             if let Some(value) = claims.get(name) {
                 kept.insert(name.to_string(), value.clone());
             }

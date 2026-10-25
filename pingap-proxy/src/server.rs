@@ -317,12 +317,12 @@ impl ListenerParams {
             }));
         }
         // support listen multi address
-        for addr in self
+        let addrs = self
             .addr
             .split(',')
             .map(str::trim)
-            .filter(|a| !a.is_empty())
-        {
+            .filter(|a| !a.is_empty());
+        for addr in addrs {
             // tls
             if let Some(dynamic_cert) = &self.dynamic_cert {
                 let mut tls_settings = dynamic_cert

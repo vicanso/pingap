@@ -35,6 +35,8 @@ const HTTP_HEADER_X_REAL_IP: &str = "x-real-ip";
 
 // Define byte slice constants for special variable tags used in header value processing.
 // These are matched against the raw bytes of a header value.
+/// The `$hostname` tag of a header value: the name of the host pingap
+/// runs on.
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const HOST_TAG: &[u8] = b"$host";
 const SCHEME_TAG: &[u8] = b"$scheme";
@@ -200,30 +202,37 @@ pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
 }
 
 // Define common, pre-built HTTP headers as static constants for reuse and performance.
+/// `Cache-Control: private, no-store`.
 pub static HTTP_HEADER_NO_STORE: HttpHeader = (
     header::CACHE_CONTROL,
     HeaderValue::from_static("private, no-store"),
 );
+/// `Cache-Control: private, no-cache`.
 pub static HTTP_HEADER_NO_CACHE: HttpHeader = (
     header::CACHE_CONTROL,
     HeaderValue::from_static("private, no-cache"),
 );
+/// `Content-Type: application/json; charset=utf-8`.
 pub static HTTP_HEADER_CONTENT_JSON: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("application/json; charset=utf-8"),
 );
+/// `Content-Type: text/html; charset=utf-8`.
 pub static HTTP_HEADER_CONTENT_HTML: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("text/html; charset=utf-8"),
 );
+/// `Content-Type: text/plain; charset=utf-8`.
 pub static HTTP_HEADER_CONTENT_TEXT: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("text/plain; charset=utf-8"),
 );
+/// `Transfer-Encoding: chunked`.
 pub static HTTP_HEADER_TRANSFER_CHUNKED: HttpHeader = (
     header::TRANSFER_ENCODING,
     HeaderValue::from_static("chunked"),
 );
+/// The header name `X-Request-Id`.
 pub static HTTP_HEADER_NAME_X_REQUEST_ID: HeaderName =
     HeaderName::from_static("x-request-id");
 

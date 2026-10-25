@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use parking_lot::{Mutex, MutexGuard};
 use pingap_core::{
     Notification, NotificationData, NotificationLevel, get_hostname,
     get_identity, is_ntfy_notification, parse_notification_headers,
@@ -21,8 +22,8 @@ use pingap_core::{
 };
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Map, Value};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
@@ -145,6 +146,7 @@ impl WebhookNotificationSender {
     }
 
     /// Sets what the webhook does beyond posting: see [`WebhookOptions`].
+    #[must_use]
     pub fn with_options(self, options: WebhookOptions) -> Self {
         Self::build(
             self.inner.url.clone(),
@@ -160,6 +162,7 @@ impl WebhookNotificationSender {
     /// are merged, at most `max_events` per post. A zero `window` or a
     /// `max_events` of at most one posts every notification on its own,
     /// before `send_notification` returns.
+    #[must_use]
     pub fn with_batch(self, window: Duration, max_events: usize) -> Self {
         Self::build(
             self.inner.url.clone(),
@@ -373,9 +376,7 @@ impl Inner {
     fn lock_pending(&self) -> MutexGuard<'_, Option<Batch>> {
         // A panic while the lock was held cannot have left a half-updated
         // batch worth protecting: at worst a notification is posted twice.
-        self.pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.pending.lock()
     }
 
     async fn post(self: &Arc<Self>, events: Vec<NotificationData>) {

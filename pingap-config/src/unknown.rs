@@ -160,11 +160,11 @@ impl PingapTomlConfig {
             .collect();
         fn entries<T: Default + Serialize>(
             kind: &str,
-            section: &Option<Map<String, Value>>,
+            section: Option<&Map<String, Value>>,
             storages: Option<&HashMap<String, StorageConf>>,
             found: &mut Vec<String>,
         ) {
-            for (name, value) in section.iter().flatten() {
+            for (name, value) in section.into_iter().flatten() {
                 let mut value = value.clone();
                 if let Some(storages) = storages {
                     let _ = expand_includes(storages, kind, name, &mut value);
@@ -173,16 +173,36 @@ impl PingapTomlConfig {
             }
         }
         let with = Some(&storages);
-        entries::<ServerConf>("server", &self.servers, with, &mut found);
-        entries::<LocationConf>("location", &self.locations, with, &mut found);
-        entries::<UpstreamConf>("upstream", &self.upstreams, with, &mut found);
+        entries::<ServerConf>(
+            "server",
+            self.servers.as_ref(),
+            with,
+            &mut found,
+        );
+        entries::<LocationConf>(
+            "location",
+            self.locations.as_ref(),
+            with,
+            &mut found,
+        );
+        entries::<UpstreamConf>(
+            "upstream",
+            self.upstreams.as_ref(),
+            with,
+            &mut found,
+        );
         entries::<CertificateConf>(
             "certificate",
-            &self.certificates,
+            self.certificates.as_ref(),
             None,
             &mut found,
         );
-        entries::<StorageConf>("storage", &self.storages, None, &mut found);
+        entries::<StorageConf>(
+            "storage",
+            self.storages.as_ref(),
+            None,
+            &mut found,
+        );
         found
     }
 }

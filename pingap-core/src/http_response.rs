@@ -99,6 +99,7 @@ impl HttpResponseBuilder {
     ///
     /// This method is generic over `impl Into<Bytes>`, allowing various types like
     /// `Vec<u8>`, `String`, or `&'static str` to be passed as the body.
+    #[must_use]
     pub fn body(mut self, body: impl Into<Bytes>) -> Self {
         self.response.body = body.into();
         self
@@ -107,6 +108,7 @@ impl HttpResponseBuilder {
     /// Adds a single HTTP header to the response.
     ///
     /// If the headers vector doesn't exist yet, it will be created.
+    #[must_use]
     pub fn header(mut self, header: HttpHeader) -> Self {
         self.response
             .headers
@@ -116,6 +118,7 @@ impl HttpResponseBuilder {
     }
 
     /// Appends multiple HTTP headers to the response.
+    #[must_use]
     pub fn headers(mut self, headers: Vec<HttpHeader>) -> Self {
         self.response
             .headers
@@ -125,6 +128,7 @@ impl HttpResponseBuilder {
     }
 
     /// Sets the `Cache-Control` max-age and privacy directive.
+    #[must_use]
     pub fn max_age(mut self, seconds: u32, is_private: bool) -> Self {
         self.response.max_age = Some(seconds);
         self.response.cache_private = Some(is_private);
@@ -132,6 +136,7 @@ impl HttpResponseBuilder {
     }
 
     /// A convenience method to add a "no-store" `Cache-Control` header.
+    #[must_use]
     pub fn no_store(self) -> Self {
         self.header(HTTP_HEADER_NO_STORE.clone())
     }

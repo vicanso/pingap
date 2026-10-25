@@ -270,6 +270,7 @@ impl TracerService {
     /// Adds attributes to the resource the spans are reported for, each a
     /// key and a value: `cluster` and `sh-prod`. With several deployments
     /// that report to one collector, they are what tells them apart.
+    #[must_use]
     pub fn with_attributes(mut self, attributes: &[(String, String)]) -> Self {
         self.attributes.extend(attributes.iter().cloned());
         self
@@ -289,6 +290,7 @@ impl TracerServiceBuilder {
     ///
     /// # Arguments
     /// * `name` - The name of the service
+    #[must_use]
     pub fn name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
         self
@@ -298,6 +300,7 @@ impl TracerServiceBuilder {
     ///
     /// # Arguments
     /// * `endpoint` - The endpoint URL string
+    #[must_use]
     pub fn endpoint(mut self, endpoint: &str) -> Self {
         self.endpoint = Some(endpoint.to_string());
         if let Ok(info) = Url::parse(endpoint) {

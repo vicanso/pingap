@@ -487,7 +487,7 @@ fn io_error_response(err: &std::io::Error) -> HttpResponse {
 fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
-    charset: &Option<String>,
+    charset: Option<&str>,
     support_range: bool,
     coding: Option<&'static str>,
 ) -> (bool, usize, Vec<HttpHeader>) {
@@ -1117,7 +1117,7 @@ impl Plugin for Directory {
             get_cacheable_and_headers_from_meta(
                 &file,
                 &meta,
-                &self.charset,
+                self.charset.as_deref(),
                 true,
                 coding,
             );
@@ -1856,7 +1856,7 @@ follow_symlinks = {follow_symlinks}
         let (cacheable, _, headers) = get_cacheable_and_headers_from_meta(
             &file,
             &meta,
-            &Some("utf-8".to_string()),
+            Some("utf-8"),
             false,
             None,
         );

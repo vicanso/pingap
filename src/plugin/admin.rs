@@ -30,6 +30,7 @@ use hex::encode;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
+use parking_lot::RwLock;
 use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
@@ -62,7 +63,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::{LazyLock, RwLock};
+use std::sync::LazyLock;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error, info, warn};
@@ -95,18 +96,14 @@ const GZIPPED_LIMIT: usize = 256;
 
 fn gzipped(file: &EmbeddedFile) -> Option<Bytes> {
     let key = file.metadata.sha256_hash();
-    let cached = GZIPPED
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&key)
-        .cloned();
+    let cached = GZIPPED.read().get(&key).cloned();
     if cached.is_some() {
         return cached;
     }
     let mut encoder = GzEncoder::new(vec![], Compression::best());
     encoder.write_all(&file.data).ok()?;
     let data = Bytes::from(encoder.finish().ok()?);
-    let mut cache = GZIPPED.write().unwrap_or_else(|e| e.into_inner());
+    let mut cache = GZIPPED.write();
     if cache.len() >= GZIPPED_LIMIT {
         cache.clear();
     }

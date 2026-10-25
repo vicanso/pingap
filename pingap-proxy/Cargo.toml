@@ -20,6 +20,7 @@ http = { workspace = true }
 humantime = { workspace = true, optional = true }
 itoa = { workspace = true }
 num_cpus = { workspace = true }
+parking_lot = { workspace = true }
 pingap-acme = { workspace = true }
 pingap-cache = { workspace = true }
 pingap-certificate = { workspace = true }

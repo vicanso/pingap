@@ -29,6 +29,7 @@ use instant_acme::{
     ExternalAccountKey, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
 };
+use parking_lot::Mutex;
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
     Certificate, parse_leaf_chain_certificates, update_certificates,
@@ -53,7 +54,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::Mutex;
 #[cfg(feature = "openssl")]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -397,7 +397,7 @@ pub fn hand_over(names: &[String]) {
         return;
     }
     let now = Instant::now();
-    let mut handed = HANDED_OVER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut handed = HANDED_OVER.lock();
     handed.extend(names.iter().map(|name| (name.clone(), now)));
 }
 
@@ -485,13 +485,12 @@ impl LetsEncryptTask {
     }
 
     fn retry_of(&self, name: &str) -> Option<Retry> {
-        let retries = self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        let retries = self.retries.lock();
         retries.get(name).copied()
     }
 
     fn clear_retry(&self, name: &str) {
-        let mut retries =
-            self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut retries = self.retries.lock();
         retries.remove(name);
     }
 
@@ -510,8 +509,7 @@ impl LetsEncryptTask {
         // Of what was handed over, the entries that are this task's:
         // the names it has an entry of. The rest stays for whose it is.
         let handed: HashSet<String> = {
-            let mut handed =
-                HANDED_OVER.lock().unwrap_or_else(|e| e.into_inner());
+            let mut handed = HANDED_OVER.lock();
             handed.retain(|_, at| at.elapsed() < HANDED_OVER_KEPT);
             params
                 .iter()
@@ -519,7 +517,7 @@ impl LetsEncryptTask {
                 .map(|item| item.name.clone())
                 .collect()
         };
-        let mut seen = self.seen.lock().unwrap_or_else(|e| e.into_inner());
+        let mut seen = self.seen.lock();
         let news: HashSet<String> = params
             .iter()
             .filter(|item| {
@@ -532,8 +530,7 @@ impl LetsEncryptTask {
             .iter()
             .map(|item| (item.name.clone(), item.clone()))
             .collect();
-        let mut retries =
-            self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut retries = self.retries.lock();
         retries
             .retain(|name, _| seen.contains_key(name) && !news.contains(name));
         news
@@ -594,8 +591,7 @@ impl LetsEncryptTask {
                     target: LOG_TARGET,
                     name, "the entry was changed during this run"
                 );
-                let mut seen =
-                    self.seen.lock().unwrap_or_else(|e| e.into_inner());
+                let mut seen = self.seen.lock();
                 seen.remove(name);
                 Some(())
             };
@@ -715,8 +711,7 @@ impl LetsEncryptTask {
             .map_or(1, |retry| retry.failures.saturating_add(1));
         let delay = retry_delay(failures);
         {
-            let mut retries =
-                self.retries.lock().unwrap_or_else(|e| e.into_inner());
+            let mut retries = self.retries.lock();
             retries.insert(
                 params.name.clone(),
                 Retry {
@@ -1224,14 +1219,14 @@ static OWN_TOKENS: LazyLock<Mutex<HashMap<String, (String, u64)>>> =
 
 fn remember_own_token(token: &str, key_authorization: &str) {
     let now = pingap_core::now_sec();
-    let mut tokens = OWN_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut tokens = OWN_TOKENS.lock();
     // An order is over within minutes, one way or the other.
     tokens.retain(|_, (_, at)| now.saturating_sub(*at) < HTTP_01_TOKEN_MAX_AGE);
     tokens.insert(token.to_string(), (key_authorization.to_string(), now));
 }
 
 fn own_token(token: &str) -> Option<String> {
-    let tokens = OWN_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+    let tokens = OWN_TOKENS.lock();
     tokens.get(token).map(|(value, _)| value.clone())
 }
 
@@ -2103,8 +2098,10 @@ mod tests {
                 counter.fetch_add(1, Ordering::Relaxed);
                 order(manager, params)
             }),
-            retries: Mutex::new(HashMap::new()),
-            seen: Mutex::new(HashMap::new()),
+            // The task's own locks are parking_lot's; the helpers of these
+            // tests keep std's.
+            retries: parking_lot::Mutex::new(HashMap::new()),
+            seen: parking_lot::Mutex::new(HashMap::new()),
         };
         Fixture {
             _dir: dir,
@@ -2393,7 +2390,7 @@ mod tests {
                 .iter()
                 .any(|data| data.level != NotificationLevel::Info),
         );
-        assert_eq!(true, fixture.task.retries.lock().unwrap().is_empty());
+        assert_eq!(true, fixture.task.retries.lock().is_empty());
         // The next time the certificates are looked at.
         fixture.task.execute(10).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -2892,7 +2889,7 @@ mod tests {
         fixture.task.execute(11).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
         // Said once.
-        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.retries.lock().clear();
         fixture.task.execute(12).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
 
@@ -2972,10 +2969,7 @@ mod tests {
         // Nothing failed: there is nothing to report.
         assert_eq!(true, fixture.notifications.lock().unwrap().is_empty());
         // The entry is the next run's, whatever it says then.
-        assert_eq!(
-            false,
-            fixture.task.seen.lock().unwrap().contains_key("site")
-        );
+        assert_eq!(false, fixture.task.seen.lock().contains_key("site"));
     }
 
     /// Regression: an entry that the storage no longer gives to ACME was
@@ -3023,7 +3017,7 @@ mod tests {
         let fixture = fixture(SITE, failing).await;
         fixture.task.execute(0).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
-        assert_eq!(1, fixture.task.retries.lock().unwrap()["site"].failures);
+        assert_eq!(1, fixture.task.retries.lock()["site"].failures);
         // The same entry waits, also when the certificates are looked at.
         fixture.task.execute(10).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
@@ -3037,7 +3031,7 @@ mod tests {
         fixture.task.execute(11).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
         // It failed again, with these settings: once.
-        assert_eq!(1, fixture.task.retries.lock().unwrap()["site"].failures);
+        assert_eq!(1, fixture.task.retries.lock()["site"].failures);
         fixture.task.execute(12).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
 
@@ -3046,8 +3040,8 @@ mod tests {
         running.certificates.clear();
         fixture.manager.set_current_config(running);
         fixture.task.execute(13).await.unwrap();
-        assert_eq!(true, fixture.task.retries.lock().unwrap().is_empty());
-        assert_eq!(true, fixture.task.seen.lock().unwrap().is_empty());
+        assert_eq!(true, fixture.task.retries.lock().is_empty());
+        assert_eq!(true, fixture.task.seen.lock().is_empty());
     }
 
     /// The challenge that is answered by hand is asked for when the
@@ -3074,7 +3068,7 @@ mod tests {
         fixture.task.execute(0).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
         // Not at the later checks, whatever became of the wait.
-        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.retries.lock().clear();
         fixture.task.execute(10).await.unwrap();
         assert_eq!(1, fixture.orders.load(Ordering::Relaxed));
 
@@ -3086,7 +3080,7 @@ mod tests {
         .await;
         fixture.task.execute(11).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
-        fixture.task.retries.lock().unwrap().clear();
+        fixture.task.retries.lock().clear();
         fixture.task.execute(20).await.unwrap();
         assert_eq!(2, fixture.orders.load(Ordering::Relaxed));
     }
@@ -3256,7 +3250,7 @@ mod tests {
 
         // Once the wait is over it is tried again, and waits longer.
         let wait_over = |fixture: &Fixture| {
-            let mut retries = fixture.task.retries.lock().unwrap();
+            let mut retries = fixture.task.retries.lock();
             let retry = retries.get_mut("site").unwrap();
             let waited = retry.not_before - pingap_core::now_sec();
             retry.not_before = 0;

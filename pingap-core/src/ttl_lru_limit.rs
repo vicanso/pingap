@@ -28,6 +28,10 @@ struct TtlLimit {
     created_at: AtomicU64,
 }
 
+/// Counts per key within a window of time, for a rate limit: a key may be
+/// counted `max` times within the `ttl` that its first count opens. The
+/// keys are kept in a bounded TinyUFO cache of about `size` entries, so a
+/// key that is pushed out loses its count (see [`TtlLruLimit::new`]).
 pub struct TtlLruLimit {
     ttl: u64,
     /// Keys are stored as stable hashes so `validate`/`inc` can look up with

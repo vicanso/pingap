@@ -67,20 +67,20 @@ pub trait UpstreamProvider: Send + Sync {
     fn healthy_status(&self) -> HashMap<String, UpstreamHealthyStatus> {
         let upstreams = self.list();
         let mut healthy_status = HashMap::with_capacity(upstreams.len());
-        upstreams.iter().for_each(|(k, v)| {
+        for (k, v) in upstreams.iter() {
             let mut total = 0;
             let mut healthy = 0;
             let mut unhealthy_backends = vec![];
             if let Some(backends) = v.get_backends() {
                 let backend_set = backends.get_backend();
                 total = backend_set.len();
-                backend_set.iter().for_each(|backend| {
+                for backend in backend_set.iter() {
                     if backends.ready(backend) {
                         healthy += 1;
                     } else {
                         unhealthy_backends.push(backend.to_string());
                     }
-                });
+                }
             }
             healthy_status.insert(
                 k.to_string(),
@@ -90,7 +90,7 @@ pub trait UpstreamProvider: Send + Sync {
                     unhealthy_backends,
                 },
             );
-        });
+        }
         healthy_status
     }
 
@@ -99,12 +99,10 @@ pub trait UpstreamProvider: Send + Sync {
     /// # Returns
     /// * `HashMap<String, UpstreamStats>` - Stats of all upstreams
     fn get_all_stats(&self) -> HashMap<String, UpstreamStats> {
-        let upstreams = self.list();
-        let mut stats_list = HashMap::with_capacity(upstreams.len());
-        upstreams.iter().for_each(|(k, v)| {
-            stats_list.insert(k.to_string(), v.stats());
-        });
-        stats_list
+        self.list()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.stats()))
+            .collect()
     }
 }
 

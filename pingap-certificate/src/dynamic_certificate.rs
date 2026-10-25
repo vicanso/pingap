@@ -417,10 +417,8 @@ fn set_status_callback(
 /// `tls_max_version` value. An unknown name is an error; it used to be
 /// TLS 1.2 without a word.
 #[cfg(feature = "openssl")]
-fn convert_tls_version(version: &Option<String>) -> Result<Option<SslVersion>> {
-    let Some(version) =
-        version.as_deref().map(str::trim).filter(|v| !v.is_empty())
-    else {
+fn convert_tls_version(version: Option<&str>) -> Result<Option<SslVersion>> {
+    let Some(version) = version.map(str::trim).filter(|v| !v.is_empty()) else {
         return Ok(None);
     };
     let ssl_version = match version.to_lowercase().as_str() {
@@ -529,7 +527,9 @@ impl GlobalCertificate {
                 .set_ciphersuites(cipher_suites)
                 .map_err(|e| invalid("set cipher suites", &e))?;
         }
-        if let Some(version) = convert_tls_version(&params.tls_min_version)? {
+        if let Some(version) =
+            convert_tls_version(params.tls_min_version.as_deref())?
+        {
             tls_settings
                 .set_min_proto_version(Some(version))
                 .map_err(|e| invalid("set tls min proto version", &e))?;
@@ -541,7 +541,7 @@ impl GlobalCertificate {
         }
         tls_settings
             .set_max_proto_version(convert_tls_version(
-                &params.tls_max_version,
+                params.tls_max_version.as_deref(),
             )?)
             .map_err(|e| invalid("set tls max proto version", &e))?;
 
@@ -960,13 +960,12 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     #[cfg(feature = "openssl")]
     #[test]
     fn test_convert_tls_version() {
-        let convert =
-            |value: &str| convert_tls_version(&Some(value.to_string()));
+        let convert = |value: &str| convert_tls_version(Some(value));
         assert_eq!(Some(SslVersion::TLS1_1), convert("tlsv1.1").unwrap());
         assert_eq!(Some(SslVersion::TLS1_2), convert("TLSv1.2").unwrap());
         assert_eq!(Some(SslVersion::TLS1_3), convert("tlsv1.3").unwrap());
         assert_eq!(None, convert("").unwrap());
-        assert_eq!(None, convert_tls_version(&None).unwrap());
+        assert_eq!(None, convert_tls_version(None).unwrap());
         assert_eq!(
             "Invalid error, category: tls_version, tls version \"tlsv1.0\" is invalid, expected tlsv1.1, tlsv1.2 or tlsv1.3",
             convert("tlsv1.0").expect_err("error").to_string()

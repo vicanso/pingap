@@ -20,9 +20,12 @@ use std::fmt::Display;
 /// ranks them: a merged batch reports the highest level in it.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NotificationLevel {
+    /// Something worth knowing; nothing is wrong.
     #[default]
     Info,
+    /// Something that may need a look.
     Warn,
+    /// Something failed.
     Error,
 }
 
@@ -37,6 +40,8 @@ impl Display for NotificationLevel {
     }
 }
 
+/// One notification: what it is about, how severe it is, and what it
+/// says.
 #[derive(Default, Clone, Debug)]
 pub struct NotificationData {
     /// The category of the notification, used for grouping or filtering notifications
@@ -213,6 +218,8 @@ pub fn parse_ntfy_url(url: &str) -> Result<NtfyTarget, String> {
 /// (email, SMS, push notification, etc.)
 #[async_trait]
 pub trait Notification {
+    /// Sends `data`, or queues it to be sent. A failure to deliver is the
+    /// implementer's to handle: nothing is returned to the caller.
     async fn notify(&self, data: NotificationData);
 }
 

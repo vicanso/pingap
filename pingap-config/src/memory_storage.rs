@@ -46,6 +46,7 @@ impl MemoryStorage {
     }
     /// Mirrors every write to `path`. The file holds the private key of the
     /// issued certificate, so it is created with owner-only permissions.
+    #[must_use]
     pub fn with_path(mut self, path: PathBuf) -> Self {
         self.path = Some(path);
         self

@@ -14,6 +14,7 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
+use parking_lot::Mutex;
 use pingap_certificate::{
     CertificatePair, CertificateProvider, DynamicCertificates,
     is_unused_certificate_key, lookup_certificates, unused_certificate_key,
@@ -23,7 +24,6 @@ use pingap_config::{CertificateConf, Hashable};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
-use std::sync::Mutex;
 
 struct Provider {
     certificates: ArcSwap<DynamicCertificates>,
@@ -247,7 +247,7 @@ pub fn try_reload_certificate_files(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
     let current = CERTIFICATE_PROVIDER.list();
-    let mut failed = FAILED_FILES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut failed = FAILED_FILES.lock();
     let mut hashes = HashMap::new();
     let stale: HashMap<String, CertificateConf> = certificate_configs
         .iter()

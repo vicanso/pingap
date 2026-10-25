@@ -44,6 +44,7 @@ humantime = { workspace = true }
 maxminddb = { workspace = true, optional = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
+parking_lot = { workspace = true }
 path-absolutize = { workspace = true }
 pingap-cache = { workspace = true }
 pingap-config = { workspace = true }

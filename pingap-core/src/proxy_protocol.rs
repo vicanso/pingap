@@ -186,7 +186,10 @@ pub fn new_proxy_protocol_header(
 pub struct ProxyProtocolConnectOptions {
     /// How long connecting and sending the header may take.
     pub connection_timeout: Option<Duration>,
+    /// The size of the receive buffer of the socket (`SO_RCVBUF`), where
+    /// one is set.
     pub tcp_recv_buf: Option<usize>,
+    /// Whether the connection is opened with TCP Fast Open.
     pub tcp_fast_open: bool,
 }
 
@@ -217,6 +220,7 @@ fn new_connect_error(e: std::io::Error, addr: &PeerAddr) -> Box<Error> {
 }
 
 impl ProxyProtocolConnector {
+    /// A connector that starts every connection with `header`.
     pub fn new(header: Vec<u8>, options: ProxyProtocolConnectOptions) -> Self {
         Self { header, options }
     }

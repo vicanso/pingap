@@ -131,6 +131,7 @@ impl WebSocketHealthCheck {
 
     /// Opens the connections of the check with `connector`, where there
     /// is one, in place of pingora's own way.
+    #[must_use]
     pub fn with_connector(
         mut self,
         connector: Option<crate::HealthCheckConnector>,

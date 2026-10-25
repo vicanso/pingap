@@ -20,6 +20,7 @@ bollard = { workspace = true }
 futures = { workspace = true }
 hickory-resolver = { workspace = true }
 http = { workspace = true }
+parking_lot = { workspace = true }
 pingap-core = { workspace = true }
 pingora = { workspace = true }
 snafu = { workspace = true }

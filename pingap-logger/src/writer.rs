@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
+use parking_lot::{Mutex, MutexGuard};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use std::collections::HashSet;
@@ -32,7 +33,7 @@ use std::fs;
 use std::io;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 use tracing::{Subscriber, error, info, warn};
@@ -225,10 +226,10 @@ fn compress_logs(params: &LogCompressParams) {
         };
         // A symlink is not a file here, so nothing is followed out of the
         // directory.
-        for entry in entries
+        let files = entries
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_ok_and(|kind| kind.is_file()))
-        {
+            .filter(|e| e.file_type().is_ok_and(|kind| kind.is_file()));
+        for entry in files {
             if !entry
                 .file_name()
                 .to_str()
@@ -338,9 +339,10 @@ struct SharedWriterGuard<'a>(MutexGuard<'a, BufWriter<RollingFileAppender>>);
 impl<'a> MakeWriter<'a> for SharedWriter {
     type Writer = SharedWriterGuard<'a>;
     fn make_writer(&'a self) -> Self::Writer {
-        // A panic while holding the lock poisons it; the writer inside is
-        // still usable, and losing the application log over it is worse.
-        SharedWriterGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        // parking_lot's lock is not poisoned by a panic: the writer inside
+        // stays usable after one, and losing the application log over it
+        // would be worse.
+        SharedWriterGuard(self.0.lock())
     }
 }
 
@@ -370,7 +372,7 @@ pub fn flush_application_log() {
     let Some(writer) = BUFFERED_WRITER.get() else {
         return;
     };
-    let mut writer = writer.lock().unwrap_or_else(|e| e.into_inner());
+    let mut writer = writer.lock();
     if let Err(e) = writer.flush() {
         // The subscriber owns this writer, so a failure here has nowhere
         // else to go.

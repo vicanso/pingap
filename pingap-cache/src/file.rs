@@ -23,13 +23,13 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
+use parking_lot::RwLock;
 use path_absolutize::*;
 #[cfg(feature = "tracing")]
 use prometheus::Histogram;
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
@@ -594,7 +594,7 @@ impl FileCache {
     /// as usable as before.
     fn with_hot<T>(&self, f: impl FnOnce(&MemoryCache) -> T) -> Option<T> {
         let cache = self.cache.as_ref()?;
-        let cache = cache.read().unwrap_or_else(|e| e.into_inner());
+        let cache = cache.read();
         Some(f(&cache))
     }
 
@@ -609,7 +609,7 @@ impl FileCache {
     /// Empties the hot layer by putting a new one in its place.
     fn reset_hot(&self) {
         if let Some(cache) = &self.cache {
-            *cache.write().unwrap_or_else(|e| e.into_inner()) =
+            *cache.write() =
                 MemoryCache::new(CacheMode::Normal, self.cache_max);
         }
     }
@@ -902,8 +902,7 @@ impl HttpCacheStorage for FileCache {
     /// holds it may be serving a request.
     fn retire(&self) {
         if let Some(cache) = &self.cache {
-            *cache.write().unwrap_or_else(|e| e.into_inner()) =
-                MemoryCache::new(CacheMode::Normal, 1);
+            *cache.write() = MemoryCache::new(CacheMode::Normal, 1);
         }
     }
 

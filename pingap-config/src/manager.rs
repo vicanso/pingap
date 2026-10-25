@@ -204,20 +204,20 @@ impl PingapTomlConfig {
     }
     fn get_category_toml(&self, category: &Category) -> Result<String> {
         let key = format_category(category);
-        fn wrap<T: Serialize>(key: &str, value: &Option<T>) -> Result<String> {
+        fn wrap<T: Serialize>(key: &str, value: Option<&T>) -> Result<String> {
             match value {
                 Some(value) => wrap_toml(key, value),
                 None => Ok(String::new()),
             }
         }
         match category {
-            Category::Basic => wrap(key, &self.basic),
-            Category::Server => wrap(key, &self.servers),
-            Category::Location => wrap(key, &self.locations),
-            Category::Upstream => wrap(key, &self.upstreams),
-            Category::Plugin => wrap(key, &self.plugins),
-            Category::Certificate => wrap(key, &self.certificates),
-            Category::Storage => wrap(key, &self.storages),
+            Category::Basic => wrap(key, self.basic.as_ref()),
+            Category::Server => wrap(key, self.servers.as_ref()),
+            Category::Location => wrap(key, self.locations.as_ref()),
+            Category::Upstream => wrap(key, self.upstreams.as_ref()),
+            Category::Plugin => wrap(key, self.plugins.as_ref()),
+            Category::Certificate => wrap(key, self.certificates.as_ref()),
+            Category::Storage => wrap(key, self.storages.as_ref()),
         }
     }
     fn update(&mut self, category: &Category, name: &str, value: Value) {

@@ -21,6 +21,7 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
+use parking_lot::Mutex;
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
@@ -30,7 +31,7 @@ use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, SystemTime};
 use tor_geoip::GeoipDb;
 use tracing::{debug, info, warn};
@@ -118,9 +119,7 @@ impl DatabaseFile {
     /// The database at `path`: the one that is loaded already, or a new
     /// one. An error says what is wrong with the file.
     fn open(path: &str) -> Result<Arc<Self>, String> {
-        let mut databases = DATABASES
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut databases = DATABASES.lock();
         databases.retain(|_, database| database.strong_count() > 0);
         if let Some(database) =
             databases.get(path).and_then(|database| database.upgrade())
@@ -174,10 +173,7 @@ impl DatabaseFile {
     /// the one that is loaded in place, and is tried again next time.
     fn reload_if_changed(&self) {
         let modified = modified_of(&self.path);
-        let mut loaded = self
-            .modified
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut loaded = self.modified.lock();
         if modified.is_none() {
             // Once, when it goes missing: looked at every second, it
             // would be a line a second for as long as it is gone.

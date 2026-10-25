@@ -812,7 +812,7 @@ pub fn convert_toml_to_hcl(input: &str) -> Result<String> {
         }
     }
 
-    Ok(output.trim_end().to_string() + "\n")
+    Ok(format!("{}\n", output.trim_end()))
 }
 
 #[cfg(test)]

@@ -21,16 +21,25 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use strum::EnumString;
 
+/// The point of a request at which a plugin runs, as the configuration
+/// names it (`step = "early_request"`). Each is one of pingora's callbacks,
+/// and a plugin runs at one step of a request at most.
 #[derive(
     PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginStep {
+    /// `early_request_filter`, the first callback of a request.
     EarlyRequest,
+    /// `request_filter`, the step of a plugin that names none.
     #[default]
     Request,
+    /// `proxy_upstream_filter`, before the request goes to the upstream.
     ProxyUpstream,
+    /// `upstream_response_filter`, on the response of the upstream before
+    /// it is cached.
     UpstreamResponse,
+    /// `response_filter`, on the response that goes to the client.
     Response,
 }
 
@@ -57,7 +66,7 @@ pub enum ResponsePluginResult {
     // FullyReplaced(HttpResponse),
 }
 
-// Represents the action a plugin task on a response
+/// What a plugin did to a chunk of the response body.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResponseBodyPluginResult {
     /// The plugin did not modify the response body.
@@ -276,6 +285,7 @@ pub struct MissingPlugin {
 }
 
 impl MissingPlugin {
+    /// Stands in for the plugin `name`.
     pub fn new(name: Arc<str>) -> Self {
         Self { name }
     }
@@ -316,6 +326,7 @@ pub trait PluginProvider: Send + Sync {
     }
 }
 
+/// The plugins by the name they are configured under.
 pub type Plugins = AHashMap<String, Arc<dyn Plugin>>;
 
 /// Lets the plugins that ask for it set their headers on a response a

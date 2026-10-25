@@ -89,6 +89,10 @@ impl BackgroundTaskService {
     pub fn set_immediately(&mut self, immediately: bool) {
         self.immediately = immediately;
     }
+    /// Waits `initial_delay` once, when the service starts, before its
+    /// interval begins: the first round is then at `initial_delay` with
+    /// [`Self::set_immediately`], and at `initial_delay` plus the interval
+    /// without it.
     pub fn set_initial_delay(&mut self, initial_delay: Option<Duration>) {
         self.initial_delay = initial_delay;
     }
@@ -97,6 +101,7 @@ impl BackgroundTaskService {
     pub fn add_task(&mut self, task_name: &str, task: Box<dyn BackgroundTask>) {
         self.tasks.push((task_name.to_string(), task));
     }
+    /// The name of the service, as it is logged.
     pub fn name(&self) -> &str {
         &self.name
     }

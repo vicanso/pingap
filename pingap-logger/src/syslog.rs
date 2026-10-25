@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use super::Error;
+use parking_lot::{Mutex, MutexGuard};
 use pingap_core::get_hostname;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::str::FromStr;
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use syslog::{
     Facility, Formatter3164, Formatter5424, LogFormat, LoggerBackend, Severity,
@@ -369,9 +369,9 @@ impl<'a> MakeWriter<'a> for SyslogWriter {
     type Writer = SyslogWriterGuard<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        // A panic while holding the lock poisons it; the sender inside is
-        // still usable.
-        SyslogWriterGuard(self.0.lock().unwrap_or_else(|e| e.into_inner()))
+        // parking_lot's lock is not poisoned by a panic: the sender inside
+        // stays usable after one.
+        SyslogWriterGuard(self.0.lock())
     }
 }
 

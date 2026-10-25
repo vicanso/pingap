@@ -35,8 +35,8 @@ pub fn install_default_crypto_provider() {
     }
 }
 
-fn non_empty(value: &Option<String>) -> bool {
-    value.as_ref().is_some_and(|s| !s.is_empty())
+fn non_empty(value: Option<&str>) -> bool {
+    value.is_some_and(|s| !s.is_empty())
 }
 
 /// Rejects per-server TLS version / cipher settings that the active backend
@@ -57,16 +57,16 @@ pub fn validate_servers_tls_for_backend(
     let mut problems = Vec::new();
     for (name, server) in servers {
         let mut set = Vec::new();
-        if non_empty(&server.tls_cipher_list) {
+        if non_empty(server.tls_cipher_list.as_deref()) {
             set.push("tls_cipher_list");
         }
-        if non_empty(&server.tls_ciphersuites) {
+        if non_empty(server.tls_ciphersuites.as_deref()) {
             set.push("tls_ciphersuites");
         }
-        if non_empty(&server.tls_min_version) {
+        if non_empty(server.tls_min_version.as_deref()) {
             set.push("tls_min_version");
         }
-        if non_empty(&server.tls_max_version) {
+        if non_empty(server.tls_max_version.as_deref()) {
             set.push("tls_max_version");
         }
         if set.is_empty() {

@@ -16,6 +16,7 @@ use super::{Error, LOG_TARGET, Result, get_process_system_info};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use humantime::parse_duration;
+use parking_lot::Mutex;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
@@ -34,7 +35,7 @@ use prometheus::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{error, warn};
 use url::Url;
@@ -974,10 +975,7 @@ impl Prometheus {
             !is_configured(name) && series.requests_current.get() <= 0
         };
         let now = Instant::now();
-        let mut since = self
-            .locations_gone_since
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut since = self.locations_gone_since.lock();
         // One that is configured again, or has a request on its way
         // again, is gone anew the next time it is.
         since.retain(|name, _| {
@@ -2365,13 +2363,10 @@ mod tests {
         p.forget_removed_locations(is_configured, hour);
         p.forget_removed_locations(is_configured, hour);
         assert_eq!(true, count(&p, "gone") > 0);
-        assert_eq!(
-            true,
-            p.locations_gone_since.lock().unwrap().contains_key("gone")
-        );
+        assert_eq!(true, p.locations_gone_since.lock().contains_key("gone"));
         // Configured again meanwhile, it is not on its way out any more.
         p.forget_removed_locations(|_| true, hour);
-        assert_eq!(true, p.locations_gone_since.lock().unwrap().is_empty());
+        assert_eq!(true, p.locations_gone_since.lock().is_empty());
 
         // A request that was counted in series which were dropped before
         // it ended makes them anew, and leaves them below zero: dropped

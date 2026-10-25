@@ -158,6 +158,9 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 - CI runs `cargo clippy --features=full --all-targets --all -- --deny=warnings` plus `typos`. Run `make lint` before pushing.
 - The git pre-commit hook (installed via `make hooks`) just runs `make lint`.
 - `typos.toml` excludes `*.md` and `*.toml` from the spell check — typos in those file types will not be caught by `make lint`.
+- A lock that is held without an `.await` in between is `parking_lot::Mutex` / `RwLock`, not the std one; one that is held across an `.await` is tokio's. The std locks are poisoned by a panic, and `lock().unwrap_or_else(|e| e.into_inner())` reaches into a poisoned lock, which the Google Rust style guide rules out. A release build aborts on a panic (`panic = "abort"`), so a lock is never poisoned there anyway. `parking_lot` is in the tree through pingora already.
+- `pingap-core` has `#![warn(missing_docs)]`: under `make lint` an undocumented public item there fails the build. It is the crate plugins are written against.
+- Builder methods that take `self` and return `Self` carry `#[must_use]`, and private helpers take `Option<&T>` rather than `&Option<T>` (the exception is a serde `serialize_with` function, which has to take `&Option<T>`).
 
 ## CI gates
 

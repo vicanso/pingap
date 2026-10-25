@@ -12,16 +12,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! What every other pingap crate builds on: the context of a request
+//! ([`Ctx`]), the plugin traits ([`Plugin`], the [`PluginStep`] a plugin
+//! runs at and the results it returns), the response a plugin answers
+//! with ([`HttpResponse`]), header helpers, background tasks
+//! ([`BackgroundTaskService`]), notifications and who the process is
+//! ([`Identity`]).
+//!
+//! A plugin that answers a request itself builds an [`HttpResponse`]:
+//!
+//! ```
+//! use http::StatusCode;
+//! use pingap_core::{HTTP_HEADER_NO_STORE, HttpResponse};
+//!
+//! let resp = HttpResponse::builder(StatusCode::FORBIDDEN)
+//!     .header(HTTP_HEADER_NO_STORE.clone())
+//!     .body("not allowed")
+//!     .finish();
+//! assert_eq!(StatusCode::FORBIDDEN, resp.status);
+//! assert_eq!(resp.body, "not allowed");
+//! ```
+
+#![warn(missing_docs)]
+
 use snafu::Snafu;
 
 static LOG_TARGET: &str = "pingap::core";
 
+/// The errors of this crate.
 #[derive(Debug, Snafu)]
 pub enum Error {
+    /// A value that cannot be used, and why.
     #[snafu(display("invalid error, {message}"))]
-    Invalid { message: String },
+    Invalid {
+        /// What is wrong with it.
+        message: String,
+    },
+    /// Something of `category` that was asked for is not there.
     #[snafu(display("{category} not found"))]
-    NotFound { category: String },
+    NotFound {
+        /// The kind of thing that was asked for.
+        category: String,
+    },
 }
 
 /// Creates a new internal error

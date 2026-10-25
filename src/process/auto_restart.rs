@@ -25,6 +25,7 @@ use crate::webhook::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use pingap_certificate::validate_servers_tls_for_backend;
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM, CertificateConf,
@@ -41,8 +42,8 @@ use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -361,7 +362,7 @@ fn left_is_news(left: &[String]) -> bool {
 /// Notes `now` as what was told last, and says whether it is worth
 /// telling: there is something, and it is not what was told the last time.
 fn is_news(reported: &Mutex<Vec<String>>, now: &[String]) -> bool {
-    let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reported = reported.lock();
     if reported.as_slice() == now {
         return false;
     }

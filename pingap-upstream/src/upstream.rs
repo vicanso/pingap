@@ -97,9 +97,9 @@ impl HealthObserve for BackendObserveNotification {
         let addr = backend.addr.to_string();
         let template = format!("upstream {}({addr}) becomes ", self.name);
         let info = if healthy {
-            (NotificationLevel::Info, template + "healthy")
+            (NotificationLevel::Info, format!("{template}healthy"))
         } else {
-            (NotificationLevel::Error, template + "unhealthy")
+            (NotificationLevel::Error, format!("{template}unhealthy"))
         };
 
         self.sender

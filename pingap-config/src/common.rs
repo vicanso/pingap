@@ -1542,17 +1542,14 @@ impl ServerConf {
     /// other direction - a server that looks protected and lets everyone
     /// in - so they are errors, not defaults.
     fn validate_client_auth(&self) -> Result<()> {
-        fn given(value: &Option<String>) -> Option<&str> {
-            value
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+        fn given(value: Option<&str>) -> Option<&str> {
+            value.map(str::trim).filter(|value| !value.is_empty())
         }
-        let ca = given(&self.tls_client_ca);
+        let ca = given(self.tls_client_ca.as_deref());
         let invalid = |message: &str| Error::Invalid {
             message: message.to_string(),
         };
-        match given(&self.tls_client_auth) {
+        match given(self.tls_client_auth.as_deref()) {
             None | Some("require") | Some("optional") => {},
             Some(_) => {
                 return Err(invalid(
@@ -1560,7 +1557,7 @@ impl ServerConf {
                 ));
             },
         }
-        if given(&self.tls_client_auth).is_some() && ca.is_none() {
+        if given(self.tls_client_auth.as_deref()).is_some() && ca.is_none() {
             return Err(invalid("tls_client_auth needs tls_client_ca"));
         }
         if ca.is_some() && !self.global_certificates.unwrap_or_default() {
@@ -2273,14 +2270,14 @@ fn convert_document(
     references: Option<MissingReference>,
 ) -> Result<PingapConfig> {
     fn entries<T: DeserializeOwned>(
-        section: &Option<Map<String, Value>>,
+        section: Option<&Map<String, Value>>,
         kind: &str,
         storages: &HashMap<String, StorageConf>,
         replace_include: bool,
         mut references: Option<(MissingReference, &mut HashSet<String>)>,
     ) -> Result<HashMap<String, T>> {
         let mut out = HashMap::new();
-        for (name, value) in section.iter().flatten() {
+        for (name, value) in section.into_iter().flatten() {
             let mut value = value.clone();
             if replace_include {
                 expand_includes(storages, kind, name, &mut value)?;
@@ -2308,40 +2305,45 @@ fn convert_document(
     };
     // As they are written: a storage is a fragment that other entries
     // include, and what it holds is looked at where it ends up.
-    let storages =
-        entries(&data.storages, "storage", &HashMap::new(), false, None)?;
+    let storages = entries(
+        data.storages.as_ref(),
+        "storage",
+        &HashMap::new(),
+        false,
+        None,
+    )?;
     Ok(PingapConfig {
         basic,
         upstreams: entries(
-            &data.upstreams,
+            data.upstreams.as_ref(),
             "upstream",
             &storages,
             replace_include,
             references.map(|missing| (missing, &mut referenced)),
         )?,
         locations: entries(
-            &data.locations,
+            data.locations.as_ref(),
             "location",
             &storages,
             replace_include,
             references.map(|missing| (missing, &mut referenced)),
         )?,
         servers: entries(
-            &data.servers,
+            data.servers.as_ref(),
             "server",
             &storages,
             replace_include,
             references.map(|missing| (missing, &mut referenced)),
         )?,
         plugins: entries(
-            &data.plugins,
+            data.plugins.as_ref(),
             "plugin",
             &storages,
             false,
             references.map(|missing| (missing, &mut referenced)),
         )?,
         certificates: entries(
-            &data.certificates,
+            data.certificates.as_ref(),
             "certificate",
             &storages,
             false,

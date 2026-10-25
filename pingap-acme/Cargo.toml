@@ -23,6 +23,7 @@ hickory-resolver = { workspace = true }
 hmac = { workspace = true }
 instant-acme = { workspace = true }
 nanoid = { workspace = true }
+parking_lot = { workspace = true }
 pingap-certificate = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }

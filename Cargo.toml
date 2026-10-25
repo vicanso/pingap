@@ -71,6 +71,7 @@ humantime = { workspace = true }
 humantime-serde = { workspace = true }
 nanoid = { workspace = true }
 nix = { version = "0.31.3", features = ["signal"] }
+parking_lot = { workspace = true }
 pingap-acme = { workspace = true }
 pingap-cache = { workspace = true }
 pingap-certificate = { workspace = true }
@@ -331,6 +332,7 @@ opentelemetry-otlp = { version = "0.32.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.32.1", features = [
     "rt-tokio",
 ], default-features = false }
+parking_lot = "0.12.5"
 path-absolutize = "4.0.1"
 pingap-acme = { version = "0.16.1", path = "pingap-acme", default-features = false }
 pingap-cache = { version = "0.16.1", path = "pingap-cache" }

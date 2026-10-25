@@ -26,6 +26,7 @@
 use super::LOG_TARGET;
 use ahash::AHashMap;
 use async_trait::async_trait;
+use parking_lot::{Mutex, MutexGuard};
 use pingap_core::Ja4Fingerprint;
 use pingap_core::ja4::{
     ClientHelloStatus, MAX_CLIENT_HELLO_SIZE, read_client_hello,
@@ -33,7 +34,7 @@ use pingap_core::ja4::{
 use pingora::listeners::PreTlsProcess;
 use pingora::protocols::l4::stream::Stream as L4Stream;
 use pingora::protocols::{GetSocketDigest, SocketDigest};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::time::{Instant, timeout_at};
@@ -90,9 +91,7 @@ impl Ja4Store {
         let index = (key >> 4 ^ key >> 12) % SHARDS;
         // A poisoned lock only means another thread panicked while holding
         // it; the map itself is still consistent.
-        self.shards[index]
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.shards[index].lock()
     }
 
     /// Files `fingerprint` under the connection whose socket digest is
@@ -141,13 +140,7 @@ impl Ja4Store {
     fn len(&self) -> usize {
         self.shards
             .iter()
-            .map(|shard| {
-                shard
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .entries
-                    .len()
-            })
+            .map(|shard| shard.lock().entries.len())
             .sum()
     }
 }

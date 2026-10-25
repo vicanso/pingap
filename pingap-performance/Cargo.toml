@@ -24,6 +24,7 @@ tracing = [
     "dep:reqwest",
     "dep:url",
     "dep:humantime",
+    "dep:parking_lot",
     "dep:http",
     "dep:snafu",
     "dep:pingap-util",
@@ -40,6 +41,7 @@ humantime = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 memory-stats = { workspace = true }
 num_cpus = { workspace = true }
+parking_lot = { workspace = true, optional = true }
 pingap-cache = { workspace = true }
 pingap-core = { workspace = true }
 pingap-location = { workspace = true }

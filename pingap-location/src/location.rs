@@ -376,36 +376,35 @@ fn interpolate_variables<'a>(
 /// Parses `["name:value", "name", ...]` match conditions into `(name, value)`
 /// pairs, where a missing value means a presence-only check.
 fn parse_match_conditions(
-    list: &Option<Vec<String>>,
+    list: Option<&[String]>,
 ) -> Vec<(String, Option<String>)> {
-    list.as_ref()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let item = item.trim();
-                    if item.is_empty() {
-                        return None;
-                    }
-                    let cond = match item.split_once(':') {
-                        Some((n, v)) => {
-                            (n.trim().to_string(), Some(v.trim().to_string()))
-                        },
-                        None => (item.to_string(), None),
-                    };
-                    Some(cond)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    list.map(|items| {
+        items
+            .iter()
+            .filter_map(|item| {
+                let item = item.trim();
+                if item.is_empty() {
+                    return None;
+                }
+                let cond = match item.split_once(':') {
+                    Some((n, v)) => {
+                        (n.trim().to_string(), Some(v.trim().to_string()))
+                    },
+                    None => (item.to_string(), None),
+                };
+                Some(cond)
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// Returns true if `actual` satisfies `expected`: present with the exact value,
 /// or merely present when no value is required.
 #[inline]
-fn condition_met(actual: Option<&str>, expected: &Option<String>) -> bool {
+fn condition_met(actual: Option<&str>, expected: Option<&str>) -> bool {
     match actual {
-        Some(a) => expected.as_deref().is_none_or(|v| v == a),
+        Some(a) => expected.is_none_or(|v| v == a),
         None => false,
     }
 }
@@ -420,10 +419,7 @@ fn condition_met(actual: Option<&str>, expected: &Option<String>) -> bool {
 /// in the encoded form to get around that goes on matching: the value as
 /// it was sent is compared first.
 #[inline]
-fn query_condition_met(
-    actual: Option<&str>,
-    expected: &Option<String>,
-) -> bool {
+fn query_condition_met(actual: Option<&str>, expected: Option<&str>) -> bool {
     if condition_met(actual, expected) {
         return true;
     }
@@ -555,7 +551,7 @@ pub struct Location {
 /// # Returns
 /// * `Result<Option<Vec<HttpHeader>>>` - Parsed headers or None if input was None
 fn format_headers(
-    values: &Option<Vec<String>>,
+    values: Option<&[String]>,
 ) -> Result<Option<Vec<HttpHeader>>> {
     if let Some(header_values) = values {
         let arr =
@@ -635,9 +631,12 @@ impl Location {
 
         // Parse optional match conditions ("name:value" for an exact value, or
         // "name" for a presence check) on headers, query params and cookies.
-        let header_conditions = parse_match_conditions(&conf.match_headers);
-        let query_conditions = parse_match_conditions(&conf.match_query);
-        let cookie_conditions = parse_match_conditions(&conf.match_cookies);
+        let header_conditions =
+            parse_match_conditions(conf.match_headers.as_deref());
+        let query_conditions =
+            parse_match_conditions(conf.match_query.as_deref());
+        let cookie_conditions =
+            parse_match_conditions(conf.match_cookies.as_deref());
 
         let mut headers: Vec<(HeaderName, HeaderValue, bool)> = vec![];
         if conf.enable_reverse_proxy_headers.unwrap_or_default() {
@@ -649,14 +648,14 @@ impl Location {
         // process: resolve them here so the request path only sees the
         // variables that really change per request.
         if let Some(proxy_set_headers) =
-            format_headers(&conf.proxy_set_headers)?
+            format_headers(conf.proxy_set_headers.as_deref())?
         {
             for (name, value) in proxy_set_headers {
                 headers.push((name, resolve_static_header_value(value), false));
             }
         }
         if let Some(proxy_add_headers) =
-            format_headers(&conf.proxy_add_headers)?
+            format_headers(conf.proxy_add_headers.as_deref())?
         {
             for (name, value) in proxy_add_headers {
                 headers.push((name, resolve_static_header_value(value), true));
@@ -864,17 +863,17 @@ impl Location {
         self.header_conditions.iter().all(|(name, expected)| {
             condition_met(
                 pingap_core::get_req_header_value(req_header, name),
-                expected,
+                expected.as_deref(),
             )
         }) && self.query_conditions.iter().all(|(name, expected)| {
             query_condition_met(
                 pingap_core::get_query_value(req_header, name),
-                expected,
+                expected.as_deref(),
             )
         }) && self.cookie_conditions.iter().all(|(name, expected)| {
             condition_met(
                 pingap_core::get_cookie_value(req_header, name),
-                expected,
+                expected.as_deref(),
             )
         })
     }
@@ -1083,8 +1082,8 @@ mod tests {
 
     #[test]
     fn test_format_headers() {
-        let headers = format_headers(&Some(vec![
-            "Content-Type: application/json".to_string(),
+        let headers = format_headers(Some(&[
+            "Content-Type: application/json".to_string()
         ]))
         .unwrap();
         assert_eq!(

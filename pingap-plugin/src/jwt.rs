@@ -1378,7 +1378,7 @@ impl ModifyResponseBody for Sign {
         };
         // spellchecker:off
         let header = URL_SAFE_NO_PAD
-            .encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
+            .encode(format!(r#"{{"alg": "{alg}","typ": "JWT"}}"#));
         // spellchecker:on
         let payload = URL_SAFE_NO_PAD.encode(&self.buffer);
         let content = format!("{header}.{payload}");

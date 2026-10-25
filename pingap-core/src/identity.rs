@@ -32,6 +32,8 @@ const MAX_LABEL_KEY: usize = 32;
 const MAX_LABEL_VALUE: usize = 128;
 const MAX_NAME: usize = 64;
 
+/// Who the process is, for what says where it is from: the name and the
+/// labels of the deployment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Identity {
     /// What the deployment is called (`basic.name`).

@@ -164,6 +164,7 @@ impl Discovery {
             sender: None,
         }
     }
+    #[must_use]
     pub fn with_sender(
         mut self,
         sender: Option<Arc<NotificationSender>>,
@@ -171,14 +172,17 @@ impl Discovery {
         self.sender = sender;
         self
     }
+    #[must_use]
     pub fn with_tls(mut self, tls: bool) -> Self {
         self.tls = tls;
         self
     }
+    #[must_use]
     pub fn with_ipv4_only(mut self, ipv4_only: bool) -> Self {
         self.ipv4_only = ipv4_only;
         self
     }
+    #[must_use]
     pub fn with_dns_server(mut self, dns_server: String) -> Self {
         if dns_server.is_empty() {
             self.dns_server = None;
@@ -187,10 +191,12 @@ impl Discovery {
         }
         self
     }
+    #[must_use]
     pub fn with_domain(mut self, domain: String) -> Self {
         self.dns_domain = Some(domain).filter(|domain| !domain.is_empty());
         self
     }
+    #[must_use]
     pub fn with_search(mut self, search: String) -> Self {
         self.dns_search = Some(search).filter(|search| !search.is_empty());
         self

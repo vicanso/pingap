@@ -25,6 +25,7 @@ bytesize = { workspace = true }
 chrono = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
+parking_lot = { workspace = true }
 path-absolutize = { workspace = true }
 pingap-core = { workspace = true }
 pingora = { workspace = true }
