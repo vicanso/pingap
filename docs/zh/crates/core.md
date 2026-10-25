@@ -30,6 +30,7 @@ Pingap Core 是 Pingap 项目的基础库，提供一组核心组件与工具，
 - `notification`：发送通知的 trait。
 - `identity`：进程是谁，用于它对外说明自己的地方：这套部署的名称和标签（`basic.name`、`basic.labels`），由 `set_identity` 设置一次，webhook、访问日志和 tracer 通过 `get_identity` 读取。`parse_labels` 解析配置里的 `键:值` 条目。
 - `proxy_protocol`：连接发起端的 PROXY protocol。`new_proxy_protocol_header` 按客户端地址生成 v1 或 v2 的头，`ProxyProtocolConnector` 是一个 pingora `Connect`，把这个头作为连接的最初几个字节写出去（`PeerOptions::custom_l4`）。upstream 的 `send_proxy_protocol` 及其健康检查使用它；监听端的读取在 `pingap-proxy`。
+- `compression`：pingora 的响应压缩模块，但会把 brotli 流补完整。pingora 0.9.0 压缩出的每个流都漏掉了最后一个块（[#256](https://github.com/vicanso/pingap/issues/256)）。`ResponseCompressionBuilder` 取代 pingora 的 builder；`ResponseCompression` deref 到 pingora 的 `ResponseCompressionCtx`，在 `downstream_modules_ctx` 里要按这个类型取。`BrotliTail` 负责补全 pingora 某个 brotli 编码器的流。只有 `brotli_needs_tail()` 检测到 pingora 的编码器仍然不补全流时，这些才会生效；等 pingora 自己补全了，这个模块就删掉。
 - `util`：杂项工具，含时间缓存与主机名获取。
 
 ## 许可证

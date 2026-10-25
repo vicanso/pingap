@@ -2,8 +2,11 @@
 
 Response compression with gzip, brotli and zstd. Two modes:
 
-- **downstream mode** (default) — configures pingora's built-in compression
-  module, which compresses on the way out to the client.
+- **downstream mode** (default) — configures pingora's compression module,
+  which compresses on the way out to the client. Pingap runs it through a
+  module of its own that finishes the brotli streams: pingora 0.9.0 leaves
+  out their last block, which browsers overlook and strict decoders (Node's
+  `fetch`, `brotli -t`) refuse.
 - **upstream mode** (`mode = "upstream"`) — Pingap compresses the upstream
   response body itself as it streams through, before the response reaches the
   [`cache`](cache.md) plugin, so what is cached is the compressed form.
@@ -141,6 +144,9 @@ In both modes these responses are passed on as they came:
   `decompression`: a response that arrives compressed is passed on compressed. An upstream that streams in another
   format (newline-delimited JSON, a chunked AI completion) can set it to keep
   its chunks flowing through a location that has compression on.
+
+Upstream mode also leaves alone a response whose `Content-Length` is `0`: no
+body filter runs for it, and zero bytes are no stream of any coding.
 
 ## Upstream mode details
 

@@ -13,7 +13,9 @@
 #                               needs systemd and a sudo that asks nothing
 #
 # Needs bash, curl, python3 and openssl. nginx is used where it is
-# installed, as a backend that reads the PROXY protocol. The cases that
+# installed, as a backend that reads the PROXY protocol; node, or the
+# brotli command, as a strict brotli decoder (`compression` skips its
+# decoding without either). The cases that
 # hand listening sockets from one process to the next (`restart`,
 # `restart_guard`, `upgrade`, `systemd`) run on Linux only: pingora does
 # not do it anywhere else.
@@ -23,7 +25,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy reload webhook abnormal_exit foreground proxy_protocol daemon restart restart_guard upgrade systemd"
+CASES="samples proxy compression reload webhook abnormal_exit foreground proxy_protocol daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -293,6 +295,95 @@ case_proxy() {
     expect "which does not validate" 0 "$(printf '%s' "$strict" | grep -c 'Validate config success')"
     ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# compression: a `br` body is a whole brotli stream, which a strict decoder
+# reads to its end (pingora 0.9.0 leaves the end out, pingap#256), coded by
+# pingora's module for a response of a plugin and of an upstream, and by
+# the plugin in upstream mode. An empty body is sent as it is.
+case_compression() {
+  local proxy=$((PORT_BASE + 110)) origin=$((PORT_BASE + 111))
+  local decoder route
+  if command -v node >/dev/null; then
+    decoder=node
+  elif command -v brotli >/dev/null; then
+    decoder=brotli
+  fi
+  mkdir -p "$DIR/www"
+  seq 1 20000 | sed 's|^|upstream location /api/|' >"$DIR/www/page.txt"
+  : >"$DIR/www/empty.txt"
+  basic_conf "$DIR/c"
+  printf '[upstreams.origin]\naddrs = ["127.0.0.1:%s"]\n' $origin >"$DIR/c/upstreams.toml"
+  cat >"$DIR/c/locations.toml" <<CONF
+[locations.static]
+path = "/"
+plugins = ["files", "compress"]
+
+[locations.up]
+path = "/up/"
+upstream = "origin"
+rewrite = "^/up/(.*)$ /\$1"
+plugins = ["compress"]
+
+[locations.upmode]
+path = "/upmode/"
+upstream = "origin"
+rewrite = "^/upmode/(.*)$ /\$1"
+plugins = ["compressUp"]
+
+[locations.origin]
+plugins = ["files"]
+CONF
+  cat >"$DIR/c/servers.toml" <<CONF
+[servers.web]
+addr = "127.0.0.1:$proxy"
+locations = ["static", "up", "upmode"]
+
+[servers.origin]
+addr = "127.0.0.1:$origin"
+locations = ["origin"]
+CONF
+  cat >"$DIR/c/plugins.toml" <<CONF
+[plugins.files]
+category = "directory"
+path = "$DIR/www"
+
+[plugins.compress]
+category = "compression"
+br_level = 5
+
+[plugins.compressUp]
+category = "compression"
+br_level = 5
+mode = "upstream"
+CONF
+  pingap "$DIR/pingap.log" -c "$DIR/c"
+  wait_port $proxy || fail "pingap listens on $proxy"
+  wait_port $origin || fail "pingap listens on $origin"
+
+  for route in / /up/ /upmode/; do
+    curl -s -m 8 -H 'Accept-Encoding: br' -D "$DIR/h" -o "$DIR/br" \
+      "http://127.0.0.1:$proxy${route}page.txt"
+    expect "${route}page.txt is coded as br" br \
+      "$(grep -i '^content-encoding:' "$DIR/h" | tr -d '\r' | awk '{print $2}')"
+    case $decoder in
+    node)
+      node -e 'process.stdout.write(require("zlib").brotliDecompressSync(require("fs").readFileSync(0)))' \
+        <"$DIR/br" >"$DIR/decoded" 2>"$DIR/decode.err" ;;
+    brotli) brotli -dc "$DIR/br" >"$DIR/decoded" 2>"$DIR/decode.err" ;;
+    *)
+      skip "${route}page.txt read by a strict decoder: no node, no brotli"
+      continue ;;
+    esac
+    expect "${route}page.txt is a whole stream of the file ($decoder)" same \
+      "$(cmp -s "$DIR/decoded" "$DIR/www/page.txt" && echo same || head -c 200 "$DIR/decode.err")"
+  done
+  # Nothing passes the body filter of an empty body, so nothing would be
+  # coded under the Content-Encoding.
+  expect "/upmode/empty.txt is sent without a Content-Encoding" 0 \
+    "$(curl -s -m 8 -H 'Accept-Encoding: br' -D - -o /dev/null \
+      "http://127.0.0.1:$proxy/upmode/empty.txt" | grep -ci '^content-encoding:')"
 }
 
 # ---------------------------------------------------------------------------

@@ -67,6 +67,7 @@ uuid = { workspace = true }
 
 
 [dev-dependencies]
+brotli = { workspace = true }
 criterion = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }

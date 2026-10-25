@@ -268,6 +268,9 @@ bytes = "1.12.1"
 bytesize = { version = "2.7.0", features = ["serde"] }
 bollard = "0.21.1"
 bstr = "1.13.1"
+# The one pingora-core depends on ("3"), for the decoder that checks its
+# brotli streams are whole: see pingap-core/src/compression.rs.
+brotli = "3.5.0"
 dashmap = "6.2.1"
 cfg-if = "1.0.4"
 chrono = { version = "0.4.45", default-features = false, features = [

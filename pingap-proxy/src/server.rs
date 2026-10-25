@@ -68,10 +68,10 @@ use pingora::cache::{
 use pingora::connectors::ConnectorOptions;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TcpSocketOptions;
+// pingap's own, which finishes the brotli streams pingora's leaves
+// unfinished (pingap_core::compression).
+use pingap_core::{ResponseCompression, ResponseCompressionBuilder};
 use pingora::modules::http::HttpModules;
-use pingora::modules::http::compression::{
-    ResponseCompression, ResponseCompressionBuilder,
-};
 use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::protocols::Digest;
 use pingora::protocols::http::error_resp;
@@ -3320,6 +3320,18 @@ value = 'proxy_set_headers = ["name:value"]'
             .unwrap();
 
         assert_eq!("Pingora HTTP Proxy Service", services.lb.name());
+    }
+
+    /// The compression module of the server is the type the compression
+    /// plugin looks up: to a lookup of another type it is not there, and
+    /// compression is off without a word.
+    #[test]
+    fn test_downstream_compression_module_is_the_plugins() {
+        let server = new_server();
+        let mut modules = HttpModules::new();
+        server.init_downstream_modules(&mut modules);
+        let ctx = modules.build_ctx();
+        assert_eq!(true, ctx.get::<ResponseCompression>().is_some());
     }
 
     #[tokio::test]

@@ -26,11 +26,11 @@ use http::{HeaderValue, Method, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
-    Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
-    ResponseBodyPluginResult, ResponsePluginResult, new_internal_error,
+    BrotliTail, Ctx, ModifyResponseBody, Plugin, PluginStep,
+    RequestPluginResult, ResponseBodyPluginResult, ResponseCompression,
+    ResponsePluginResult, brotli_needs_tail, new_internal_error,
 };
 use pingora::http::ResponseHeader;
-use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::{Algorithm, Encode};
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -51,6 +51,9 @@ const PLUGIN_ID: &str = "_compress_";
 
 struct Compressor {
     compressor: Box<dyn Encode + Send + Sync>,
+    /// The end of the stream, for pingora's brotli encoder, which leaves
+    /// it out (see `pingap_core::BrotliTail`).
+    tail: Option<BrotliTail>,
 }
 
 impl Compressor {
@@ -64,7 +67,10 @@ impl Compressor {
                 ),
             )
         })?;
-        Ok(Self { compressor })
+        let tail = (matches!(algorithm, Algorithm::Brotli)
+            && brotli_needs_tail())
+        .then(BrotliTail::default);
+        Ok(Self { compressor, tail })
     }
 }
 
@@ -84,7 +90,10 @@ impl ModifyResponseBody for Compressor {
             .as_mut()
             .encode(input_data, end_of_stream)
             .map_err(|e| new_internal_error(500, e))?;
-        *body = Some(data);
+        *body = Some(match &mut self.tail {
+            Some(tail) => tail.apply(data, end_of_stream),
+            None => data,
+        });
         Ok(())
     }
     fn name(&self) -> &str {
@@ -319,6 +328,15 @@ pub(crate) fn matches_types(
                 head.eq_ignore_ascii_case(prefix.as_bytes())
             })
     })
+}
+
+/// Whether the response says in `Content-Length` that it has no body.
+fn is_empty_body(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        == Some(0)
 }
 
 /// Whether the response says it is shorter than `min_length`. One that
@@ -677,7 +695,12 @@ impl Plugin for Compression {
         if !chosen {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if is_shorter_than(self.min_length, &upstream_response.headers) {
+        // An empty body passes no body filter, so nothing would be coded
+        // under the `Content-Encoding` said here: zero bytes are no stream
+        // of any coding.
+        if is_shorter_than(self.min_length, &upstream_response.headers)
+            || is_empty_body(&upstream_response.headers)
+        {
             return Ok(ResponsePluginResult::Unchanged);
         }
 
@@ -844,11 +867,9 @@ register_plugin!("compression", Compression);
 mod tests {
     use super::*;
     use pingap_config::PluginConf;
+    use pingap_core::ResponseCompressionBuilder;
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::modules::http::HttpModules;
-    use pingora::modules::http::compression::{
-        ResponseCompression, ResponseCompressionBuilder,
-    };
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -1374,6 +1395,56 @@ zstd_level = 6
         assert_eq!(false, coded(Some(Some(&json))).await);
     }
 
+    /// Upstream mode with brotli: what the plugin codes is a whole stream,
+    /// which a strict decoder reads to its end. pingora's encoder left
+    /// out the end of the stream, and every `br` body was refused by
+    /// `brotli -t` and Node's `fetch` (pingap#256).
+    #[tokio::test]
+    async fn test_upstream_mode_brotli_is_a_whole_stream() {
+        use std::io::Read;
+        let compression = new_compression("mode = \"upstream\"\nbr_level = 5");
+        let mut session =
+            new_session("GET / HTTP/1.1\r\nAccept-Encoding: br\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = response("text/html", None);
+        compression
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        assert_eq!(
+            Some("br"),
+            resp.headers
+                .get(CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+        );
+        let handler = ctx
+            .get_modify_body_handler(&compression.handler_id)
+            .unwrap();
+        let input: Vec<u8> = (0..20_000)
+            .map(|i| format!("location /api/{} ", i % 97))
+            .collect::<String>()
+            .into_bytes();
+        let chunks: Vec<&[u8]> = input.chunks(8192).collect();
+        let mut sent = vec![];
+        for (index, chunk) in chunks.iter().enumerate() {
+            let mut body = Some(bytes::Bytes::copy_from_slice(chunk));
+            handler
+                .handle(&session, &mut body, index == chunks.len() - 1)
+                .unwrap();
+            sent.extend_from_slice(&body.unwrap_or_default());
+        }
+        let decode = |stream: &[u8]| {
+            let mut decoded = vec![];
+            brotli::Decompressor::new(stream, 4096)
+                .read_to_end(&mut decoded)
+                .map(|_| decoded)
+                .ok()
+        };
+        assert_eq!(Some(input), decode(&sent));
+        // The last byte is the end of the stream, and there is one end:
+        // `Decompressor` takes bytes after the end without a word.
+        assert_eq!(None, decode(&sent[..sent.len() - 1]));
+    }
+
     /// Upstream mode compresses only responses that have a body, and adds
     /// `Vary: Accept-Encoding` on the way out.
     #[tokio::test]
@@ -1422,6 +1493,22 @@ zstd_level = 6
             .unwrap();
         assert_eq!(ResponsePluginResult::Unchanged, result);
         assert_eq!(1, resp.headers.get_all(VARY).iter().count());
+
+        // Nor one that says it has no body: no body filter runs for it,
+        // and the zero bytes it has are no stream of the coding said.
+        let mut empty = response(200);
+        empty.append_header("Content-Length", "0").unwrap();
+        assert_eq!(
+            ResponsePluginResult::Unchanged,
+            compression
+                .handle_upstream_response(
+                    &mut session,
+                    &mut Ctx::default(),
+                    &mut empty,
+                )
+                .unwrap()
+        );
+        assert_eq!(false, empty.headers.contains_key(CONTENT_ENCODING));
 
         for status in [204, 304, 101] {
             let mut resp = response(status);

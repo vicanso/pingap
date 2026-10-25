@@ -12,6 +12,8 @@
 - **`image_optim` 输出的 png 不再是原来的字节。** png 的调色板原来由 `imagequant` 生成，现在由 `color_quant`（NeuQuant）生成，颜色的统计、抖动以及用多少种颜色由 Pingap 自己完成。在用来对比的六张图片上，默认 `png_quality` 下有五张的体积在小 14% 到大 8% 之间，另一张（`imagequant` 只用了 20 种颜色的图标）大了一半；信噪比有五张相差在 2 dB 以内，一张高 4 dB。`png_quality` 的取值范围和方向不变，含义是对调色板误差的限制：见 [image_optim](../plugins/image_optim.md#png)。颜色不超过 256 种的图片在任何取值下都保留全部颜色，而 `imagequant` 在取值较低时会减少颜色。缓存里已有的内容是旧编码器写的，到期之前不会变。
 - **`image_optim` 重新编码没有收益时发送原图**：png 仍以 png 返回、jpeg 仍以 jpeg 返回，而结果并不更小的情况。以前会发出重新编码后的结果，比原图还大。
 
+- **`br` 响应现在是完整的 brotli 流。** pingora 0.9.0 压缩的每个流都漏掉了最后一个块，`compression` 的两种模式都受影响：浏览器能正常显示，严格的解码器（Node 的 `fetch`、`brotli -t`）会拒绝（[#256](https://github.com/vicanso/pingap/issues/256)）。上游模式之前存进缓存的仍是不完整的流，直到过期：请 purge。上游模式下，`Content-Length: 0` 的响应也不再在零个字节上标 `Content-Encoding`。
+
 ### 许可证
 
 - 所有构建都不再链接 copyleft 许可证的代码。`imagequant`（GPL-3.0-or-later）原来在 `-full`、`-rustls-full` 压缩包以及 `:full`、`:rustls-full` 镜像里；`option-ext`（MPL-2.0，经 `dirs` 引入）原来在每一个构建里。
@@ -24,6 +26,7 @@
 ### 使用这些 crate 的开发者
 
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。
+- **pingap-proxy**：服务器的压缩模块换成了 `pingap_core::ResponseCompression`（它会补全 brotli 流，[#256](https://github.com/vicanso/pingap/issues/256)），不再是 pingora 的。自己写的插件如果要调整压缩，得按这个类型取：`downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`。按 pingora 的 `ResponseCompression` 取会拿到空，插件也就静默地不再调整压缩，不会报错。它 deref 到 pingora 的 `ResponseCompressionCtx`，上面的调用不用改。
 
 ## 从 0.15 升级到 0.16
 

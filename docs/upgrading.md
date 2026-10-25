@@ -28,6 +28,15 @@ What is on `main` and in no release yet.
   a png answered as png, or a jpeg as jpeg, that would not be smaller. It
   used to go out re-encoded, larger than it came.
 
+- **A `br` response is a whole brotli stream.** pingora 0.9.0 left out the
+  last block of every stream it compressed, in both modes of `compression`:
+  browsers rendered the page, and a strict decoder (Node's `fetch`,
+  `brotli -t`) refused it ([#256](https://github.com/vicanso/pingap/issues/256)).
+  What upstream mode stored in the cache before is still the unfinished
+  stream, until it expires: purge it. In upstream mode a response with
+  `Content-Length: 0` is no longer given a `Content-Encoding` over its zero
+  bytes.
+
 ### Licenses
 
 - No build links code under a copyleft license any more. `imagequant`
@@ -53,6 +62,14 @@ What is on `main` and in no release yet.
 
 - **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`
   with.
+- **pingap-proxy**: the compression module of the server is
+  `pingap_core::ResponseCompression`, which finishes the brotli streams
+  ([#256](https://github.com/vicanso/pingap/issues/256)), no longer
+  pingora's. A plugin of your own that adjusts compression must look it up
+  as that type: `downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`.
+  A lookup of pingora's `ResponseCompression` finds nothing, and your
+  plugin leaves compression as it is without an error. It derefs to
+  pingora's `ResponseCompressionCtx`, so the calls on it stay the same.
 
 ## From 0.15 to 0.16
 

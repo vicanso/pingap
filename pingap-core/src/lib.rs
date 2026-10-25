@@ -69,6 +69,7 @@ pub fn is_upstream_status_error(e: &pingora::Error) -> bool {
 pub const ACCESS_LOG_PRESETS: [&str; 5] =
     ["combined", "common", "short", "tiny", "json"];
 
+mod compression;
 mod ctx;
 mod http_header;
 mod http_response;
@@ -81,6 +82,10 @@ mod service;
 mod ttl_lru_limit;
 mod util;
 
+pub use compression::{
+    BrotliTail, ResponseCompression, ResponseCompressionBuilder,
+    brotli_needs_tail,
+};
 pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;

@@ -13,6 +13,7 @@ description = "Core for pingap"
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
+brotli = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 hostname = { workspace = true }

@@ -30,6 +30,7 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 - `notification`: Defines the trait for sending notifications.
 - `identity`: Who the process is, for what it says about itself: the name and the labels of the deployment (`basic.name`, `basic.labels`), set once with `set_identity` and read with `get_identity` by the webhook, the access log and the tracer. `parse_labels` reads the `key:value` entries of the configuration.
 - `proxy_protocol`: The PROXY protocol on the connecting side. `new_proxy_protocol_header` builds a version 1 or 2 header for a client's addresses, and `ProxyProtocolConnector` is a pingora `Connect` that writes it as the first bytes of a connection (`PeerOptions::custom_l4`). Used by `send_proxy_protocol` of an upstream and by its health checks; the listening side is in `pingap-proxy`.
+- `compression`: pingora's response compression module with the brotli streams finished. pingora 0.9.0 leaves the last block out of each of them ([#256](https://github.com/vicanso/pingap/issues/256)). `ResponseCompressionBuilder` takes the place of pingora's builder, and `ResponseCompression`, which derefs to pingora's `ResponseCompressionCtx`, is the type to look up in `downstream_modules_ctx`. `BrotliTail` finishes the stream of one of pingora's brotli encoders. Everything here is on only while `brotli_needs_tail()` finds pingora's encoder leaving its streams unfinished. The module goes once pingora finishes them.
 - `util`: Contains miscellaneous utilities, including time caching and hostname retrieval.
 
 ## License
