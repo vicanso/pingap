@@ -32,6 +32,5 @@ pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

@@ -56,6 +56,5 @@ tempfile = { workspace = true }
 tokio-test = { workspace = true }
 toml = { workspace = true }
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

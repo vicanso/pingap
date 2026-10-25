@@ -17,7 +17,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_config::{PingapConfig, PluginConf};
 use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
-use pingap_plugin::get_plugin_factory;
+use pingap_plugin::{PluginFactory, get_plugin_factory};
 // Reuse the canonical plugin-config helpers instead of keeping a second copy.
 // `get_hash_key` in particular MUST stay byte-identical to the one plugins use
 // to compute their config key, otherwise hot-reload change detection breaks.
@@ -31,13 +31,33 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Once};
 use tracing::{error, info, warn};
 
 mod admin;
 mod health;
 mod stats;
+
+/// The factory every plugin of this build is created by. pingap-plugin
+/// fills it with its own plugins the first time it is asked for; the
+/// plugins of this binary and `image_optim`, which pingap-plugin cannot
+/// name, are added here, once, before it is handed out. Everything in the
+/// binary goes through this function, never `get_plugin_factory` itself,
+/// so no use of the factory can come before they are in it. The `register`
+/// functions it calls go to `get_plugin_factory`: one that called this
+/// function instead would wait on its own `Once`.
+pub fn plugin_factory() -> &'static PluginFactory {
+    static REGISTERED: Once = Once::new();
+    REGISTERED.call_once(|| {
+        admin::register();
+        health::register();
+        stats::register();
+        #[cfg(feature = "imageoptim")]
+        pingap_imageoptim::register();
+    });
+    get_plugin_factory()
+}
 
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
@@ -466,7 +486,7 @@ fn validate_plugin_features(config: &PingapConfig) -> Result<()> {
     // A plugin this build can not provide and a location can not go
     // without. Defining one is harmless, the config may be meant for
     // another build as well; naming it in a location is not.
-    let supported = get_plugin_factory().supported_plugins();
+    let supported = plugin_factory().supported_plugins();
     for (location_name, location) in config.locations.iter() {
         for name in location.plugins.iter().flatten() {
             let Some(gated) = config
@@ -522,7 +542,7 @@ pub fn parse_plugins(
             continue;
         }
 
-        match get_plugin_factory().create(conf) {
+        match plugin_factory().create(conf) {
             Ok(plugin) => {
                 plugins.insert(name.clone(), plugin.clone());
             },
@@ -795,6 +815,20 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    /// The plugins of the binary, and `image_optim` in a build that has it,
+    /// are in the factory for whoever uses it first: there is no call that
+    /// has to come before.
+    #[test]
+    fn test_plugin_factory_has_the_plugins_of_the_build() {
+        let supported = plugin_factory().supported_plugins();
+        let has =
+            |category: &str| supported.iter().any(|item| item == category);
+        for category in ["admin", "health", "stats", "ping", "uri_block"] {
+            assert_eq!(true, has(category), "{category}");
+        }
+        assert_eq!(cfg!(feature = "imageoptim"), has("image_optim"));
+    }
+
     fn authorizations(conf: &PluginConf) -> Vec<String> {
         get_str_slice_conf(conf, "authorizations")
     }
@@ -1040,7 +1074,7 @@ plugins = {plugins}
             .unwrap();
             validate_plugin_references(&config).map_err(|e| e.to_string())
         };
-        let supported = get_plugin_factory().supported_plugins();
+        let supported = plugin_factory().supported_plugins();
         let has = |category: &str| supported.iter().any(|c| c == category);
 
         // Defined and not used: fine everywhere.

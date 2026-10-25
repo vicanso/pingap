@@ -94,7 +94,7 @@ util -> core -> {discovery, config, logger, location, cache, certificate, upstre
 - `pingap-core::identity` — who the process is: `basic.name` and `basic.labels`, set once in `main.rs` (`set_identity`) and read by what says where it is from: the webhook (`name`, `labels`, `version` in every format), the access log (`{$name}`, `{$label:<key>}`), the tracer's resource attributes. Not by the metrics: a label there changes what a series is. A label's value is the one place a `$ENV:NAME` reference is a part of a string (`resolve_label_values` in `pingap-config/src/reference.rs`).
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
 - `pingap-proxy` — implements pingora's `ProxyHttp`. The request lifecycle in `pingap-proxy/src/server.rs` calls (in order) `early_request_filter` -> `request_filter` -> `proxy_upstream_filter` -> `upstream_request_filter` -> `upstream_response_filter` -> `logging`. Each step matches the `PluginStep` enum in `pingap-core/src/plugin.rs` (`EarlyRequest`, `Request`, `ProxyUpstream`, `UpstreamResponse`, `Response`); a plugin runs at most one step per request.
-- `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
+- `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core`, giving the module its `register` with `register_plugin!` and calling that from `register_builtin_plugins` in `pingap-plugin/src/lib.rs` (a module left out is dead code, which `make lint` refuses). The factory is filled with them the first time `get_plugin_factory()` is called, so there is no order to keep. The binary's own plugins (`admin`, `health`, `stats`) and `image_optim` are added in `plugin_factory()` (`src/plugin/mod.rs`), once, before it hands the factory out: the binary uses the factory through that function only, never `get_plugin_factory()` directly, or a plugin of its own could be missing at that point. Nothing runs before `main` (no `ctor`).
 - `pingap-upstream` — pingora `Backends` + load-balancing wiring; gets its backend set from `pingap-discovery` (static / DNS / Docker labels / transparent) and `pingap-health` for active checks.
 - `src/main.rs` — argument parsing, config bootstrap, daemonization, server assembly. The `src/process/` and `src/plugin/` modules handle hot reload + the admin plugin.
 - `build.rs` — uses `vergen = "10.0.3"` + `vergen-git2 = "10.0.3"` to embed `VERGEN_GIT_SHA` into the binary's `--version`. **Both crates must stay on matching majors**; if you see `Add` trait-bound errors from `vergen_lib`, the lockfile has pulled mismatched versions — refresh it. The emitter runs with `default_on_error()`: vergen 10 otherwise leaves `VERGEN_GIT_SHA` unset when there is no `.git` (source export, crates.io tarball) and `env!()` stops compiling; with it the value is `VERGEN_IDEMPOTENT_OUTPUT`, which `git_hash()` in `src/main.rs` reports as `unknown`.
@@ -154,13 +154,34 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 ## Lint and code style notes
 
-- `clippy.toml` denies unwrap outside tests, sets `cognitive-complexity-threshold = 10`, and pins `msrv = "1.96.0"`. The root `Cargo.toml` adds `unwrap_used = "deny"`.
+- `clippy.toml` allows unwrap in tests, sets `cognitive-complexity-threshold = 10`, and pins `msrv = "1.96.0"`. The lints themselves are in `[workspace.lints.clippy]` of the root `Cargo.toml`, and every crate takes them with `[lints] workspace = true` (a crate cannot add lints of its own next to that line: `pingap-core` sets `missing_docs` in `lib.rs` instead).
 - CI runs `cargo clippy --features=full --all-targets --all -- --deny=warnings` plus `typos`. Run `make lint` before pushing.
 - The git pre-commit hook (installed via `make hooks`) just runs `make lint`.
 - `typos.toml` excludes `*.md` and `*.toml` from the spell check — typos in those file types will not be caught by `make lint`.
-- A lock that is held without an `.await` in between is `parking_lot::Mutex` / `RwLock`, not the std one; one that is held across an `.await` is tokio's. The std locks are poisoned by a panic, and `lock().unwrap_or_else(|e| e.into_inner())` reaches into a poisoned lock, which the Google Rust style guide rules out. A release build aborts on a panic (`panic = "abort"`), so a lock is never poisoned there anyway. `parking_lot` is in the tree through pingora already.
-- `pingap-core` has `#![warn(missing_docs)]`: under `make lint` an undocumented public item there fails the build. It is the crate plugins are written against.
-- Builder methods that take `self` and return `Self` carry `#[must_use]`, and private helpers take `Option<&T>` rather than `&Option<T>` (the exception is a serde `serialize_with` function, which has to take `&Option<T>`).
+
+### Rust style
+
+The rules of the [Google Rust style guide](https://google.github.io/styleguide/rustguide.html) that pingap follows are listed here; the guide as a whole is not the standard. Much of it is about Google's own codebases (Chromium, Android, Fuchsia), and some of it is against choices made here on purpose. What clippy can check is in `[workspace.lints.clippy]`, so `make lint` fails on it:
+
+- No `unwrap` outside tests (`unwrap_used`, deny). A panic that documents itself is `expect("why this holds")`.
+- A builder method that takes `self` and returns `Self` is `#[must_use]` (`return_self_not_must_use`).
+- A parameter is `Option<&T>` (`Option<&str>`, `Option<&[T]>`), not `&Option<T>` (`ref_option`). The exception is a serde `serialize_with` function, which is handed `&Option<T>` and carries `#[allow(clippy::ref_option)]`.
+- `format!` / `write!`, not `+`, to put strings together (`string_add`); a `for` loop, not `Iterator::for_each` (`needless_for_each`).
+- An `unsafe` block says why it is sound in a `// SAFETY:` comment (`undocumented_unsafe_blocks`). There is none today.
+- Every public item of `pingap-core` is documented (`#![warn(missing_docs)]` in its `lib.rs`).
+
+And what no lint checks:
+
+- A lock that is held without an `.await` in between is `parking_lot::Mutex` / `RwLock`; one held across an `.await` is tokio's. A std lock is poisoned by a panic, and `lock().unwrap_or_else(|e| e.into_inner())` reaches into a poisoned lock, which the guide rules out. Turning the poison into an `Err` is fine.
+- A chain of several iterator adapters goes into a named variable before the `for` that walks it, not into the `for` header.
+- Nothing runs before `main`: no `ctor` or other constructor in a link section. What has to be set up before something is used is set up on its first use (a `LazyLock`, a `Once`), as the plugin factory is.
+
+Where pingap goes another way than the guide, deliberately:
+
+- `max_width = 80` in `rustfmt.toml` (the guide suggests 100).
+- The public API keeps its `get_*` functions, its tuple returns and its type aliases (`Upstreams`, `Locations`): renaming them breaks the crates' users for little. New code follows the guide.
+- `Arc` is everywhere, and has to be: pingora runs on many threads and the configuration is swapped in place (`ArcSwap`).
+- No `#[non_exhaustive]` on the public enums and structs yet: adding it breaks every crate user that matches on them or builds them.
 
 ## CI gates
 

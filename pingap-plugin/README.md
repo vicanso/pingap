@@ -153,6 +153,13 @@ this crate, because they need access to the process and the configuration
 manager. `image_optim` lives in `pingap-imageoptim`. All of them register into
 the same factory and are configured exactly the same way.
 
+The plugins of this crate are in the factory from the first time
+`get_plugin_factory()` is called; nothing runs before `main`. A plugin from
+elsewhere is added with `get_plugin_factory().register(category, creator)`
+before the factory is asked to create one: the `pingap` binary adds its own
+and `image_optim` (`pingap_imageoptim::register()`) in `plugin_factory()`
+(`src/plugin/mod.rs`), the one way the binary reaches the factory.
+
 ## Writing a plugin
 
 1. Implement `pingap_core::Plugin`. Only the hooks you need have to be
@@ -164,8 +171,10 @@ the same factory and are configured exactly the same way.
    plugin with that note, so the type of each key needs no check of your own.
 3. Return `get_hash_key(conf)` from `config_key()`. Pingap uses it to detect
    whether a hot reload actually changed this plugin instance.
-4. Register the category with the `register_plugin!` macro, which expands to a
-   pre-main constructor.
+4. Give the module its `register` with the `register_plugin!` macro, and call
+   it from `register_builtin_plugins` in `src/lib.rs`. A module left out of
+   that list has a `register` nobody calls, which `make lint` refuses as dead
+   code.
 5. A plugin that only sets response headers, and should set them on a response
    another plugin answered with as well (as `cors` does for a `401`), returns
    `true` from `handles_plugin_response()`. Its `handle_response` is then also
@@ -201,6 +210,9 @@ impl Plugin for MyPlugin {
 }
 
 register_plugin!("my_plugin", MyPlugin);
+
+// and in `register_builtin_plugins` (src/lib.rs):
+//     my_plugin::register(factory);
 ```
 
 ## Features

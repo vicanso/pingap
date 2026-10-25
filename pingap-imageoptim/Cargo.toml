@@ -19,7 +19,6 @@ async-trait = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
 color_quant = { workspace = true }
-ctor = { workspace = true }
 http = { workspace = true }
 # Only the four formats this crate actually handles. `image`'s defaults enable
 # sixteen, and the unused `exr` decoder was dragging in pulp -> paste
@@ -44,6 +43,5 @@ tokio-test = { workspace = true }
 criterion = { workspace = true }
 toml = { workspace = true }
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

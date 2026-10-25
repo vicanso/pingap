@@ -62,6 +62,14 @@ What is on `main` and in no release yet.
 
 - **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`
   with.
+- **pingap-imageoptim**: the `image_optim` plugin is no longer registered by
+  a constructor before `main`. A program of its own that uses the crate calls
+  `pingap_imageoptim::register()` before it creates the plugin; one that does
+  not finds no `image_optim` in the factory.
+- **pingap-plugin**: its plugins are put into the factory the first time
+  `get_plugin_factory()` is called, instead of before `main`, which changes
+  nothing for a caller. `PluginFactory` is exported. The crates no longer
+  depend on `ctor`.
 - **pingap-proxy**: the compression module of the server is
   `pingap_core::ResponseCompression`, which finishes the brotli streams
   ([#256](https://github.com/vicanso/pingap/issues/256)), no longer

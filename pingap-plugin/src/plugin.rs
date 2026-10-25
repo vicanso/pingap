@@ -79,9 +79,16 @@ impl Default for PluginFactory {
     }
 }
 
-static PLUGIN_FACTORY: LazyLock<PluginFactory> =
-    LazyLock::new(PluginFactory::new);
+static PLUGIN_FACTORY: LazyLock<PluginFactory> = LazyLock::new(|| {
+    let factory = PluginFactory::new();
+    crate::register_builtin_plugins(&factory);
+    factory
+});
 
+/// The factory the plugins are created by, with every plugin of this crate
+/// in it from the first time it is asked for. Plugins from elsewhere
+/// (`image_optim`, the ones of the `pingap` binary) are added by who has
+/// them, before the factory is asked to create one.
 pub fn get_plugin_factory() -> &'static PluginFactory {
     &PLUGIN_FACTORY
 }

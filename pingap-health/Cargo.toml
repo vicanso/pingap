@@ -34,6 +34,5 @@ tokio = { workspace = true, features = ["net", "io-util", "rt", "macros"] }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

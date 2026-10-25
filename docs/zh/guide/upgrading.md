@@ -26,6 +26,8 @@
 ### 使用这些 crate 的开发者
 
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。
+- **pingap-imageoptim**：`image_optim` 插件不再由 `main` 之前的构造函数注册。自己写程序使用这个 crate 的，要在创建插件之前调用 `pingap_imageoptim::register()`；不调用的话，工厂里没有 `image_optim`。
+- **pingap-plugin**：它的插件改为在第一次调用 `get_plugin_factory()` 时放进工厂，不再在 `main` 之前，对调用方没有影响。`PluginFactory` 现在是公开导出的。这些 crate 不再依赖 `ctor`。
 - **pingap-proxy**：服务器的压缩模块换成了 `pingap_core::ResponseCompression`（它会补全 brotli 流，[#256](https://github.com/vicanso/pingap/issues/256)），不再是 pingora 的。自己写的插件如果要调整压缩，得按这个类型取：`downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`。按 pingora 的 `ResponseCompression` 取会拿到空，插件也就静默地不再调整压缩，不会报错。它 deref 到 pingora 的 `ResponseCompressionCtx`，上面的调用不用改。
 - **tokio 低于 1.54**：这里用到 tokio 的 crate 现在都要求 `tokio = ">=1.53.3, <1.54"`。pingora 0.9.0 给每个连接建的缓冲区容量为 0，tokio 1.54 不再接受，第一个连接就会 panic（[cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)）。要求 tokio 1.54 及以上的项目，在 pingora 修复之前用不了这些 crate。
 

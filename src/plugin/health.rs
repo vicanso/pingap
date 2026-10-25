@@ -17,7 +17,6 @@ use super::{
 };
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
-use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, PluginStep, RequestPluginResult};
@@ -223,8 +222,9 @@ impl Plugin for Health {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Puts the `health` plugin into the plugin factory: see
+/// [`super::plugin_factory`].
+pub(super) fn register() {
     get_plugin_factory()
         .register("health", |params| Ok(Arc::new(Health::new(params)?)));
 }

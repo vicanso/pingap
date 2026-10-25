@@ -436,7 +436,7 @@ pub fn validate_upstreams(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
 /// of this build is only warned about, matching runtime behaviour; any other
 /// construction error, an unknown category included, is treated as fatal.
 pub fn validate_plugins(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
-    let factory = pingap_plugin::get_plugin_factory();
+    let factory = crate::plugin::plugin_factory();
     for (name, conf) in config.plugins.iter() {
         match factory.create(conf) {
             Ok(_) => {},

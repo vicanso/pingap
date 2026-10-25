@@ -16,7 +16,6 @@ use super::{Plugin, get_hash_key, get_step_conf, get_str_conf};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, PluginStep, RequestPluginResult, get_hostname,
@@ -202,8 +201,9 @@ impl Plugin for Stats {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Puts the `stats` plugin into the plugin factory: see
+/// [`super::plugin_factory`].
+pub(super) fn register() {
     get_plugin_factory()
         .register("stats", |params| Ok(Arc::new(Stats::new(params)?)));
 }

@@ -554,14 +554,15 @@ pub fn get_hash_key(conf: &PluginConf) -> String {
     format!("{hash:X}")
 }
 
-/// Registers a plugin with the global plugin factory inside a pre-main
-/// constructor. Collapses the identical `#[ctor(unsafe)] fn init()` block
-/// that every plugin module would otherwise repeat.
+/// Gives a plugin module its `register`, which puts the plugin into a
+/// factory under the category the configuration names it with.
+/// [`register_builtin_plugins`] calls every one of them: a module it leaves
+/// out has a `register` nothing calls, which is dead code, and `make lint`
+/// refuses it.
 macro_rules! register_plugin {
     ($category:literal, $ty:ty) => {
-        #[::ctor::ctor(unsafe)]
-        fn init() {
-            $crate::get_plugin_factory().register($category, |params| {
+        pub(crate) fn register(factory: &crate::plugin::PluginFactory) {
+            factory.register($category, |params| {
                 Ok(::std::sync::Arc::new(<$ty>::new(params)?))
             });
         }
@@ -604,7 +605,47 @@ mod uri_block;
 
 mod plugin;
 
-pub use plugin::get_plugin_factory;
+pub use plugin::{PluginFactory, get_plugin_factory};
+
+/// Puts the plugins of this crate into `factory`. The factory of
+/// [`get_plugin_factory`] is filled with them the first time it is asked
+/// for, so they are there for whoever asks, whenever: no code has to run
+/// before `main` or before the first use.
+fn register_builtin_plugins(factory: &plugin::PluginFactory) {
+    accept_encoding::register(factory);
+    bandwidth_limit::register(factory);
+    basic_auth::register(factory);
+    cache::register(factory);
+    combined_auth::register(factory);
+    compression::register(factory);
+    cors::register(factory);
+    csrf::register(factory);
+    directory::register(factory);
+    error_page::register(factory);
+    forward_auth::register(factory);
+    #[cfg(feature = "geo")]
+    geo_restriction::register(factory);
+    hmac_auth::register(factory);
+    ip_restriction::register(factory);
+    ja4_restriction::register(factory);
+    jwt::register(factory);
+    key_auth::register(factory);
+    limit::register(factory);
+    maintenance::register(factory);
+    mirror::register(factory);
+    mock::register(factory);
+    oidc::register(factory);
+    ping::register(factory);
+    redirect::register(factory);
+    referer_restriction::register(factory);
+    request_headers::register(factory);
+    request_id::register(factory);
+    response_headers::register(factory);
+    sub_filter::register(factory);
+    traffic_splitting::register(factory);
+    ua_restriction::register(factory);
+    uri_block::register(factory);
+}
 
 #[cfg(test)]
 mod tests {
@@ -613,6 +654,50 @@ mod tests {
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+
+    /// Every plugin of this crate is in the factory the first time it is
+    /// asked for, with nothing run before: no constructor before `main`.
+    #[test]
+    fn test_builtin_plugins_are_registered() {
+        let mut expected = vec![
+            "accept_encoding",
+            "bandwidth_limit",
+            "basic_auth",
+            "cache",
+            "combined_auth",
+            "compression",
+            "cors",
+            "csrf",
+            "directory",
+            "error_page",
+            "forward_auth",
+            "hmac_auth",
+            "ip_restriction",
+            "ja4_restriction",
+            "jwt",
+            "key_auth",
+            "limit",
+            "maintenance",
+            "mirror",
+            "mock",
+            "oidc",
+            "ping",
+            "redirect",
+            "referer_restriction",
+            "request_headers",
+            "request_id",
+            "response_headers",
+            "sub_filter",
+            "traffic_splitting",
+            "ua_restriction",
+            "uri_block",
+        ];
+        if cfg!(feature = "geo") {
+            expected.push("geo_restriction");
+            expected.sort();
+        }
+        assert_eq!(expected, get_plugin_factory().supported_plugins());
+    }
 
     /// Regression: the address a dry run logs is the one the decision is
     /// made by. It was the first of `X-Forwarded-For`, which without

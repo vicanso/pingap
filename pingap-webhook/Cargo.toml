@@ -26,6 +26,5 @@ tracing = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "rt", "macros", "sync"] }
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

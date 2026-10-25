@@ -23,7 +23,7 @@ cargo build --features=imageoptim     # or --features=full
 
 ## 配置
 
-注册为插件 category `image_optim`：
+由 `pingap_imageoptim::register()` 注册为插件 category `image_optim`。`pingap` 二进制在第一次使用插件工厂时调用它；自己写程序使用本 crate 的，要在创建插件之前调用：
 
 ```toml
 [plugins.imageOptim]

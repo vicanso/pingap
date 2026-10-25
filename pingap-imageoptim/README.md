@@ -27,7 +27,7 @@ cargo build --features=imageoptim     # or --features=full
 
 ## Configuration
 
-Registered as plugin category `image_optim`:
+Registered as plugin category `image_optim` by `pingap_imageoptim::register()`, which the `pingap` binary calls when it first uses the plugin factory; a program of its own that uses this crate calls it before it creates the plugin:
 
 ```toml
 [plugins.imageOptim]

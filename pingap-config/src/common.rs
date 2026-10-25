@@ -1921,6 +1921,8 @@ fn format_byte_size(size: ByteSize) -> String {
     }
 }
 
+// `serialize_with` hands the field over by reference: `&Option<ByteSize>`.
+#[allow(clippy::ref_option)]
 fn serialize_byte_size<S: serde::Serializer>(
     value: &Option<ByteSize>,
     serializer: S,

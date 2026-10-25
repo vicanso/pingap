@@ -22,7 +22,6 @@ use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
-use ctor::ctor;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use hex::ToHex;
@@ -1403,7 +1402,7 @@ async fn handle_request_admin(
             fd_count: info.fd_count,
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
-            supported_plugins: get_plugin_factory().supported_plugins(),
+            supported_plugins: super::plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
             read_only: identity.read_only,
@@ -1556,8 +1555,9 @@ impl Plugin for AdminServe {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Puts the `admin` plugin into the plugin factory: see
+/// [`super::plugin_factory`].
+pub(super) fn register() {
     get_plugin_factory()
         .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)));
 }

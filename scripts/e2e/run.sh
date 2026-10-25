@@ -277,6 +277,17 @@ case_proxy() {
   local features out strict
   features=$(body "http://127.0.0.1:$admin/api/basic" |
     python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["features"]))' 2>/dev/null)
+  # The plugins that are registered when the factory is first used, not
+  # before `main`: the ones of the binary, and image_optim in a full build.
+  local supported
+  supported=$(body "http://127.0.0.1:$admin/api/basic" |
+    python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["supported_plugins"]))' 2>/dev/null)
+  expect_match "the plugins of the binary are registered (admin, health, stats)" \
+    ' admin .* health .* stats ' " $supported "
+  case " $features " in
+  *" full "*)
+    expect_match "and image_optim, in a full build" ' image_optim ' " $supported " ;;
+  esac
   mkdir -p "$DIR/m" && cp "$DIR"/c/*.toml "$DIR/m/"
   printf 'prometheus_metrics = "/metrics"\n' >>"$DIR/m/servers.toml"
   out=$("$BIN" -t -c "$DIR/m" 2>&1 | plain)

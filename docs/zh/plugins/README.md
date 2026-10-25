@@ -121,12 +121,14 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 
 `stats` 与 `admin` 位于 `pingap` 二进制（`src/plugin/`）而非本 crate，因为它们需要进程与配置管理器。`image_optim` 位于 `pingap-imageoptim`。它们都注册到同一工厂，配置方式完全一致。
 
+本 crate 的插件在第一次调用 `get_plugin_factory()` 时就已在工厂里，`main` 之前不运行任何代码。其他地方的插件要在工厂创建它之前用 `get_plugin_factory().register(category, creator)` 加进去：`pingap` 二进制在 `plugin_factory()`（`src/plugin/mod.rs`）里加入自己的插件和 `image_optim`（`pingap_imageoptim::register()`），二进制只通过这个函数使用工厂。
+
 ## 编写插件
 
 1. 实现 `pingap_core::Plugin`。只需覆盖需要的钩子——其余方法默认空操作。
 2. 在 `TryFrom` 中解析 `&PluginConf`，使用 `src/lib.rs` 中的 `get_*_conf` 辅助函数，在此拒绝非法组合，以便 `pingap -t` 在代理启动前发现错误。辅助函数遇到类型不对的值时返回默认值并记下来，工厂随后据此让插件创建失败，所以各个键的类型不需要自己再检查。
 3. 从 `config_key()` 返回 `get_hash_key(conf)`。Pingap 用它判断热更新是否真正改变了该插件实例。
-4. 用 `register_plugin!` 宏注册 category，该宏展开为 pre-main 构造。
+4. 用 `register_plugin!` 宏给模块生成 `register` 函数，并在 `src/lib.rs` 的 `register_builtin_plugins` 里调用它。漏掉的模块，其 `register` 没人调用，`make lint` 会把它当作死代码拒绝。
 5. 只设置响应头、并且希望其他插件直接返回的响应也带上这些头的插件（例如 `cors` 之于 `401`），让 `handles_plugin_response()` 返回 `true`。这类响应不经过响应阶段，此时它的 `handle_response` 也会被调用。
 
 ```rust
@@ -159,6 +161,9 @@ impl Plugin for MyPlugin {
 }
 
 register_plugin!("my_plugin", MyPlugin);
+
+// 并在 `register_builtin_plugins`（src/lib.rs）里：
+//     my_plugin::register(factory);
 ```
 
 ## Features

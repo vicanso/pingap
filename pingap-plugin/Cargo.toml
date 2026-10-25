@@ -31,7 +31,6 @@ bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
 cookie = { workspace = true }
-ctor = { workspace = true }
 crc32fast = { workspace = true }
 dashmap = { workspace = true }
 fancy-regex = { workspace = true }
@@ -78,6 +77,5 @@ tokio-test = { workspace = true }
 name = "bench"
 harness = false
 
-[lints.clippy]
-# Set the unwrap_used lint level to deny
-unwrap_used = "deny"
+[lints]
+workspace = true

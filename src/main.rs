@@ -45,9 +45,6 @@ use pingap_certificate::{
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
 use pingap_core::BackgroundTaskService;
-#[cfg(feature = "imageoptim")]
-#[allow(unused_imports)]
-use pingap_imageoptim::ImageOptim;
 use pingap_logger::parse_access_log_directive;
 use pingap_logger::{
     AsyncLoggerTask, LogCompressParams, new_async_logger,
@@ -60,7 +57,6 @@ use pingap_performance::new_performance_metrics_log_service;
 use pingap_performance::{
     set_metrics_location_provider, set_metrics_upstream_provider,
 };
-use pingap_plugin::get_plugin_factory;
 use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
@@ -1236,7 +1232,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     info!(
         target: LOG_TARGET,
-        plugins = get_plugin_factory().supported_plugins().join(","),
+        plugins = plugin::plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
     let (_, error) = plugin::try_init_plugins(&config.plugins);

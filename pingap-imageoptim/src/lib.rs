@@ -18,7 +18,6 @@ use crate::optimizer::{
 };
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use ctor::ctor;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
@@ -470,8 +469,11 @@ impl Plugin for ImageOptim {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
+/// Puts the `image_optim` plugin into the factory of
+/// [`get_plugin_factory`]. The `pingap` binary calls it when the factory is
+/// first used; a program of its own that uses this crate calls it before it
+/// creates the plugin.
+pub fn register() {
     get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))
     });
