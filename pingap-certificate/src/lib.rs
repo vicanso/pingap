@@ -363,15 +363,10 @@ impl CertificatePair {
     }
 }
 
-/// The certificates of `certificates` for the server name `sni`: those of
-/// the name itself, or else those of its wildcard (`*.example.com`), or
-/// else the default ones. The first of the three that has any is the
-/// answer, whole: a name with only an RSA certificate of its own is not
-/// given the other kind from its wildcard.
-///
-/// Names are compared without regard to case, as DNS compares them.
-/// OpenSSL hands the name over as the client wrote it.
-pub fn lookup_certificates(
+/// The certificates of `certificates` that match `sni` by domain or
+/// wildcard (`*.example.com`), without falling back to the default
+/// certificate.
+fn lookup_domain_certificates(
     certificates: &DynamicCertificates,
     sni: &str,
 ) -> CertificatePair {
@@ -396,7 +391,76 @@ pub fn lookup_certificates(
             return pair;
         }
     }
-    at(DEFAULT_SERVER_NAME)
+    CertificatePair::default()
+}
+
+/// The certificates of `certificates` for the server name `sni`: those of
+/// the name itself, or else those of its wildcard (`*.example.com`), or
+/// else the default ones. The first of the three that has any is the
+/// answer, whole: a name with only an RSA certificate of its own is not
+/// given the other kind from its wildcard.
+///
+/// Names are compared without regard to case, as DNS compares them.
+/// OpenSSL hands the name over as the client wrote it.
+pub fn lookup_certificates(
+    certificates: &DynamicCertificates,
+    sni: &str,
+) -> CertificatePair {
+    let pair = lookup_domain_certificates(certificates, sni);
+    if !pair.is_empty() {
+        return pair;
+    }
+    CertificatePair {
+        other: certificates.get(DEFAULT_SERVER_NAME).cloned(),
+        rsa: certificates
+            .get(&certificate_key(DEFAULT_SERVER_NAME, true))
+            .cloned(),
+    }
+}
+
+fn same_certificate(
+    a: Option<&Arc<TlsCertificate>>,
+    b: Option<&Arc<TlsCertificate>>,
+) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Whether a request for `host` may be served on a TLS connection opened
+/// with `sni` (`strict_sni`, RFC 9110 §15.5.20).
+///
+/// The same name always may. Two different names may when both match a
+/// domain or wildcard entry in `certificates` (not the fallback default
+/// certificate) and select the same certificate pair, and neither entry
+/// is a CA that mints a per-host certificate on the fly.
+pub fn sni_matches_host(
+    certificates: &DynamicCertificates,
+    sni: Option<&str>,
+    host: &str,
+) -> bool {
+    let Some(sni) = sni
+        .map(pingap_core::strip_root_label)
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    let host = pingap_core::strip_root_label(host);
+    if host.is_empty() {
+        return false;
+    }
+    if sni.eq_ignore_ascii_case(host) {
+        return true;
+    }
+    let sni_pair = lookup_domain_certificates(certificates, sni);
+    if sni_pair.is_empty() || sni_pair.iter().any(|cert| cert.is_ca) {
+        return false;
+    }
+    let host_pair = lookup_domain_certificates(certificates, host);
+    same_certificate(sni_pair.other.as_ref(), host_pair.other.as_ref())
+        && same_certificate(sni_pair.rsa.as_ref(), host_pair.rsa.as_ref())
 }
 
 pub trait CertificateProvider: Send + Sync {

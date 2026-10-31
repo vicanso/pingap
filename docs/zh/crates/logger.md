@@ -132,6 +132,7 @@ let parser = Parser::from(format);
 | `location` | 匹配到的 location 名称 |
 | `tls_version` | 下游 TLS 版本：OpenSSL 构建为 `TLSv1.3`，rustls 构建为 `TLSv1_3` |
 | `tls_cipher` | 下游 TLS 密码套件 |
+| `tls_server_name` | 客户端在下游 TLS 握手中发送的 SNI |
 | `tls_client_subject`、`tls_client_fingerprint`、`tls_client_serial`、`tls_client_verified` | 配了 [`tls_client_ca`](proxy.md#客户端证书-双向-tls) 的 server 上客户端出示的证书：subject、SHA-256、序列号，以及有没有出示证书（`true` / `false`） |
 | `tls_handshake_time` | 下游 TLS 握手耗时，仅连接上的第一个请求有 |
 | `ja4` | 客户端的 [JA4 指纹](proxy.md#ja4-指纹)，如 `t13d1516h2_8daaf6152771_e5627efa2ab1`；需要 server 设置 `ja4 = true` |

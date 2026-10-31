@@ -206,6 +206,10 @@ pub struct Server {
     /// Whether to use global certificate store for TLS
     global_certificates: bool,
 
+    /// Answer 421 Misdirected Request when a TLS request's Host would
+    /// select a different certificate than the connection's SNI did.
+    strict_sni: bool,
+
     /// The JA4 fingerprints of this server's open TLS connections, filled
     /// before each handshake; `None` unless `ja4` is enabled.
     ja4: Option<Arc<Ja4Store>>,
@@ -423,7 +427,7 @@ fn cache_variance(
 /// once; any other status is generated on demand the way pingora does it.
 static ERROR_RESPONSES: LazyLock<AHashMap<u16, ResponseHeader>> =
     LazyLock::new(|| {
-        [400, 404, 408, 413, 429, 500, 502, 503, 504]
+        [400, 404, 408, 413, 421, 429, 500, 502, 503, 504]
             .into_iter()
             .map(|code| (code, error_resp::gen_error_response(code)))
             .collect()
@@ -610,6 +614,7 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
+            strict_sni: conf.strict_sni,
             ja4: conf.ja4.then(|| Arc::new(Ja4Store::default())),
             proxy_protocol: conf.proxy_protocol,
             enabled_h2: conf.enabled_h2,
@@ -904,16 +909,18 @@ impl Server {
             {
                 ctx.timing.tls_handshake = Some(handshake as i32);
             }
-            ctx.conn.tls_cipher = digest_detail.tls_cipher;
-            ctx.conn.tls_version = digest_detail.tls_version;
-            ctx.conn.tls_client_cert = digest_detail.tls_client_cert;
-            // The fingerprint was filed under this connection's socket
-            // digest before its handshake.
-            if let Some(store) = &self.ja4
-                && digest.ssl_digest.is_some()
-                && let Some(socket_digest) = &digest.socket_digest
-            {
-                ctx.conn.ja4 = store.get(socket_digest);
+            if digest.ssl_digest.is_some() {
+                ctx.conn.tls_cipher = digest_detail.tls_cipher;
+                ctx.conn.tls_version = digest_detail.tls_version;
+                ctx.conn.tls_server_name = digest_detail.tls_server_name;
+                ctx.conn.tls_client_cert = digest_detail.tls_client_cert;
+                // The fingerprint was filed under this connection's socket
+                // digest before its handshake.
+                if let Some(store) = &self.ja4
+                    && let Some(socket_digest) = &digest.socket_digest
+                {
+                    ctx.conn.ja4 = store.get(socket_digest);
+                }
             }
         };
         accept_request();
@@ -1742,6 +1749,24 @@ impl ProxyHttp for Server {
         #[cfg(feature = "tracing")]
         if self.enabled_otel {
             initialize_telemetry(&self.name, session, ctx);
+        }
+        // RFC 9110 §15.5.20: before a location is chosen by `Host`, refuse
+        // a request on a TLS connection whose `Host` would have chosen a
+        // different certificate than the handshake's SNI did.
+        if self.strict_sni && ctx.conn.tls_version.is_some() {
+            let host =
+                pingap_core::get_host(session.req_header()).unwrap_or_default();
+            let certs = self.certificate_provider.list();
+            if !pingap_certificate::sni_matches_host(
+                &certs,
+                ctx.conn.tls_server_name.as_deref(),
+                host,
+            ) {
+                return Err(new_internal_error(
+                    421,
+                    "request host does not match TLS SNI",
+                ));
+            }
         }
         self.find_and_apply_location(session, ctx).await?;
 
@@ -6351,5 +6376,50 @@ addr = "127.0.0.1:6188"
             "{response}"
         );
         assert_eq!(false, response.contains("ReadError"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn test_strict_sni() {
+        let mut server = new_server();
+        server.strict_sni = true;
+
+        let run = async |server: &Server, sni: Option<&str>, host: &str| {
+            let req =
+                format!("GET /vicanso/pingap HTTP/1.1\r\nHost: {host}\r\n\r\n");
+            let mock_io = Builder::new().read(req.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            ctx.conn.tls_version = Some("TLSv1.3".into());
+            ctx.conn.tls_server_name = sni.map(Arc::from);
+            let res = server.early_request_filter(&mut session, &mut ctx).await;
+            (res, ctx)
+        };
+
+        // Matching SNI and Host: accepted.
+        let (res, ctx) =
+            run(&server, Some("a.example.com"), "a.example.com:443").await;
+        assert_eq!(true, res.is_ok());
+        assert_eq!(true, ctx.upstream.location_instance.is_some());
+
+        // Mismatched Host: rejected with 421 Misdirected Request before
+        // location matching.
+        let (res, ctx) =
+            run(&server, Some("a.example.com"), "b.example.com").await;
+        let err = res.unwrap_err();
+        assert_eq!(pingora::ErrorType::HTTPStatus(421), *err.etype());
+        assert_eq!(true, ctx.upstream.location_instance.is_none());
+
+        // Missing SNI on a TLS connection: rejected with 421.
+        let (res, _) = run(&server, None, "a.example.com").await;
+        let err = res.unwrap_err();
+        assert_eq!(pingora::ErrorType::HTTPStatus(421), *err.etype());
+
+        // Without strict_sni: mismatched Host is allowed.
+        server.strict_sni = false;
+        let (res, ctx) =
+            run(&server, Some("a.example.com"), "b.example.com").await;
+        assert_eq!(true, res.is_ok());
+        assert_eq!(true, ctx.upstream.location_instance.is_some());
     }
 }

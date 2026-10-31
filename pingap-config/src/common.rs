@@ -1354,6 +1354,11 @@ pub struct ServerConf {
     /// TLS listener (`global_certificates`).
     pub ja4: Option<bool>,
 
+    /// Answer `421 Misdirected Request` when the request's `Host` would
+    /// select a different certificate than the TLS connection's SNI did
+    /// (RFC 9110 §15.5.20). Needs a TLS listener (`global_certificates`).
+    pub strict_sni: Option<bool>,
+
     /// Read the PROXY protocol header (version 1 or 2) a load balancer
     /// puts in front of a connection, and take the client's address
     /// from it. Only from the addresses of `basic.trusted_proxies`,
@@ -1529,6 +1534,16 @@ impl ServerConf {
             return Err(Error::Invalid {
                 message:
                     "ja4 needs a TLS listener (global_certificates = true)"
+                        .to_string(),
+            });
+        }
+
+        if self.strict_sni.unwrap_or_default()
+            && !self.global_certificates.unwrap_or_default()
+        {
+            return Err(Error::Invalid {
+                message:
+                    "strict_sni needs a TLS listener (global_certificates = true)"
                         .to_string(),
             });
         }
@@ -4042,6 +4057,21 @@ upstream = "not-a-reference"
             toml::from_str("addr = \"127.0.0.1:3001\"\nja4 = true\n").unwrap();
         assert_eq!(
             "Invalid error ja4 needs a TLS listener (global_certificates = true)",
+            conf.validate().unwrap_err().to_string()
+        );
+
+        let conf: ServerConf = toml::from_str(
+            "addr = \"127.0.0.1:3001\"\nglobal_certificates = true\nstrict_sni = true\n",
+        )
+        .unwrap();
+        assert_eq!(Some(true), conf.strict_sni);
+        assert_eq!(true, conf.validate().is_ok());
+
+        let conf: ServerConf =
+            toml::from_str("addr = \"127.0.0.1:3001\"\nstrict_sni = true\n")
+                .unwrap();
+        assert_eq!(
+            "Invalid error strict_sni needs a TLS listener (global_certificates = true)",
             conf.validate().unwrap_err().to_string()
         );
     }

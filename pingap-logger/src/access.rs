@@ -527,8 +527,8 @@ fn escape_json(buf: &mut BytesMut, start: usize) {
 }
 
 /// Whether a tag's value is text from outside: the request line, a header
-/// of either side, the client address a header can give. The rest is
-/// numbers, times and names from the configuration.
+/// of either side, the client address a header can give, the TLS SNI. The
+/// rest is numbers, times and names from the configuration.
 const fn is_outside_text(category: &TagCategory) -> bool {
     matches!(
         category,
@@ -543,6 +543,7 @@ const fn is_outside_text(category: &TagCategory) -> bool {
             | TagCategory::RequestHeader
             | TagCategory::ResponseHeader
             | TagCategory::RequestId
+            | TagCategory::Context(CtxLogField::TlsServerName)
     )
 }
 

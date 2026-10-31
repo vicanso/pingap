@@ -179,6 +179,17 @@ export default function Servers() {
       options: newBooleanOptions(),
     },
     {
+      name: "strict_sni",
+      section: sec.tls,
+      label: serverI18n("strictSni"),
+      placeholder: "",
+      tips: serverI18n("strictSniTips"),
+      defaultValue: serverConfig.strict_sni,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "ja4",
       section: sec.tls,
       label: serverI18n("ja4"),

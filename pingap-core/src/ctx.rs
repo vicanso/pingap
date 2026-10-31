@@ -177,6 +177,9 @@ pub struct ConnectionInfo {
     pub tls_version: Option<Cow<'static, str>>,
     /// The TLS cipher used for the connection, if any.
     pub tls_cipher: Option<Cow<'static, str>>,
+    /// The server name (SNI) the client sent in the TLS handshake, if any.
+    /// Shared by every request on the connection.
+    pub tls_server_name: Option<Arc<str>>,
     /// The JA4 fingerprint of the client's ClientHello, when the server
     /// collects it. Shared by every request on the connection.
     pub ja4: Option<Arc<Ja4Fingerprint>>,
@@ -200,6 +203,18 @@ pub struct TlsClientCert {
     pub fingerprint: String,
     /// The serial number, in lower case hex.
     pub serial: String,
+}
+
+/// What [`get_digest_detail`] reads from [`SslDigest::extension`]: the
+/// server name (SNI) and the client certificate from the TLS handshake,
+/// built once when the handshake finishes and shared across every
+/// request on the connection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsHandshakeInfo {
+    /// The server name (SNI) the client sent in the ClientHello, if any.
+    pub server_name: Option<Arc<str>>,
+    /// The verified client certificate, on a server with `tls_client_ca`.
+    pub client_cert: Option<Arc<TlsClientCert>>,
 }
 
 /// All timing-related metrics for the request lifecycle.
@@ -961,6 +976,9 @@ pub enum CtxLogField {
     TlsVersion,
     /// `tls_cipher`: the downstream TLS cipher.
     TlsCipher,
+    /// `tls_server_name`: the server name (SNI) the client sent in the
+    /// TLS handshake.
+    TlsServerName,
     /// `tls_client_subject`: the subject of the certificate the client
     /// showed.
     TlsClientSubject,
@@ -1069,6 +1087,8 @@ pub struct DigestDetail {
     pub tls_version: Option<Cow<'static, str>>,
     /// TLS cipher suite in use if using HTTPS
     pub tls_cipher: Option<Cow<'static, str>>,
+    /// The server name (SNI) the peer sent in the TLS handshake, if any.
+    pub tls_server_name: Option<Arc<str>>,
     /// The certificate of the peer, where the listener's handshake kept
     /// one for the connection.
     pub tls_client_cert: Option<Arc<TlsClientCert>>,
@@ -1114,6 +1134,7 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         };
     };
 
+    let handshake = ssl_digest.extension.get::<TlsHandshakeInfo>();
     DigestDetail {
         connection_reused,
         tcp_established,
@@ -1127,10 +1148,10 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         tls_cipher: Some(ssl_digest.cipher.clone()),
         // Made once, when the handshake was done: a request takes a
         // reference to it.
-        tls_client_cert: ssl_digest
-            .extension
-            .get::<Arc<TlsClientCert>>()
-            .cloned(),
+        tls_server_name: handshake.and_then(|h| h.server_name.clone()),
+        tls_client_cert: handshake.and_then(|h| h.client_cert.clone()).or_else(
+            || ssl_digest.extension.get::<Arc<TlsClientCert>>().cloned(),
+        ),
     }
 }
 
@@ -1575,6 +1596,11 @@ impl Ctx {
             },
             CtxLogField::TlsCipher => {
                 if let Some(value) = &self.conn.tls_cipher {
+                    buf.extend(value.as_bytes());
+                }
+            },
+            CtxLogField::TlsServerName => {
+                if let Some(value) = &self.conn.tls_server_name {
                     buf.extend(value.as_bytes());
                 }
             },
@@ -2230,13 +2256,16 @@ mod tests {
             ctx.append_log_value(&mut buf, key);
             String::from_utf8_lossy(&buf).to_string()
         };
+        assert_eq!("", print(&ctx, "tls_server_name"));
         assert_eq!("", print(&ctx, "tls_client_subject"));
         assert_eq!("false", print(&ctx, "tls_client_verified"));
+        ctx.conn.tls_server_name = Some(Arc::from("a.example.com"));
         ctx.conn.tls_client_cert = Some(Arc::new(TlsClientCert {
             subject: "O=Example, CN=device-42".to_string(),
             fingerprint: "b545db7a".to_string(),
             serial: "3429".to_string(),
         }));
+        assert_eq!("a.example.com", print(&ctx, "tls_server_name"));
         assert_eq!(
             "O=Example, CN=device-42",
             print(&ctx, "tls_client_subject")
@@ -2344,6 +2373,7 @@ mod tests {
                 CtxLogField::UpstreamConnectOffloadWaitTime,
             ),
             ("tls_version", CtxLogField::TlsVersion),
+            ("tls_server_name", CtxLogField::TlsServerName),
             ("tls_client_subject", CtxLogField::TlsClientSubject),
             ("tls_client_fingerprint", CtxLogField::TlsClientFingerprint),
             ("tls_client_serial", CtxLogField::TlsClientSerial),

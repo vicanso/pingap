@@ -104,6 +104,11 @@ locations = ["lo"]
 # `ja4_restriction` plugins. Needs `global_certificates = true`.
 # ja4 = true
 
+# Answer `421 Misdirected Request` when a request's `Host` would select a
+# different certificate than the TLS connection's SNI did (RFC 9110 §15.5.20).
+# Needs `global_certificates = true`. Default `false`
+# strict_sni = true
+
 # Read the PROXY protocol header (v1 or v2) of a load balancer that works on
 # connections (a cloud NLB, HAProxy in TCP mode) and take the address of the
 # client from it. Only from the addresses of `basic.trusted_proxies`, which

@@ -362,7 +362,17 @@ Notes on a few of these:
 - `global_certificates = true` switches the listener to TLS using the dynamic,
   SNI-driven certificate store from
   [pingap-certificate](../pingap-certificate/README.md). Without it the listener
-  is plain HTTP, and `enabled_h2` then means h2c.
+  is plain HTTP, and `enabled_h2` then means h2c. The SNI the client sent in
+  the handshake is available on every request of the connection as
+  `$tls_server_name` in headers and `{:tls_server_name}` in the access log
+  (empty when the client sent none or on plain HTTP).
+- `strict_sni = true` answers `421 Misdirected Request` (RFC 9110 §15.5.20)
+  before location matching when a request's `Host` on a TLS connection would
+  select a different certificate than the handshake's SNI did, or when the
+  client sent no SNI. HTTP/2 connection coalescing across hosts covered by the
+  same wildcard or multi-SAN certificate continues to pass; a catch-all default
+  certificate (`is_default = true`) does not count as a match for an unlisted
+  host. Needs `global_certificates = true`, which config validation checks.
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` /
   `tls_ciphersuites` apply only on an **OpenSSL** build. Version names are
   `tlsv1.1` / `tlsv1.2` / `tlsv1.3` (case-insensitive, so `TLSv1.2` also

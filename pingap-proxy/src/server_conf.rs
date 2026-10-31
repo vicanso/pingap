@@ -89,6 +89,10 @@ pub struct ServerConf {
     // False means the server is using http protocol
     pub global_certificates: bool,
 
+    // Answer 421 Misdirected Request when the request Host does not match
+    // the connection's TLS SNI
+    pub strict_sni: bool,
+
     // Compute the JA4 fingerprint of each TLS client (needs TLS)
     pub ja4: bool,
 
@@ -190,6 +194,7 @@ impl fmt::Display for ServerConf {
         // --- TLS ---
         writeln!(f, "  - TLS Settings:")?;
         writeln!(f, "    Global Certificates: {}", self.global_certificates)?;
+        writeln!(f, "    Strict SNI: {}", self.strict_sni)?;
         writeln!(f, "    JA4 Fingerprint: {}", self.ja4)?;
         writeln!(
             f,
@@ -307,6 +312,7 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             locations: item.locations.unwrap_or_default(),
             threads: item.threads,
             global_certificates: item.global_certificates.unwrap_or_default(),
+            strict_sni: item.strict_sni.unwrap_or_default(),
             ja4: item.ja4.unwrap_or_default(),
             proxy_protocol: item.proxy_protocol.unwrap_or_default(),
             enabled_h2: item.enabled_h2.unwrap_or_default(),
@@ -386,6 +392,7 @@ mod tests {
     Downstream Write Timeout: default
   - TLS Settings:
     Global Certificates: false
+    Strict SNI: false
     JA4 Fingerprint: false
     Min Version: 
     Max Version: 
@@ -421,6 +428,7 @@ mod tests {
     Downstream Write Timeout: default
   - TLS Settings:
     Global Certificates: false
+    Strict SNI: false
     JA4 Fingerprint: false
     Min Version: 
     Max Version: 

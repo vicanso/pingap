@@ -234,7 +234,8 @@ modules = ["grpc-web"]
 
 - `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。
 - `tcp_idle`、`tcp_interval`、`tcp_probe_count`、`tcp_user_timeout`（仅 Linux）四项只要配置了其中一项，就会对接入的连接开启 TCP keepalive。没有配置的项取内核默认值（空闲 7200s、探测间隔 75s、探测 9 次），所以 `tcp_user_timeout` 可以单独设置。空闲时间和间隔按整秒生效，至少 `1s`；探测次数至少为 1。更小的值在配置校验时被拒绝，因为内核会在每个连接上拒绝它们。
-- `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。
+- `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。客户端在握手里发送的 SNI 在该连接的每个请求上都可通过请求头/响应头中的 `$tls_server_name` 与访问日志中的 `{:tls_server_name}` 获取（未发 SNI 或明文 HTTP 时为空）。
+- `strict_sni = true` 在 TLS 连接上请求的 `Host` 所选证书与握手时 SNI 所选证书不一致（或客户端未发送 SNI）时，在匹配 location 之前返回 `421 Misdirected Request`（RFC 9110 §15.5.20）。共享同一张通配符证书或多域名（SAN）证书的 HTTP/2 连接复用仍可正常通过；兜底默认证书（`is_default = true`）不会让未列出的域名视为匹配。需要 `global_certificates = true`，配置校验会检查。
 - `tls_min_version` / `tls_max_version` / `tls_cipher_list` / `tls_ciphersuites` 仅在 **OpenSSL** 构建下生效。版本名接受 `tlsv1.1` / `tlsv1.2` / `tlsv1.3`（大小写不敏感，`TLSv1.2` 亦可）。`tls-rustls` 构建固定提供 TLS 1.2/1.3 与 rustls 默认密码套件；配置了这些字段会在启动 / `--test` / auto-restart 的配置校验阶段失败（见 [pingap-certificate](certificate.md)）。Admin UI 在 rustls 二进制上会禁用对应表单项。
 - `h2_max_concurrent_streams`、`h2_max_header_list_size`、`h2_initial_window_size`、`h2_initial_connection_window_size` 与 `h2_idle_timeout` 调整监听器面向客户端的 HTTP/2 SETTINGS。不设置即沿用 pingora 的有界默认值（100 个并发流、64 KiB 请求头列表），它们限制单个客户端连接能占用的内存；gRPC 汇聚或大请求头的场景应有意识地调高，而不是去掉上限。
 - `ja4 = true` 为每个客户端计算 JA4 TLS 指纹，见 [JA4 指纹](#ja4-指纹)。需要 `global_certificates = true`，配置校验会检查。

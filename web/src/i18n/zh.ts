@@ -375,6 +375,9 @@ export default {
     threadsPlaceholder: "输入服务线程数",
     threadsTips: "填 0 表示按 CPU 核数；留空则继承 basic.threads。",
     globalCertificates: "使用全局证书",
+    strictSni: "严格 SNI 校验",
+    strictSniTips:
+      "当 TLS 连接上请求的 Host 所选证书与握手时 SNI 所选证书不一致时返回 421 Misdirected Request（RFC 9110 §15.5.20）。需要开启使用全局证书。",
     ja4: "JA4 指纹",
     ja4Tips:
       "根据客户端的 ClientHello 计算 JA4 TLS 指纹，可在请求头中用 $ja4、在访问日志中用 {:ja4} 获取。需要开启使用全局证书。",

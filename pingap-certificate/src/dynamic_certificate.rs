@@ -22,7 +22,7 @@ use ahash::AHashMap;
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;
-use pingap_core::TlsClientCert;
+use pingap_core::{TlsClientCert, TlsHandshakeInfo};
 use pingora::listeners::tls::TlsSettings;
 #[cfg(feature = "openssl")]
 use pingora::tls::ssl::{NameType, Ssl, SslContextBuilder, SslRef, SslVersion};
@@ -254,7 +254,7 @@ fn client_ca_pems(server: &str, value: &str) -> Result<Vec<Vec<u8>>> {
 fn tls_client_cert(
     der: &[u8],
     fingerprint: &[u8],
-) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+) -> Option<Arc<TlsClientCert>> {
     let (_, cert) = x509_parser::parse_x509_certificate(der).ok()?;
     let hex = |bytes: &[u8]| {
         bytes.iter().fold(
@@ -276,12 +276,29 @@ fn tls_client_cert(
         .unwrap_or(serial.len().saturating_sub(1))..];
     // Stored as an `Arc` of its own, so that a request takes a reference
     // and no copy.
-    let info = Arc::new(TlsClientCert {
+    Some(Arc::new(TlsClientCert {
         subject: subject_text(cert.subject()),
         fingerprint: hex(fingerprint),
         serial: hex(serial),
-    });
-    Some(Arc::new(info))
+    }))
+}
+
+/// The extension value stored on the connection's [`SslDigest`] once its
+/// handshake finishes: the SNI and the client certificate, if any.
+fn tls_handshake_info(
+    server_name: Option<&str>,
+    client_cert: Option<Arc<TlsClientCert>>,
+) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+    let server_name = server_name
+        .filter(|name| !name.is_empty())
+        .map(Arc::<str>::from);
+    if server_name.is_none() && client_cert.is_none() {
+        return None;
+    }
+    Some(Arc::new(TlsHandshakeInfo {
+        server_name,
+        client_cert,
+    }))
 }
 
 /// The value of one part of a name, with what could be taken for the end
@@ -617,15 +634,12 @@ impl GlobalCertificate {
     ) -> Result<TlsSettings> {
         let name = params.server_name.clone();
         // No certificate files: the resolver below supplies every certificate.
-        // With clients to verify the settings carry this as their
-        // callbacks too: what is kept of a client's certificate is made
-        // when its handshake is done.
-        let settings = if params.client_ca.is_some() {
-            TlsSettings::with_callbacks(Box::new(self.clone()))
-        } else {
-            TlsSettings::intermediate("", "")
-        };
-        let mut tls_settings = settings.map_err(|e| Error::Invalid {
+        // The callbacks record the SNI (and the client's certificate when
+        // `client_ca` is set) once the handshake finishes.
+        let mut tls_settings = TlsSettings::with_callbacks(Box::new(
+            self.clone(),
+        ))
+        .map_err(|e| Error::Invalid {
             category: "new_tls_settings".to_string(),
             message: e.to_string(),
         })?;
@@ -709,24 +723,27 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         }
     }
 
-    /// Keeps what a request is told of the client's certificate. There is
-    /// one only on a server that asks for it, and then it has verified.
+    /// Keeps the server name (SNI) and what a request is told of the
+    /// client's certificate (on a server that asks for it, once verified).
     async fn handshake_complete_callback(
         &self,
         ssl: &SslRef,
     ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
-        let cert = ssl.peer_certificate()?;
-        let der = cert.to_der().ok()?;
-        let fingerprint = cert
-            .digest(pingora::tls::hash::MessageDigest::sha256())
-            .ok()?;
-        tls_client_cert(&der, &fingerprint)
+        let server_name = ssl.servername(NameType::HOST_NAME);
+        let client_cert = ssl.peer_certificate().and_then(|cert| {
+            let der = cert.to_der().ok()?;
+            let fingerprint = cert
+                .digest(pingora::tls::hash::MessageDigest::sha256())
+                .ok()?;
+            tls_client_cert(&der, &fingerprint)
+        });
+        tls_handshake_info(server_name, client_cert)
     }
 }
 
 /// With rustls the certificates come from the resolver below; what is
-/// left for the callbacks is the client's certificate, once the
-/// handshake is done.
+/// left for the callbacks is the server name (SNI) and the client's
+/// certificate, once the handshake is done.
 #[cfg(feature = "tls-rustls")]
 #[async_trait]
 impl pingora::listeners::TlsAccept for GlobalCertificate {
@@ -734,11 +751,14 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         &self,
         tls: &pingora::protocols::tls::TlsRef,
     ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
-        let der = tls.peer_certificate_der()?;
-        let fingerprint = pingora::tls::hash_certificate(
-            &pingora::tls::CertificateDer::from(der),
-        );
-        tls_client_cert(der, &fingerprint)
+        let server_name = tls.server_name();
+        let client_cert = tls.peer_certificate_der().and_then(|der| {
+            let fingerprint = pingora::tls::hash_certificate(
+                &pingora::tls::CertificateDer::from(der),
+            );
+            tls_client_cert(der, &fingerprint)
+        });
+        tls_handshake_info(server_name, client_cert)
     }
 }
 
@@ -931,15 +951,23 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     fn test_tls_client_cert() {
         let (_, pem) =
             x509_parser::pem::parse_x509_pem(CLIENT_CERT.as_bytes()).unwrap();
-        let extension =
+        let cert =
             tls_client_cert(&pem.contents, &[0xb5, 0x45, 0x0d, 0x00]).unwrap();
-        let cert = extension.downcast_ref::<Arc<TlsClientCert>>().unwrap();
         assert_eq!("O=Pingap Test, CN=test-client", cert.subject);
         // The digest the handshake made of the certificate, in hex.
         assert_eq!("b5450d00", cert.fingerprint);
         assert_eq!("342969e4ffd50aa62fcb10ffa46db31860d34251", cert.serial);
         // What is no certificate gives nothing.
         assert_eq!(true, tls_client_cert(b"junk", &[1]).is_none());
+
+        assert_eq!(true, tls_handshake_info(None, None).is_none());
+        assert_eq!(true, tls_handshake_info(Some(""), None).is_none());
+        let extension =
+            tls_handshake_info(Some("a.example.com"), Some(cert.clone()))
+                .unwrap();
+        let info = extension.downcast_ref::<TlsHandshakeInfo>().unwrap();
+        assert_eq!(Some("a.example.com"), info.server_name.as_deref());
+        assert_eq!(Some(&cert), info.client_cert.as_ref());
 
         // A value can not pass for more parts of the name than it is, nor
         // for the start of another line.
@@ -1772,5 +1800,100 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(1720232616, info.not_before);
         assert_eq!(1791253416, info.not_after);
         assert_eq!(true, dynamic_certificate.certificate.is_some());
+    }
+
+    #[test]
+    fn test_sni_matches_host() {
+        use crate::sni_matches_host;
+
+        let mut configs = HashMap::new();
+        let mut wild = new_conf("*.example.com", false);
+        wild.is_default = Some(true);
+        configs.insert("wild".to_string(), wild);
+        configs.insert(
+            "specific".to_string(),
+            new_conf("specific.example.com", false),
+        );
+        configs.insert(
+            "san".to_string(),
+            new_conf("one.san.test, two.san.test", false),
+        );
+        let mut ca = new_conf("*.ca.test", false);
+        ca.is_ca = Some(true);
+        configs.insert("ca".to_string(), ca);
+
+        let (certs, errors) = parse_certificates(&configs);
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+
+        // Same name (case-insensitively, with or without root dot): always ok.
+        assert_eq!(
+            true,
+            sni_matches_host(&certs, Some("a.example.com"), "a.example.com")
+        );
+        assert_eq!(
+            true,
+            sni_matches_host(&certs, Some("A.Example.COM"), "a.example.com.")
+        );
+
+        // Missing SNI or missing Host: refused.
+        assert_eq!(false, sni_matches_host(&certs, None, "a.example.com"));
+        assert_eq!(false, sni_matches_host(&certs, Some(""), "a.example.com"));
+        assert_eq!(false, sni_matches_host(&certs, Some("a.example.com"), ""));
+
+        // Two names covered by the same wildcard (neither has a specific cert): ok.
+        assert_eq!(
+            true,
+            sni_matches_host(&certs, Some("a.example.com"), "b.example.com")
+        );
+
+        // Two names on the same SAN certificate: ok.
+        assert_eq!(
+            true,
+            sni_matches_host(&certs, Some("one.san.test"), "two.san.test")
+        );
+
+        // Coalescing from wildcard to a host that has its own cert, or vice versa: 421.
+        assert_eq!(
+            false,
+            sni_matches_host(
+                &certs,
+                Some("a.example.com"),
+                "specific.example.com"
+            )
+        );
+        assert_eq!(
+            false,
+            sni_matches_host(
+                &certs,
+                Some("specific.example.com"),
+                "a.example.com"
+            )
+        );
+
+        // Different certificates: 421.
+        assert_eq!(
+            false,
+            sni_matches_host(&certs, Some("a.example.com"), "one.san.test")
+        );
+
+        // Unknown host must not pass merely because `wild` is `is_default = true`.
+        assert_eq!(
+            false,
+            sni_matches_host(&certs, Some("a.example.com"), "other.org")
+        );
+        assert_eq!(
+            false,
+            sni_matches_host(&certs, Some("other.org"), "another.org")
+        );
+
+        // Dynamic CA mints per-SNI leaf certs, so two different hosts never share a cert.
+        assert_eq!(
+            true,
+            sni_matches_host(&certs, Some("a.ca.test"), "a.ca.test")
+        );
+        assert_eq!(
+            false,
+            sni_matches_host(&certs, Some("a.ca.test"), "b.ca.test")
+        );
     }
 }

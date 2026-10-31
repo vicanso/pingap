@@ -156,6 +156,7 @@ The same keys work in header values as `:<context_key>`, for example
 | `location` | Name of the matched location |
 | `tls_version` | Downstream TLS version: `TLSv1.3` on an OpenSSL build, `TLSv1_3` on a rustls build |
 | `tls_cipher` | Downstream TLS cipher |
+| `tls_server_name` | Downstream TLS SNI the client sent in the handshake |
 | `tls_client_subject`, `tls_client_fingerprint`, `tls_client_serial`, `tls_client_verified` | The certificate the client showed on a server with [`tls_client_ca`](../pingap-proxy/README.md#client-certificates-mutual-tls): its subject, SHA-256 and serial number, and `true` / `false` for whether there is one |
 | `tls_handshake_time` | Downstream TLS handshake, on the first request of a connection |
 | `ja4` | The client's [JA4 fingerprint](../pingap-proxy/README.md#ja4-fingerprint), e.g. `t13d1516h2_8daaf6152771_e5627efa2ab1`; needs `ja4 = true` on the server |

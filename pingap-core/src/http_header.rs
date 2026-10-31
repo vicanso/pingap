@@ -51,6 +51,7 @@ const CLIENT_IP_TAG: &[u8] = b"$client_ip";
 const FORWARDED_PROTO_TAG: &[u8] = b"$forwarded_proto";
 const FORWARDED_HOST_TAG: &[u8] = b"$forwarded_host";
 const FORWARDED_PORT_TAG: &[u8] = b"$forwarded_port";
+const TLS_SERVER_NAME_TAG: &[u8] = b"$tls_server_name";
 const TLS_CLIENT_SUBJECT_TAG: &[u8] = b"$tls_client_subject";
 const TLS_CLIENT_FINGERPRINT_TAG: &[u8] = b"$tls_client_fingerprint";
 const TLS_CLIENT_SERIAL_TAG: &[u8] = b"$tls_client_serial";
@@ -251,7 +252,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
     if buf == HOST_NAME_TAG {
         return HeaderValue::from_str(get_hostname()).unwrap_or(value);
     }
-    let request_tags: [&[u8]; 17] = [
+    let request_tags: [&[u8]; 18] = [
         HOST_TAG,
         SCHEME_TAG,
         REMOTE_ADDR_TAG,
@@ -265,6 +266,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         FORWARDED_PROTO_TAG,
         FORWARDED_HOST_TAG,
         FORWARDED_PORT_TAG,
+        TLS_SERVER_NAME_TAG,
         TLS_CLIENT_SUBJECT_TAG,
         TLS_CLIENT_FINGERPRINT_TAG,
         TLS_CLIENT_SERIAL_TAG,
@@ -382,11 +384,18 @@ pub fn convert_header_value(
                     get_host(session.req_header()).and_then(to_header_value)
                 })
         },
-        // The certificate the client showed in the handshake, on a server
-        // that asks for one. Without a certificate the value is empty and
-        // not missing: the header is set all the same, and what the
-        // client sent under that name does not reach the upstream as if
-        // the proxy had vouched for it.
+        // The server name (SNI) the client sent in the handshake, and the
+        // certificate it showed on a server that asks for one. Without a
+        // value it is empty and not missing: the header is set all the
+        // same, and what the client sent under that name does not reach
+        // the upstream as if the proxy had vouched for it.
+        TLS_SERVER_NAME_TAG => Some(
+            ctx.conn
+                .tls_server_name
+                .as_deref()
+                .and_then(to_header_value)
+                .unwrap_or_else(|| HeaderValue::from_static("")),
+        ),
         TLS_CLIENT_SUBJECT_TAG => {
             Some(tls_client_value(ctx, |cert| cert.subject.as_str()))
         },
@@ -1361,6 +1370,7 @@ mod tests {
         };
         let mut ctx = Ctx::default();
         for tag in [
+            "$tls_server_name",
             "$tls_client_subject",
             "$tls_client_fingerprint",
             "$tls_client_serial",
@@ -1372,11 +1382,20 @@ mod tests {
             value(&ctx, "$tls_client_verified")
         );
 
+        ctx.conn.tls_server_name = Some(std::sync::Arc::from("a.example.com"));
         ctx.conn.tls_client_cert = Some(std::sync::Arc::new(TlsClientCert {
             subject: "O=Example, CN=device-42".to_string(),
             fingerprint: "b545db7a".to_string(),
             serial: "3429".to_string(),
         }));
+        assert_eq!(
+            Some("a.example.com".to_string()),
+            value(&ctx, "$tls_server_name")
+        );
+        assert_eq!(
+            Some("a.example.com".to_string()),
+            value(&ctx, ":tls_server_name")
+        );
         assert_eq!(
             Some("O=Example, CN=device-42".to_string()),
             value(&ctx, "$tls_client_subject")
@@ -1392,8 +1411,12 @@ mod tests {
         );
         // Not an environment variable to look up when the configuration
         // is read: it is the request's.
-        let tag = HeaderValue::from_static("$tls_client_subject");
-        assert_eq!(tag.clone(), resolve_static_header_value(tag));
+        for tag in [
+            HeaderValue::from_static("$tls_server_name"),
+            HeaderValue::from_static("$tls_client_subject"),
+        ] {
+            assert_eq!(tag.clone(), resolve_static_header_value(tag));
+        }
     }
 
     #[tokio::test]

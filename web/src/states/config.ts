@@ -132,6 +132,7 @@ export interface Server {
   h1_pipelining?: boolean;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
+  strict_sni?: boolean;
   ja4?: boolean;
   proxy_protocol?: boolean;
   downstream_read_timeout?: string;
