@@ -56,7 +56,7 @@ for arg in "$@"; do
 done
 
 # Dependency order among workspace members. Keep in sync with the graph in
-# docs/modules.md / CLAUDE.md: util -> core -> … -> proxy / imageoptim.
+# docs/modules.md / AGENTS.md: util -> core -> … -> proxy / imageoptim.
 MEMBERS=(
   pingap-util
   pingap-core

@@ -314,7 +314,7 @@ mod tests {
     /// put pingora's `ResponseCompressionBuilder` and `ResponseCompression`
     /// back in pingap-proxy and pingap-plugin, drop `BrotliTail` from the
     /// compressor of the plugin's upstream mode, and the `brotli`
-    /// dependency (see CLAUDE.md).
+    /// dependency (see AGENTS.md).
     #[test]
     fn test_pingora_still_leaves_brotli_unfinished() {
         assert_eq!(true, brotli_needs_tail());

@@ -1,6 +1,17 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
+
+## Project Memory (`~/.gemini/projects/pingap/memory/`)
+
+- `MEMORY.md` — index of historical decisions, local environment facts, and verification recipes:
+  - `no-commit-draft-messages-only.md` — the user commits, stages, pushes, and posts to GitHub themselves; draft commit messages only when asked
+  - `pingap-local-environment.md` — cargo target dir (`/Users/tree/cargo-target`), etcd on 2379, no docker, Go-built Pebble / TLS etcd for e2e, zsh and e2e script pitfalls
+  - `pingap-review-triage.md` — keep real bugs apart from design trade-offs; cache does not judge by request `Cookie`; group findings as bug/高/中/低
+  - `pingap-nginx-parity-defaults.md` — defaults and variables modelled on nginx are deliberate; add an opt-in and ask rather than changing them
+  - `pingap-local-gates-scope.md` — run fast, change-specific checks locally; leave the full matrix to CI and read its result after push
+  - `pingora-brotli-workaround.md` — #256 `BrotliTail` in `pingap-core`; remove when pingora finishes `br` streams (tripwire test)
+  - `pingora-tokio-cap.md` — `tokio` pinned `<1.54` because pingora 0.9.0 panics on every connection with 1.54 (pingora#1059); run e2e after tokio/pingora bumps
 
 ## Project
 
