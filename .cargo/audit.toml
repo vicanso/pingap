@@ -29,4 +29,32 @@ ignore = [
     # rustls-pki-types. Cannot drop without forking pingora. Remove when
     # pingora-rustls stops depending on rustls-pemfile.
     "RUSTSEC-2025-0134",
+
+    # zstd 0.13.3 / zstd-safe 7.3.0 (vulnerabilities and unsoundness fixed in
+    # zstd >= 0.14.3 / zstd-safe >= 8.2.0, with no 0.13.x / 7.x backport).
+    # pingap's own crates, pingora-core 0.9 and rust-embed are on zstd 0.14.3 /
+    # zstd-safe 8.2.0; this older copy is pulled in solely by
+    # pingora-header-serde 0.9.0 (via pingora-cache 0.9.0), which pins
+    # zstd ^0.13.1 and zstd-safe ^7.1.0. None of the affected APIs
+    # (`with_context` stream encoders/decoders, `Seekable`, streaming
+    # decompression of legacy frames, mixing streaming and one-shot calls on a
+    # context, `try_clone`, `init_using_cdict`/`ddict`, `StableInBuffer`,
+    # `InBuffer`/`OutBuffer`, or `train_from_buffer`) are called at runtime by
+    # pingora-header-serde: it only runs one-shot `CCtx::compress(_using_cdict)`
+    # and `DCtx::decompress(_using_ddict)` on cached response headers it
+    # serialized itself. Remove when pingora updates pingora-header-serde to
+    # zstd >= 0.14.3 / zstd-safe >= 8.2.0.
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0395",
+    "RUSTSEC-2026-0396",
+    "RUSTSEC-2026-0397",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0399",
+    "RUSTSEC-2026-0400",
+    "RUSTSEC-2026-0401",
+    "RUSTSEC-2026-0402",
+    "RUSTSEC-2026-0403",
+    "RUSTSEC-2026-0404",
+    "RUSTSEC-2026-0405",
+    "RUSTSEC-2026-0406",
 ]
