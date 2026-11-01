@@ -17,7 +17,7 @@ Selected with `discovery` in `UpstreamConf`:
 
 | Value | Behaviour |
 | --- | --- |
-| `static` | Resolve `addrs` once at startup and keep the result. The default when every address is an IP address |
+| `static` | Resolve `addrs` once at startup and keep the result. The default when every address is an IP address or a unix socket |
 | `dns` | Re-resolve `addrs` periodically, so DNS changes take effect. The default when an address is a host name |
 | `srv` | Look up the `SRV` records of the names in `addrs` periodically: they give the hosts, their ports and their weights |
 | `docker` | Look up containers by label through the Docker API |
@@ -41,6 +41,16 @@ that does not parse or a weight of `0` (a backend that would never be
 selected) is rejected rather than silently dropped. With `discovery = "static"`
 set, host names are resolved once, at startup; without it an upstream with a
 host name among its addresses is a `dns` one, and follows the name.
+
+A static address may also be a unix socket, written `unix:/absolute/path`,
+with the same trailing weight (`unix:/var/run/app.sock 2`). The path is
+absolute. `unix:80` is still the host `unix` on port 80. A relative path, a
+path with a space and an abstract name (`unix:@name`) are rejected. `dns`,
+`srv` and `docker` discover hosts and do not take a unix socket. `ipv4_only`
+set together with one is rejected. Logs, health notifications and the list of
+backends a request has already failed show the path on its own
+(`/var/run/app.sock`). Windows builds have no unix sockets, and the same
+spelling is a configuration error there.
 
 ### DNS
 
@@ -140,9 +150,11 @@ discovery = "docker"
 update_frequency = "10s"
 ```
 
-Each entry is `label[:port] [weight]`. Containers are matched by Docker label
-and their published address becomes a backend, so `docker compose up --scale
-api=5` is picked up on the next refresh. The Docker daemon is reached through
+Each entry is `label[:port] [weight]`. A `unix:` address is a configuration
+error: this discovery matches containers by label, it does not connect to a
+socket written in `addrs`. Containers are matched by Docker label and their
+published address becomes a backend, so `docker compose up --scale api=5` is
+picked up on the next refresh. The Docker daemon is reached through
 its unix socket: the one `DOCKER_HOST` names when that is a `unix://` path,
 else the default one. A `tcp://` `DOCKER_HOST` is not used. A background watcher
 follows container events and refreshes the list as they happen; it re-lists

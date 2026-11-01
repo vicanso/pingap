@@ -392,9 +392,10 @@ export default {
     server: "Server",
     serverPlaceholder: "Select the server",
     addr: "Listen Addresses",
-    addrPlaceholder: "Input listen addresses, separated by comma",
+    addrPlaceholder:
+      "Input listen addresses, separated by comma, or unix:/absolute/path",
     addrTips:
-      "e.g. 0.0.0.0:80, [::]:443 — multiple addresses separated by commas.",
+      "e.g. 0.0.0.0:80, [::]:443, unix:/var/run/pingap.sock — multiple addresses separated by commas.",
     locations: "Locations",
     locationsPlaceholder: "Select the locations for server",
     locationsTips:
@@ -573,7 +574,7 @@ export default {
     upstreamPlaceholder: "Select the upstream",
     addrs: "Upstream Address",
     addrsPlaceholder:
-      "Input the address of upstream(e.g. 127.0.0.1:3000) : Input the weight of upstream",
+      "Input the address of upstream(e.g. 127.0.0.1:3000 or unix:/var/run/app.sock) : Input the weight of upstream",
     discovery: "Service Discovery",
     discoveryPlaceholder: "Select a discovery for upstream",
     updateFrequency: "Discovery Update Frequency",

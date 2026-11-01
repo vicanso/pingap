@@ -317,6 +317,29 @@ fn overlaps(
         && (ours == theirs || ours.is_unspecified() || theirs.is_unspecified())
 }
 
+/// Binds `path` and removes the socket file that bind created. An
+/// address already in use is left as it is: that file is not ours.
+#[cfg(unix)]
+fn try_bind_unix(path: &str) -> io::Result<()> {
+    let listener = std::os::unix::net::UnixListener::bind(path)?;
+    drop(listener);
+    std::fs::remove_file(path)
+}
+
+/// `Some` when `name` is a unix socket address, with the result of
+/// probing it. `None` when it is a TCP address, including `unix:80`
+/// (the host `unix`).
+#[cfg(unix)]
+fn probe_unix(name: &str) -> Option<io::Result<()>> {
+    match pingap_core::unix_socket_path(name.trim()) {
+        Ok(Some(path)) => Some(try_bind_unix(path)),
+        Ok(None) => None,
+        Err(message) => {
+            Some(Err(io::Error::new(io::ErrorKind::InvalidInput, message)))
+        },
+    }
+}
+
 /// The addresses among `wanted` that a replacement of the process which
 /// listens on `held` could not listen on, each with the reason.
 ///
@@ -328,6 +351,10 @@ fn overlaps(
 /// that overlaps. That may be this process itself, under another spelling
 /// of the address, and it lets go of its sockets before the replacement
 /// stops trying. What somebody else holds there as well is not seen.
+///
+/// A `unix:` path is not resolved. One this process already listens on is
+/// handed over with the rest. A new one is bound and, when that succeeds,
+/// the socket file the probe created is removed.
 #[cfg(unix)]
 fn unbindable(held: &[ListenAddress], wanted: &[ListenAddress]) -> Vec<String> {
     use std::net::ToSocketAddrs;
@@ -335,9 +362,17 @@ fn unbindable(held: &[ListenAddress], wanted: &[ListenAddress]) -> Vec<String> {
     let resolve =
         |name: &str| name.to_socket_addrs().map(|mut addrs| addrs.next());
     let kept = |addr: &str| wanted.iter().any(|item| item.addr == addr);
+    // A unix path is not a name. `to_socket_addrs` must not see it.
+    let tcp = |addr: &str| {
+        pingap_core::unix_socket_path(addr.trim())
+            .ok()
+            .flatten()
+            .is_none()
+    };
     let released: Vec<std::net::SocketAddr> = held
         .iter()
         .filter(|item| !kept(&item.addr))
+        .filter(|item| tcp(&item.addr))
         .filter_map(|item| resolve(&item.addr).ok().flatten())
         .collect();
     let mut tried: Vec<&str> = vec![];
@@ -348,6 +383,12 @@ fn unbindable(held: &[ListenAddress], wanted: &[ListenAddress]) -> Vec<String> {
             continue;
         }
         tried.push(name);
+        if let Some(probed) = probe_unix(name) {
+            if let Err(e) = probed {
+                failed.push(format!("{name} ({e})"));
+            }
+            continue;
+        }
         let addr = match resolve(name) {
             Ok(Some(addr)) => addr,
             Ok(None) => {
@@ -972,6 +1013,41 @@ mod tests {
             &[listen(&format!("192.0.2.1:{port}"))],
         );
         assert_eq!(1, failed.len(), "{failed:?}");
+    }
+
+    /// A new unix path is bound and the socket file removed. One that is
+    /// already listening is reported and its file is left in place. A
+    /// path this process holds is handed over and not probed.
+    #[test]
+    fn test_unbindable_unix() {
+        struct DeleteFile(PathBuf);
+        impl Drop for DeleteFile {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let path = sock_path("bind");
+        let _gone = DeleteFile(path.clone());
+        let listen = |addr: &str| ListenAddress {
+            addr: addr.to_string(),
+            reuse_port: None,
+        };
+        let addr = format!("unix:{}", path.display());
+        let none = Vec::<String>::new();
+        assert_eq!(none, unbindable(&[], &[listen(&addr)]));
+        assert!(!path.exists());
+
+        let live = match std::os::unix::net::UnixListener::bind(&path) {
+            Ok(listener) => listener,
+            Err(err) => panic!("bind {path:?}: {err}"),
+        };
+        let failed = unbindable(&[], &[listen(&addr)]);
+        assert_eq!(1, failed.len(), "{failed:?}");
+        assert!(path.exists());
+        // Held by this process: not probed, so the live socket stays.
+        assert_eq!(none, unbindable(&[listen(&addr)], &[listen(&addr)]));
+        assert!(path.exists());
+        drop(live);
     }
 
     #[test]

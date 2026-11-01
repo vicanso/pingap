@@ -112,6 +112,7 @@ mod plugin;
 mod proxy_protocol;
 mod service;
 mod ttl_lru_limit;
+mod unix_addr;
 mod util;
 
 pub use compression::{
@@ -131,6 +132,7 @@ pub use proxy_protocol::*;
 pub use service::*;
 pub use tinyufo::TinyUfo;
 pub use ttl_lru_limit::*;
+pub use unix_addr::unix_socket_path;
 pub use util::*;
 
 /// Builds an HTTP/1 session that has read `GET <url>` with `headers`, for

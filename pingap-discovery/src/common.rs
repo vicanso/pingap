@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Discovery, LOG_TARGET, STATIC_DISCOVERY};
-use super::{Result, format_addrs};
+use super::{Discovery, Endpoint, LOG_TARGET, STATIC_DISCOVERY};
+use super::{Result, split_addr};
 use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
@@ -35,6 +35,51 @@ pub fn is_static_discovery(value: &str) -> bool {
     matches!(value, "" | STATIC_DISCOVERY)
 }
 
+/// An IP literal needs no lookup - and no trip through the blocking
+/// resolver this runs on during a hot reload. A name that does not
+/// resolve is left out; the other addresses of the upstream still serve.
+fn resolve_host_port(host: &str, port: u16) -> Vec<std::net::SocketAddr> {
+    match host.parse::<IpAddr>() {
+        Ok(ip) => vec![std::net::SocketAddr::new(ip, port)],
+        Err(_) => match format!("{host}:{port}").to_socket_addrs() {
+            Ok(addrs) => addrs.collect(),
+            Err(e) => {
+                warn!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    host,
+                    port,
+                    "failed to resolve socket address"
+                );
+                vec![]
+            },
+        },
+    }
+}
+
+/// A unix backend, built here. `Backend::new` only parses an IP address.
+fn unix_backend(path: &str, weight: usize) -> Result<Backend> {
+    #[cfg(unix)]
+    {
+        let addr = std::os::unix::net::SocketAddr::from_pathname(path)
+            .map_err(|e| super::Error::Invalid {
+                message: format!("unix socket {path}: {e}"),
+            })?;
+        Ok(Backend {
+            addr: SocketAddr::Unix(addr),
+            weight,
+            ext: Extensions::new(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, weight);
+        Err(super::Error::Invalid {
+            message: "unix sockets are not available on this build".to_string(),
+        })
+    }
+}
+
 /// Create a static discovery, execute it only once.
 /// It will resolve the domain to socket address at the beginning stage.
 ///
@@ -51,45 +96,35 @@ pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
         "starting static discovery"
     );
 
-    let formatted_addrs = format_addrs(&discovery.addr, discovery.tls)?;
-
-    // Directly collect into a BTreeSet to handle deduplication and sorting automatically.
-    let upstreams: BTreeSet<_> = formatted_addrs
-        .into_iter()
-        .flat_map(|(host, port, weight)| {
-            // An IP literal needs no lookup - and no trip through the
-            // blocking resolver this runs on during a hot reload.
-            let resolved_addrs: Vec<_> = match host.parse::<IpAddr>() {
-                Ok(ip) => vec![std::net::SocketAddr::new(ip, port)],
-                Err(_) => match format!("{host}:{port}").to_socket_addrs() {
-                    Ok(addrs) => addrs.collect(),
-                    Err(e) => {
-                        // Log the error but don't stop the whole process.
-                        warn!(
-                            target: LOG_TARGET,
-                            error = %e,
-                            host,
-                            port,
-                            "failed to resolve socket address"
-                        );
-                        vec![]
-                    },
-                },
-            };
-            // Pair each address with the weight.
-            resolved_addrs.into_iter().map(move |addr| (addr, weight))
-        })
-        // Filter out only valid addresses and apply the IPv4-only filter.
-        .filter(|(socket_addr, _)| {
-            !discovery.ipv4_only || socket_addr.is_ipv4()
-        })
-        // Map the resolved addresses to Backend structs.
-        .map(|(socket_addr, weight)| Backend {
-            addr: SocketAddr::Inet(socket_addr),
-            weight,
-            ext: Extensions::new(),
-        })
-        .collect();
+    let default_port = if discovery.tls { 443 } else { 80 };
+    let mut upstreams = BTreeSet::new();
+    for addr in &discovery.addr {
+        match split_addr(addr)? {
+            Endpoint::Unix { path, weight } => {
+                if discovery.ipv4_only {
+                    return Err(super::Error::Invalid {
+                        message: format!(
+                            "ipv4_only does not apply to unix socket {addr}"
+                        ),
+                    });
+                }
+                upstreams.insert(unix_backend(&path, weight)?);
+            },
+            Endpoint::Tcp { host, port, weight } => {
+                let port = port.unwrap_or(default_port);
+                for socket_addr in resolve_host_port(&host, port) {
+                    if discovery.ipv4_only && !socket_addr.is_ipv4() {
+                        continue;
+                    }
+                    upstreams.insert(Backend {
+                        addr: SocketAddr::Inet(socket_addr),
+                        weight,
+                        ext: Extensions::new(),
+                    });
+                }
+            },
+        }
+    }
 
     // Generate the log message from the final, deduplicated set of backends.
     let resolved_addrs: Vec<String> =
@@ -179,5 +214,61 @@ mod tests {
             "weight of 127.0.0.1:8080 0 must be a positive integer",
             err.to_string()
         );
+    }
+
+    /// A unix path is a backend of its own, with no port invented and no
+    /// DNS lookup. `ipv4_only` does not drop it quietly.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_static_discovery_unix() {
+        let backends = match new_static_discovery(&Discovery {
+            addr: vec![
+                "unix:/tmp/pingap-app.sock 2".to_string(),
+                "127.0.0.1:8080".to_string(),
+            ],
+            ..Default::default()
+        }) {
+            Ok(backends) => backends,
+            Err(err) => panic!("unix discovery failed: {err}"),
+        };
+        match backends.update(|_| {}).await {
+            Ok(()) => {},
+            Err(err) => panic!("update failed: {err}"),
+        }
+        let mut addrs: Vec<(String, usize)> = backends
+            .get_backend()
+            .iter()
+            .map(|backend| (backend.addr.to_string(), backend.weight))
+            .collect();
+        addrs.sort();
+        assert_eq!(
+            vec![
+                ("/tmp/pingap-app.sock".to_string(), 2),
+                ("127.0.0.1:8080".to_string(), 1),
+            ],
+            addrs
+        );
+
+        match new_static_discovery(&Discovery {
+            addr: vec!["unix:/tmp/pingap-app.sock".to_string()],
+            ipv4_only: true,
+            ..Default::default()
+        }) {
+            Err(err) => assert_eq!(
+                "ipv4_only does not apply to unix socket unix:/tmp/pingap-app.sock",
+                err.to_string()
+            ),
+            Ok(_) => panic!("ipv4_only with a unix socket accepted"),
+        }
+        match new_static_discovery(&Discovery {
+            addr: vec!["unix:@app".to_string()],
+            ..Default::default()
+        }) {
+            Err(err) => assert_eq!(
+                "abstract unix sockets are not supported",
+                err.to_string()
+            ),
+            Ok(_) => panic!("abstract socket accepted"),
+        }
     }
 }

@@ -703,7 +703,11 @@ fn available_memory(machine: u64, cgroup_limit: Option<u64>) -> u64 {
 /// The two then shared the socket, and each got a part of the connections:
 /// the challenge was answered now and then, and so was everything else.
 fn listens_on_port_80(addr: &str) -> bool {
-    addr.split(',').any(|addr| addr.trim().ends_with(":80"))
+    addr.split(',').any(|addr| {
+        let addr = addr.trim();
+        // `unix:/tmp/app.sock:80` is a path, not port 80.
+        !addr.starts_with("unix:/") && addr.ends_with(":80")
+    })
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
@@ -1661,14 +1665,23 @@ addr = "127.0.0.1:80"
             "0.0.0.0:80,[::]:8080",
             "127.0.0.1:8080, 0.0.0.0:80",
             "0.0.0.0:443 , [::]:80 ,127.0.0.1:8080",
+            // The host `unix`, not a socket path.
+            "unix:80",
         ] {
             assert_eq!(true, listens_on_port_80(addr), "{addr}");
         }
-        for addr in
-            ["0.0.0.0:8080", "0.0.0.0:443,[::]:8080", "127.0.0.1:180", ""]
-        {
+        for addr in [
+            "0.0.0.0:8080",
+            "0.0.0.0:443,[::]:8080",
+            "127.0.0.1:180",
+            "",
+            "unix:/tmp/app.sock",
+            "unix:/tmp/app.sock:80",
+            "127.0.0.1:8080,unix:/tmp/app.sock",
+        ] {
             assert_eq!(false, listens_on_port_80(addr), "{addr}");
         }
+        assert_eq!(true, listens_on_port_80("unix:/tmp/app.sock,127.0.0.1:80"));
     }
 
     #[test]

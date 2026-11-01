@@ -352,6 +352,15 @@ modules = ["grpc-web"]
 Notes on a few of these:
 
 - `addr` accepts several comma-separated listen addresses for one logical server.
+  One of them may be a unix socket, `unix:/absolute/path`
+  (`127.0.0.1:6188,unix:/var/run/pingap.sock`). It can carry TLS with the same
+  certificate as the TCP addresses of that server. `tcp_fastopen`, keepalive
+  and `reuse_port` apply to those TCP addresses; a unix socket has none of
+  them. The socket file is created with mode `0666`, pingora's default.
+  There is no setting for another mode. `unix:80` is still the host `unix`
+  on port 80. A relative path, a path with a space and an abstract name
+  (`unix:@name`) are rejected. Windows builds have no unix sockets, and the
+  spelling is a configuration error there.
 - `tcp_idle`, `tcp_interval`, `tcp_probe_count` and `tcp_user_timeout` (Linux
   only) turn TCP keepalive on for accepted connections as soon as one of them
   is set. Whatever is left out takes the kernel's default (7200s idle, 75s

@@ -46,20 +46,45 @@ impl From<Error> for pingora::BError {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A configured backend address: host (a name or a bare IP literal, an
-/// IPv6 one without its brackets), port and weight.
+/// IPv6 one without its brackets), port and weight. TCP only: a unix
+/// socket does not go through here.
 pub(crate) type Addr = (String, u16, usize);
+
+/// One `addrs` entry after its weight is split off.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Endpoint {
+    /// `host`, `host:port`, `[ipv6]` or `[ipv6]:port`.
+    Tcp {
+        /// Name or IP literal, an IPv6 one without brackets.
+        host: String,
+        /// `None` when the entry names no port.
+        port: Option<u16>,
+        /// The weight, at least 1.
+        weight: usize,
+    },
+    /// Absolute path of a `unix:/...` address.
+    Unix {
+        /// The path, without the `unix:` prefix.
+        path: String,
+        /// The weight, at least 1.
+        weight: usize,
+    },
+}
 
 fn invalid(message: String) -> Error {
     Error::Invalid { message }
 }
 
 /// Splits one `addrs` entry - `host[:port] [weight]`, where an IPv6 literal
-/// with a port is written `[::1]:8080` - into its host, optional port and
-/// weight. Every part is checked here, once, so a bad port or weight is a
-/// configuration error rather than something each discovery tick trips
-/// over: a weight of zero would never be selected, and a port that does
-/// not parse used to fail silently on every refresh.
-pub(crate) fn split_addr(addr: &str) -> Result<(String, Option<u16>, usize)> {
+/// with a port is written `[::1]:8080`, or `unix:/absolute/path [weight]` -
+/// into its host or path, optional port and weight. Every part is checked
+/// here, once, so a bad port or weight is a configuration error rather
+/// than something each discovery tick trips over: a weight of zero would
+/// never be selected, and a port that does not parse used to fail silently
+/// on every refresh.
+///
+/// `unix:80` is the host `unix` on port 80. A socket path is absolute.
+pub(crate) fn split_addr(addr: &str) -> Result<Endpoint> {
     let mut parts = addr.split_whitespace();
     let host_port = parts
         .next()
@@ -79,11 +104,22 @@ pub(crate) fn split_addr(addr: &str) -> Result<(String, Option<u16>, usize)> {
             "{addr} has more than a weight after the address"
         )));
     }
+    if let Some(path) =
+        pingap_core::unix_socket_path(host_port).map_err(invalid)?
+    {
+        return Ok(Endpoint::Unix {
+            path: path.to_string(),
+            weight,
+        });
+    }
     let parse_port = |port: &str| {
         port.parse::<u16>()
             .ok()
             .filter(|port| *port > 0)
             .ok_or_else(|| invalid(format!("port of {addr} is invalid")))
+    };
+    let tcp = |host: String, port: Option<u16>| {
+        Ok(Endpoint::Tcp { host, port, weight })
     };
     // `[v6]` or `[v6]:port`
     if let Some(rest) = host_port.strip_prefix('[') {
@@ -100,7 +136,7 @@ pub(crate) fn split_addr(addr: &str) -> Result<(String, Option<u16>, usize)> {
             None if after.is_empty() => None,
             None => return Err(invalid(format!("{addr} is invalid"))),
         };
-        return Ok((host.to_string(), port, weight));
+        return tcp(host.to_string(), port);
     }
     // A bare IPv6 literal has more than one colon and no port.
     if host_port.matches(':').count() > 1 {
@@ -109,26 +145,31 @@ pub(crate) fn split_addr(addr: &str) -> Result<(String, Option<u16>, usize)> {
                 "{addr} is not an IPv6 address; write [addr]:port for a port"
             )));
         }
-        return Ok((host_port.to_string(), None, weight));
+        return tcp(host_port.to_string(), None);
     }
     match host_port.split_once(':') {
         Some((host, port)) if !host.is_empty() => {
-            Ok((host.to_string(), Some(parse_port(port)?), weight))
+            tcp(host.to_string(), Some(parse_port(port)?))
         },
         Some(_) => Err(invalid(format!("{addr} has no host"))),
-        None => Ok((host_port.to_string(), None, weight)),
+        None => tcp(host_port.to_string(), None),
     }
 }
 
-/// Parses every `addrs` entry, filling in the default port (443 under TLS,
-/// 80 otherwise) where none is given.
+/// Parses every `addrs` entry as a TCP address, filling in the default
+/// port (443 under TLS, 80 otherwise) where none is given. A unix socket
+/// is rejected: DNS and SRV discovery resolve host names.
 pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Result<Vec<Addr>> {
     let default_port = if tls { 443 } else { 80 };
     addrs
         .iter()
-        .map(|addr| {
-            let (host, port, weight) = split_addr(addr)?;
-            Ok((host, port.unwrap_or(default_port), weight))
+        .map(|addr| match split_addr(addr)? {
+            Endpoint::Tcp { host, port, weight } => {
+                Ok((host, port.unwrap_or(default_port), weight))
+            },
+            Endpoint::Unix { .. } => Err(invalid(format!(
+                "{addr} is a unix socket; only static discovery accepts one"
+            ))),
         })
         .collect()
 }
@@ -215,7 +256,7 @@ pub use docker::{is_docker_discovery, new_docker_discover_backends};
 
 #[cfg(test)]
 mod tests {
-    use super::{Discovery, format_addrs, split_addr};
+    use super::{Discovery, Endpoint, format_addrs, split_addr};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -242,6 +283,9 @@ mod tests {
             ("2001:db8::1".to_string(), 80, 1),
             one("2001:db8::1", false)
         );
+        // `unix:80` is the host, which is how it was written before a
+        // socket path was a spelling of its own.
+        assert_eq!(("unix".to_string(), 80, 1), one("unix:80", false));
 
         for bad in [
             "",
@@ -268,6 +312,38 @@ mod tests {
             format_addrs(&["ok:80".to_string(), "bad:x".to_string()], false)
                 .is_err()
         );
+
+        match split_addr("unix:@app") {
+            Err(err) => assert_eq!(
+                "abstract unix sockets are not supported",
+                err.to_string()
+            ),
+            Ok(endpoint) => panic!("abstract socket accepted: {endpoint:?}"),
+        }
+        match split_addr("unix:/var/run/app.sock 2") {
+            #[cfg(unix)]
+            Ok(endpoint) => assert_eq!(
+                Endpoint::Unix {
+                    path: "/var/run/app.sock".to_string(),
+                    weight: 2,
+                },
+                endpoint
+            ),
+            #[cfg(not(unix))]
+            Err(err) => assert_eq!(
+                "unix sockets are not available on this build",
+                err.to_string()
+            ),
+            other => panic!("unexpected {other:?}"),
+        }
+        #[cfg(unix)]
+        match format_addrs(&["unix:/var/run/app.sock".to_string()], false) {
+            Err(err) => assert_eq!(
+                "unix:/var/run/app.sock is a unix socket; only static discovery accepts one",
+                err.to_string()
+            ),
+            Ok(addrs) => panic!("unix address formatted as tcp: {addrs:?}"),
+        }
     }
 
     #[test]

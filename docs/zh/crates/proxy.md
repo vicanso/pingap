@@ -232,7 +232,7 @@ modules = ["grpc-web"]
 
 部分说明：
 
-- `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。
+- `addr` 可接受逗号分隔的多个监听地址，对应一个逻辑 server。其中可以有一个 unix socket，写作 `unix:/绝对路径`（`127.0.0.1:6188,unix:/var/run/pingap.sock`）。它可以和同一 server 的 TCP 地址共用证书，走 TLS。`tcp_fastopen`、keepalive 和 `reuse_port` 只作用于这些 TCP 地址，unix socket 没有这几项。套接字文件按 pingora 的默认权限 `0666` 创建，没有另一项配置可以改它。`unix:80` 仍然是主机 `unix` 的 80 端口。相对路径、带空格的路径和抽象命名空间（`unix:@name`）会被拒绝。Windows 构建没有 unix socket，这种写法是配置错误。
 - `tcp_idle`、`tcp_interval`、`tcp_probe_count`、`tcp_user_timeout`（仅 Linux）四项只要配置了其中一项，就会对接入的连接开启 TCP keepalive。没有配置的项取内核默认值（空闲 7200s、探测间隔 75s、探测 9 次），所以 `tcp_user_timeout` 可以单独设置。空闲时间和间隔按整秒生效，至少 `1s`；探测次数至少为 1。更小的值在配置校验时被拒绝，因为内核会在每个连接上拒绝它们。
 - `global_certificates = true` 用 [pingap-certificate](certificate.md) 的动态 SNI 证书存储把监听器切到 TLS。否则为明文 HTTP，此时 `enabled_h2` 表示 h2c。客户端在握手里发送的 SNI 在该连接的每个请求上都可通过请求头/响应头中的 `$tls_server_name` 与访问日志中的 `{:tls_server_name}` 获取（未发 SNI 或明文 HTTP 时为空）。
 - `strict_sni = true` 在 TLS 连接上请求的 `Host` 所选证书与握手时 SNI 所选证书不一致（或客户端未发送 SNI）时，在匹配 location 之前返回 `421 Misdirected Request`（RFC 9110 §15.5.20）。共享同一张通配符证书或多域名（SAN）证书的 HTTP/2 连接复用仍可正常通过；兜底默认证书（`is_default = true`）不会让未列出的域名视为匹配。需要 `global_certificates = true`，配置校验会检查。

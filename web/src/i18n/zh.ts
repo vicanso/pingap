@@ -366,8 +366,9 @@ export default {
     server: "服务",
     serverPlaceholder: "选择服务",
     addr: "监听地址",
-    addrPlaceholder: "输入监控的地址，多个地址以`,`分隔",
-    addrTips: "例如 0.0.0.0:80, [::]:443，多个地址用逗号分隔。",
+    addrPlaceholder: "输入监听地址，多个以`,`分隔，或 unix:/绝对路径",
+    addrTips:
+      "例如 0.0.0.0:80, [::]:443, unix:/var/run/pingap.sock，多个地址用逗号分隔。",
     locations: "Location列表",
     locationsPlaceholder: "选择关联的location列表",
     locationsTips: "该监听器处理的路由，按权重匹配。",
@@ -530,7 +531,8 @@ export default {
     upstream: "上游服务",
     upstreamPlaceholder: "选择上游服务",
     addrs: "上游服务地址列表",
-    addrsPlaceholder: "输入上游服务地址(如127.0.0.1:3000) : 输入对应权重",
+    addrsPlaceholder:
+      "输入上游服务地址(如127.0.0.1:3000或unix:/var/run/app.sock) : 输入对应权重",
     discovery: "服务发现",
     discoveryPlaceholder: "选择上游服务发现类型",
     updateFrequency: "服务发现更新间隔",

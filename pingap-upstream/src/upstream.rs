@@ -963,13 +963,48 @@ fn split_host_port(host: &str, default_port: u16) -> (&str, u16) {
 }
 
 /// Whether `backend` is one of the addresses in `failed`, which are
-/// written as a peer shows its address.
+/// written as a peer shows its address. A unix socket is that path,
+/// without the `unix:` prefix both sides print.
 fn has_failed(backend: &Backend, failed: &[String]) -> bool {
     if failed.is_empty() {
         return false;
     }
     let addr = backend.addr.to_string();
     failed.contains(&addr)
+}
+
+/// The peer for `backend`. `HttpPeer::new` only builds an IP peer, and
+/// panics on a worker when the address is a unix socket.
+fn http_peer_for_backend(
+    backend: &Backend,
+    tls: bool,
+    sni: String,
+) -> Option<HttpPeer> {
+    #[cfg(unix)]
+    if let Some(unix) = backend.addr.as_unix() {
+        let Some(path) = unix.as_pathname().and_then(|path| path.to_str())
+        else {
+            error!(
+                target: LOG_TARGET,
+                addr = %backend.addr,
+                "unix backend has no path"
+            );
+            return None;
+        };
+        return match HttpPeer::new_uds(path, tls, sni) {
+            Ok(peer) => Some(peer),
+            Err(err) => {
+                error!(
+                    target: LOG_TARGET,
+                    path,
+                    error = %err,
+                    "unix backend has no peer"
+                );
+                None
+            },
+        };
+    }
+    Some(HttpPeer::new(backend, tls, sni))
 }
 
 /// The host name part of a `Host` value, without a port or brackets.
@@ -1570,7 +1605,7 @@ impl Upstream {
                         false,
                     )?
                 };
-                HttpPeer::new(backend, self.tls, sni.clone())
+                http_peer_for_backend(&backend, self.tls, sni.clone())?
             },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
@@ -1589,7 +1624,7 @@ impl Upstream {
                     failed,
                     true,
                 )?;
-                HttpPeer::new(backend, self.tls, sni)
+                http_peer_for_backend(&backend, self.tls, sni)?
             },
             // In transparent mode, use the request's host header
             SelectionLb::Transparent => {
@@ -2099,8 +2134,9 @@ pub fn new_upstream_health_check_task(
 mod tests {
     use super::{
         InflightGuard, PeerAttempt, Upstream, UpstreamConf, UpstreamProvider,
-        ca_group_key, host_name, new_backends, new_client_cert,
-        new_load_balancer, resolve_host, split_host_port,
+        ca_group_key, has_failed, host_name, http_peer_for_backend,
+        new_backends, new_client_cert, new_load_balancer, resolve_host,
+        split_host_port,
     };
     use crate::first_round::FirstRound;
     use crate::new_ahash_upstreams;
@@ -2118,6 +2154,40 @@ mod tests {
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
     use tokio_test::io::Builder;
+
+    /// A unix backend is an `HttpPeer` of that path. `HttpPeer::new` is not
+    /// used: it only builds an IP peer.
+    #[cfg(unix)]
+    #[test]
+    fn test_unix_backend_peer_is_the_path() {
+        let path = "/tmp/pingap-upstream.sock";
+        let unix = match std::os::unix::net::SocketAddr::from_pathname(path) {
+            Ok(addr) => addr,
+            Err(err) => panic!("path: {err}"),
+        };
+        let backend = pingora::lb::Backend {
+            addr: pingora::protocols::l4::socket::SocketAddr::Unix(unix),
+            weight: 2,
+            ext: http::Extensions::new(),
+        };
+        let peer =
+            match http_peer_for_backend(&backend, true, "app".to_string()) {
+                Some(peer) => peer,
+                None => panic!("expected a peer"),
+            };
+        let got = peer.address().as_unix().and_then(|addr| addr.as_pathname());
+        let Some(got) = got else {
+            panic!("expected a unix address");
+        };
+        assert_eq!(std::path::Path::new(path), got);
+        // The retry list and this peer spell the address the same way.
+        assert_eq!(backend.addr.to_string(), peer.address().to_string());
+        assert!(has_failed(&backend, &[peer.address().to_string()]));
+        assert!(!has_failed(
+            &backend,
+            &["unix:/tmp/pingap-upstream.sock".to_string()]
+        ));
+    }
 
     struct TmpProvider {
         upstream: Arc<Upstream>,

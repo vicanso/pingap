@@ -493,7 +493,9 @@ pub const H1_UPGRADE_POLICIES: [&str; 3] =
 /// Configuration for an upstream service that handles proxied requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct UpstreamConf {
-    /// List of upstream server addresses in format "host:port" or "host:port weight"
+    /// List of upstream server addresses: `host`, `host:port`,
+    /// `[ipv6]:port`, or `unix:/absolute/path`, each with an optional
+    /// trailing weight.
     pub addrs: Vec<String>,
 
     /// Service discovery mechanism to use (e.g. "dns", "static")
@@ -791,6 +793,8 @@ impl UpstreamConf {
     /// - Returns configured discovery if set
     /// - Returns DNS discovery if any address contains a hostname
     /// - Returns empty string (static discovery) otherwise
+    ///
+    /// A `unix:/` path is not a hostname.
     pub fn guess_discovery(&self) -> String {
         // Return explicitly configured discovery if set. In lower case,
         // which is how every reader of it compares: `DNS` was no discovery
@@ -804,6 +808,10 @@ impl UpstreamConf {
             // `host[:port] [weight]`; an IPv6 literal with a port is
             // bracketed, a bare one has more than one colon and no port.
             let host_port = addr.split_whitespace().next().unwrap_or(addr);
+            // A socket path is static, the same as an IP literal.
+            if host_port.starts_with("unix:/") {
+                return false;
+            }
             let host = if let Some(rest) = host_port.strip_prefix('[') {
                 rest.split_once(']').map_or(rest, |(host, _)| host)
             } else if host_port.matches(':').count() > 1 {
@@ -898,6 +906,7 @@ impl UpstreamConf {
                 });
             }
         }
+        self.reject_unix_addresses()?;
 
         // Only validate addresses for static discovery
         if !is_static_discovery(&self.guess_discovery()) {
@@ -907,6 +916,14 @@ impl UpstreamConf {
         for addr in &self.addrs {
             let parts: Vec<_> = addr.split_whitespace().collect();
             let host_port = parts[0].to_string();
+            // Checked in `reject_unix_addresses`, and it is not a TCP name.
+            if pingap_core::unix_socket_path(&host_port)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                continue;
+            }
 
             // `[v6]`, `[v6]:port`, a bare `v6` (more than one colon, no
             // port), `host` or `host:port`.
@@ -956,6 +973,52 @@ impl UpstreamConf {
         Ok(())
     }
 
+    /// A unix socket is a static backend. It has no port, so `check_port`
+    /// does not apply, and it is not an IPv4 address.
+    fn reject_unix_addresses(&self) -> Result<()> {
+        let mut has_unix = false;
+        for addr in &self.addrs {
+            let Some(token) = addr.split_whitespace().next() else {
+                continue;
+            };
+            match pingap_core::unix_socket_path(token) {
+                Ok(Some(_)) => has_unix = true,
+                Ok(None) => {},
+                Err(message) => {
+                    return Err(Error::Invalid {
+                        message: format!("upstream addr({addr}) {message}"),
+                    });
+                },
+            }
+        }
+        if !has_unix {
+            return Ok(());
+        }
+        if !is_static_discovery(&self.guess_discovery()) {
+            return Err(Error::Invalid {
+                message: "unix socket addresses are only for static discovery"
+                    .to_string(),
+            });
+        }
+        if self.ipv4_only.unwrap_or(false) {
+            return Err(Error::Invalid {
+                message: "ipv4_only does not apply to a unix socket address"
+                    .to_string(),
+            });
+        }
+        if self
+            .health_check
+            .as_deref()
+            .is_some_and(Self::health_check_overrides_port)
+        {
+            return Err(Error::Invalid {
+                message: "check_port does not apply to a unix socket address"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
     fn validate_health_check(&self) -> Result<()> {
         let health_check = match &self.health_check {
             Some(url) if !url.is_empty() => url,
@@ -968,6 +1031,14 @@ impl UpstreamConf {
         })?;
 
         Ok(())
+    }
+
+    /// `check_port` sends an HTTP check to another port. A unix socket has
+    /// none.
+    fn health_check_overrides_port(url: &str) -> bool {
+        Url::parse(url).is_ok_and(|parsed| {
+            parsed.query_pairs().any(|(key, _)| key == "check_port")
+        })
     }
 
     fn validate_tcp_probe_count(&self) -> Result<()> {
@@ -1305,7 +1376,8 @@ impl LocationConf {
 /// Configuration for a server instance that handles incoming HTTP/HTTPS requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct ServerConf {
-    /// Address to listen on in format "host:port" or multiple addresses separated by commas
+    /// Address to listen on: `host:port`, several of them separated by
+    /// commas, or `unix:/absolute/path`.
     pub addr: String,
 
     /// Access log format string for request logging
@@ -1499,10 +1571,29 @@ impl ServerConf {
     /// 3. Parse access log layout success.
     fn validate_with_locations(&self, location_names: &[String]) -> Result<()> {
         for addr in self.addr.split(',') {
-            let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
-                source: e,
-                file: self.addr.clone(),
-            })?;
+            let trimmed = addr.trim();
+            if trimmed.is_empty() {
+                let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
+                    source: e,
+                    file: self.addr.clone(),
+                })?;
+                continue;
+            }
+            match pingap_core::unix_socket_path(trimmed) {
+                Ok(Some(_)) => {},
+                Ok(None) => {
+                    let _ =
+                        trimmed.to_socket_addrs().map_err(|e| Error::Io {
+                            source: e,
+                            file: self.addr.clone(),
+                        })?;
+                },
+                Err(message) => {
+                    return Err(Error::Invalid {
+                        message: format!("server addr({trimmed}) {message}"),
+                    });
+                },
+            }
         }
         if !location_names.is_empty()
             && let Some(locations) = &self.locations
@@ -3091,6 +3182,8 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         // IP literals, with or without port and weight, are static.
         assert_eq!("", guess(&["127.0.0.1:8080", "127.0.0.1 10"]));
         assert_eq!("", guess(&["[::1]:8080 2", "[::1]", "2001:db8::1"]));
+        assert_eq!("", guess(&["unix:/var/run/app.sock 2"]));
+        assert_eq!("dns", guess(&["unix:/var/run/app.sock", "api"]));
         // A name anywhere means DNS.
         assert_eq!("dns", guess(&["127.0.0.1:8080", "api:8080"]));
         assert_eq!("dns", guess(&["api"]));
@@ -3135,6 +3228,81 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
             ..Default::default()
         };
         assert_eq!(true, conf.validate().is_ok());
+    }
+
+    #[test]
+    fn test_upstream_unix_socket() {
+        let conf = |discovery: Option<&str>, addrs: &[&str]| UpstreamConf {
+            addrs: addrs.iter().map(|addr| addr.to_string()).collect(),
+            discovery: discovery.map(|value| value.to_string()),
+            ..Default::default()
+        };
+        let error = |upstream: &UpstreamConf| {
+            upstream
+                .validate()
+                .err()
+                .map(|err| err.to_string())
+                .unwrap_or_default()
+        };
+
+        #[cfg(unix)]
+        {
+            assert_eq!("", error(&conf(None, &["unix:/var/run/app.sock 2"])));
+            assert_eq!(
+                "",
+                error(&conf(
+                    Some("static"),
+                    &["127.0.0.1:8080", "unix:/var/run/app.sock"]
+                ))
+            );
+            assert_eq!(
+                "Invalid error unix socket addresses are only for static discovery",
+                error(&conf(Some("dns"), &["unix:/var/run/app.sock"]))
+            );
+            assert_eq!(
+                "Invalid error unix socket addresses are only for static discovery",
+                error(&conf(Some("docker"), &["unix:/var/run/docker.sock"]))
+            );
+            assert_eq!(
+                "Invalid error unix socket addresses are only for static discovery",
+                error(&conf(Some("srv"), &["unix:/var/run/app.sock"]))
+            );
+        }
+        #[cfg(not(unix))]
+        assert!(
+            error(&conf(None, &["unix:/var/run/app.sock"]))
+                .contains("unix sockets are not available on this build")
+        );
+
+        assert_eq!(
+            "Invalid error upstream addr(unix:@app) abstract unix sockets are not supported",
+            error(&conf(None, &["unix:@app"]))
+        );
+        // A space already separates the weight, so the path check never
+        // sees one. The address is still refused.
+        assert_eq!(
+            "Invalid error upstream addr(unix:/tmp/my app.sock) weight must be a positive integer",
+            error(&conf(None, &["unix:/tmp/my app.sock"]))
+        );
+        #[cfg(unix)]
+        {
+            let mut ipv4 = conf(Some("static"), &["unix:/var/run/app.sock"]);
+            ipv4.ipv4_only = Some(true);
+            assert_eq!(
+                "Invalid error ipv4_only does not apply to a unix socket address",
+                error(&ipv4)
+            );
+            let mut checked = conf(Some("static"), &["unix:/var/run/app.sock"]);
+            checked.health_check =
+                Some("http://backend/ping?check_port=8081".to_string());
+            assert_eq!(
+                "Invalid error check_port does not apply to a unix socket address",
+                error(&checked)
+            );
+            // A check on the socket itself is fine.
+            checked.health_check = Some("http://backend/ping".to_string());
+            assert_eq!("", error(&checked));
+        }
     }
 
     #[test]
@@ -3803,6 +3971,43 @@ write_timeout = "1m"
         conf.locations = Some(vec!["lo".to_string()]);
         let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_ok());
+
+        conf.addr = "127.0.0.1:3001,unix:/tmp/pingap.sock".to_string();
+        #[cfg(unix)]
+        match conf.validate_with_locations(&location_names) {
+            Ok(()) => {},
+            Err(err) => panic!("unix listener refused: {err}"),
+        }
+        #[cfg(not(unix))]
+        {
+            let message = conf
+                .validate_with_locations(&location_names)
+                .expect_err("windows refuses a unix listener")
+                .to_string();
+            assert!(
+                message
+                    .contains("unix sockets are not available on this build"),
+                "{message}"
+            );
+        }
+        conf.addr = "unix:@pingap".to_string();
+        let message = conf
+            .validate_with_locations(&location_names)
+            .expect_err("abstract socket")
+            .to_string();
+        assert_eq!(
+            "Invalid error server addr(unix:@pingap) abstract unix sockets are not supported",
+            message
+        );
+        conf.addr = "unix:/tmp/my pingap.sock".to_string();
+        let message = conf
+            .validate_with_locations(&location_names)
+            .expect_err("path with a space")
+            .to_string();
+        assert_eq!(
+            "Invalid error server addr(unix:/tmp/my pingap.sock) unix socket path contains whitespace",
+            message
+        );
     }
 
     /// Regression: the upstream a `traffic_splitting` plugin names was not

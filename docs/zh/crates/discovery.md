@@ -12,7 +12,7 @@
 
 | Value | Behaviour |
 | --- | --- |
-| `static` | 启动时解析一次 `addrs` 并保持。地址全是 IP 时的默认值 |
+| `static` | 启动时解析一次 `addrs` 并保持。地址全是 IP 或 unix socket 时的默认值 |
 | `dns` | 周期性重新解析 `addrs`，DNS 变更生效。地址里有域名时的默认值 |
 | `srv` | 周期性查询 `addrs` 里各个名字的 `SRV` 记录：记录给出主机、端口和权重 |
 | `docker` | 经 Docker API 按标签查找容器 |
@@ -30,6 +30,8 @@ addrs = ["10.0.0.1:8080", "10.0.0.2:8080 5"]
 ```
 
 地址可带尾部权重（`host:port weight`），负载均衡器会遵守；带端口的 IPv6 字面量写作 `[::1]:8080`。端口和权重在加载配置时就会检查：无法解析的端口或为 `0` 的权重（这样的后端永远不会被选中）会直接报错，而不是被静默丢弃。显式设置 `discovery = "static"` 时，主机名只在启动时解析一次；不设置时，地址里有主机名的 upstream 按 `dns` 处理，会跟随域名的变化。
+
+静态地址也可以是 unix socket，写作 `unix:/绝对路径`，权重写法相同（`unix:/var/run/app.sock 2`）。路径必须是绝对路径。`unix:80` 仍然是主机 `unix` 的 80 端口。相对路径、带空格的路径和抽象命名空间（`unix:@name`）会被拒绝。`dns`、`srv` 和 `docker` 发现的是主机，不接受 unix socket。和 unix socket 一起设置 `ipv4_only` 会被拒绝。日志、健康状态通知，以及请求已经失败过的后端列表，显示的是路径本身（`/var/run/app.sock`）。Windows 构建没有 unix socket，同样的写法是配置错误。
 
 ### DNS
 
@@ -83,7 +85,7 @@ discovery = "docker"
 update_frequency = "10s"
 ```
 
-每项为 `label[:port] [weight]`。按 Docker 标签匹配容器，其发布地址成为后端，因此 `docker compose up --scale api=5` 会在下次刷新时被发现。通过 unix 套接字连接 Docker 守护进程：`DOCKER_HOST` 是 `unix://` 路径时用它指定的套接字，否则用默认的；`tcp://` 形式的 `DOCKER_HOST` 不会被使用。后台任务跟随容器事件即时刷新列表；每次重连守护进程后都会重新列举容器，上游因重载被替换时该任务随之停止。守护进程连不上时只在开始连不上（或第一次尝试）的那一次报告，之后的每次重试不再重复通知。
+每项为 `label[:port] [weight]`。`unix:` 地址是配置错误：这种发现按标签匹配容器，不会去连接 `addrs` 里写的套接字。按 Docker 标签匹配容器，其发布地址成为后端，因此 `docker compose up --scale api=5` 会在下次刷新时被发现。通过 unix 套接字连接 Docker 守护进程：`DOCKER_HOST` 是 `unix://` 路径时用它指定的套接字，否则用默认的；`tcp://` 形式的 `DOCKER_HOST` 不会被使用。后台任务跟随容器事件即时刷新列表；每次重连守护进程后都会重新列举容器，上游因重载被替换时该任务随之停止。守护进程连不上时只在开始连不上（或第一次尝试）的那一次报告，之后的每次重试不再重复通知。
 
 ### Transparent
 

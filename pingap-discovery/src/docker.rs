@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET, split_addr};
+use super::{DOCKER_DISCOVERY, Discovery, Endpoint, LOG_TARGET, split_addr};
 use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptions};
@@ -59,14 +59,25 @@ struct Container {
 
 impl Container {
     /// Parses `label[:port] [weight]`. A bad port or weight is a
-    /// configuration error, the same as for the other discoveries.
+    /// configuration error, the same as for the other discoveries. A unix
+    /// socket is not a label.
     fn new(addr: &str) -> Result<Self> {
-        let (label, port, weight) = split_addr(addr)?;
-        Ok(Self {
-            label,
-            weight,
-            port: port.unwrap_or(0),
-        })
+        match split_addr(addr)? {
+            Endpoint::Tcp {
+                host: label,
+                port,
+                weight,
+            } => Ok(Self {
+                label,
+                weight,
+                port: port.unwrap_or(0),
+            }),
+            Endpoint::Unix { .. } => Err(Error::Invalid {
+                message: format!(
+                    "{addr} is a unix socket; docker discovery matches containers by label"
+                ),
+            }),
+        }
     }
 }
 
@@ -528,6 +539,14 @@ mod tests {
         );
         for bad in ["app=api:x", "app=api:8080 0", "app=api 1 2"] {
             assert_eq!(true, Container::new(bad).is_err(), "{bad:?}");
+        }
+        #[cfg(unix)]
+        match Container::new("unix:/var/run/app.sock") {
+            Err(err) => assert_eq!(
+                "unix:/var/run/app.sock is a unix socket; docker discovery matches containers by label",
+                err.to_string()
+            ),
+            Ok(container) => panic!("accepted {container:?}"),
         }
     }
 

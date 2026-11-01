@@ -67,6 +67,8 @@ use pingora::cache::{
 #[cfg(feature = "tracing")]
 use pingora::connectors::ConnectorOptions;
 use pingora::http::{RequestHeader, ResponseHeader};
+#[cfg(unix)]
+use pingora::listeners::ListenerConfig;
 use pingora::listeners::TcpSocketOptions;
 // pingap's own, which finishes the brotli streams pingora's leaves
 // unfinished (pingap_core::compression).
@@ -300,56 +302,152 @@ impl ListenerParams {
         lb: &mut Service<A>,
         conf: &Arc<configuration::ServerConf>,
     ) -> Result<()> {
-        let is_tls = self.dynamic_cert.is_some();
-        lb.threads = self.threads;
+        let Self {
+            name,
+            addr,
+            threads,
+            tcp_socket_options,
+            dynamic_cert,
+            tls,
+            ja4,
+            proxy_protocol,
+        } = self;
+        let is_tls = dynamic_cert.is_some();
+        lb.threads = threads;
         // pingora has one hook ahead of the handshake, in code its TLS
         // backends share, and it only ever runs on TLS listeners: the
         // PROXY protocol header of a listener without TLS is read by
         // `ProxyProtocolApp`, and config validation rejects `ja4` without
         // TLS.
-        if self.ja4.is_some() && !is_tls {
+        if ja4.is_some() && !is_tls {
             warn!(
                 target: LOG_TARGET,
-                name = self.name,
+                name,
                 "ja4 needs a TLS listener, not collecting it"
             );
         }
-        if is_tls && (self.ja4.is_some() || self.proxy_protocol) {
+        if is_tls && (ja4.is_some() || proxy_protocol) {
             lb.endpoints().set_pre_tls_callback(Arc::new(PreTls {
-                proxy_protocol: self.proxy_protocol,
-                ja4: self.ja4.map(Ja4Collector::new),
+                proxy_protocol,
+                ja4: ja4.map(Ja4Collector::new),
             }));
         }
         // support listen multi address
-        let addrs = self
-            .addr
-            .split(',')
-            .map(str::trim)
-            .filter(|a| !a.is_empty());
+        let addrs = addr.split(',').map(str::trim).filter(|a| !a.is_empty());
         for addr in addrs {
-            // tls
-            if let Some(dynamic_cert) = &self.dynamic_cert {
-                let mut tls_settings = dynamic_cert
-                    .new_tls_settings(&self.tls)
-                    .map_err(|e| Error::Common {
+            Self::add_endpoint(
+                lb,
+                conf,
+                addr,
+                dynamic_cert.as_ref(),
+                &tls,
+                tcp_socket_options.as_ref(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn add_endpoint<A>(
+        lb: &mut Service<A>,
+        conf: &Arc<configuration::ServerConf>,
+        addr: &str,
+        dynamic_cert: Option<&GlobalCertificate>,
+        tls: &TlsSettingParams,
+        tcp_socket_options: Option<&TcpSocketOptions>,
+    ) -> Result<()> {
+        match pingap_core::unix_socket_path(addr) {
+            Ok(Some(path)) => {
+                Self::add_unix_endpoint(lb, conf, path, dynamic_cert, tls)
+            },
+            Ok(None) => Self::add_tcp_endpoint(
+                lb,
+                conf,
+                addr,
+                dynamic_cert,
+                tls,
+                tcp_socket_options,
+            ),
+            Err(message) => Err(Error::Common {
+                category: "listen".to_string(),
+                message,
+            }),
+        }
+    }
+
+    /// TCP options stay off a unix socket: pingora panics when they are
+    /// set on one. TLS uses the same certificate as the TCP addresses.
+    #[cfg(unix)]
+    fn add_unix_endpoint<A>(
+        lb: &mut Service<A>,
+        conf: &Arc<configuration::ServerConf>,
+        path: &str,
+        dynamic_cert: Option<&GlobalCertificate>,
+        tls: &TlsSettingParams,
+    ) -> Result<()> {
+        let mut endpoint = ListenerConfig::uds(path);
+        if let Some(dynamic_cert) = dynamic_cert {
+            let mut tls_settings =
+                dynamic_cert.new_tls_settings(tls).map_err(|e| {
+                    Error::Common {
                         category: "tls".to_string(),
                         message: e.to_string(),
-                    })?;
-                // Handshakes move to the dedicated pools when
-                // `basic.downstream_tls_offload_*` asks for them. pingora
-                // applies this per listener because every listener owns its
-                // TlsSettings, and leaves it off while the pair is unset.
-                tls_settings.set_offload_threadpool_from_server_conf(conf);
-                lb.add_tls_with_settings(
-                    addr,
-                    self.tcp_socket_options.clone(),
-                    tls_settings,
-                );
-            } else if let Some(opt) = &self.tcp_socket_options {
-                lb.add_tcp_with_settings(addr, opt.clone());
-            } else {
-                lb.add_tcp(addr);
-            }
+                    }
+                })?;
+            // Handshakes move to the dedicated pools when
+            // `basic.downstream_tls_offload_*` asks for them. pingora
+            // applies this per listener because every listener owns its
+            // TlsSettings, and leaves it off while the pair is unset.
+            tls_settings.set_offload_threadpool_from_server_conf(conf);
+            endpoint = endpoint.tls(tls_settings);
+        }
+        lb.add_listener(endpoint);
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn add_unix_endpoint<A>(
+        _lb: &mut Service<A>,
+        _conf: &Arc<configuration::ServerConf>,
+        _path: &str,
+        _dynamic_cert: Option<&GlobalCertificate>,
+        _tls: &TlsSettingParams,
+    ) -> Result<()> {
+        Err(Error::Common {
+            category: "listen".to_string(),
+            message: "unix sockets are not available on this build".to_string(),
+        })
+    }
+
+    fn add_tcp_endpoint<A>(
+        lb: &mut Service<A>,
+        conf: &Arc<configuration::ServerConf>,
+        addr: &str,
+        dynamic_cert: Option<&GlobalCertificate>,
+        tls: &TlsSettingParams,
+        tcp_socket_options: Option<&TcpSocketOptions>,
+    ) -> Result<()> {
+        if let Some(dynamic_cert) = dynamic_cert {
+            let mut tls_settings =
+                dynamic_cert.new_tls_settings(tls).map_err(|e| {
+                    Error::Common {
+                        category: "tls".to_string(),
+                        message: e.to_string(),
+                    }
+                })?;
+            // Handshakes move to the dedicated pools when
+            // `basic.downstream_tls_offload_*` asks for them. pingora
+            // applies this per listener because every listener owns its
+            // TlsSettings, and leaves it off while the pair is unset.
+            tls_settings.set_offload_threadpool_from_server_conf(conf);
+            lb.add_tls_with_settings(
+                addr,
+                tcp_socket_options.cloned(),
+                tls_settings,
+            );
+        } else if let Some(opt) = tcp_socket_options {
+            lb.add_tcp_with_settings(addr, opt.clone());
+        } else {
+            lb.add_tcp(addr);
         }
         Ok(())
     }
