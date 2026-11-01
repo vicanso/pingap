@@ -202,7 +202,7 @@ pub trait AcmeDnsTask: Sync + Send {
 }
 ```
 
-然后在 `lets_encrypt.rs` 的 match 中接入提供商名。最小现有示例见 `dns_cf.rs`。
+然后增加一个 `DnsProvider` 变体，并在 `new_dns_task` 中接上它的构造。最小现有示例见 `dns_cf.rs`。
 
 ## 许可证
 

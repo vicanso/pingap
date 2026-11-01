@@ -406,8 +406,8 @@ pub trait AcmeDnsTask: Sync + Send {
 }
 ```
 
-then wire the provider name into the match in `lets_encrypt.rs`. See
-`dns_cf.rs` for the smallest existing example.
+then add a `DnsProvider` variant and the constructor arm in `new_dns_task`.
+See `dns_cf.rs` for the smallest existing example.
 
 ## License
 

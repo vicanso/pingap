@@ -35,7 +35,7 @@ use pingap_certificate::{
     Certificate, parse_leaf_chain_certificates, update_certificates,
 };
 use pingap_config::{
-    Category, CertificateConf, ConfigManager, DNS_PROVIDER_MANUAL,
+    Category, CertificateConf, ConfigManager, DNS_PROVIDER_MANUAL, DnsProvider,
     PingapConfig, StorageConf, acme_contacts, decode_eab_hmac,
     normalize_dns_provider,
 };
@@ -359,14 +359,18 @@ impl UpdateCertificateParams {
             buffer_days: certificate.buffer_days.unwrap_or_default(),
             domains: ordered_domains(domains),
             dns_challenge: certificate.dns_challenge.unwrap_or_default(),
-            // Normalized once here so the match on it only ever sees a
-            // canonical name. `validate` rejects anything unrecognised, so
-            // the fallback is only reached for `manual` / unset.
-            dns_provider: normalize_dns_provider(
-                certificate.dns_provider.as_deref().unwrap_or_default(),
-            )
-            .unwrap_or(DNS_PROVIDER_MANUAL)
-            .to_string(),
+            // A known name is stored in its canonical spelling. An empty
+            // value is manual. A name `validate` rejects is kept as
+            // written, so the order fails instead of waiting on a TXT
+            // record nobody will add.
+            dns_provider: {
+                let configured =
+                    certificate.dns_provider.as_deref().unwrap_or_default();
+                match normalize_dns_provider(configured) {
+                    Some(name) => name.to_string(),
+                    None => configured.trim().to_string(),
+                }
+            },
             dns_service_url,
             server: AcmeServer::new(certificate),
         })
@@ -1628,6 +1632,37 @@ fn rsa_request(names: Vec<String>) -> Result<(Vec<u8>, String)> {
     Ok((request.der().to_vec(), key.serialize_pem()))
 }
 
+/// `name` as a provider this build can answer a DNS-01 challenge with.
+fn parsed_dns_provider(name: &str) -> Result<DnsProvider> {
+    match DnsProvider::parse(name) {
+        Some(provider) => Ok(provider),
+        None => Err(Error::Fail {
+            category: "dns_provider".to_string(),
+            message: format!(
+                "Invalid dns_provider({name}), expect one of: {}",
+                DnsProvider::ALL.map(DnsProvider::as_str).join(", ")
+            ),
+        }),
+    }
+}
+
+/// The task that adds the TXT record for `provider`. An unknown name is an
+/// error: it used to become the manual task and wait for a record nobody
+/// adds.
+fn new_dns_task(
+    provider: &str,
+    service_url: &str,
+    config_manager: Arc<ConfigManager>,
+) -> Result<Box<dyn AcmeDnsTask>> {
+    match parsed_dns_provider(provider)? {
+        DnsProvider::Ali => Ok(Box::new(AliDnsTask::new(service_url)?)),
+        DnsProvider::Cf => Ok(Box::new(CfDnsTask::new(service_url)?)),
+        DnsProvider::Tencent => Ok(Box::new(TencentDnsTask::new(service_url)?)),
+        DnsProvider::Huawei => Ok(Box::new(HuaweiDnsTask::new(service_url)?)),
+        DnsProvider::Manual => Ok(Box::new(ManualDnsTask::new(config_manager))),
+    }
+}
+
 /// Generates a new certificate from Let's Encrypt for the given domains.
 /// The ACME protocol flow:
 /// 1. Creates/retrieves an ACME account with Let's Encrypt
@@ -1655,6 +1690,9 @@ async fn new_lets_encrypt(
         "order a certificate by acme"
     );
     ensure_crypto_provider();
+    // Before an account or an order. An unknown name used to become the
+    // manual task and wait for a TXT record nobody adds.
+    parsed_dns_provider(&params.dns_provider)?;
 
     let account = bounded(
         "create_account",
@@ -1742,22 +1780,11 @@ async fn new_lets_encrypt(
                     identifier.strip_prefix("*.").unwrap_or(&identifier);
                 let dns_txt_value = challenge.key_authorization().dns_value();
                 let acme_dns_name = format!("_acme-challenge.{identifier}");
-                let task: Box<dyn AcmeDnsTask> = match params
-                    .dns_provider
-                    .as_str()
-                {
-                    "ali" => {
-                        Box::new(AliDnsTask::new(&params.dns_service_url)?)
-                    },
-                    "cf" => Box::new(CfDnsTask::new(&params.dns_service_url)?),
-                    "tencent" => {
-                        Box::new(TencentDnsTask::new(&params.dns_service_url)?)
-                    },
-                    "huawei" => {
-                        Box::new(HuaweiDnsTask::new(&params.dns_service_url)?)
-                    },
-                    _ => Box::new(ManualDnsTask::new(config_manager.clone())),
-                };
+                let task = new_dns_task(
+                    &params.dns_provider,
+                    &params.dns_service_url,
+                    config_manager.clone(),
+                )?;
 
                 info!(
                     target: LOG_TARGET,
@@ -1988,7 +2015,7 @@ mod tests {
     };
     use pingap_config::{
         Category, CertificateConf, ConfigManager, StorageConf,
-        new_file_config_manager,
+        new_file_config_manager, new_memory_config_manager,
     };
     use pingap_core::{
         BackgroundTask, Ctx, Notification, NotificationData, NotificationLevel,
@@ -3853,5 +3880,59 @@ mod tests {
         assert!(!is_valid_challenge_token("..%2Fcertificate"));
         assert!(!is_valid_challenge_token("a.b"));
         assert!(!is_valid_challenge_token("a/b"));
+    }
+
+    /// The name an order stores is the canonical spelling. An unknown name
+    /// is kept, and the task for it fails instead of waiting on a TXT
+    /// record nobody adds.
+    #[test]
+    fn test_dns_task_follows_the_provider() {
+        let provider_of = |dns_provider: Option<&str>| {
+            let certificate = CertificateConf {
+                acme: Some("lets_encrypt".to_string()),
+                domains: Some("example.com".to_string()),
+                dns_provider: dns_provider.map(str::to_string),
+                ..Default::default()
+            };
+            match UpdateCertificateParams::of("site", &certificate) {
+                Some(params) => params.dns_provider,
+                None => panic!("an entry with acme and a domain is ordered"),
+            }
+        };
+        assert_eq!("manual", provider_of(None).as_str());
+        assert_eq!("manual", provider_of(Some("")).as_str());
+        assert_eq!("manual", provider_of(Some("  manual ")).as_str());
+        assert_eq!("cf", provider_of(Some("Cloudflare")).as_str());
+        assert_eq!("ali", provider_of(Some(" ALI ")).as_str());
+        assert_eq!("route53", provider_of(Some("  route53")).as_str());
+
+        let manager = Arc::new(new_memory_config_manager("", None));
+        let task = |name: &str, url: &str| {
+            super::new_dns_task(name, url, manager.clone())
+        };
+        match task("manual", "") {
+            Ok(_built) => {},
+            Err(err) => panic!("manual needs no service url: {err}"),
+        }
+        match task("", "") {
+            Ok(_built) => {},
+            Err(err) => panic!("an empty provider is manual: {err}"),
+        }
+        match task("nope", "") {
+            Ok(_built) => {
+                panic!("an unknown provider must not become the manual task")
+            },
+            Err(err) => assert_eq!(
+                "Let's Encrypt operation failed: Invalid dns_provider(nope), expect one of: ali, cf, tencent, huawei, manual, category: dns_provider",
+                err.to_string()
+            ),
+        }
+        match task("aliyun", "https://alidns.aliyuncs.com/") {
+            Ok(_built) => panic!("ali without credentials must fail"),
+            Err(err) => assert_eq!(
+                "Let's Encrypt operation failed: access_key_id or access_key_secret is required, category: ali",
+                err.to_string()
+            ),
+        }
     }
 }

@@ -133,20 +133,68 @@ impl<'de> Deserialize<'de> for PluginCategory {
 /// is logged and the operator adds it by hand.
 pub const DNS_PROVIDER_MANUAL: &str = "manual";
 
+/// A DNS provider an ACME DNS-01 challenge can be answered with.
+///
+/// The configured spelling is [`Self::parse`]. `aliyun` is [`Self::Ali`] and
+/// `cloudflare` is [`Self::Cf`]: those are the names earlier documentation
+/// used. An empty value is [`Self::Manual`]. Adding a provider is a variant
+/// here and a task in `new_dns_task`; the match there is exhaustive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnsProvider {
+    /// AliDNS.
+    Ali,
+    /// Cloudflare.
+    Cf,
+    /// Tencent Cloud DNS.
+    Tencent,
+    /// Huawei Cloud DNS.
+    Huawei,
+    /// The TXT record is logged and added by hand.
+    Manual,
+}
+
+impl DnsProvider {
+    /// Every provider, in the order a validation error lists them.
+    pub const ALL: [Self; 5] = [
+        Self::Ali,
+        Self::Cf,
+        Self::Tencent,
+        Self::Huawei,
+        Self::Manual,
+    ];
+
+    /// The spelling that is stored and matched on.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ali => "ali",
+            Self::Cf => "cf",
+            Self::Tencent => "tencent",
+            Self::Huawei => "huawei",
+            Self::Manual => DNS_PROVIDER_MANUAL,
+        }
+    }
+
+    /// The provider `value` names, or `None` when this build has none by
+    /// that name. Surrounding whitespace is ignored and case does not matter.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "" | "manual" => Some(Self::Manual),
+            "ali" | "aliyun" => Some(Self::Ali),
+            "cf" | "cloudflare" => Some(Self::Cf),
+            "tencent" => Some(Self::Tencent),
+            "huawei" => Some(Self::Huawei),
+            _ => None,
+        }
+    }
+}
+
 /// Maps a configured `dns_provider` to the canonical name the acme code matches
 /// on, or `None` when it is not a provider Pingap knows about.
 ///
 /// `aliyun` and `cloudflare` are accepted as aliases because earlier
 /// documentation used those spellings.
 pub fn normalize_dns_provider(value: &str) -> Option<&'static str> {
-    match value.trim().to_lowercase().as_str() {
-        "" | "manual" => Some(DNS_PROVIDER_MANUAL),
-        "ali" | "aliyun" => Some("ali"),
-        "cf" | "cloudflare" => Some("cf"),
-        "tencent" => Some("tencent"),
-        "huawei" => Some("huawei"),
-        _ => None,
-    }
+    DnsProvider::parse(value).map(DnsProvider::as_str)
 }
 
 /// Configuration struct for TLS/SSL certificates
@@ -345,7 +393,8 @@ impl Validate for CertificateConf {
         {
             return Err(Error::Invalid {
                 message: format!(
-                    "Invalid dns_provider({dns_provider}), expect one of: ali, cf, tencent, huawei, manual"
+                    "Invalid dns_provider({dns_provider}), expect one of: {}",
+                    DnsProvider::ALL.map(DnsProvider::as_str).join(", ")
                 ),
             });
         }
@@ -2916,7 +2965,8 @@ mod tests {
         convert_pingap_config,
     };
     use super::{
-        CertificateConf, Hashable, PingapConfig, Validate, validate_cert,
+        CertificateConf, DnsProvider, Hashable, PingapConfig, Validate,
+        normalize_dns_provider, validate_cert,
     };
     use bytesize::ByteSize;
     use pingap_core::PluginStep;
@@ -4710,6 +4760,61 @@ upstream_connect_offload_thread_per_pool = 8
             CertificateConf { acme: None, ..http },
         ] {
             assert_eq!(false, other.is_acme_http_challenge(), "{other:?}");
+        }
+    }
+
+    /// Aliases and the empty value are the names the documentation used.
+    /// The validation error lists [`DnsProvider::ALL`], so it cannot name
+    /// a provider the enum does not.
+    #[test]
+    fn test_dns_provider() {
+        assert_eq!(Some(DnsProvider::Ali), DnsProvider::parse("aliyun"));
+        assert_eq!(Some(DnsProvider::Ali), DnsProvider::parse(" ALI "));
+        assert_eq!(Some(DnsProvider::Cf), DnsProvider::parse("Cloudflare"));
+        assert_eq!(Some(DnsProvider::Cf), DnsProvider::parse("cf"));
+        assert_eq!(Some(DnsProvider::Tencent), DnsProvider::parse("tencent"));
+        assert_eq!(Some(DnsProvider::Huawei), DnsProvider::parse("Huawei"));
+        assert_eq!(Some(DnsProvider::Manual), DnsProvider::parse(""));
+        assert_eq!(Some(DnsProvider::Manual), DnsProvider::parse("  manual "));
+        assert_eq!(None, DnsProvider::parse("route53"));
+
+        for provider in DnsProvider::ALL {
+            let name = provider.as_str();
+            assert_eq!(Some(provider), DnsProvider::parse(name), "{name}");
+            assert_eq!(Some(name), normalize_dns_provider(name), "{name}");
+        }
+        assert_eq!(Some("ali"), normalize_dns_provider("aliyun"));
+        assert_eq!(Some("cf"), normalize_dns_provider("cloudflare"));
+        assert_eq!(Some("manual"), normalize_dns_provider(""));
+        assert_eq!(None, normalize_dns_provider("route53"));
+
+        let unknown = CertificateConf {
+            dns_provider: Some("route53".to_string()),
+            ..Default::default()
+        };
+        match unknown.validate() {
+            Ok(()) => panic!("route53 is not a dns provider"),
+            Err(err) => assert_eq!(
+                "Invalid error Invalid dns_provider(route53), expect one of: ali, cf, tencent, huawei, manual",
+                err.to_string()
+            ),
+        }
+
+        let alias = CertificateConf {
+            dns_provider: Some("aliyun".to_string()),
+            ..Default::default()
+        };
+        match alias.validate() {
+            Ok(()) => {},
+            Err(err) => panic!("aliyun is a known provider: {err}"),
+        }
+        let empty = CertificateConf {
+            dns_provider: Some(String::new()),
+            ..Default::default()
+        };
+        match empty.validate() {
+            Ok(()) => {},
+            Err(err) => panic!("an empty provider is manual: {err}"),
         }
     }
 
