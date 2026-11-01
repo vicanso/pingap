@@ -710,6 +710,23 @@ fn listens_on_port_80(addr: &str) -> bool {
     })
 }
 
+/// The process settings a control-panel node runs with.
+///
+/// Not the `basic` of the configuration it stores: that is for the machines
+/// that proxy, and this node applies only `basic.trusted_proxies` of it.
+/// `daemon` is how this process was started. The upgrade socket is pingap's
+/// own default, the one `new_with_opt_and_conf` snapshots, rather than
+/// pingora's. The node does not take part in a hot upgrade.
+fn control_panel_server_conf(
+    daemon: bool,
+) -> server::configuration::ServerConf {
+    server::configuration::ServerConf {
+        daemon,
+        upgrade_sock: DEFAULT_UPGRADE_SOCK.to_string(),
+        ..Default::default()
+    }
+}
+
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
@@ -735,12 +752,19 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     }
     tokio::runtime::Runtime::new()?
         .block_on(migrate_config_layout(&config_manager));
+    // `upgrade` stays false: this node does not take over listeners.
+    // The configuration goes in at construction. `Server::new` would
+    // snapshot pingora's own upgrade socket into `Bootstrap`, and a later
+    // assignment would never reach the receiving half of an upgrade.
     let opt = Opt {
         daemon: args.daemon,
         ..Default::default()
     };
     // config::set_config_path(&args.conf);
-    let mut my_server = server::Server::new(Some(opt))?;
+    let mut my_server = server::Server::new_with_opt_and_conf(
+        Some(opt),
+        control_panel_server_conf(args.daemon),
+    );
     // The one setting of what it stores that this node runs with: who
     // the proxies in front of it are, for the address a failed login is
     // counted by.
@@ -765,11 +789,23 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     my_server
         .add_boxed_service(services.lb)
         .add_dependency(&bootstrap_handle);
+    // Same shutdown as `run`. This service flushes while the runtimes are
+    // still up (SIGTERM, SIGQUIT). Nothing here reads `basic.webhook`.
+    my_server.add_service(background_service(
+        "webhook_flush",
+        webhook::WebhookFlushService,
+    ));
     info!(target: LOG_TARGET, "Admin node server is running");
     let _ = get_start_time();
 
-    // TODO not process exit until pingora supports
-    my_server.run_forever();
+    // `run`, not `run_forever`: it returns once the runtimes have exited.
+    // A fast stop (SIGINT) never runs the flush service, so the same flush
+    // runs once more here. This path writes no exit mark.
+    my_server.run(server::RunArgs::default());
+    process::remove_on_clean_exit();
+    webhook::flush_pending_before_exit();
+    pingap_logger::flush_application_log();
+    std::process::exit(0);
 }
 
 fn parse_arguments() -> Args {
@@ -1592,6 +1628,51 @@ mod tests {
         // left in its environment.
         assert_eq!("/run/new.sock", path(Some("/run/old.sock"), false));
         assert_eq!("/run/new.sock", path(Some(""), true));
+    }
+
+    /// A control-panel node does not take the process settings of the
+    /// configuration it stores. Only whether it daemonizes, and pingap's
+    /// own upgrade socket, differ from pingora's defaults.
+    #[test]
+    fn test_control_panel_server_conf() {
+        let defaults = server::configuration::ServerConf::default();
+        assert_eq!("/tmp/pingora_upgrade.sock", defaults.upgrade_sock);
+        for daemon in [false, true] {
+            let conf = control_panel_server_conf(daemon);
+            assert_eq!(daemon, conf.daemon);
+            assert_eq!(DEFAULT_UPGRADE_SOCK, conf.upgrade_sock);
+            assert_eq!(defaults.pid_file, conf.pid_file);
+            assert_eq!(defaults.error_log, conf.error_log);
+            assert_eq!(defaults.user, conf.user);
+            assert_eq!(defaults.group, conf.group);
+            assert_eq!(defaults.working_directory, conf.working_directory);
+            assert_eq!(defaults.threads, conf.threads);
+            assert_eq!(defaults.work_stealing, conf.work_stealing);
+            assert_eq!(
+                defaults.listener_tasks_per_fd,
+                conf.listener_tasks_per_fd
+            );
+            assert_eq!(
+                defaults.grace_period_seconds,
+                conf.grace_period_seconds
+            );
+            assert_eq!(
+                defaults.graceful_shutdown_timeout_seconds,
+                conf.graceful_shutdown_timeout_seconds
+            );
+            assert_eq!(
+                defaults.upstream_keepalive_pool_size,
+                conf.upstream_keepalive_pool_size
+            );
+            assert_eq!(
+                defaults.max_blocking_threads,
+                conf.max_blocking_threads
+            );
+            assert_eq!(
+                defaults.daemon_wait_for_ready,
+                conf.daemon_wait_for_ready
+            );
+        }
     }
 
     /// The servers a process listens with, which a restart compares with
