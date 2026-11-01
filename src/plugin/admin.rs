@@ -1559,7 +1559,8 @@ impl Plugin for AdminServe {
 /// [`super::plugin_factory`].
 pub(super) fn register() {
     get_plugin_factory()
-        .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)));
+        .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)))
+        .expect("plugin category is registered once");
 }
 
 #[cfg(test)]

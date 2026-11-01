@@ -156,9 +156,11 @@ the same factory and are configured exactly the same way.
 The plugins of this crate are in the factory from the first time
 `get_plugin_factory()` is called; nothing runs before `main`. A plugin from
 elsewhere is added with `get_plugin_factory().register(category, creator)`
-before the factory is asked to create one: the `pingap` binary adds its own
-and `image_optim` (`pingap_imageoptim::register()`) in `plugin_factory()`
-(`src/plugin/mod.rs`), the one way the binary reaches the factory.
+before the factory is asked to create one. A category that is empty or
+already registered is an error, and the creator already there is kept. The
+`pingap` binary adds its own and `image_optim`
+(`pingap_imageoptim::register()`) in `plugin_factory()` (`src/plugin/mod.rs`),
+the one way the binary reaches the factory.
 
 ## Writing a plugin
 

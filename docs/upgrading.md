@@ -82,6 +82,10 @@ What is on `main` and in no release yet.
   `get_plugin_factory()` is called, instead of before `main`, which changes
   nothing for a caller. `PluginFactory` is exported. The crates no longer
   depend on `ctor`.
+- **pingap-plugin**: `PluginFactory::register` returns a `Result` and refuses
+  a category that is empty or already registered. It used to replace the
+  creator. A configuration is unchanged. A second registration of the same
+  name is `Plugin {category} invalid, message: category is already registered`.
 - **pingap-core**: the proxy calls `handle_request` only when
   `Plugin::step()` is that callback. The default is `request`. A plugin
   that runs at another step and does not implement `step()` is no longer

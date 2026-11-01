@@ -482,9 +482,11 @@ impl Plugin for ImageOptim {
 /// first used; a program of its own that uses this crate calls it before it
 /// creates the plugin.
 pub fn register() {
-    get_plugin_factory().register("image_optim", |params| {
-        Ok(Arc::new(ImageOptim::new(params)?))
-    });
+    get_plugin_factory()
+        .register("image_optim", |params| {
+            Ok(Arc::new(ImageOptim::new(params)?))
+        })
+        .expect("plugin category is registered once");
 }
 
 #[cfg(test)]

@@ -206,7 +206,8 @@ impl Plugin for Stats {
 /// [`super::plugin_factory`].
 pub(super) fn register() {
     get_plugin_factory()
-        .register("stats", |params| Ok(Arc::new(Stats::new(params)?)));
+        .register("stats", |params| Ok(Arc::new(Stats::new(params)?)))
+        .expect("plugin category is registered once");
 }
 
 #[cfg(test)]

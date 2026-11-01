@@ -121,7 +121,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 
 `stats` 与 `admin` 位于 `pingap` 二进制（`src/plugin/`）而非本 crate，因为它们需要进程与配置管理器。`image_optim` 位于 `pingap-imageoptim`。它们都注册到同一工厂，配置方式完全一致。
 
-本 crate 的插件在第一次调用 `get_plugin_factory()` 时就已在工厂里，`main` 之前不运行任何代码。其他地方的插件要在工厂创建它之前用 `get_plugin_factory().register(category, creator)` 加进去：`pingap` 二进制在 `plugin_factory()`（`src/plugin/mod.rs`）里加入自己的插件和 `image_optim`（`pingap_imageoptim::register()`），二进制只通过这个函数使用工厂。
+本 crate 的插件在第一次调用 `get_plugin_factory()` 时就已在工厂里，`main` 之前不运行任何代码。其他地方的插件要在工厂创建它之前用 `get_plugin_factory().register(category, creator)` 加进去。category 是空的，或者已经登记过，就是错误，原来的构造函数保留。`pingap` 二进制在 `plugin_factory()`（`src/plugin/mod.rs`）里加入自己的插件和 `image_optim`（`pingap_imageoptim::register()`），二进制只通过这个函数使用工厂。
 
 ## 编写插件
 

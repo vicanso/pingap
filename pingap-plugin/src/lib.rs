@@ -562,9 +562,11 @@ pub fn get_hash_key(conf: &PluginConf) -> String {
 macro_rules! register_plugin {
     ($category:literal, $ty:ty) => {
         pub(crate) fn register(factory: &crate::plugin::PluginFactory) {
-            factory.register($category, |params| {
-                Ok(::std::sync::Arc::new(<$ty>::new(params)?))
-            });
+            factory
+                .register($category, |params| {
+                    Ok(::std::sync::Arc::new(<$ty>::new(params)?))
+                })
+                .expect("plugin category is registered once");
         }
     };
 }

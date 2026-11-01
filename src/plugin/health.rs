@@ -226,7 +226,8 @@ impl Plugin for Health {
 /// [`super::plugin_factory`].
 pub(super) fn register() {
     get_plugin_factory()
-        .register("health", |params| Ok(Arc::new(Health::new(params)?)));
+        .register("health", |params| Ok(Arc::new(Health::new(params)?)))
+        .expect("plugin category is registered once");
 }
 
 #[cfg(test)]
