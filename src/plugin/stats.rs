@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Plugin, get_hash_key, get_step_conf, get_str_conf};
+use super::{Plugin, get_hash_key, get_str_conf};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -21,7 +21,7 @@ use pingap_core::{
     Ctx, HttpResponse, PluginStep, RequestPluginResult, get_hostname,
 };
 use pingap_performance::{get_process_system_info, get_processing_accepted};
-use pingap_plugin::{Error, get_plugin_factory};
+use pingap_plugin::{Error, get_plugin_factory, get_step_conf_in};
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::borrow::Cow;
@@ -100,22 +100,18 @@ impl TryFrom<&PluginConf> for Stats {
     /// or an Error if the configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
+        let step = get_step_conf_in(
+            value,
+            &PluginCategory::Stats.to_string(),
+            PluginStep::Request,
+            &[PluginStep::Request, PluginStep::ProxyUpstream],
+        )?;
 
-        let params = Self {
+        Ok(Self {
             hash_value,
             plugin_step: step,
             path: get_str_conf(value, "path"),
-        };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Stats.to_string(),
-                message: "Stats plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
-        Ok(params)
+        })
     }
 }
 
@@ -140,6 +136,11 @@ impl Plugin for Stats {
     #[inline]
     fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
+    }
+
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
     }
     /// Handles incoming HTTP requests for the Stats plugin
     ///
@@ -242,9 +243,32 @@ mod tests {
         );
 
         assert_eq!(
-            "Plugin stats invalid, message: Stats plugin should be executed at request or proxy upstream step",
-            result.err().unwrap().to_string()
+            true,
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("Invalid step(response)")
         );
+
+        // spellchecker:off
+        let typo = Stats::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+        step = "requset"
+        path = "/stats"
+    "###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            true,
+            typo.err()
+                .unwrap()
+                .to_string()
+                .contains("Invalid step(requset)")
+        );
+        // spellchecker:on
     }
 
     #[tokio::test]

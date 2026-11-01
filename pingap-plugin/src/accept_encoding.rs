@@ -97,6 +97,11 @@ impl Plugin for AcceptEncoding {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// Processes the HTTP request by filtering the Accept-Encoding header.
     ///
     /// # Arguments

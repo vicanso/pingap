@@ -36,6 +36,18 @@ What is on `main` and in no release yet.
   stream, until it expires: purge it. In upstream mode a response with
   `Content-Length: 0` is no longer given a `Content-Encoding` over its zero
   bytes.
+- **A misspelt `step` on `oidc` or `stats` is refused.** A value that is
+  not a step name used to be read as `request`, and the plugin ran. A step
+  the plugin does not implement was already an error. `pingap -t` now
+  reports `Invalid step(...)`.
+
+### Cache
+
+- **A memory cache with `eviction = true` counts the headers in the
+  weight.** `finish` used to tell the LRU the size of the body alone,
+  while the stored object weighs the body and its meta. An entry near the
+  budget is evicted a little sooner. The file cache does not use this
+  weight. `max_file_size` is still the size of the body.
 
 ### Licenses
 
@@ -70,6 +82,14 @@ What is on `main` and in no release yet.
   `get_plugin_factory()` is called, instead of before `main`, which changes
   nothing for a caller. `PluginFactory` is exported. The crates no longer
   depend on `ctor`.
+- **pingap-core**: the proxy calls `handle_request` only when
+  `Plugin::step()` is that callback. The default is `request`. A plugin
+  that runs at another step and does not implement `step()` is no longer
+  called. `handle_response_body` and `handle_upstream_response_body` are
+  called only when `handles_response_body()` or
+  `handles_upstream_response_body()` is true; both default to false. A
+  plugin that overrides a body method and leaves the flag false is no
+  longer called. The header callbacks are unchanged.
 - **pingap-proxy**: the compression module of the server is
   `pingap_core::ResponseCompression`, which finishes the brotli streams
   ([#256](https://github.com/vicanso/pingap/issues/256)), no longer

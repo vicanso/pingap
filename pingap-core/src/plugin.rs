@@ -116,6 +116,35 @@ pub trait Plugin: Sync + Send {
         Cow::Borrowed("")
     }
 
+    /// The request step at which `handle_request` runs.
+    ///
+    /// The proxy calls `handle_request` only when this is the step of the
+    /// callback. The default is [`PluginStep::Request`]. A plugin that
+    /// runs at another step returns that step.
+    #[inline]
+    fn step(&self) -> PluginStep {
+        PluginStep::Request
+    }
+
+    /// Whether `handle_response_body` rewrites the body sent to the client.
+    ///
+    /// The proxy does not call the method when this is false, which is
+    /// the default.
+    #[inline]
+    fn handles_response_body(&self) -> bool {
+        false
+    }
+
+    /// Whether `handle_upstream_response_body` rewrites the upstream
+    /// body, before it is cached.
+    ///
+    /// The proxy does not call the method when this is false, which is
+    /// the default.
+    #[inline]
+    fn handles_upstream_response_body(&self) -> bool {
+        false
+    }
+
     /// Processes an HTTP request at a specified lifecycle step.
     ///
     /// # Parameters
@@ -293,6 +322,14 @@ impl MissingPlugin {
 
 #[async_trait]
 impl Plugin for MissingPlugin {
+    fn step(&self) -> PluginStep {
+        // The first callback. Failing here, in list order, is what a
+        // plugin that did not load did when every plugin was called at
+        // every step: nothing listed after it runs, and a later plugin
+        // cannot answer the request in its place.
+        PluginStep::EarlyRequest
+    }
+
     async fn handle_request(
         &self,
         _step: PluginStep,
@@ -412,6 +449,14 @@ mod tests {
             .unwrap();
         assert_eq!(1, marked(&header));
         assert_eq!(true, ctx.response_plugins.is_some());
+    }
+
+    #[test]
+    fn test_missing_plugin_fails_at_the_first_step() {
+        let plugin = MissingPlugin::new(Arc::from("pingap:requestId"));
+        assert_eq!(PluginStep::EarlyRequest, plugin.step());
+        assert_eq!(false, plugin.handles_response_body());
+        assert_eq!(false, plugin.handles_upstream_response_body());
     }
 
     #[test]

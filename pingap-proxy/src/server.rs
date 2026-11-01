@@ -1311,6 +1311,10 @@ impl Server {
         let result = async {
             let mut request_done = false;
             for (index, (name, plugin)) in plugins.iter().enumerate() {
+                // The plugin's own step check stays. This skips the call.
+                if plugin.step() != step {
+                    continue;
+                }
                 let now = Instant::now();
                 let result = plugin.handle_request(step, session, ctx).await?;
                 let elapsed = now.elapsed().as_millis() as u32;
@@ -1466,6 +1470,9 @@ impl Server {
         // `handle_upstream_response_plugin`.
         let mut result = Ok(());
         for (name, plugin) in plugins.iter() {
+            if !plugin.handles_upstream_response_body() {
+                continue;
+            }
             let now = Instant::now();
             match plugin.handle_upstream_response_body(
                 session,
@@ -1526,6 +1533,9 @@ impl Server {
         // `handle_upstream_response_plugin`.
         let mut result = Ok(());
         for (name, plugin) in plugins.iter() {
+            if !plugin.handles_response_body() {
+                continue;
+            }
             let now = Instant::now();
             match plugin.handle_response_body(session, ctx, body, end_of_stream)
             {
@@ -3389,6 +3399,14 @@ value = 'proxy_set_headers = ["name:value"]'
 
     #[async_trait::async_trait]
     impl Plugin for CountingPlugin {
+        fn handles_response_body(&self) -> bool {
+            true
+        }
+
+        fn handles_upstream_response_body(&self) -> bool {
+            true
+        }
+
         async fn handle_request(
             &self,
             _step: PluginStep,
@@ -3400,6 +3418,17 @@ value = 'proxy_set_headers = ["name:value"]'
         }
 
         fn handle_response_body(
+            &self,
+            _session: &mut Session,
+            _ctx: &mut Ctx,
+            _body: &mut Option<bytes::Bytes>,
+            _end_of_stream: bool,
+        ) -> pingora::Result<ResponseBodyPluginResult> {
+            self.body_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ResponseBodyPluginResult::Unchanged)
+        }
+
+        fn handle_upstream_response_body(
             &self,
             _session: &mut Session,
             _ctx: &mut Ctx,
@@ -3469,9 +3498,11 @@ value = 'proxy_set_headers = ["name:value"]'
                 ctx.plugins.is_some(),
                 "plugin chain was dropped for headers {headers:?}"
             );
-            assert!(
-                request_calls.load(Ordering::SeqCst) > 0,
-                "request plugins never ran for headers {headers:?}"
+            // CountingPlugin runs at request. EarlyRequest does not call it.
+            assert_eq!(
+                0,
+                request_calls.load(Ordering::SeqCst),
+                "a request-step plugin ran at early_request for headers {headers:?}"
             );
 
             // And they keep running at the Request step, not just EarlyRequest.
@@ -3534,11 +3565,126 @@ value = 'proxy_set_headers = ["name:value"]'
                 true,
             )
             .unwrap();
+        // The location names two plugins, and both body hooks run on each.
         assert_eq!(
-            2,
+            4,
             body_calls.load(Ordering::SeqCst),
             "body hooks must not bail out before the handshake completes"
         );
+    }
+
+    /// A body method with the flag left false is not called. The flag is
+    /// what the proxy trusts; overriding the method is not enough.
+    #[tokio::test]
+    async fn test_body_hook_without_the_flag_is_not_called() {
+        struct Counts(AtomicUsize);
+        impl Plugin for Counts {
+            fn handle_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<bytes::Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<ResponseBodyPluginResult> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(ResponseBodyPluginResult::Unchanged)
+            }
+
+            fn handle_upstream_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<bytes::Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<ResponseBodyPluginResult> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(ResponseBodyPluginResult::Unchanged)
+            }
+        }
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let counts = Arc::new(Counts(AtomicUsize::new(0)));
+        let mut ctx = Ctx::default();
+        let plugins: Vec<pingap_core::NamedPlugin> =
+            vec![("counts".into(), counts.clone())];
+        ctx.plugins = Some(Arc::from(plugins));
+        let mut body = Some(bytes::Bytes::from_static(b"hello"));
+        server
+            .handle_response_body_plugin(
+                &mut session,
+                &mut ctx,
+                &mut body,
+                true,
+            )
+            .unwrap();
+        server
+            .handle_upstream_response_body_plugin(
+                &mut session,
+                &mut ctx,
+                &mut body,
+                true,
+            )
+            .unwrap();
+        assert_eq!(0, counts.0.load(Ordering::SeqCst));
+    }
+
+    /// A plugin is called at its own step and at none of the others.
+    #[tokio::test]
+    async fn test_request_plugin_runs_only_at_its_step() {
+        struct At {
+            step: PluginStep,
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Plugin for At {
+            fn step(&self) -> PluginStep {
+                self.step
+            }
+            async fn handle_request(
+                &self,
+                _step: PluginStep,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+            ) -> pingora::Result<RequestPluginResult> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(RequestPluginResult::Continue)
+            }
+        }
+        let calls = Arc::new(AtomicUsize::new(0));
+        let server = new_server_with(Some(Arc::new(CountingPluginProvider {
+            plugin: Arc::new(At {
+                step: PluginStep::ProxyUpstream,
+                calls: calls.clone(),
+            }),
+        })));
+        let input_header = "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        server
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        server
+            .handle_request_plugin(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(0, calls.load(Ordering::SeqCst));
+        server
+            .handle_request_plugin(
+                PluginStep::ProxyUpstream,
+                &mut session,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        // The location names two plugins. Both are this one.
+        assert_eq!(2, calls.load(Ordering::SeqCst));
     }
 
     /// Regression: a plugin that is not loaded - a misspelled name, a config
@@ -4567,6 +4713,12 @@ value = 'proxy_set_headers = ["name:value"]'
     async fn test_plugins_survive_a_failing_body_plugin() {
         struct Fails;
         impl Plugin for Fails {
+            fn handles_upstream_response_body(&self) -> bool {
+                true
+            }
+            fn handles_response_body(&self) -> bool {
+                true
+            }
             fn handle_upstream_response_body(
                 &self,
                 _session: &mut Session,
@@ -4629,6 +4781,9 @@ value = 'proxy_set_headers = ["name:value"]'
         /// a body does.
         struct HoldsBack;
         impl Plugin for HoldsBack {
+            fn handles_upstream_response_body(&self) -> bool {
+                true
+            }
             fn handle_upstream_response_body(
                 &self,
                 _session: &mut Session,
@@ -4846,6 +5001,9 @@ value = 'proxy_set_headers = ["name:value"]'
         #[derive(Default)]
         struct Ends(AtomicUsize);
         impl Plugin for Ends {
+            fn handles_response_body(&self) -> bool {
+                true
+            }
             fn handle_response_body(
                 &self,
                 _session: &mut Session,
@@ -5774,6 +5932,10 @@ addr = "127.0.0.1:6188"
 
     #[async_trait::async_trait]
     impl Plugin for EarlyResponder {
+        fn step(&self) -> PluginStep {
+            PluginStep::EarlyRequest
+        }
+
         async fn handle_request(
             &self,
             step: PluginStep,

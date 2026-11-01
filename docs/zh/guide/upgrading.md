@@ -13,6 +13,11 @@
 - **`image_optim` 重新编码没有收益时发送原图**：png 仍以 png 返回、jpeg 仍以 jpeg 返回，而结果并不更小的情况。以前会发出重新编码后的结果，比原图还大。
 
 - **`br` 响应现在是完整的 brotli 流。** pingora 0.9.0 压缩的每个流都漏掉了最后一个块，`compression` 的两种模式都受影响：浏览器能正常显示，严格的解码器（Node 的 `fetch`、`brotli -t`）会拒绝（[#256](https://github.com/vicanso/pingap/issues/256)）。上游模式之前存进缓存的仍是不完整的流，直到过期：请 purge。上游模式下，`Content-Length: 0` 的响应也不再在零个字节上标 `Content-Encoding`。
+- **`oidc` 和 `stats` 写错的 `step` 会被拒绝。** 不是 step 名字的值以前被当成 `request`，插件照常运行。插件不支持的真实 step 本来就会报错。现在 `pingap -t` 报 `Invalid step(...)`。
+
+### 缓存
+
+- **内存缓存在 `eviction = true` 时把响应头算进权重。** `finish` 以前只把 body 的长度交给 LRU，存下来的对象在 `get_weight` 里还算上 meta。靠近容量上限的条目会稍早被换出。文件缓存不用这个权重。`max_file_size` 仍然只看 body。
 
 ### 许可证
 
@@ -28,6 +33,7 @@
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。
 - **pingap-imageoptim**：`image_optim` 插件不再由 `main` 之前的构造函数注册。自己写程序使用这个 crate 的，要在创建插件之前调用 `pingap_imageoptim::register()`；不调用的话，工厂里没有 `image_optim`。
 - **pingap-plugin**：它的插件改为在第一次调用 `get_plugin_factory()` 时放进工厂，不再在 `main` 之前，对调用方没有影响。`PluginFactory` 现在是公开导出的。这些 crate 不再依赖 `ctor`。
+- **pingap-core**：代理只在 `Plugin::step()` 等于当前回调时调用 `handle_request`，默认是 `request`。请求阶段不是 `request`、又没有实现 `step()` 的插件不再被调用。`handle_response_body` 和 `handle_upstream_response_body` 只在 `handles_response_body()` 或 `handles_upstream_response_body()` 返回 `true` 时调用，默认都是 `false`。改写了 body 方法但标记仍是 `false` 的插件不再被调用。改响应头的回调不变。
 - **pingap-proxy**：服务器的压缩模块换成了 `pingap_core::ResponseCompression`（它会补全 brotli 流，[#256](https://github.com/vicanso/pingap/issues/256)），不再是 pingora 的。自己写的插件如果要调整压缩，得按这个类型取：`downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`。按 pingora 的 `ResponseCompression` 取会拿到空，插件也就静默地不再调整压缩，不会报错。它 deref 到 pingora 的 `ResponseCompressionCtx`，上面的调用不用改。
 - **tokio 低于 1.54**：这里用到 tokio 的 crate 现在都要求 `tokio = ">=1.53.3, <1.54"`。pingora 0.9.0 给每个连接建的缓冲区容量为 0，tokio 1.54 不再接受，第一个连接就会 panic（[cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)）。要求 tokio 1.54 及以上的项目，在 pingora 修复之前用不了这些 crate。
 

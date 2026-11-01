@@ -17,7 +17,7 @@ use super::jwt::{
     strip_claim_headers,
 };
 use super::{Error, get_duration_conf, get_hash_key, get_str_conf};
-use super::{get_step_conf, get_str_slice_conf};
+use super::{get_step_conf_in, get_str_slice_conf};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -192,12 +192,12 @@ impl TryFrom<&PluginConf> for Oidc {
             category: CATEGORY.to_string(),
             message,
         };
-        let plugin_step = get_step_conf(value, PluginStep::Request);
-        if plugin_step != PluginStep::Request {
-            return Err(invalid(
-                "oidc plugin should be executed at request step".to_string(),
-            ));
-        }
+        let plugin_step = get_step_conf_in(
+            value,
+            CATEGORY,
+            PluginStep::Request,
+            &[PluginStep::Request],
+        )?;
         let issuer = get_str_conf(value, "issuer")
             .trim()
             .trim_end_matches('/')
@@ -1074,8 +1074,10 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             let error = new(conf);
             assert_eq!(true, error.contains(message), "{conf}: {error}");
         }
+        // spellchecker:off
         for (extra, message) in [
-            ("step = \"response\"", "should be executed at request step"),
+            ("step = \"response\"", "Invalid step(response)"),
+            ("step = \"requset\"", "Invalid step(requset)"),
             ("redirect_path = \"callback\"", "is not a path"),
             ("redirect_path = \"//evil.test/x\"", "is not a path"),
             ("redirect_path = \"/cb?x=1\"", "is not a path"),
@@ -1110,6 +1112,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 .unwrap_or_default();
             assert_eq!(true, error.contains(message), "{extra}: {error}");
         }
+        // spellchecker:on
     }
 
     #[test]

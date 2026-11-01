@@ -438,7 +438,11 @@ impl HandleMiss for ObjectMissHandler {
     }
 
     async fn finish(self: Box<Self>) -> pingora::Result<MissFinishType> {
-        let size = self.body.len(); // FIXME: this just body size, also track meta size
+        // The same bytes `CacheObject::get_weight` counts. pingora's
+        // eviction admits an entry by this size (`eviction = true` on
+        // the memory cache). The body alone under-counted every entry
+        // by its headers.
+        let size = self.body.len() + self.meta.0.len() + self.meta.1.len();
         info!(
             target: LOG_TARGET,
             key = self.key,
@@ -747,7 +751,12 @@ mod tests {
             .write_body(Bytes::from_static(b"Hello World!"), true)
             .await
             .unwrap();
-        handle.finish().await.unwrap();
+        // "Hello World!" (12) plus the meta "Hello" and "World".
+        match handle.finish().await {
+            Ok(MissFinishType::Created(size)) => assert_eq!(22, size),
+            Ok(_) => panic!("expected Created"),
+            Err(err) => panic!("finish failed: {err}"),
+        }
 
         let data = cache.get(key, b"").await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());

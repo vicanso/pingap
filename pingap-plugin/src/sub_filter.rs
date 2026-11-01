@@ -443,6 +443,11 @@ impl Plugin for SubFilter {
         );
         Ok(ResponsePluginResult::Modified)
     }
+
+    fn handles_response_body(&self) -> bool {
+        true
+    }
+
     fn handle_response_body(
         &self,
         session: &mut Session,

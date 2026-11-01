@@ -578,6 +578,11 @@ impl Plugin for Limiter {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// Handles incoming HTTP requests by applying configured limits
     ///
     /// # Arguments

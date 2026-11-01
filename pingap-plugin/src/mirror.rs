@@ -466,6 +466,11 @@ impl Plugin for Mirror {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     async fn handle_request(
         &self,
         step: PluginStep,

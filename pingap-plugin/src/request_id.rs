@@ -170,6 +170,11 @@ impl Plugin for RequestId {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// Handles incoming requests by managing request IDs.
     ///
     /// # Arguments

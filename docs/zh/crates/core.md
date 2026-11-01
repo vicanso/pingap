@@ -9,7 +9,7 @@ Pingap Core 是 Pingap 项目的基础库，提供一组核心组件与工具，
 ## 核心特性
 
 - **请求上下文（`Ctx`）**：跟踪每个请求的状态，包括时序指标、连接细节、上游信息、缓存状态与自定义变量。并提供生成详细日志与 `Server-Timing` 头的工具。
-- **插件系统**：可扩展架构，允许挂接到请求/响应生命周期的各阶段（`PluginStep`），实现认证、限流、改头等自定义逻辑。插件直接返回的响应不经过响应阶段；`handles_plugin_response()` 返回 `true` 的插件仍然可以给它设置响应头。
+- **插件系统**：可扩展架构，允许挂接到请求/响应生命周期的各阶段（`PluginStep`），实现认证、限流、改头等自定义逻辑。插件直接返回的响应不经过响应阶段；`handles_plugin_response()` 返回 `true` 的插件仍然可以给它设置响应头。代理只在 `step()` 等于当前回调时调用 `handle_request`（默认是 `request`），也只在 `handles_response_body()` 或 `handles_upstream_response_body()` 为 `true` 时调用对应的 body 钩子。
 - **HTTP 辅助**：
   - **头操作**：解析、创建与修改 HTTP 头，支持动态值替换（如 `$hostname`、`$remote_addr`、`$ja4`、`$http_user_agent`）。
   - **响应构建器**：流畅的 `HttpResponseBuilder`，便于构造完整 HTTP 响应，含 JSON、HTML、文本与重定向等常用类型。同名的头写两次以后一次为准，`Set-Cookie`、`WWW-Authenticate`、`Proxy-Authenticate`、`Link` 除外，它们每个值各发一次。

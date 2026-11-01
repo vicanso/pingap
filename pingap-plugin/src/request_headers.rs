@@ -178,6 +178,11 @@ impl Plugin for RequestHeaders {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// Applies the rules, in the order `response_headers` applies its own:
     /// add, remove, set, set where missing, rename.
     #[inline]

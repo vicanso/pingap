@@ -206,6 +206,11 @@ impl Plugin for MockResponse {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// Handles incoming requests and returns mock responses when appropriate.
     ///
     /// # Parameters

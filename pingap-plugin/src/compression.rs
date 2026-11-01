@@ -484,6 +484,11 @@ impl Plugin for Compression {
         Cow::Borrowed(&self.hash_value)
     }
 
+    #[inline]
+    fn step(&self) -> PluginStep {
+        self.plugin_step
+    }
+
     /// In the default mode pingora compresses what a plugin answers with
     /// as well - the files of `directory` above all - so what is left out
     /// has to be asked about those too: `types` and `min_length`, or the
@@ -495,6 +500,13 @@ impl Plugin for Compression {
     #[inline]
     fn handles_plugin_response(&self) -> bool {
         !self.upstream_mode && self.support_compression
+    }
+
+    /// Upstream mode rewrites the body here. The default mode is pingora's
+    /// downstream module, which this method does not touch.
+    #[inline]
+    fn handles_upstream_response_body(&self) -> bool {
+        self.upstream_mode
     }
 
     /// Processes incoming HTTP requests to configure response compression

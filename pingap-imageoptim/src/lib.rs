@@ -284,6 +284,14 @@ impl Plugin for ImageOptim {
     fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
+
+    fn step(&self) -> PluginStep {
+        PluginStep::EarlyRequest
+    }
+
+    fn handles_upstream_response_body(&self) -> bool {
+        true
+    }
     async fn handle_request(
         &self,
         step: PluginStep,

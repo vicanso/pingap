@@ -1312,6 +1312,12 @@ impl Plugin for JwtAuth {
 
         Ok(ResponsePluginResult::Modified)
     }
+
+    #[inline]
+    fn handles_response_body(&self) -> bool {
+        true
+    }
+
     fn handle_response_body(
         &self,
         session: &mut Session,
