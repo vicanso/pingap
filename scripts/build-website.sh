@@ -192,12 +192,14 @@ build_en() {
     "https://github.com/vicanso/pingap/blob/main/docs/acme_chart.md"
 
   cp "${ROOT}/examples/README.md" "${EN}/guide/examples.md"
-  rewrite_links "${EN}/guide/examples.md" guide
+  # rewrite_links strips README.md before this substitution can see it,
+  # which leaves ./static-serve/ — a route the site does not have.
   sed -E -i.bak \
     -e 's|\(\./([a-z0-9-]+)/README\.md\)|(https://github.com/vicanso/pingap/tree/main/examples/\1)|g' \
     -e 's|\(\./([a-z0-9-]+)/([a-z0-9.-]+)\)|(https://github.com/vicanso/pingap/tree/main/examples/\1/\2)|g' \
     "${EN}/guide/examples.md"
   rm -f "${EN}/guide/examples.md.bak"
+  rewrite_links "${EN}/guide/examples.md" guide
   strip_md_links "${EN}/guide/examples.md"
   append_source_footer "${EN}/guide/examples.md" "examples/README.md" \
     "https://github.com/vicanso/pingap/blob/main/examples/README.md"

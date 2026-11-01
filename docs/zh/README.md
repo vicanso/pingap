@@ -87,6 +87,7 @@ graph TD
     config --> discovery
     config --> util
     discovery --> core
+    health --> util
     imageoptim --> config
     imageoptim --> core
     imageoptim --> plugin
@@ -103,6 +104,7 @@ graph TD
     plugin --> core
     plugin --> util
     proxy --> acme
+    proxy --> cache
     proxy --> certificate
     proxy --> config
     proxy --> core
@@ -116,6 +118,7 @@ graph TD
     upstream --> core
     upstream --> discovery
     upstream --> health
+    upstream --> util
     webhook --> core
 ```
 
@@ -123,13 +126,13 @@ graph TD
 
 ## 插件分类
 
-| 分类 | 示例 |
+| 分类 | 插件 |
 | --- | --- |
-| 认证 | `basic_auth`, `key_auth`, `jwt`, `combined_auth`, `forward_auth`, `csrf` |
-| 访问控制 | `ip_restriction`, `referer_restriction`, `ua_restriction`, `geo_restriction` |
-| 流量控制 | `limit`, `traffic_splitting`, `cache` |
-| 内容 | `compression`, `directory`, `sub_filter`, `cors`, `redirect`, `image_optim` |
-| 运维 | `ping`, `mock`, `request_id`, `stats`, `admin` |
+| 认证 | `basic_auth`, `key_auth`, `jwt`, `combined_auth`, `hmac_auth`, `forward_auth`, `oidc`, `csrf` |
+| 访问控制 | `ip_restriction`, `referer_restriction`, `ua_restriction`, `ja4_restriction`, `geo_restriction`, `uri_block`, `maintenance` |
+| 流量控制 | `limit`, `traffic_splitting`, `mirror`, `cache`, `bandwidth_limit` |
+| 内容 | `compression`, `accept_encoding`, `directory`, `sub_filter`, `request_headers`, `response_headers`, `cors`, `redirect`, `error_page`, `image_optim` |
+| 运维 | `ping`, `health`, `mock`, `request_id`, `stats`, `admin` |
 
 完整索引与配置说明：**[插件](plugins/)**。
 
@@ -176,6 +179,8 @@ zstd_level = 3
 | `proxy_upstream` | 选择后端之前 | 不应在缓存命中时执行的检查 |
 | `upstream_response` | 上游响应头到达时 | 头改写、响应体变换 |
 | `response` | 发往客户端之前 | 响应头、sub_filter |
+
+代理只在 `Plugin::step()` 等于当前回调时调用 `handle_request`，默认是 `request`。`directory`、`limit`、`mirror`、`mock`、`request_headers`、`request_id`、`stats` 可以配成 `request` 或 `proxy_upstream`，其他值是配置错误。不读取 `step` 的插件固定在自己的步骤：多数是 `request`，`accept_encoding`、`compression`、`image_optim` 是 `early_request`。
 
 详见 [pingap-proxy](crates/proxy.md) 与 [插件生命周期](plugins/#生命周期步骤)。
 

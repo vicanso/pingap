@@ -75,9 +75,13 @@ Pingap maps the pingora callbacks in `pingap-proxy/src/server.rs` onto five
 | `upstream_response` | When the upstream response header arrives | Rewriting upstream headers, body transformations |
 | `response` | When the response header is about to be sent downstream | Adding response headers, body substitution |
 
-Setting `step` to a value a plugin does not implement makes it a silent no-op.
-Only `directory`, `limit`, `request_id` and `stats` actually read `step`; every
-other plugin pins its own step (documented per plugin below).
+The proxy calls `handle_request` only when `Plugin::step()` is that callback.
+The default is `request`. These plugins read `step` and can run at `request`
+or `proxy_upstream`: `directory`, `limit`, `mirror`, `mock`,
+`request_headers`, `request_id` and `stats`. Any other value is a
+configuration error (`Invalid step(...)` from `pingap -t`). A plugin that
+does not read `step` runs at the step it pins: `request`, or `early_request`
+for `accept_encoding`, `compression` and `image_optim`.
 
 Each request-step plugin returns one of three results:
 

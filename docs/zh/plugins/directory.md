@@ -23,7 +23,7 @@
 | `precompressed` | string[] | — | 文件旁边可以另存的压缩形式，按优先顺序：`br`（`app.js.br`）、`gzip`（`app.js.gz`）、`zstd`（`app.js.zst`）。见[预压缩文件](#预压缩文件)。 |
 | `hidden` | bool | `false` | 是否提供以点开头的内容。为 `false` 时，路径里有这样的段（`/.env`、`/.git/config`）就返回 `404`；`.well-known` 不受影响。 |
 | `headers` | string[] | — | 额外响应头，格式 `Name: value`。 |
-| `step` | string | `request` | `request` 或 `proxy_upstream`。 |
+| `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
 
 ## 示例
 

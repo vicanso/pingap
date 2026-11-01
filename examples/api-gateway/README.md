@@ -4,7 +4,7 @@ API网关是微服务架构中的重要组成部分，它负责将客户端的�
 
 
 ```bash
-pingap -c ~/github/pingap/examples/api-gateway --admin=127.0.0.1:3018 --autoreload
+cargo run -- -c=examples/api-gateway --admin=127.0.0.1:3018 --autoreload
 ```
 
 ## 配置简述

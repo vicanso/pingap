@@ -2,7 +2,7 @@
 
 返回固定响应而不代理，可选延迟。适合桩未就绪端点、维护页、无需上游的 `/robots.txt`，或测试客户端超时处理。
 
-- **步骤：** `request`（固定）
+- **步骤：** `request`（默认）或 `proxy_upstream` — 可配置
 - **注册名：** `mock`
 
 ## 配置
@@ -17,6 +17,7 @@
 | `delay` | duration | 无 | 应答前休眠。 |
 | `percentage` | int | `100` | 匹配的请求里有多大比例得到 mock 的响应，`0` 到 `100`；其余请求照常处理，就像没有这个插件。 |
 | `delay_only` | bool | `false` | 等待 `delay` 之后请求继续发往上游，拿到真实的响应。需要同时配置 `delay`。 |
+| `step` | string | `request` | `request` 或 `proxy_upstream`。其他值为配置错误。 |
 
 ## 示例
 

@@ -63,5 +63,5 @@ curl 'http://127.0.0.1:6188/api/users?api_key=KOXQaw'
 ## 使用说明
 
 - 查询串中的密钥会出现在浏览器历史、`Referer` 以及中间代理日志中。能控制客户端时优先用 `header`。
-- **不**遵循 `step`——无论配置如何，始终在 `request` 运行。
+- 只在 `request` 运行。把 `step` 设成别的值是配置错误，不会悄悄改到别的步骤：在 `proxy_upstream` 鉴权会落在缓存查找之后，命中的响应就不会再核对密钥。
 - 若需按密钥配额，在本插件之后挂 [`limit`](limit.md)，`tag = "header"`（或 `"query"`）并使用相同的密钥名。

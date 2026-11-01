@@ -48,7 +48,7 @@ Pingap 将 `pingap-proxy/src/server.rs` 中的 pingora 回调映射为五个 `Pl
 | `upstream_response` | 上游响应头到达时 | 改写上游头、响应体变换 |
 | `response` | 响应头即将发往下游时 | 添加响应头、正文替换 |
 
-若 `step` 设为插件未实现的值，该插件静默跳过。只有 `directory`、`limit`、`request_id` 和 `stats` 会读取 `step`；其余插件固定自身步骤（见各插件文档）。
+代理只在 `Plugin::step()` 等于当前回调时调用 `handle_request`，默认是 `request`。这些插件读取 `step`，可以在 `request` 或 `proxy_upstream` 运行：`directory`、`limit`、`mirror`、`mock`、`request_headers`、`request_id`、`stats`。其他值是配置错误（`pingap -t` 报 `Invalid step(...)`）。不读取 `step` 的插件固定在它自己的步骤：`request`，以及 `accept_encoding`、`compression`、`image_optim` 的 `early_request`。
 
 请求步骤插件的返回值：
 

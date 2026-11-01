@@ -4,7 +4,7 @@
 
 
 ```bash
-pingap -c ~/github/pingap/examples/static-serve --admin=127.0.0.1:3018 --autoreload
+cargo run -- -c=examples/static-serve --admin=127.0.0.1:3018 --autoreload
 ```
 
 

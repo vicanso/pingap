@@ -20,7 +20,7 @@
 | `max_inflight` | int | `100` | 同时在途的副本数量上限。超出上限的副本不发送。 |
 | `host` | string | — | 副本的 `Host`。不设置时用请求自己的。 |
 | `compare` | bool | `false` | 镜像对副本返回的状态码和上游对请求返回的不一致时，记一条警告日志。见[对比响应](#对比响应)。 |
-| `step` | string | `request` | `request`，或者 `proxy_upstream`（只复制即将发往上游的请求）。 |
+| `step` | string | `request` | `request`，或者 `proxy_upstream`（只复制即将发往上游的请求）。其他值为配置错误。 |
 
 ## 示例
 

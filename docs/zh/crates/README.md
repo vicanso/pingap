@@ -5,7 +5,7 @@
 | Crate | 职责 |
 | --- | --- |
 | [pingap-util](util.md) | 加解密、IP 规则、PEM/base64、路径与格式化辅助 |
-| [pingap-core](core.md) | `Ctx`、`HttpResponse`、`Plugin` trait、后台服务、粗粒度时钟 |
+| [pingap-core](core.md) | `Ctx`、`HttpResponse`、`Plugin` trait、后台服务、时钟（`now_sec` / `now_ms`） |
 | [pingap-config](config.md) | 配置模型、存储后端、TOML/HCL/KDL |
 | [pingap-discovery](discovery.md) | 静态 / DNS / Docker / 透明后端发现 |
 | [pingap-health](health.md) | TCP、HTTP(S) 与 gRPC 健康检查 |

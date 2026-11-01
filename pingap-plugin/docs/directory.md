@@ -26,7 +26,7 @@ applications, forced downloads and an optional HTML directory index.
 | `precompressed` | string[] | — | Codings a file may be kept in next to itself, in order of preference: `br` (`app.js.br`), `gzip` (`app.js.gz`), `zstd` (`app.js.zst`). See [Precompressed files](#precompressed-files). |
 | `hidden` | bool | `false` | Serve what begins with a dot. When `false`, a path with such a segment (`/.env`, `/.git/config`) is answered `404`; `.well-known` is served either way. |
 | `headers` | string[] | — | Extra response headers as `Name: value`. |
-| `step` | string | `request` | `request` or `proxy_upstream`. |
+| `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
 
 ## Examples
 

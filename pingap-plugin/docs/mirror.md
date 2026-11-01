@@ -25,7 +25,7 @@ upstreams. `mirror` sends them to both.
 | `max_inflight` | int | `100` | Copies that may be under way at one time. A copy that would be one more is not sent. |
 | `host` | string | — | The `Host` of the copy. Unset: the one of the request. |
 | `compare` | bool | `false` | Log a warning when the mirror answers a copy with another status than the upstream answered the request with. See [Comparing the answers](#comparing-the-answers). |
-| `step` | string | `request` | `request`, or `proxy_upstream` to copy only what is on its way to the upstream. |
+| `step` | string | `request` | `request`, or `proxy_upstream` to copy only what is on its way to the upstream. Any other value is a configuration error. |
 
 ## Examples
 

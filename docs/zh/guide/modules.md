@@ -38,6 +38,8 @@ graph TD
 
     discovery --> core
 
+    health --> util
+
     imageoptim --> config
     imageoptim --> core
     imageoptim --> plugin
@@ -74,6 +76,7 @@ graph TD
     upstream --> core
     upstream --> discovery
     upstream --> health
+    upstream --> util
 
     webhook --> core
 ```

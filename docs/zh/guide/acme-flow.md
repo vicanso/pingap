@@ -4,32 +4,32 @@
 
 ```mermaid
 graph TD;
-  start("new acme service") --> validate_certificate{{Load certificate and validate}};
-  validate_certificate -- not found or expired --> new_acme_order;
+  start("新建 ACME 服务") --> validate_certificate{{加载证书并校验}};
+  validate_certificate -- 没有或已过期 --> new_acme_order;
 
   new_acme_order --> get_authorizations;
 
-  get_authorizations -- load all authorization and save tokens to files --> set_challenges;
+  get_authorizations -- 读取全部授权并把 token 写到文件 --> set_challenges;
 
-  set_challenges -- wait for ready --> order_fresh;
+  set_challenges -- 等待就绪 --> order_fresh;
 
-  order_fresh -- ready --> done;
-  order_fresh -- not ready --> delay;
+  order_fresh -- 就绪 --> done;
+  order_fresh -- 未就绪 --> delay;
 
   delay -- xms*2 --> order_fresh
 
-  validate_certificate -- valid --> done("wait for next task");
+  validate_certificate -- 有效 --> done("等待下一轮");
 ```
 
 ### Http 01 Challenge
 
 ```mermaid
 graph TD;
-  start("new http 80") -- wait for http-01 challenge request --> handle_request;
+  start("监听 80") -- 等到 HTTP-01 质询请求 --> handle_request;
 
-  handle_request -- get token from file --> validate_token;
+  handle_request -- 从文件读取 token --> validate_token;
 
-  validate_token -- fail(not found) --> done;
+  validate_token -- 失败（找不到） --> done;
 
-  validate_token -- success --> done;
+  validate_token -- 成功 --> done;
 ```
