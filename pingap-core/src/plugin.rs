@@ -62,8 +62,6 @@ pub enum ResponsePluginResult {
     Unchanged,
     /// The plugin modified the response (e.g., headers or body).
     Modified,
-    // TODO
-    // FullyReplaced(HttpResponse),
 }
 
 /// What a plugin did to a chunk of the response body.
