@@ -160,6 +160,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_error_display() {
+        let err = Error::Invalid {
+            message: "nope".to_string(),
+        };
+        assert_eq!("invalid error, nope", err.to_string());
+        let err = Error::NotFound {
+            category: "widget".to_string(),
+        };
+        assert_eq!("widget not found", err.to_string());
+    }
+
+    #[test]
     fn test_new_internal_error() {
         let err = new_internal_error(500, "Internal Server Error");
         assert_eq!(

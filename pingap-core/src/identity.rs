@@ -235,4 +235,50 @@ mod tests {
         let many: Vec<&str> = many.iter().map(String::as_str).collect();
         assert_eq!(true, parse(&many).unwrap_err().contains("the most is 16"));
     }
+
+    /// The bounds are inclusive, and only a `$` at the start of a value is
+    /// read as a reference that was not resolved.
+    #[test]
+    fn test_identity_boundaries() {
+        assert_eq!(Ok(()), parse_identity_name(Some("")));
+        assert_eq!(Ok(()), parse_identity_name(Some("   ")));
+        let name = "n".repeat(64);
+        assert_eq!(Ok(()), parse_identity_name(Some(&name)));
+        let padded = format!(" {name} ");
+        assert_eq!(Ok(()), parse_identity_name(Some(&padded)));
+        let too_long = format!(" {} ", "n".repeat(65));
+        assert_eq!(true, parse_identity_name(Some(&too_long)).is_err());
+
+        let mut entries: Vec<String> =
+            (0..14).map(|i| format!("k{i}:v")).collect();
+        entries.push(format!("{}:v", "k".repeat(32)));
+        entries.push(format!("value:{}", "v".repeat(128)));
+        let labels = match parse_labels(&entries) {
+            Ok(labels) => labels,
+            Err(message) => panic!("16 labels on the bound: {message}"),
+        };
+        assert_eq!(16, labels.len());
+        assert_eq!("k".repeat(32), labels[14].0);
+        assert_eq!("v".repeat(128), labels[15].1);
+
+        let labels = match parse_labels(&["price:usd$5".to_string()]) {
+            Ok(labels) => labels,
+            Err(message) => panic!("a $ inside a value: {message}"),
+        };
+        assert_eq!(vec![("price".to_string(), "usd$5".to_string())], labels);
+
+        // Trimmed, the second key is the first one again.
+        match parse_labels(&[
+            "cluster:a".to_string(),
+            " cluster :b".to_string(),
+        ]) {
+            Err(message) => {
+                assert_eq!(
+                    true,
+                    message.contains("\"cluster\" is there twice")
+                );
+            },
+            Ok(labels) => panic!("duplicate after trim accepted: {labels:?}"),
+        }
+    }
 }

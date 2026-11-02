@@ -79,9 +79,39 @@ mod tests {
         }
 
         #[cfg(unix)]
-        match unix_socket_path("unix:/tmp/pingap.sock") {
-            Ok(Some(path)) => assert_eq!("/tmp/pingap.sock", path),
-            other => panic!("expected the path, got {other:?}"),
+        {
+            match unix_socket_path("unix:/tmp/pingap.sock") {
+                Ok(Some(path)) => assert_eq!("/tmp/pingap.sock", path),
+                other => panic!("expected the path, got {other:?}"),
+            }
+            match unix_socket_path("unix:/tmp/pingap\tsock") {
+                Err(message) => {
+                    assert_eq!("unix socket path contains whitespace", message);
+                },
+                Ok(path) => panic!("tab in the path accepted: {path:?}"),
+            }
+            // `/` is absolute. Binding it is a later failure.
+            match unix_socket_path("unix:/") {
+                Ok(Some(path)) => assert_eq!("/", path),
+                other => panic!("unix:/ : {other:?}"),
+            }
+            let long = format!("unix:/{}", "a".repeat(200));
+            match unix_socket_path(&long) {
+                Err(message) => assert_eq!(
+                    true,
+                    message.starts_with("unix socket path is invalid:"),
+                    "{message}"
+                ),
+                Ok(path) => panic!("overlong path accepted: {path:?}"),
+            }
+            match unix_socket_path("unix:/tmp/pingap\0sock") {
+                Err(message) => assert_eq!(
+                    true,
+                    message.starts_with("unix socket path is invalid:"),
+                    "{message}"
+                ),
+                Ok(path) => panic!("nul in the path accepted: {path:?}"),
+            }
         }
         #[cfg(not(unix))]
         match unix_socket_path("unix:/tmp/pingap.sock") {

@@ -474,6 +474,16 @@ mod tests {
         let step = "response".parse::<PluginStep>().unwrap();
         assert_eq!(step, PluginStep::Response);
         assert_eq!(step.to_string(), "response");
+
+        assert_eq!(PluginStep::Request, PluginStep::default());
+        match "upstream_response".parse::<PluginStep>() {
+            Ok(step) => {
+                assert_eq!(PluginStep::UpstreamResponse, step);
+                assert_eq!("upstream_response", step.to_string());
+            },
+            Err(message) => panic!("upstream_response: {message}"),
+        }
+        assert_eq!(true, "no_such_step".parse::<PluginStep>().is_err());
     }
 
     #[test]
@@ -489,5 +499,35 @@ mod tests {
         let respond1 = RequestPluginResult::Respond(HttpResponse::no_content());
         let respond2 = RequestPluginResult::Respond(HttpResponse::no_content());
         assert_eq!(false, respond1 == respond2);
+        assert_eq!(false, skip1 == continue1);
+        assert_eq!(false, continue1 == respond1);
+    }
+
+    /// A location that names a plugin which did not load fails the request
+    /// at the first step, instead of serving it without that plugin.
+    #[tokio::test]
+    async fn test_missing_plugin_rejects_the_request() {
+        let plugin = MissingPlugin::new(Arc::from("pingap:requestId"));
+        let mut session = crate::new_test_session(&[], "/").await;
+        let mut ctx = Ctx::default();
+        assert_eq!(
+            None,
+            plugin.error_page(&session, http::StatusCode::NOT_FOUND, "missing")
+        );
+        match plugin
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+        {
+            Err(err) => {
+                assert_eq!(&pingora::ErrorType::HTTPStatus(500), err.etype());
+                assert_eq!(
+                    true,
+                    err.to_string()
+                        .contains("plugin pingap:requestId is not available"),
+                    "{err}"
+                );
+            },
+            Ok(result) => panic!("missing plugin continued: {result:?}"),
+        }
     }
 }

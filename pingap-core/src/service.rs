@@ -238,10 +238,20 @@ mod tests {
 
     #[test]
     fn test_duration_to_string() {
-        assert_eq!(duration_to_string(Duration::from_secs(1)), "1.0s");
-        assert_eq!(duration_to_string(Duration::from_secs(60)), "1.0m");
-        assert_eq!(duration_to_string(Duration::from_secs(3600)), "1.0h");
-        assert_eq!(duration_to_string(Duration::from_secs(86400)), "1.0d");
+        assert_eq!("0.0s", duration_to_string(Duration::ZERO));
+        assert_eq!("0.1s", duration_to_string(Duration::from_millis(100)));
+        assert_eq!("1.0s", duration_to_string(Duration::from_secs(1)));
+        // Just under the next unit stays in the smaller one.
+        assert_eq!("59.0s", duration_to_string(Duration::from_secs(59)));
+        assert_eq!("1.0m", duration_to_string(Duration::from_secs(60)));
+        assert_eq!("59.0m", duration_to_string(Duration::from_secs(59 * 60)));
+        assert_eq!("1.0h", duration_to_string(Duration::from_secs(3600)));
+        assert_eq!("23.0h", duration_to_string(Duration::from_secs(23 * 3600)));
+        assert_eq!("1.0d", duration_to_string(Duration::from_secs(86400)));
+        assert_eq!(
+            "1.0d",
+            duration_to_string(Duration::from_secs(86400 + 3600))
+        );
     }
 
     /// Regression: a round waited for every task, so one slow task held
@@ -349,8 +359,81 @@ mod tests {
             Box::new(TestTask {}),
         );
         service.set_immediately(true);
+        service.set_initial_delay(Some(Duration::from_secs(3)));
         assert_eq!(service.name(), "test");
         assert_eq!(service.tasks.len(), 1);
         assert_eq!(true, service.immediately);
+        assert_eq!(Some(Duration::from_secs(3)), service.initial_delay);
+        service.set_initial_delay(None);
+        assert_eq!(None, service.initial_delay);
+    }
+
+    /// `Ok(false)` and `Err` are one round. Neither stops the service, so
+    /// the next round still runs both tasks.
+    #[tokio::test]
+    async fn test_a_failed_task_does_not_stop_the_service() {
+        use std::sync::Arc;
+
+        struct Flag {
+            runs: Arc<AtomicU32>,
+            fail: bool,
+        }
+        #[async_trait]
+        impl BackgroundTask for Flag {
+            async fn execute(&self, _count: u32) -> Result<bool, Error> {
+                self.runs.fetch_add(1, Ordering::Relaxed);
+                if self.fail {
+                    Err(Error::Invalid {
+                        message: "boom".to_string(),
+                    })
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+        let skipped = Arc::new(AtomicU32::new(0));
+        let failed = Arc::new(AtomicU32::new(0));
+        let mut service = BackgroundTaskService::new(
+            "edges",
+            Duration::from_millis(20),
+            vec![
+                (
+                    "skip".to_string(),
+                    Box::new(Flag {
+                        runs: skipped.clone(),
+                        fail: false,
+                    }),
+                ),
+                (
+                    "fail".to_string(),
+                    Box::new(Flag {
+                        runs: failed.clone(),
+                        fail: true,
+                    }),
+                ),
+            ],
+        );
+        service.set_immediately(true);
+        // Zero still takes the initial-delay branch, without waiting.
+        service.set_initial_delay(Some(Duration::ZERO));
+        let (stop, shutdown) = tokio::sync::watch::channel(false);
+        let wait = async {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while (skipped.load(Ordering::Relaxed) < 2
+                || failed.load(Ordering::Relaxed) < 2)
+                && Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            match stop.send(true) {
+                Ok(()) => {},
+                Err(_) => panic!("the service dropped the shutdown watch"),
+            }
+        };
+        tokio::join!(service.start(shutdown), wait);
+        let skipped = skipped.load(Ordering::Relaxed);
+        let failed = failed.load(Ordering::Relaxed);
+        assert_eq!(true, skipped >= 2, "skipped ran {skipped}");
+        assert_eq!(true, failed >= 2, "failed ran {failed}");
     }
 }

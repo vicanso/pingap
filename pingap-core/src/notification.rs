@@ -308,4 +308,95 @@ mod tests {
         assert_eq!(false, is_ntfy_notification("normal"));
         assert_eq!(false, is_ntfy_notification(""));
     }
+
+    /// The variants are ordered so a merged batch can take the highest.
+    #[test]
+    fn test_parse_notification_level_and_order() {
+        assert_eq!(Ok(NotificationLevel::Info), parse_notification_level(None));
+        assert_eq!(
+            Ok(NotificationLevel::Info),
+            parse_notification_level(Some(""))
+        );
+        assert_eq!(
+            Ok(NotificationLevel::Info),
+            parse_notification_level(Some(" info "))
+        );
+        assert_eq!(
+            Ok(NotificationLevel::Warn),
+            parse_notification_level(Some("warn"))
+        );
+        assert_eq!(
+            Ok(NotificationLevel::Error),
+            parse_notification_level(Some(" error "))
+        );
+        assert_eq!(NotificationLevel::Info, NotificationLevel::default());
+        match parse_notification_level(Some("ERROR")) {
+            Err(message) => assert_eq!(
+                "webhook_min_level(ERROR) should be info, warn or error",
+                message
+            ),
+            Ok(level) => panic!("uppercase level accepted: {level}"),
+        }
+        assert_eq!(true, NotificationLevel::Error > NotificationLevel::Warn);
+        assert_eq!(true, NotificationLevel::Warn > NotificationLevel::Info);
+        let highest = [
+            NotificationLevel::Info,
+            NotificationLevel::Error,
+            NotificationLevel::Warn,
+        ]
+        .into_iter()
+        .max();
+        assert_eq!(Some(NotificationLevel::Error), highest);
+    }
+
+    /// An error names the header. The value is often a token.
+    #[test]
+    fn test_parse_notification_headers_and_retries() {
+        assert_eq!(Ok(vec![]), parse_notification_headers(&[]));
+        let headers = match parse_notification_headers(&[
+            "Authorization: Bearer t0ken".to_string(),
+            " X-Team : ops ".to_string(),
+            "X-Empty:".to_string(),
+        ]) {
+            Ok(headers) => headers,
+            Err(message) => panic!("headers: {message}"),
+        };
+        assert_eq!("authorization", headers[0].0.as_str());
+        match headers[0].1.to_str() {
+            Ok(value) => assert_eq!("Bearer t0ken", value),
+            Err(_) => panic!("header value is not text"),
+        }
+        assert_eq!("x-team", headers[1].0.as_str());
+        match headers[1].1.to_str() {
+            Ok(value) => assert_eq!("ops", value),
+            Err(_) => panic!("header value is not text"),
+        }
+        match headers[2].1.to_str() {
+            Ok(value) => assert_eq!("", value),
+            Err(_) => panic!("empty header value is not text"),
+        }
+
+        let secret = "Authorization: Bearer\ns3cret";
+        match parse_notification_headers(&[secret.to_string()]) {
+            Err(message) => {
+                assert_eq!(
+                    true,
+                    message.contains("\"Authorization\""),
+                    "{message}"
+                );
+                assert_eq!(false, message.contains("s3cret"), "{message}");
+            },
+            Ok(headers) => panic!("newline in a value accepted: {headers:?}"),
+        }
+
+        assert_eq!(Ok(0), parse_notification_retries(None));
+        assert_eq!(Ok(0), parse_notification_retries(Some(0)));
+        assert_eq!(Ok(10), parse_notification_retries(Some(10)));
+        match parse_notification_retries(Some(11)) {
+            Err(message) => {
+                assert_eq!("webhook_retries(11) should be at most 10", message)
+            },
+            Ok(retries) => panic!("11 retries accepted: {retries}"),
+        }
+    }
 }

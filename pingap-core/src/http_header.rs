@@ -1888,6 +1888,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_trusted_proxy_network_edges() {
+        let parse = |value: &str| match value.parse::<IpAddr>() {
+            Ok(ip) => ip,
+            Err(message) => panic!("{value}: {message}"),
+        };
+        // Host bits in the written prefix still cover the network, and a
+        // mapped query is the IPv4 address.
+        let trusted = TrustedProxies::parse(&["192.168.1.5/24".to_string()]);
+        assert_eq!(true, trusted.contains(parse("192.168.1.7")));
+        assert_eq!(true, trusted.contains(parse("::ffff:192.168.1.7")));
+        assert_eq!(false, trusted.contains(parse("192.168.2.1")));
+
+        // A mistyped entry is ignored; the rest of the list still applies.
+        let trusted = TrustedProxies::parse(&[
+            "not-an-ip".to_string(),
+            "10.1.1.1".to_string(),
+        ]);
+        assert_eq!(true, trusted.contains(parse("10.1.1.1")));
+        assert_eq!(false, trusted.contains(parse("10.1.1.2")));
+    }
+
     #[tokio::test]
     async fn test_get_header_value() {
         let session =
