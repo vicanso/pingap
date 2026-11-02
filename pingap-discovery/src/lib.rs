@@ -283,6 +283,10 @@ mod tests {
             ("2001:db8::1".to_string(), 80, 1),
             one("2001:db8::1", false)
         );
+        assert_eq!(
+            ("127.0.0.1".to_string(), 65535, 1),
+            one("127.0.0.1:65535", false)
+        );
         // `unix:80` is the host, which is how it was written before a
         // socket path was a spelling of its own.
         assert_eq!(("unix".to_string(), 80, 1), one("unix:80", false));
@@ -300,6 +304,9 @@ mod tests {
             "[::1]8080",
             "[nope]:80",
             "a:b:c",
+            "[]:80",
+            "[::1]:",
+            "127.0.0.1:65536",
         ] {
             assert_eq!(
                 true,
@@ -360,5 +367,34 @@ mod tests {
             .with_search("a,b".to_string());
         assert_eq!(Some("svc".to_string()), discovery.dns_domain);
         assert_eq!(Some("a,b".to_string()), discovery.dns_search);
+
+        let discovery = Discovery::new(vec!["api".to_string()])
+            .with_tls(true)
+            .with_ipv4_only(true)
+            .with_sender(None);
+        assert_eq!(true, discovery.tls);
+        assert_eq!(true, discovery.ipv4_only);
+        assert_eq!(true, discovery.sender.is_none());
+    }
+
+    /// The comparison is exact. The configuration lower-cases a value
+    /// before it gets here.
+    #[test]
+    fn test_discovery_kind() {
+        use super::{
+            is_dns_discovery, is_docker_discovery, is_srv_discovery,
+            is_static_discovery,
+        };
+
+        assert_eq!(true, is_static_discovery(""));
+        assert_eq!(true, is_static_discovery(super::STATIC_DISCOVERY));
+        assert_eq!(false, is_static_discovery("dns"));
+        assert_eq!(false, is_static_discovery("STATIC"));
+        assert_eq!(true, is_dns_discovery(super::DNS_DISCOVERY));
+        assert_eq!(false, is_dns_discovery("DNS"));
+        assert_eq!(true, is_srv_discovery(super::SRV_DISCOVERY));
+        assert_eq!(false, is_srv_discovery("dns"));
+        assert_eq!(true, is_docker_discovery(super::DOCKER_DISCOVERY));
+        assert_eq!(false, is_docker_discovery(""));
     }
 }

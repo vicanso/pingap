@@ -1103,7 +1103,12 @@ mod tests {
             vec![server("10.0.0.53", 53), server("10.0.0.54", 1053)],
             servers("10.0.0.53, 10.0.0.54:1053,")
         );
+        assert_eq!(
+            vec![server("10.0.0.53", 53), server("10.0.0.54", 1053)],
+            servers(" 10.0.0.53 , , 10.0.0.54:1053 ")
+        );
         assert_eq!(true, servers("").is_empty());
+        assert_eq!(true, servers(" , ").is_empty());
 
         // Not an address: said so, not skipped.
         for value in ["dns.example.com", "10.0.0.53:port", "10.0.0.53,nope"] {
@@ -1257,6 +1262,53 @@ mod tests {
             now,
         );
         assert_eq!(now + DISCOVERY_CACHE_MAX, valid_until);
+
+        // A record that expires in a second is still held for the floor.
+        let soon = now + Duration::from_secs(1);
+        let (_, valid_until) = merge_round(
+            &hosts,
+            false,
+            &[
+                Resolved::Addrs(vec![ip(1)], soon),
+                Resolved::Addrs(vec![ip(3)], soon),
+            ],
+            None,
+            now,
+        );
+        assert_eq!(now + DISCOVERY_CACHE_MIN, valid_until);
+    }
+
+    /// A server that is not an address fails while the upstream is built.
+    #[test]
+    fn test_dns_server_is_checked_when_the_upstream_is_built() {
+        match new_dns_discover_backends(&Discovery {
+            addr: vec!["api".to_string()],
+            dns_server: Some("dns.example.com".to_string()),
+            ..Default::default()
+        }) {
+            Err(err) => {
+                assert_eq!(
+                    true,
+                    err.to_string().contains("is invalid"),
+                    "{err}"
+                );
+            },
+            Ok(_) => panic!("a hostname was accepted as a dns server"),
+        }
+        match new_srv_discover_backends(&Discovery {
+            addr: vec!["_http._tcp.api".to_string()],
+            dns_server: Some("10.0.0.53:port".to_string()),
+            ..Default::default()
+        }) {
+            Err(err) => {
+                assert_eq!(
+                    true,
+                    err.to_string().contains("is invalid"),
+                    "{err}"
+                );
+            },
+            Ok(_) => panic!("a bad port was accepted as a dns server"),
+        }
     }
 
     #[tokio::test]

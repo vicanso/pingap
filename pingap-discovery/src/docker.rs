@@ -537,6 +537,17 @@ mod tests {
             },
             Container::new("app=api:8080 5").unwrap()
         );
+        match Container::new("app=api 5") {
+            Ok(container) => assert_eq!(
+                Container {
+                    label: "app=api".to_string(),
+                    weight: 5,
+                    port: 0,
+                },
+                container
+            ),
+            Err(err) => panic!("weight without a port: {err}"),
+        }
         for bad in ["app=api:x", "app=api:8080 0", "app=api 1 2"] {
             assert_eq!(true, Container::new(bad).is_err(), "{bad:?}");
         }
@@ -569,6 +580,34 @@ mod tests {
         // Otherwise the container's own mapping is used.
         assert_eq!(
             Some((3000, 33000)),
+            DockerState::get_container_ports(&summary, 0)
+        );
+
+        // An empty list is not a missing one: a configured port still
+        // applies, and with none there is nothing to publish.
+        summary.ports = Some(vec![]);
+        assert_eq!(
+            Some((8080, 0)),
+            DockerState::get_container_ports(&summary, 8080)
+        );
+        assert_eq!(None, DockerState::get_container_ports(&summary, 0));
+
+        // A mapping with no private port is skipped. No public port means
+        // the container's own address.
+        summary.ports = Some(vec![
+            bollard::models::PortSummary {
+                private_port: 0,
+                public_port: Some(1),
+                ..Default::default()
+            },
+            bollard::models::PortSummary {
+                private_port: 3000,
+                public_port: None,
+                ..Default::default()
+            },
+        ]);
+        assert_eq!(
+            Some((3000, 0)),
             DockerState::get_container_ports(&summary, 0)
         );
     }
@@ -606,6 +645,35 @@ mod tests {
         }
         assert_eq!(vec!["service_discover_fail".to_string()], *notified.lock());
         assert_eq!(true, state.failing.load(Ordering::Relaxed));
+    }
+
+    /// Once the list can be read again, the failure is over. A second
+    /// success is not news.
+    #[tokio::test]
+    async fn test_report_working_clears_the_failure() {
+        let docker = match bollard::Docker::connect_with_http(
+            "http://127.0.0.1:1",
+            2,
+            bollard::API_DEFAULT_VERSION,
+        ) {
+            Ok(docker) => docker,
+            Err(err) => panic!("connect: {err}"),
+        };
+        let container = match Container::new("app:8080") {
+            Ok(container) => container,
+            Err(err) => panic!("container: {err}"),
+        };
+        let state = DockerState {
+            ipv4_only: false,
+            docker,
+            containers: vec![container],
+            sender: None,
+            failing: AtomicBool::new(true),
+        };
+        state.report_working();
+        assert_eq!(false, state.failing.load(Ordering::Relaxed));
+        state.report_working();
+        assert_eq!(false, state.failing.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -271,4 +271,43 @@ mod tests {
             Ok(_) => panic!("abstract socket accepted"),
         }
     }
+
+    /// An address with no port takes 80, or 443 when the upstream speaks
+    /// TLS. The same address written twice is one backend.
+    #[tokio::test]
+    async fn test_static_discovery_default_port() {
+        async fn listed(addr: &str, tls: bool) -> Vec<(String, usize)> {
+            let backends = match new_static_discovery(&Discovery {
+                addr: vec![addr.to_string(), addr.to_string()],
+                tls,
+                ..Default::default()
+            }) {
+                Ok(backends) => backends,
+                Err(err) => panic!("{addr}: {err}"),
+            };
+            match backends.update(|_| {}).await {
+                Ok(()) => {},
+                Err(err) => panic!("update {addr}: {err}"),
+            }
+            let mut listed: Vec<(String, usize)> = backends
+                .get_backend()
+                .iter()
+                .map(|backend| (backend.addr.to_string(), backend.weight))
+                .collect();
+            listed.sort();
+            listed
+        }
+        assert_eq!(
+            vec![("127.0.0.1:80".to_string(), 1)],
+            listed("127.0.0.1", false).await
+        );
+        assert_eq!(
+            vec![("127.0.0.1:443".to_string(), 4)],
+            listed("127.0.0.1 4", true).await
+        );
+        assert_eq!(
+            vec![("[::1]:80".to_string(), 1)],
+            listed("::1", false).await
+        );
+    }
 }
