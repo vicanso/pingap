@@ -150,3 +150,27 @@ fn start_pyroscope(
     );
     client.start().context(PyroscopeSnafu)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+    use super::start_pyroscope;
+
+    #[test]
+    fn test_a_url_that_does_not_parse_names_itself() {
+        for url in ["not a url", "", "http://"] {
+            match start_pyroscope(url) {
+                Err(err @ Error::UrlParse { .. }) => {
+                    let text = err.to_string();
+                    assert!(
+                        text.starts_with("Url parse error "),
+                        "{url}: {text}"
+                    );
+                    assert!(text.contains(url), "{url}: {text}");
+                },
+                Err(err) => panic!("{url} failed another way: {err}"),
+                Ok(_) => panic!("{url} started an agent"),
+            }
+        }
+    }
+}
