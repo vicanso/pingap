@@ -28,9 +28,14 @@
 
 - **崩溃后的启动会报出来。** 进程启动时发现上一次运行没有结束——崩溃、panic，或者因内存不足被结束——会以 error 级别写日志，并发出 `Error` 级别的 `abnormal_exit` 通知，管理后台首页也会显示。配置了 `webhook_notifications = ["*"]` 的部署不用改配置就会收到；不想要的话请逐项列出类别。为此进程会在 pid 文件所在目录留下一个小文件 `pingap-<hash>.state`：见[异常退出](../crates/webhook.md#异常退出)。
 
+### 地址
+
+- **写成 IPv4 映射形式的网段就是对应的 IPv4 网段。** `ip_list`、`basic.trusted_proxies`，以及用同一套匹配的其他列表（`maintenance`、`combined_auth`、cache 的 `purge_ip_list`）里的 `::ffff:192.168.1.0/120` 以前匹配不到任何地址：查询被收成 IPv4，网段却仍按 IPv6 保存。现在它匹配 `192.168.1.0/24`，包括被看成 `::ffff:192.168.1.7` 的客户端。写成 IPv4 的网段不变。短于 96 的前缀（`::/0`）仍然只匹配 IPv6。
+
 ### 使用这些 crate 的开发者
 
-- **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。
+- **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。`IpRules` 把 IPv4 映射前缀存成对应的 IPv4 网段：`::ffff:192.168.1.0/120` 匹配 `192.168.1.7`。
+- **pingap-core**：`basic.trusted_proxies` 对映射前缀做同样的处理。
 - **pingap-imageoptim**：`image_optim` 插件不再由 `main` 之前的构造函数注册。自己写程序使用这个 crate 的，要在创建插件之前调用 `pingap_imageoptim::register()`；不调用的话，工厂里没有 `image_optim`。
 - **pingap-plugin**：它的插件改为在第一次调用 `get_plugin_factory()` 时放进工厂，不再在 `main` 之前，对调用方没有影响。`PluginFactory` 现在是公开导出的。这些 crate 不再依赖 `ctor`。
 - **pingap-plugin**：`PluginFactory::register` 现在返回 `Result`，category 为空或已经登记过就拒绝，不再换掉原来的构造函数。配置不用改。同名再登记一次是 `Plugin {category} invalid, message: category is already registered`。

@@ -89,7 +89,9 @@ The same rule now holds for [`limit`](limit.md) by ip,
 
 An IPv4 client of a dual-stack listener (`[::]:80`) has the address
 `::ffff:1.2.3.4`. It is matched, logged and counted as `1.2.3.4`, so IPv4
-entries in `ip_list` and in `trusted_proxies` apply to it.
+entries in `ip_list` and in `trusted_proxies` apply to it. A prefix written
+in that form (`::ffff:192.168.1.0/120`) is the same IPv4 network
+(`192.168.1.0/24`).
 
 ## Responses
 

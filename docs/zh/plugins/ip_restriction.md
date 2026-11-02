@@ -64,7 +64,7 @@ trusted_proxies = ["10.0.0.0/8"]
 
 （以前没有配置可信代理时，任何来源的转发头都会被采用：`10.0.0.0/8` 的允许列表会放行任何发送 `X-Forwarded-For: 10.1.2.3` 的客户端。现在按 IP 的 [`limit`](limit.md)、[`geo_restriction`](geo_restriction.md) 以及 [`combined_auth`](combined_auth.md) 的 `ip_list` 也遵循同一规则。访问日志里的客户端 IP 和 `hash:ip` 不是访问控制，仍按原来的方式读取转发头。）
 
-通过双栈监听（`[::]:80`）接入的 IPv4 客户端，地址是 `::ffff:1.2.3.4`。它按 `1.2.3.4` 匹配、记录和计数，`ip_list` 和 `trusted_proxies` 里的 IPv4 条目对它同样生效。
+通过双栈监听（`[::]:80`）接入的 IPv4 客户端，地址是 `::ffff:1.2.3.4`。它按 `1.2.3.4` 匹配、记录和计数，`ip_list` 和 `trusted_proxies` 里的 IPv4 条目对它同样生效。写成这种形式的网段（`::ffff:192.168.1.0/120`）就是对应的 IPv4 网段（`192.168.1.0/24`）。
 
 ## 响应
 

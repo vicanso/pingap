@@ -14,9 +14,32 @@
 
 use super::Error;
 use ahash::AHashSet;
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net};
 use std::net::{AddrParseError, IpAddr};
 use std::str::FromStr;
+
+/// An IPv4-mapped prefix is the IPv4 network it stands for.
+/// `::ffff:192.168.1.0/120` is `192.168.1.0/24`. A lookup goes through
+/// `IpAddr::to_canonical`, and `IpNet::contains` does not match across
+/// the two families, so the prefix has to be stored in that form. A
+/// prefix shorter than 96 also holds addresses that are not mapped, and
+/// stays IPv6. An IPv4 network is returned as it was written.
+fn canonical_net(net: IpNet) -> IpNet {
+    let IpNet::V6(v6) = net else {
+        return net;
+    };
+    if v6.prefix_len() < 96 {
+        return net;
+    }
+    let Some(addr) = v6.network().to_ipv4_mapped() else {
+        return net;
+    };
+    // 96..=128 minus 96 is 0..=32, which an IPv4 prefix accepts.
+    IpNet::V4(
+        Ipv4Net::new(addr, v6.prefix_len() - 96)
+            .expect("mapped prefix is 0..=32"),
+    )
+}
 
 /// IpRules stores pre-parsed IP addresses and networks for efficient access control.
 #[derive(Clone, Debug)]
@@ -60,7 +83,7 @@ impl IpRules {
             let item_str = item.as_ref().trim();
             // Try parsing as a CIDR network first.
             if let Ok(value) = IpNet::from_str(item_str) {
-                ip_net_list.push(value);
+                ip_net_list.push(canonical_net(value));
             // If not a network, try parsing as a single IP address.
             } else if let Ok(value) = IpAddr::from_str(item_str) {
                 ip_set.insert(value.to_canonical());
@@ -127,6 +150,60 @@ mod tests {
         for ip in ["::ffff:192.168.2.7", "::ffff:10.0.0.2", "::1"] {
             assert_eq!(Ok(false), rules.is_match(ip), "{ip}");
         }
+    }
+
+    /// A prefix written in the mapped form is the IPv4 network. One
+    /// written as IPv4, and `::/0`, are unchanged.
+    #[test]
+    fn test_ipv4_mapped_network() {
+        let rules = match IpRules::try_new(&["::ffff:192.168.1.0/120"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("{err}"),
+        };
+        for ip in [
+            "192.168.1.0",
+            "192.168.1.7",
+            "192.168.1.255",
+            "::ffff:192.168.1.7",
+        ] {
+            assert_eq!(Ok(true), rules.is_match(ip), "{ip}");
+        }
+        for ip in ["192.168.2.1", "::ffff:192.168.2.1", "2001:db8::1"] {
+            assert_eq!(Ok(false), rules.is_match(ip), "{ip}");
+        }
+
+        // Host bits in the mapped prefix still name that network.
+        let wide = match IpRules::try_new(&["::ffff:192.168.1.5/120"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(Ok(true), wide.is_match("192.168.1.9"));
+        assert_eq!(Ok(false), wide.is_match("192.168.2.5"));
+
+        let host = match IpRules::try_new(&["::ffff:10.1.2.3/128"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(Ok(true), host.is_match("10.1.2.3"));
+        assert_eq!(Ok(true), host.is_match("::ffff:10.1.2.3"));
+        assert_eq!(Ok(false), host.is_match("10.1.2.4"));
+
+        // Every mapped address, and no other IPv6 address.
+        let mapped = match IpRules::try_new(&["::ffff:0:0/96"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(Ok(true), mapped.is_match("8.8.8.8"));
+        assert_eq!(Ok(true), mapped.is_match("::ffff:8.8.8.8"));
+        assert_eq!(Ok(false), mapped.is_match("fe80::1"));
+
+        let v6_all = match IpRules::try_new(&["::/0"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(Ok(true), v6_all.is_match("fe80::1"));
+        assert_eq!(Ok(false), v6_all.is_match("8.8.8.8"));
+        assert_eq!(Ok(false), v6_all.is_match("::ffff:8.8.8.8"));
     }
 
     #[test]

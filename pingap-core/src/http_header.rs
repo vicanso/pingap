@@ -19,7 +19,7 @@ use arc_swap::ArcSwapOption;
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
@@ -517,6 +517,29 @@ pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
         .map(|addr| (addr.ip().to_canonical().to_string(), addr.port()))
 }
 
+/// An IPv4-mapped prefix is the IPv4 network it stands for.
+/// `::ffff:192.168.1.0/120` is `192.168.1.0/24`. A lookup goes through
+/// `IpAddr::to_canonical`, and `IpNet::contains` does not match across
+/// the two families, so the prefix has to be stored in that form. A
+/// prefix shorter than 96 also holds addresses that are not mapped, and
+/// stays IPv6. An IPv4 network is returned as it was written.
+fn canonical_net(net: IpNet) -> IpNet {
+    let IpNet::V6(v6) = net else {
+        return net;
+    };
+    if v6.prefix_len() < 96 {
+        return net;
+    }
+    let Some(addr) = v6.network().to_ipv4_mapped() else {
+        return net;
+    };
+    // 96..=128 minus 96 is 0..=32, which an IPv4 prefix accepts.
+    IpNet::V4(
+        Ipv4Net::new(addr, v6.prefix_len() - 96)
+            .expect("mapped prefix is 0..=32"),
+    )
+}
+
 /// Parsed trusted downstream proxy addresses: individual IPs plus CIDR
 /// networks. Kept small and local since it is only used by `get_client_ip`.
 struct TrustedProxies {
@@ -532,7 +555,7 @@ impl TrustedProxies {
         let mut ips = AHashSet::new();
         for item in values {
             if let Ok(net) = IpNet::from_str(item) {
-                nets.push(net);
+                nets.push(canonical_net(net));
             } else if let Ok(ip) = IpAddr::from_str(item) {
                 ips.insert(ip.to_canonical());
             }
@@ -1900,6 +1923,25 @@ mod tests {
         assert_eq!(true, trusted.contains(parse("192.168.1.7")));
         assert_eq!(true, trusted.contains(parse("::ffff:192.168.1.7")));
         assert_eq!(false, trusted.contains(parse("192.168.2.1")));
+
+        // The same network written as a mapped prefix.
+        let trusted =
+            TrustedProxies::parse(&["::ffff:192.168.1.0/120".to_string()]);
+        assert_eq!(true, trusted.contains(parse("192.168.1.7")));
+        assert_eq!(true, trusted.contains(parse("::ffff:192.168.1.7")));
+        assert_eq!(false, trusted.contains(parse("192.168.2.1")));
+        assert_eq!(false, trusted.contains(parse("2001:db8::1")));
+        let values = [HeaderValue::from_static("9.9.9.9, ::ffff:192.168.1.7")];
+        assert_eq!(
+            Some("9.9.9.9".to_string()),
+            forwarded_client_ip(values.iter(), &trusted)
+        );
+
+        // `::/0` is still every IPv6 address and no IPv4 address.
+        let v6_all = TrustedProxies::parse(&["::/0".to_string()]);
+        assert_eq!(true, v6_all.contains(parse("fe80::1")));
+        assert_eq!(false, v6_all.contains(parse("8.8.8.8")));
+        assert_eq!(false, v6_all.contains(parse("::ffff:8.8.8.8")));
 
         // A mistyped entry is ignored; the rest of the list still applies.
         let trusted = TrustedProxies::parse(&[

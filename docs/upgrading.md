@@ -70,10 +70,23 @@ What is on `main` and in no release yet.
   `pingap-<hash>.state`, in the directory of its pid file: see
   [Abnormal exits](../pingap-webhook/README.md#abnormal-exits).
 
+### Addresses
+
+- **An IPv4-mapped prefix is the IPv4 network.** `::ffff:192.168.1.0/120` in
+  an `ip_list`, in `basic.trusted_proxies`, and in the other lists that use
+  the same matching (`maintenance`, `combined_auth`, a cache
+  `purge_ip_list`) used to match nothing: the address was compared as IPv4
+  and the prefix was kept as IPv6. It now matches `192.168.1.0/24`, including
+  a client seen as `::ffff:192.168.1.7`. A prefix written as IPv4 is
+  unchanged. A prefix shorter than 96 (`::/0`) still matches IPv6 only.
+
 ### For users of the crates
 
 - **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`
-  with.
+  with. `IpRules` stores an IPv4-mapped prefix as the IPv4 network:
+  `::ffff:192.168.1.0/120` matches `192.168.1.7`.
+- **pingap-core**: `basic.trusted_proxies` stores a mapped prefix the same
+  way.
 - **pingap-imageoptim**: the `image_optim` plugin is no longer registered by
   a constructor before `main`. A program of its own that uses the crate calls
   `pingap_imageoptim::register()` before it creates the plugin; one that does
