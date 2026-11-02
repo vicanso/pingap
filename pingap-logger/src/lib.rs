@@ -119,6 +119,11 @@ mod tests {
             assert_eq!("INFO", default_log_level());
             assert_eq!(Some(LevelFilter::INFO), hint(""));
             assert_eq!(Some(LevelFilter::INFO), hint("  "));
+            // A word that is not a level is a target, at trace, as
+            // RUST_LOG does. A level that is not one is left out.
+            assert_eq!(Some(LevelFilter::TRACE), hint("nope"));
+            assert_eq!(Some(LevelFilter::ERROR), hint("pingap=nope"));
+            assert_eq!(Some(LevelFilter::DEBUG), hint("debug,pingap=nope"));
         }
     }
 }
