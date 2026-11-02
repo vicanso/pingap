@@ -334,4 +334,63 @@ mod tests {
         assert_eq!(true, extract_root_domain("com").is_err());
         assert_eq!(true, extract_root_domain("localhost").is_err());
     }
+
+    fn refused(url: &str) -> String {
+        match super::HuaweiDnsTask::new(url) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("{url} was accepted"),
+        }
+    }
+
+    #[test]
+    fn test_huawei_dns_url() {
+        let bad = refused("not a url");
+        assert_eq!(true, bad.contains("category: huawei"), "{bad}");
+        for url in [
+            "https://dns.myhuaweicloud.com",
+            "https://dns.myhuaweicloud.com?access_key_id=id",
+            "https://dns.myhuaweicloud.com?access_key_secret=secret",
+        ] {
+            let err = refused(url);
+            assert_eq!(
+                true,
+                err.contains(
+                    "access_key_id and access_key_secret are required"
+                ),
+                "{url}: {err}"
+            );
+        }
+        let task = match super::HuaweiDnsTask::new(
+            "https://dns.myhuaweicloud.com/?access_key_id=id&access_key_secret=secret",
+        ) {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!("dns.myhuaweicloud.com", task.params.host);
+        assert_eq!("https://dns.myhuaweicloud.com", task.params.endpoint);
+        assert_eq!("id", task.params.access_key_id);
+        assert_eq!("secret", task.params.access_key_secret);
+    }
+
+    /// Cleanup with no record does not call the API. A name with no
+    /// registrable domain is refused before that.
+    #[tokio::test]
+    async fn test_huawei_dns_stops_before_a_request() {
+        use super::AcmeDnsTask;
+        let task = match super::HuaweiDnsTask::new(
+            "https://dns.myhuaweicloud.com?access_key_id=id&access_key_secret=secret",
+        ) {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        match task.done().await {
+            Ok(()) => {},
+            Err(err) => panic!("done with no record: {err}"),
+        }
+        let err = match task.add_txt_record("localhost", "v").await {
+            Err(err) => err.to_string(),
+            Ok(()) => panic!("localhost was accepted"),
+        };
+        assert_eq!(true, err.contains("Invalid domain"), "{err}");
+    }
 }

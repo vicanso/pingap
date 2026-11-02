@@ -254,3 +254,55 @@ impl AcmeDnsTask for CfDnsTask {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AcmeDnsTask, CfDnsTask};
+    use pretty_assertions::assert_eq;
+
+    fn refused(url: &str) -> String {
+        match CfDnsTask::new(url) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("{url} was accepted"),
+        }
+    }
+
+    #[test]
+    fn test_cf_dns_url() {
+        let bad = refused("not a url");
+        assert_eq!(true, bad.contains("category: cf"), "{bad}");
+        let missing = refused("https://api.cloudflare.com/client/v4");
+        assert_eq!(true, missing.contains("token is required"), "{missing}");
+        let empty = refused("https://api.cloudflare.com/client/v4?token=");
+        assert_eq!(true, empty.contains("token is required"), "{empty}");
+
+        let task = match CfDnsTask::new(
+            "https://api.cloudflare.com/client/v4/zones?token=abc%2B&x=1",
+        ) {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!("https://api.cloudflare.com", task.endpoint);
+        assert_eq!("abc+", task.api_token);
+    }
+
+    /// Nothing is asked of Cloudflare until a record has been added.
+    /// A name with no dot is refused before any request.
+    #[tokio::test]
+    async fn test_cf_dns_stops_before_a_request() {
+        let task = match CfDnsTask::new("https://api.cloudflare.com?token=abc")
+        {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        match task.done().await {
+            Ok(()) => {},
+            Err(err) => panic!("done with no record: {err}"),
+        }
+        let err = match task.add_txt_record("nodot", "v").await {
+            Err(err) => err.to_string(),
+            Ok(()) => panic!("a name with no dot was accepted"),
+        };
+        assert_eq!(true, err.contains("invalid domain"), "{err}");
+    }
+}

@@ -308,3 +308,86 @@ impl AcmeDnsTask for TencentDnsTask {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AcmeDnsTask, TencentDnsTask, hmac_sha256, sha256_hex};
+    use pretty_assertions::assert_eq;
+
+    fn refused(url: &str) -> String {
+        match TencentDnsTask::new(url) {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("{url} was accepted"),
+        }
+    }
+
+    #[test]
+    fn test_tencent_dns_url() {
+        let bad = refused("not a url");
+        assert_eq!(true, bad.contains("category: tencent"), "{bad}");
+        for url in [
+            "https://dnspod.tencentcloudapi.com",
+            "https://dnspod.tencentcloudapi.com?access_key_id=id",
+            "https://dnspod.tencentcloudapi.com?access_key_secret=secret",
+        ] {
+            let err = refused(url);
+            assert_eq!(
+                true,
+                err.contains(
+                    "access_key_id and access_key_secret are required"
+                ),
+                "{url}: {err}"
+            );
+        }
+        let task = match TencentDnsTask::new(
+            "https://dnspod.tencentcloudapi.com/?access_key_id=id&access_key_secret=secret",
+        ) {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!("dnspod.tencentcloudapi.com", task.host);
+        assert_eq!("https://dnspod.tencentcloudapi.com", task.endpoint);
+        assert_eq!("id", task.access_key_id);
+        assert_eq!("secret", task.access_key_secret);
+    }
+
+    /// The two helpers the TC3 signature is built from.
+    #[test]
+    fn test_tencent_dns_signing() {
+        assert_eq!(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            sha256_hex(b"")
+        );
+        assert_eq!(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            sha256_hex(b"abc")
+        );
+        // RFC 4231, test case 1.
+        let key = [0x0bu8; 20];
+        assert_eq!(
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+            hex::encode(hmac_sha256(&key, b"Hi There"))
+        );
+    }
+
+    /// A record id of 0 means nothing was added, so cleanup does not call
+    /// the API. A name that is not a record fails before that too.
+    #[tokio::test]
+    async fn test_tencent_dns_stops_before_a_request() {
+        let task = match TencentDnsTask::new(
+            "https://dnspod.tencentcloudapi.com?access_key_id=id&access_key_secret=secret",
+        ) {
+            Ok(task) => task,
+            Err(err) => panic!("{err}"),
+        };
+        match task.done().await {
+            Ok(()) => {},
+            Err(err) => panic!("done with no record: {err}"),
+        }
+        let err = match task.add_txt_record("example.com", "v").await {
+            Err(err) => err.to_string(),
+            Ok(()) => panic!("a name that is only a zone was accepted"),
+        };
+        assert_eq!(true, err.contains("invalid record name"), "{err}");
+    }
+}
