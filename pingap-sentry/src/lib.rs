@@ -23,3 +23,38 @@ pub fn new_sentry_options(dsn: &str) -> Result<ClientOptions, ParseDsnError> {
         ..Default::default()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::new_sentry_options;
+    use sentry_core::ClientOptions;
+    use sentry_core::types::Dsn;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_dsn_is_the_only_option_that_is_set() {
+        let dsn = "https://public@o0.ingest.sentry.io/1";
+        let options = match new_sentry_options(dsn) {
+            Ok(options) => options,
+            Err(err) => panic!("dsn was refused: {err}"),
+        };
+        let expected = match Dsn::from_str(dsn) {
+            Ok(dsn) => dsn.to_string(),
+            Err(err) => panic!("dsn was refused: {err}"),
+        };
+        let parsed = options.dsn.as_ref().map(|dsn| dsn.to_string());
+        assert_eq!(Some(expected), parsed);
+        let defaults = ClientOptions::default();
+        assert_eq!(defaults.sample_rate, options.sample_rate);
+        assert_eq!(defaults.traces_sample_rate, options.traces_sample_rate);
+        assert_eq!(defaults.environment, options.environment);
+        assert_eq!(defaults.release, options.release);
+
+        for dsn in ["", "not a dsn", "https://o0.ingest.sentry.io/1"] {
+            match new_sentry_options(dsn) {
+                Err(_) => {},
+                Ok(_) => panic!("{dsn} was accepted"),
+            }
+        }
+    }
+}
