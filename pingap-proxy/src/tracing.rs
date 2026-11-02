@@ -233,3 +233,93 @@ pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
         tracer.http_request_span.end()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        initialize_telemetry, inject_telemetry_headers, inject_trace_context,
+        set_otel_request_attrs, set_otel_upstream_attrs,
+        update_otel_cache_attrs,
+    };
+    use pingap_core::{Ctx, Features};
+    use pingora::http::{RequestHeader, ResponseHeader};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+    use tokio_test::io::Builder;
+
+    fn request_with_traceparent() -> RequestHeader {
+        let mut request = match RequestHeader::build("GET", b"/", None) {
+            Ok(request) => request,
+            Err(err) => panic!("{err}"),
+        };
+        match request.insert_header("traceparent", "00-abc") {
+            Ok(()) => {},
+            Err(err) => panic!("{err}"),
+        }
+        request
+    }
+
+    fn traceparent(request: &RequestHeader) -> Option<&str> {
+        request
+            .headers
+            .get("traceparent")
+            .and_then(|value| value.to_str().ok())
+    }
+
+    /// No provider, and a context that has features but no span: the
+    /// headers the client sent stay, and nothing is added on the way out.
+    #[test]
+    fn test_no_tracer_leaves_headers_where_they_were() {
+        let ctx = Ctx::default();
+        let mut request = request_with_traceparent();
+        inject_trace_context(&ctx, &mut request);
+        assert_eq!(Some("00-abc"), traceparent(&request));
+
+        let mut traced = Ctx {
+            features: Some(Box::new(Features::default())),
+            ..Ctx::default()
+        };
+        inject_trace_context(&traced, &mut request);
+        assert_eq!(Some("00-abc"), traceparent(&request));
+
+        let mut response = match ResponseHeader::build(200, None) {
+            Ok(response) => response,
+            Err(err) => panic!("{err}"),
+        };
+        inject_telemetry_headers(&ctx, &mut response);
+        inject_telemetry_headers(&traced, &mut response);
+        assert_eq!(true, response.headers.get("x-trace-id").is_none());
+        assert_eq!(true, response.headers.get("x-span-id").is_none());
+
+        update_otel_cache_attrs(
+            &mut traced,
+            "hit",
+            Some(Duration::from_millis(3)),
+            None,
+        );
+        set_otel_upstream_attrs(&mut traced);
+    }
+
+    /// A name with no provider does not start a span, and the request
+    /// attributes are not touched either.
+    #[tokio::test]
+    async fn test_no_tracer_does_not_start_one() {
+        let input = "GET / HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        match session.read_request().await {
+            Ok(_) => {},
+            Err(err) => panic!("{err}"),
+        }
+        let mut ctx = Ctx::default();
+        initialize_telemetry(
+            "pingap-proxy-no-such-provider",
+            &session,
+            &mut ctx,
+        );
+        assert_eq!(true, ctx.features.is_none());
+        set_otel_request_attrs(&session, &mut ctx);
+        assert_eq!(true, ctx.features.is_none());
+    }
+}
