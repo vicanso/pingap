@@ -708,6 +708,58 @@ mod tests {
         );
         assert_eq!(Duration::from_secs(5), service.config.timeout);
         assert!(service.config.max_export_timeout_set);
+        // A value that does not parse still counts as set, and the
+        // duration stays the default. The flag is what the startup
+        // warning goes by.
+        let ignored = TracerService::new(
+            "s",
+            "http://c:4317?max_export_timeout=soon&max_attributes=many&max_events=many",
+        );
+        assert!(ignored.config.max_export_timeout_set);
+        assert_eq!(Duration::from_secs(30), ignored.config.max_export_timeout);
+        assert_eq!(16, ignored.config.max_attributes);
+        assert_eq!(16, ignored.config.max_events);
+        // `zstd` either way. Anything else, a typo included, is gzip.
+        assert_eq!(
+            Some(Compression::Zstd),
+            TracerService::new("s", "http://c:4317?compression=ZSTD")
+                .config
+                .compression
+        );
+        assert_eq!(
+            Some(Compression::Gzip),
+            TracerService::new("s", "http://c:4317?compression=gzip")
+                .config
+                .compression
+        );
+        assert_eq!(
+            Some(Compression::Gzip),
+            TracerService::new("s", "http://c:4317?compression=nope")
+                .config
+                .compression
+        );
+        // Present, whatever the value: the propagator is on.
+        let flags = TracerService::new("s", "http://c:4317?jaeger=&baggage=0");
+        assert!(flags.config.support_jaeger_propagator);
+        assert!(flags.config.support_baggage_propagator);
+        assert_eq!(
+            0.0,
+            TracerService::new(
+                "s",
+                "http://c:4317?sampler=traceidratio&sample_ratio=0"
+            )
+            .config
+            .sample_ratio
+        );
+        assert_eq!(
+            1.0,
+            TracerService::new(
+                "s",
+                "http://c:4317?sampler=traceidratio&sample_ratio=1"
+            )
+            .config
+            .sample_ratio
+        );
         // Over HTTP the spans go to the path of the traces, and the
         // parameters are not part of where.
         assert_eq!("https://otel.test/v1/traces", service.http_endpoint());
@@ -927,5 +979,23 @@ mod tests {
             &mut headers,
         );
         assert!(headers.is_empty());
+    }
+
+    /// No name and no endpoint are the defaults. A tracer exists only
+    /// after a provider of that name has been added.
+    #[test]
+    fn test_builder_defaults_and_a_missing_tracer() {
+        let service = TracerService::builder().build();
+        assert_eq!("default", service.name);
+        assert_eq!("http://localhost:4317", service.endpoint);
+        assert_eq!(SamplerKind::AlwaysOn, service.config.sampler);
+        assert!(new_http_proxy_tracer("no-such-exporter").is_none());
+
+        let name = "proxy-tracer-lock";
+        provider::add_provider(
+            name,
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+        );
+        assert!(new_http_proxy_tracer(name).is_some());
     }
 }
