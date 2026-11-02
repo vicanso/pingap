@@ -106,6 +106,15 @@ mod tests {
         assert_eq!(formatted_byte_size(0), "0B");
         assert_eq!(formatted_byte_size(999_999), "999.9KB");
         assert_eq!(formatted_byte_size(5 * 1_000_000_000), "5GB");
+        assert_eq!(formatted_byte_size(1_000_000), "1MB");
+        assert_eq!(formatted_byte_size(1_000_000_000), "1GB");
+        // One decimal digit, cut off rather than rounded, and `.0` omitted.
+        assert_eq!(formatted_byte_size(1_099), "1KB");
+        assert_eq!(formatted_byte_size(1_100), "1.1KB");
+        assert_eq!(formatted_byte_size(1_499), "1.4KB");
+        assert_eq!(formatted_byte_size(1_999_999), "1.9MB");
+        assert_eq!(formatted_byte_size(999_999_999), "999.9MB");
+        assert_eq!(formatted_byte_size(10_100_000_000), "10.1GB");
 
         // Any `fmt::Write` sink works, the access log writes into BytesMut.
         let mut bytes = bytes::BytesMut::new();

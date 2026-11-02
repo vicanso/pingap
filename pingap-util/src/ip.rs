@@ -178,4 +178,61 @@ mod tests {
             .unwrap_err();
         assert_eq!("Invalid ip or cidr: not-an-ip, 10.0.0/8", err.to_string());
     }
+
+    #[test]
+    fn test_empty_rules_prefixes_and_rejected_entries() {
+        let empty = IpRules::new(&[] as &[&str]);
+        assert_eq!(Ok(false), empty.is_match("127.0.0.1"));
+        assert_eq!(true, empty.is_match("").is_err());
+        assert_eq!(true, empty.is_match(" 10.0.0.1").is_err());
+
+        let none = match IpRules::try_new(&[] as &[&str]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("empty list is valid: {err}"),
+        };
+        assert_eq!(Ok(false), none.is_match("::1"));
+
+        let err = match IpRules::try_new(&["", "  ", "10.0.0.1/33", "::1/129"])
+        {
+            Ok(_) => panic!("invalid entries were accepted"),
+            Err(err) => err,
+        };
+        assert_eq!(
+            "Invalid ip or cidr: , , 10.0.0.1/33, ::1/129",
+            err.to_string()
+        );
+
+        // A host route is a network of one address. Host bits in a wider
+        // prefix still describe that network.
+        let rules = match IpRules::try_new(&[
+            "10.0.0.1/32",
+            "192.168.1.5/24",
+            "2001:db8::1/128",
+        ]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("networks: {err}"),
+        };
+        for ip in ["10.0.0.1", "192.168.1.100", "192.168.1.5"] {
+            assert_eq!(Ok(true), rules.is_match(ip), "{ip}");
+        }
+        assert_eq!(Ok(false), rules.is_match("192.168.2.1"));
+        assert_eq!(Ok(true), rules.is_match("2001:db8::1"));
+        assert_eq!(Ok(true), rules.is_match("2001:DB8::1"));
+        assert_eq!(Ok(false), rules.is_match("2001:db9::1"));
+
+        // `0.0.0.0/0` is every IPv4 address and no IPv6 address.
+        // `::/0` is the other way round.
+        let v4_all = match IpRules::try_new(&["0.0.0.0/0"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("v4 any: {err}"),
+        };
+        assert_eq!(Ok(true), v4_all.is_match("8.8.8.8"));
+        assert_eq!(Ok(false), v4_all.is_match("fe80::1"));
+        let v6_all = match IpRules::try_new(&["::/0"]) {
+            Ok(rules) => rules,
+            Err(err) => panic!("v6 any: {err}"),
+        };
+        assert_eq!(Ok(true), v6_all.is_match("fe80::1"));
+        assert_eq!(Ok(false), v6_all.is_match("8.8.8.8"));
+    }
 }

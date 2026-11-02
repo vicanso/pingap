@@ -210,4 +210,57 @@ mod tests {
         let empty = seal(&key, [3u8; 12], b"").unwrap();
         assert_eq!(Some(vec![]), unseal(&key, &empty));
     }
+
+    #[test]
+    fn test_aes_empty_unicode_and_truncated_key() {
+        for (key, data) in [("", ""), ("short-key", "你好")] {
+            let encrypted = match aes_encrypt(key, data) {
+                Ok(value) => value,
+                Err(err) => panic!("encrypt {key:?}: {err}"),
+            };
+            match aes_decrypt(key, &encrypted) {
+                Ok(value) => assert_eq!(data, value),
+                Err(err) => panic!("decrypt {key:?}: {err}"),
+            }
+        }
+        // Past 32 bytes the key is cut, so the extra bytes do not change
+        // the ciphertext.
+        let prefix = "12345678901234567890123456789012";
+        let longer = format!("{prefix}ABC");
+        let from_prefix = match aes_encrypt(prefix, "hello") {
+            Ok(value) => value,
+            Err(err) => panic!("encrypt prefix: {err}"),
+        };
+        let from_longer = match aes_encrypt(&longer, "hello") {
+            Ok(value) => value,
+            Err(err) => panic!("encrypt longer: {err}"),
+        };
+        assert_eq!(from_prefix, from_longer);
+
+        match aes_decrypt(prefix, "!!!!") {
+            Err(Error::Base64Decode { .. }) => {},
+            Ok(value) => panic!("invalid base64 decrypted: {value}"),
+            Err(err) => panic!("expected base64 decode, got {err}"),
+        }
+        let mut tampered = from_prefix.into_bytes();
+        let index = tampered.len() / 2;
+        tampered[index] = if tampered[index] == b'A' { b'B' } else { b'A' };
+        let tampered = match std::str::from_utf8(&tampered) {
+            Ok(value) => value,
+            Err(err) => panic!("tampered ciphertext is not utf-8: {err}"),
+        };
+        assert_eq!(true, aes_decrypt(prefix, tampered).is_err());
+    }
+
+    #[test]
+    fn test_unseal_rejects_padding_and_a_bare_nonce() {
+        let key = [7u8; KEY_SIZE];
+        let sealed = match seal(&key, [1u8; 12], b"a session") {
+            Ok(value) => value,
+            Err(err) => panic!("seal: {err}"),
+        };
+        assert_eq!(None, unseal(&key, &format!("{sealed}=")));
+        // Twelve nonce bytes and no ciphertext. URL-safe, no padding.
+        assert_eq!(None, unseal(&key, "AQEBAQEBAQEBAQEB"));
+    }
 }

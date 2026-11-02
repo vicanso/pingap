@@ -348,4 +348,171 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         let result = convert_certificate_bytes(Some(data).as_deref());
         assert_eq!(true, result.is_some());
     }
+
+    fn tiny_pem(label: &str, body: &str) -> String {
+        format!("-----BEGIN {label}-----\n{body}\n-----END {label}-----\n")
+    }
+
+    #[test]
+    fn test_is_pem() {
+        let pem = tiny_pem("CERTIFICATE", "YQ==");
+        assert_eq!(true, is_pem(&pem));
+        assert_eq!(true, is_pem(&format!("\n{pem}\n")));
+        assert_eq!(false, is_pem(""));
+        assert_eq!(false, is_pem("-----BEGIN CERTIFICATE-----"));
+        assert_eq!(
+            false,
+            is_pem("-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----")
+        );
+        assert_eq!(false, is_pem("/etc/ssl/cert.pem"));
+    }
+
+    #[test]
+    fn test_convert_pem_text_file_base64_and_errors() {
+        let first = tiny_pem("CERTIFICATE", "YQ==");
+        let second = tiny_pem("PRIVATE KEY", "Yg==");
+        let both = format!("{first}{second}");
+        let blocks = match convert_pem(&both) {
+            Ok(blocks) => blocks,
+            Err(err) => panic!("two pem blocks: {err}"),
+        };
+        assert_eq!(2, blocks.len());
+        for block in &blocks {
+            let text = String::from_utf8_lossy(block);
+            assert_eq!(true, text.contains("-----BEGIN "));
+            assert_eq!(true, text.contains("-----END "));
+        }
+
+        let padded = format!("\n{first}\n");
+        match convert_pem(&padded) {
+            Ok(blocks) => assert_eq!(1, blocks.len()),
+            Err(err) => panic!("pem with surrounding whitespace: {err}"),
+        }
+
+        let encoded = base64_encode(first.as_bytes());
+        match convert_pem(&encoded) {
+            Ok(blocks) => assert_eq!(1, blocks.len()),
+            Err(err) => panic!("base64 pem: {err}"),
+        }
+        match base64_decode(base64_encode(b"\xff\xfe")) {
+            Ok(bytes) => assert_eq!(vec![0xff, 0xfe], bytes),
+            Err(err) => panic!("base64 roundtrip: {err}"),
+        }
+        assert_eq!(true, base64_decode("!!!!").is_err());
+        assert_eq!("", base64_encode(b""));
+
+        let mut tmp = match NamedTempFile::new() {
+            Ok(file) => file,
+            Err(err) => panic!("temp file: {err}"),
+        };
+        if let Err(err) = tmp.write_all(first.as_bytes()) {
+            panic!("write temp pem: {err}");
+        }
+        let path = tmp.path().to_string_lossy().into_owned();
+        match convert_pem(&path) {
+            Ok(blocks) => assert_eq!(1, blocks.len()),
+            Err(err) => panic!("pem file: {err}"),
+        }
+
+        let mut empty = match NamedTempFile::new() {
+            Ok(file) => file,
+            Err(err) => panic!("temp file: {err}"),
+        };
+        let empty_path = empty.path().to_string_lossy().into_owned();
+        match convert_pem(&empty_path) {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("pem data is empty", message);
+            },
+            Ok(blocks) => panic!("empty file parsed: {blocks:?}"),
+            Err(err) => panic!("expected invalid pem, got {err}"),
+        }
+        if let Err(err) = empty.write_all(b"not a pem") {
+            panic!("write temp: {err}");
+        }
+        match convert_pem(&empty_path) {
+            Err(Error::Invalid { .. }) => {},
+            Ok(blocks) => panic!("garbage file parsed: {blocks:?}"),
+            Err(err) => panic!("expected invalid pem, got {err}"),
+        }
+
+        assert_eq!(true, convert_pem("/no/such/pingap-util-cert.pem").is_err());
+        // An empty body is still a PEM block. A body that is not base64 is not.
+        match convert_pem("-----BEGIN X-----\n!!!!\n-----END X-----\n") {
+            Err(Error::Invalid { .. }) => {},
+            Ok(blocks) => panic!("invalid body parsed: {blocks:?}"),
+            Err(err) => panic!("expected invalid pem, got {err}"),
+        }
+
+        assert_eq!(None, convert_certificate_bytes(None));
+        assert_eq!(None, convert_certificate_bytes(Some("")));
+        assert_eq!(None, convert_certificate_bytes(Some("not-a-certificate")));
+    }
+
+    #[test]
+    fn test_resolve_path_relative_and_tilde_inside() {
+        let cwd = match std::env::current_dir() {
+            Ok(path) => path,
+            Err(err) => panic!("cwd: {err}"),
+        };
+        assert_eq!(
+            cwd.join("pingap-relative").to_string_lossy(),
+            resolve_path("pingap-relative")
+        );
+        // A tilde that is not the start of the path is part of the path.
+        assert_eq!(
+            cwd.join("foo/~/bar").to_string_lossy(),
+            resolve_path("foo/~/bar")
+        );
+        let home = match home_dir() {
+            Some(path) => path,
+            None => panic!("this environment has a home directory"),
+        };
+        let mut parent = home.clone();
+        parent.push("..");
+        let expected = match parent.absolutize() {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(err) => panic!("absolutize home parent: {err}"),
+        };
+        assert_eq!(expected, resolve_path("~/.."));
+        assert_eq!(true, home_dir().is_some_and(|path| path.is_absolute()));
+    }
+
+    #[test]
+    fn test_path_join_root_and_nested() {
+        assert_eq!("/b", path_join("/", "b"));
+        assert_eq!("/b", path_join("/", "/b"));
+        assert_eq!("a/b/c", path_join("a/", "/b/c"));
+        assert_eq!("http://a/b", path_join("http://a", "b"));
+        assert_eq!("http://a/b", path_join("http://a/", "/b"));
+    }
+
+    #[test]
+    fn test_pkg_version_and_toml_values_that_stay() {
+        assert_eq!(env!("CARGO_PKG_VERSION"), get_pkg_version());
+        assert_eq!(true, get_rustc_version().contains('.'));
+
+        let kept = match toml_omit_empty_value(
+            "[a]\nflag = false\nn = 0\ns = \"\"\nlist = []\n",
+        ) {
+            Ok(value) => value,
+            Err(err) => panic!("non-empty table: {err}"),
+        };
+        assert_eq!(true, kept.contains("flag = false"));
+        assert_eq!(true, kept.contains("n = 0"));
+        assert_eq!(true, kept.contains("s = \"\""));
+        assert_eq!(true, kept.contains("list = []"));
+
+        let only_empty = match toml_omit_empty_value("[a]\n[b]\n") {
+            Ok(value) => value,
+            Err(err) => panic!("empty tables: {err}"),
+        };
+        assert_eq!(false, only_empty.contains("[a]"));
+        assert_eq!(false, only_empty.contains("[b]"));
+
+        let blank = match toml_omit_empty_value("") {
+            Ok(value) => value,
+            Err(err) => panic!("empty document: {err}"),
+        };
+        assert_eq!(false, blank.contains('['));
+    }
 }
