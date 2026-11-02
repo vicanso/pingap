@@ -1296,6 +1296,41 @@ mod tests {
         assert_eq!("m1", field(&body, "message"));
     }
 
+    /// An empty url sends nothing. A batch of at most one event is posted
+    /// before `send_notification` returns, even when the window is long.
+    #[tokio::test]
+    async fn test_empty_url_and_a_batch_of_one_post_nothing_later() {
+        let (url, mut bodies) = spawn_endpoint().await;
+        let quiet = WebhookNotificationSender::new(
+            String::new(),
+            "normal".to_string(),
+            vec!["a".to_string()],
+        );
+        quiet
+            .send_notification(event("a", NotificationLevel::Error, "T", "m"))
+            .await;
+        assert_eq!(true, bodies.try_recv().is_err());
+
+        for max_events in [0, 1] {
+            let sender = WebhookNotificationSender::new(
+                url.clone(),
+                "normal".to_string(),
+                vec!["a".to_string()],
+            )
+            .with_batch(Duration::from_secs(30), max_events);
+            sender
+                .send_notification(event(
+                    "a",
+                    NotificationLevel::Info,
+                    "T",
+                    "now",
+                ))
+                .await;
+            let body = bodies.try_recv().expect("posted inline");
+            assert_eq!("now", field(&body, "message"));
+        }
+    }
+
     #[tokio::test]
     async fn test_flush_posts_the_pending_batch_now() {
         let (url, mut bodies) = spawn_endpoint().await;
@@ -1721,6 +1756,9 @@ mod tests {
     async fn test_ntfy() {
         assert_eq!(Kind::Ntfy, Kind::of("ntfy"));
         assert_eq!(Kind::Ntfy, Kind::of("Ntfy"));
+        assert_eq!(Kind::WeCom, Kind::of(" WeCom "));
+        assert_eq!(Kind::DingTalk, Kind::of("DingTalk"));
+        assert_eq!(Kind::Other, Kind::of("slack"));
 
         // The url of the endpoint is the one of a topic `hook`.
         let (url, mut posts) = spawn_scripted(vec![
@@ -1898,6 +1936,7 @@ mod tests {
         assert_eq!(false, is_ntfy_message("<html>"));
         assert_eq!(None, ntfy_error("oops"));
         assert_eq!(None, ntfy_error(r#"{"id":"x"}"#));
+        assert_eq!(None, ntfy_error(r#"{"error":""}"#));
         assert_eq!(
             Some("forbidden".to_string()),
             ntfy_error(r#"{"code":40301,"http":403,"error":"forbidden"}"#)
@@ -2042,8 +2081,8 @@ mod tests {
     #[tokio::test]
     async fn test_retries() {
         assert_eq!(
-            vec![1, 2, 4, 8, 256, 300, 300],
-            [1, 2, 3, 4, 9, 10, 40]
+            vec![1, 1, 2, 4, 8, 256, 300, 300],
+            [0, 1, 2, 3, 4, 9, 10, 40]
                 .iter()
                 .map(|tried| retry_delay_secs(*tried))
                 .collect::<Vec<_>>()
