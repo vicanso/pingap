@@ -96,5 +96,10 @@ mod tests {
         let re = RegexCapture::new(r"^/api/(\d+)$").unwrap();
         assert_eq!((true, None), re.captures("/api/12"));
         assert_eq!((false, None), re.captures("/api/x"));
+
+        match RegexCapture::new("(") {
+            Err(_) => {},
+            Ok(_) => panic!("an unclosed group was accepted"),
+        }
     }
 }
