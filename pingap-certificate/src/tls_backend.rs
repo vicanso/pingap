@@ -133,13 +133,26 @@ mod tests {
                 ..Default::default()
             },
         );
+        // An empty value is unset. Spaces are a value, so rustls
+        // refuses them.
+        servers.insert(
+            "blank".to_string(),
+            ServerConf {
+                addr: "127.0.0.1:8443".to_string(),
+                tls_min_version: Some(String::new()),
+                tls_max_version: Some("  ".to_string()),
+                ..Default::default()
+            },
+        );
         let result = validate_servers_tls_for_backend(&servers);
         if TLS_BACKEND == "rustls" {
             let err = result.expect_err("rustls must reject tls_* settings");
             let message = err.to_string();
             assert!(message.contains("tls_min_version"), "{message}");
             assert!(message.contains("tls_cipher_list"), "{message}");
+            assert!(message.contains("tls_max_version"), "{message}");
             assert!(message.contains("https"), "{message}");
+            assert!(message.contains("blank"), "{message}");
         } else {
             assert_eq!(true, result.is_ok());
         }
