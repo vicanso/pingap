@@ -497,4 +497,148 @@ mod tests {
         });
         assert_eq!(true, check(&addr, "").await.is_err());
     }
+
+    #[test]
+    fn test_grpc_frame_edges() {
+        let service = "a".repeat(128);
+        let frame = encode_request(&service);
+        assert_eq!(136, frame.len());
+        assert_eq!(&b"\x00\x00\x00\x00\x83\x0a\x80\x01"[..], &frame[..8]);
+        assert_eq!(true, frame[8..].iter().all(|byte| *byte == b'a'));
+
+        assert_eq!(
+            &b"\x00\x00\x00\x00\x0e\x0a\x0clive.Service"[..],
+            &encode_request("live.Service")[..]
+        );
+
+        // A fixed32 the reader does not know, then the status.
+        assert_eq!(
+            Some(1),
+            decode_response_status(
+                b"\x00\x00\x00\x00\x07\x15\x00\x00\x00\x00\x08\x01"
+            )
+        );
+        // A status past one byte, and the names of each known status.
+        assert_eq!(
+            Some(128),
+            decode_response_status(b"\x00\x00\x00\x00\x03\x08\x80\x01")
+        );
+        assert_eq!("UNKNOWN", serving_status_name(0));
+        assert_eq!("SERVING", serving_status_name(1));
+        assert_eq!("NOT_SERVING", serving_status_name(2));
+        assert_eq!("SERVICE_UNKNOWN", serving_status_name(3));
+        assert_eq!("unrecognised", serving_status_name(4));
+        assert_eq!("unrecognised", serving_status_name(128));
+
+        // Group wire type, a fixed field that runs off the message, a
+        // length that runs off it, another compression flag, and bytes
+        // after a whole frame (those are not part of the message).
+        assert_eq!(None, decode_response_status(b"\x00\x00\x00\x00\x01\x0b"));
+        assert_eq!(
+            None,
+            decode_response_status(b"\x00\x00\x00\x00\x03\x15\x00\x00")
+        );
+        assert_eq!(
+            None,
+            decode_response_status(b"\x00\x00\x00\x00\x04\x19\x00\x00\x00")
+        );
+        assert_eq!(
+            None,
+            decode_response_status(b"\x00\x00\x00\x00\x03\x12\x05\xff")
+        );
+        assert_eq!(
+            None,
+            decode_response_status(b"\x02\x00\x00\x00\x02\x08\x01")
+        );
+        assert_eq!(
+            Some(1),
+            decode_response_status(b"\x00\x00\x00\x00\x02\x08\x01\xff")
+        );
+
+        let mut headers = http::HeaderMap::new();
+        assert_eq!(None, grpc_status(&headers));
+        headers.insert("grpc-status", http::HeaderValue::from_static(" 5 "));
+        assert_eq!(
+            Some(("5".to_string(), String::new())),
+            grpc_status(&headers)
+        );
+        headers.insert("grpc-status", http::HeaderValue::from_static("5"));
+        headers.insert(
+            "grpc-message",
+            http::HeaderValue::from_static(" missing "),
+        );
+        assert_eq!(
+            Some(("5".to_string(), "missing".to_string())),
+            grpc_status(&headers)
+        );
+        let value = match http::HeaderValue::from_bytes(&[0xff]) {
+            Ok(value) => value,
+            Err(err) => panic!("{err}"),
+        };
+        headers.insert("grpc-status", value);
+        assert_eq!(None, grpc_status(&headers));
+    }
+
+    #[test]
+    fn test_grpc_request_uses_the_health_method() {
+        let conf = match HealthCheckConf::try_from(
+            "grpc://api.internal/ignored?foo=1&service=live.Service",
+        ) {
+            Ok(conf) => conf,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!("live.Service", conf.service);
+        assert_eq!(true, conf.path.contains("foo=1"), "{}", conf.path);
+        assert_eq!(false, conf.path.contains("service"), "{}", conf.path);
+        let check = GrpcHealthCheck::new("api", &conf, None);
+        assert_eq!(false, check.peer_template.is_tls());
+        assert_eq!("", check.peer_template.sni);
+        assert_eq!(
+            &b"\x00\x00\x00\x00\x0e\x0a\x0clive.Service"[..],
+            &check.request[..]
+        );
+        let backend = match Backend::new("10.1.2.3:50051") {
+            Ok(backend) => backend,
+            Err(err) => panic!("{err}"),
+        };
+        let req = match check.build_request(&backend) {
+            Ok(req) => req,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(b"/grpc.health.v1.Health/Check", req.raw_path());
+        assert_eq!(http::Method::POST, req.method);
+        assert_eq!(
+            Some("api.internal"),
+            req.headers
+                .get("host")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("application/grpc"),
+            req.headers
+                .get("content-type")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("trailers"),
+            req.headers.get("te").and_then(|value| value.to_str().ok())
+        );
+
+        // No host in the configuration: the backend's own address.
+        let bare = HealthCheckConf {
+            schema: HealthCheckSchema::Grpc,
+            ..Default::default()
+        };
+        let check = GrpcHealthCheck::new("api", &bare, None);
+        let req = match check.build_request(&backend) {
+            Ok(req) => req,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(
+            Some("10.1.2.3:50051"),
+            req.headers
+                .get("host")
+                .and_then(|value| value.to_str().ok())
+        );
+    }
 }

@@ -346,4 +346,153 @@ mod tests {
         let err = check(&addr).await.unwrap_err();
         assert_eq!(true, err.to_string().contains("does not match"), "{err}");
     }
+
+    fn response(status: u16, headers: &[(&str, &str)]) -> ResponseHeader {
+        let mut resp = match ResponseHeader::build(status, None) {
+            Ok(resp) => resp,
+            Err(err) => panic!("response {status}: {err}"),
+        };
+        for (name, value) in headers {
+            let header_name =
+                match http::HeaderName::from_bytes(name.as_bytes()) {
+                    Ok(name) => name,
+                    Err(err) => panic!("header {name}: {err}"),
+                };
+            let value = match http::HeaderValue::from_str(value) {
+                Ok(value) => value,
+                Err(err) => panic!("header {name}: {err}"),
+            };
+            if let Err(err) = resp.append_header(header_name, value) {
+                panic!("header {name}: {err}");
+            }
+        }
+        resp
+    }
+
+    fn must_parse(url: &str) -> HealthCheckConf {
+        match url.try_into() {
+            Ok(conf) => conf,
+            Err(err) => panic!("{url}: {err}"),
+        }
+    }
+
+    /// The upgrade token is matched without regard to case or the
+    /// whitespace around a header value. A missing accept value fails
+    /// the same way a wrong one does.
+    #[test]
+    fn test_validate_response_is_lenient_about_the_header_form() {
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let resp = response(
+            101,
+            &[
+                ("Upgrade", " WebSocket "),
+                ("Sec-WebSocket-Accept", " s3pPLMBiTxaQ9kYGzzhZRbK+xOo= "),
+            ],
+        );
+        match validate_response(&resp, key) {
+            Ok(()) => {},
+            Err(err) => panic!("{err}"),
+        }
+
+        let missing = response(101, &[("Upgrade", "websocket")]);
+        let err = match validate_response(&missing, key) {
+            Err(err) => err,
+            Ok(()) => panic!("missing accept accepted"),
+        };
+        assert_eq!(true, err.to_string().contains("does not match"), "{err}");
+
+        let mut binary = response(
+            101,
+            &[("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")],
+        );
+        let value = match http::HeaderValue::from_bytes(&[0xff]) {
+            Ok(value) => value,
+            Err(err) => panic!("{err}"),
+        };
+        if let Err(err) = binary.append_header(http::header::UPGRADE, value) {
+            panic!("{err}");
+        }
+        let err = match validate_response(&binary, key) {
+            Err(err) => err,
+            Ok(()) => panic!("non-utf8 upgrade accepted"),
+        };
+        assert_eq!(true, err.to_string().contains("not websocket"), "{err}");
+    }
+
+    #[test]
+    fn test_websocket_peer_and_request() {
+        let conf = must_parse(
+            "wss://chat.example/socket?connection_timeout=2s&read_timeout=1500ms&success=3&failure=4",
+        );
+        let check = WebSocketHealthCheck::new("chat", &conf, None);
+        assert_eq!(true, check.peer_template.is_tls());
+        assert_eq!("chat.example", check.peer_template.sni);
+        assert_eq!(
+            pingora::protocols::ALPN::H1,
+            check.peer_template.options.alpn
+        );
+        assert_eq!("/socket", check.path);
+        assert_eq!(3, check.health_threshold(true));
+        assert_eq!(4, check.health_threshold(false));
+        assert_eq!(false, check.peer_template.options.verify_cert);
+        assert_eq!(None, check.peer_template.options.idle_timeout);
+        assert_eq!(
+            Some(std::time::Duration::from_millis(1500)),
+            check.peer_template.options.read_timeout
+        );
+
+        // `ws://` with `tls` is TLS as well. An empty path is `/`.
+        let flagged = WebSocketHealthCheck::new(
+            "chat",
+            &must_parse("ws://chat.example?tls"),
+            None,
+        );
+        assert_eq!(true, flagged.peer_template.is_tls());
+        assert_eq!("chat.example", flagged.peer_template.sni);
+        assert_eq!("/", flagged.path);
+        let req = match flagged.build_request("dGhlIHNhbXBsZSBub25jZQ==") {
+            Ok(req) => req,
+            Err(err) => panic!("{err}"),
+        };
+        assert_eq!(b"/", req.raw_path());
+        assert_eq!(
+            Some("chat.example"),
+            req.headers
+                .get("host")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("Upgrade"),
+            req.headers
+                .get("connection")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("websocket"),
+            req.headers
+                .get("upgrade")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("13"),
+            req.headers
+                .get("sec-websocket-version")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(
+            Some("dGhlIHNhbXBsZSBub25jZQ=="),
+            req.headers
+                .get("sec-websocket-key")
+                .and_then(|value| value.to_str().ok())
+        );
+
+        let plain = WebSocketHealthCheck::new(
+            "chat",
+            &must_parse("ws://chat.example/chat"),
+            None,
+        );
+        assert_eq!(false, plain.peer_template.is_tls());
+        assert_eq!("", plain.peer_template.sni);
+        assert_eq!("/chat", plain.path);
+    }
 }

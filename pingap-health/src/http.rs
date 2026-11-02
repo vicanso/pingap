@@ -784,4 +784,141 @@ mod tests {
         run("").await;
         assert_eq!(3, connections.load(Ordering::SeqCst));
     }
+
+    fn must_parse(url: &str) -> HealthCheckConf {
+        match HealthCheckConf::try_from(url) {
+            Ok(conf) => conf,
+            Err(err) => panic!("{url}: {err}"),
+        }
+    }
+
+    #[test]
+    fn test_health_check_url_edges() {
+        match HealthCheckConf::try_from(":::") {
+            Err(err) => assert_eq!(
+                "Url parse error relative URL without a base, :::",
+                err.to_string()
+            ),
+            Ok(_) => panic!("::: accepted"),
+        }
+        match HealthCheckConf::try_from("ftp://h") {
+            Err(err) => assert_eq!(
+                "Invalid health check schema: ftp, Matching variant not found",
+                err.to_string()
+            ),
+            Ok(_) => panic!("ftp accepted"),
+        }
+        match HealthCheckConf::try_from("http://h/p?failure=0") {
+            Err(err) => assert_eq!(
+                "Invalid health check parameter failure=0: must be at least 1",
+                err.to_string()
+            ),
+            Ok(_) => panic!("failure=0 accepted"),
+        }
+        for (url, expect) in [
+            ("wss://h/p?check_port=443", "http and https checks only"),
+            ("ws://h/p?expect_status=101", "http and https checks only"),
+        ] {
+            let err = match HealthCheckConf::try_from(url) {
+                Err(err) => err,
+                Ok(_) => panic!("{url} accepted"),
+            };
+            assert_eq!(true, err.to_string().contains(expect), "{url}: {err}");
+        }
+        assert_eq!(
+            Ok(vec![(100, 100), (599, 599), (200, 399)]),
+            parse_expect_status("100,599,200 - 399")
+        );
+
+        let plain = must_parse("http://h");
+        assert_eq!("h", plain.host);
+        assert_eq!("/", plain.path);
+        assert_eq!(DEFAULT_CONNECTION_TIMEOUT, plain.connection_timeout);
+        assert_eq!(DEFAULT_READ_TIMEOUT, plain.read_timeout);
+        assert_eq!(DEFAULT_CHECK_FREQUENCY, plain.check_frequency);
+        assert_eq!(DEFAULT_CONSECUTIVE_SUCCESS, plain.consecutive_success);
+        assert_eq!(DEFAULT_CONSECUTIVE_FAILURE, plain.consecutive_failure);
+        assert_eq!("/?flag", must_parse("http://h?flag").path);
+
+        // The port and the user info are not part of the host. The scheme
+        // is read in any case; a special-scheme host is lowercased.
+        let addressed =
+            must_parse("http://user:secret@api.example:8080/health");
+        assert_eq!("api.example", addressed.host);
+        assert_eq!("/health", addressed.path);
+        let upper = must_parse("HTTPS://API.Example/Health");
+        assert_eq!(HealthCheckSchema::Https, upper.schema);
+        assert_eq!("api.example", upper.host);
+        assert_eq!("/Health", upper.path);
+        let tcp = must_parse("TCP://Upstream");
+        assert_eq!(HealthCheckSchema::Tcp, tcp.schema);
+        assert_eq!("Upstream", tcp.host);
+
+        // `+` is a space, `%2B` is a plus. A flag's value is ignored:
+        // the parameter counts as present.
+        assert_eq!(
+            Some("a b".to_string()),
+            must_parse("http://h/p?expect_body=a+b").expect_body
+        );
+        assert_eq!(
+            Some("a+b".to_string()),
+            must_parse("http://h/p?expect_body=a%2Bb").expect_body
+        );
+        assert_eq!(true, must_parse("http://h/p?reuse=0").reuse_connection);
+        assert_eq!(true, must_parse("http://h/p?tls").tls);
+        assert_eq!(false, must_parse("https://h/p").tls);
+        assert_eq!(true, must_parse("tcp://h?parallel").parallel_check);
+        assert_eq!(
+            Some(65535),
+            must_parse("http://h/p?check_port=65535").check_port
+        );
+
+        let conf = must_parse(
+            "http://[::1]/ping?flag&from=nginx&connection_timeout=100ms&read_timeout=100ms&success=4&failure=1&parallel&reuse=0&check_port=65535",
+        );
+        assert_eq!("[::1]", conf.host);
+        assert_eq!("/ping?flag&from=nginx", conf.path);
+        assert_eq!(Duration::from_millis(100), conf.connection_timeout);
+        assert_eq!(4, conf.consecutive_success);
+        assert_eq!(1, conf.consecutive_failure);
+        assert_eq!(true, conf.parallel_check);
+        assert_eq!(true, conf.reuse_connection);
+        let check = new_http_health_check("up", &conf, None);
+        assert_eq!(b"/ping?flag&from=nginx", check.req.raw_path());
+        assert_eq!(http::Method::GET, check.req.method);
+        assert_eq!(
+            Some("[::1]"),
+            check
+                .req
+                .headers
+                .get("host")
+                .and_then(|value| value.to_str().ok())
+        );
+        assert_eq!(Some(65535), check.port_override);
+        assert_eq!(false, check.peer_template.is_tls());
+        assert_eq!("", check.peer_template.sni);
+        assert_eq!(false, check.peer_template.options.verify_cert);
+        assert_eq!(false, check.peer_template.options.verify_hostname);
+        assert_eq!(
+            Some(Duration::from_millis(100)),
+            check.peer_template.options.write_timeout
+        );
+
+        // `?tls` is stored and does not turn an HTTP check into TLS.
+        // `https://` does, and the host is the SNI.
+        let flagged = new_http_health_check(
+            "up",
+            &must_parse("http://api.example/health?tls"),
+            None,
+        );
+        assert_eq!(false, flagged.peer_template.is_tls());
+        assert_eq!("", flagged.peer_template.sni);
+        let https = new_http_health_check(
+            "up",
+            &must_parse("https://api.example/health"),
+            None,
+        );
+        assert_eq!(true, https.peer_template.is_tls());
+        assert_eq!("api.example", https.peer_template.sni);
+    }
 }

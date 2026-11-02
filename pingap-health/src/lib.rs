@@ -452,4 +452,112 @@ mod tests {
             "HTTPStatus context: test cause:  InternalError"
         );
     }
+
+    /// A TCP check does not verify a certificate, and a released
+    /// connection is not evicted before the next round.
+    #[test]
+    fn test_tcp_peer_disables_certificate_checks() {
+        let conf = match HealthCheckConf::try_from(
+            "tcp://h?connection_timeout=100ms&read_timeout=250ms",
+        ) {
+            Ok(conf) => conf,
+            Err(err) => panic!("{err}"),
+        };
+        let check = new_tcp_health_check("up", &conf, None);
+        let options = &check.peer_template.options;
+        assert_eq!(false, options.verify_cert);
+        assert_eq!(false, options.verify_hostname);
+        assert_eq!(None, options.idle_timeout);
+        assert_eq!(
+            Some(Duration::from_millis(100)),
+            options.connection_timeout
+        );
+        assert_eq!(
+            Some(Duration::from_millis(100)),
+            options.total_connection_timeout
+        );
+        assert_eq!(Some(Duration::from_millis(250)), options.read_timeout);
+        assert_eq!(Some(Duration::from_millis(250)), options.write_timeout);
+    }
+
+    struct Observe(Arc<std::sync::atomic::AtomicBool>);
+
+    #[async_trait::async_trait]
+    impl pingora::lb::health_check::HealthObserve for Observe {
+        async fn observe(&self, target: &pingora::lb::Backend, healthy: bool) {
+            assert_eq!("127.0.0.1:9", target.addr.to_string());
+            assert_eq!(false, healthy);
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    async fn observed_summary(url: &str) -> String {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let (_, check) = match new_health_check(
+            "up",
+            url,
+            Some(Box::new(Observe(called.clone()))),
+        ) {
+            Ok(check) => check,
+            Err(err) => panic!("{url}: {err}"),
+        };
+        let backend = match pingora::lb::Backend::new("127.0.0.1:9") {
+            Ok(backend) => backend,
+            Err(err) => panic!("{err}"),
+        };
+        check.health_status_change(&backend, false).await;
+        assert_eq!(true, called.load(Ordering::SeqCst), "{url}");
+        check.backend_summary(&backend)
+    }
+
+    /// A status change reaches the callback. HTTP, gRPC and WebSocket
+    /// name the upstream in the summary pingora logs; TCP does not.
+    #[tokio::test]
+    async fn test_status_change_is_observed() {
+        for url in [
+            "http://h/p",
+            "https://h/p",
+            "http://h/p?expect_body=ok",
+            "grpc://h",
+            "ws://h/chat",
+            "wss://h/chat",
+        ] {
+            assert_eq!("up: 127.0.0.1:9", observed_summary(url).await, "{url}");
+        }
+        for url in ["", "tcp://h"] {
+            let summary = observed_summary(url).await;
+            assert_eq!(
+                true,
+                summary.contains("127.0.0.1:9"),
+                "{url}: {summary}"
+            );
+            assert_eq!(false, summary.starts_with("up:"), "{url}: {summary}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_status_change_without_callback_returns() {
+        let backend = match pingora::lb::Backend::new("127.0.0.1:9") {
+            Ok(backend) => backend,
+            Err(err) => panic!("{err}"),
+        };
+        for url in [
+            "",
+            "tcp://h",
+            "http://h/p",
+            "https://h/p",
+            "grpc://h",
+            "ws://h/p",
+            "wss://h/p",
+            "http://h/p?expect_body=ok",
+        ] {
+            let (_, check) = match new_health_check("up", url, None) {
+                Ok(check) => check,
+                Err(err) => panic!("{url}: {err}"),
+            };
+            check.health_status_change(&backend, true).await;
+        }
+    }
 }
