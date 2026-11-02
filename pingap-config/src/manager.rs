@@ -2007,6 +2007,21 @@ addrs = ["127.0.0.1:7083"]
         ))
         .unwrap();
         assert_eq!(ConfigMode::MultiByItem, manager.mode);
+        // Only the exact string `false` turns separation off. `FALSE`,
+        // `0` and a bare `separation` are on.
+        for (query, expected) in [
+            ("separation=false", ConfigMode::MultiByType),
+            ("separation=FALSE", ConfigMode::MultiByItem),
+            ("separation=0", ConfigMode::MultiByItem),
+            ("separation", ConfigMode::MultiByItem),
+        ] {
+            let manager = new_file_config_manager(&format!(
+                "{}?{query}",
+                dir.path().join("flags").to_string_lossy()
+            ))
+            .unwrap();
+            assert_eq!(expected, manager.mode, "{query}");
+        }
 
         // Writing it produces the separated layout, not a `pingap.toml` that
         // the next run would then have to migrate away.

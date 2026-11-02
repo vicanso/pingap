@@ -419,6 +419,33 @@ pub use storage::*;
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_category_names() {
+        for (name, category) in [
+            ("basic", Category::Basic),
+            ("SERVER", Category::Server),
+            ("Location", Category::Location),
+            ("upstream", Category::Upstream),
+            ("plugin", Category::Plugin),
+            ("certificate", Category::Certificate),
+            ("storage", Category::Storage),
+        ] {
+            match Category::from_str(name) {
+                Ok(parsed) => assert_eq!(category, parsed),
+                Err(err) => panic!("{name} was refused: {err}"),
+            }
+            assert_eq!(name.to_lowercase(), category.to_string());
+        }
+        match Category::from_str("servers") {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("invalid category: servers", message);
+            },
+            Ok(category) => panic!("servers was accepted as {category}"),
+            Err(err) => panic!("expected invalid category, got {err}"),
+        }
+    }
 
     async fn load(dir: &std::path::Path) -> Result<PingapConfig> {
         let data = read_all_config_files(&dir.to_string_lossy()).await?;

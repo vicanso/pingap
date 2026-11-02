@@ -225,3 +225,93 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
 
     toml::to_string_pretty(&root).map_err(|e| Error::Ser { source: e })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ConfigBlock, ParsedLocation, ParsedServer, TomlMap, TomlValue,
+        assemble_toml,
+    };
+    use crate::Error;
+    use pretty_assertions::assert_eq;
+
+    fn table() -> TomlMap<String, TomlValue> {
+        TomlMap::new()
+    }
+
+    fn location(name: &str) -> ConfigBlock {
+        ConfigBlock::Location(
+            name.to_string(),
+            ParsedLocation {
+                location: table(),
+                upstreams: table(),
+                plugins: table(),
+            },
+        )
+    }
+
+    #[test]
+    fn test_the_same_name_in_two_blocks_is_refused() {
+        let blocks =
+            vec![ConfigBlock::Basic(table()), ConfigBlock::Basic(table())];
+        match assemble_toml(blocks) {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("duplicate \"basic\" in basic", message);
+            },
+            Ok(toml) => panic!("two basic blocks were accepted:\n{toml}"),
+            Err(err) => panic!("expected a duplicate basic, got {err}"),
+        }
+
+        let blocks = vec![
+            ConfigBlock::Plugin("stats".to_string(), table()),
+            location("api"),
+            ConfigBlock::Server(
+                "web".to_string(),
+                ParsedServer {
+                    server: table(),
+                    locations: table(),
+                    upstreams: table(),
+                    plugins: {
+                        let mut plugins = table();
+                        plugins.insert(
+                            "stats".to_string(),
+                            TomlValue::Table(table()),
+                        );
+                        plugins
+                    },
+                    certificates: table(),
+                },
+            ),
+        ];
+        match assemble_toml(blocks) {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("duplicate \"stats\" in plugins", message);
+            },
+            Ok(toml) => panic!("one plugin was defined twice:\n{toml}"),
+            Err(err) => panic!("expected a duplicate plugin, got {err}"),
+        }
+
+        let mut nested = table();
+        nested.insert("api".to_string(), TomlValue::Table(table()));
+        let blocks = vec![
+            location("api"),
+            ConfigBlock::Server(
+                "web".to_string(),
+                ParsedServer {
+                    server: table(),
+                    locations: nested,
+                    upstreams: table(),
+                    plugins: table(),
+                    certificates: table(),
+                },
+            ),
+        ];
+        match assemble_toml(blocks) {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("duplicate \"api\" in locations", message);
+            },
+            Ok(toml) => panic!("one location was defined twice:\n{toml}"),
+            Err(err) => panic!("expected a duplicate location, got {err}"),
+        }
+    }
+}
