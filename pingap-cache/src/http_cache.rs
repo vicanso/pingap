@@ -645,6 +645,46 @@ mod tests {
         assert_eq!(true, handle.read_body().await.unwrap().is_none());
     }
 
+    /// A start at or past the body is refused. An empty body has no
+    /// position 0 to seek to. Leaving the end unset keeps the range that
+    /// was already there.
+    #[tokio::test]
+    async fn test_seek_start_past_the_body_is_an_error() {
+        let mut hit = CompleteHit {
+            body: Bytes::from_static(b"Hello"),
+            done: true,
+            range_start: 0,
+            range_end: 5,
+        };
+        match hit.seek(5, Some(6)) {
+            Err(Error::Invalid { message }) => {
+                assert_eq!("seek start out of range 5 >= 5", message);
+            },
+            Ok(()) => panic!("a start at the end of the body was accepted"),
+            Err(err) => panic!("expected invalid, got {err}"),
+        }
+        // The refused seek leaves the handler where it was.
+        assert_eq!(true, hit.done);
+        assert_eq!(0, hit.range_start);
+
+        match hit.seek(1, None) {
+            Ok(()) => {},
+            Err(err) => panic!("seek inside the body failed: {err}"),
+        }
+        assert_eq!(false, hit.done);
+        assert_eq!(1, hit.range_start);
+        assert_eq!(5, hit.range_end);
+        assert_eq!(Some(Bytes::from_static(b"ello")), hit.get());
+
+        let mut empty = CompleteHit {
+            body: Bytes::new(),
+            done: false,
+            range_start: 0,
+            range_end: 0,
+        };
+        assert_eq!(true, empty.seek(0, None).is_err());
+    }
+
     /// Regression: a body was handed out in one piece however large it
     /// was, and a response that is held to a rate went out as nothing
     /// for a long while and then all at once.

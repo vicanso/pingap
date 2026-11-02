@@ -328,6 +328,33 @@ mod tests {
             " HTTPStatus context: invalid error cause:  InternalError",
             b_error.to_string()
         );
+
+        assert_eq!(
+            "no meta found",
+            Error::Invalid {
+                message: "no meta found".to_string(),
+            }
+            .to_string()
+        );
+        let io = Error::Io {
+            source: std::io::Error::other("disk full"),
+        };
+        assert_eq!("Io error: disk full", io.to_string());
+        assert_eq!(
+            "Over quota error, max: 10, readers",
+            Error::OverQuota {
+                max: 10,
+                message: "readers".to_string(),
+            }
+            .to_string()
+        );
+        assert_eq!(
+            "duplicate metric",
+            Error::Prometheus {
+                message: "duplicate metric".to_string(),
+            }
+            .to_string()
+        );
     }
 
     #[test]
@@ -428,8 +455,11 @@ mod tests {
 
         assert_eq!(None, parse("memory://pingap"));
         assert_eq!(None, parse("memory://pingap?max_size="));
+        // Whitespace is trimmed before the empty check, so it is unset.
+        assert_eq!(None, parse("memory://pingap?max_size=%20%20"));
 
         // A bare number is a percentage of the budget.
+        assert_eq!(Some(MaxSize::Percent(0)), parse("memory://?max_size=0"));
         assert_eq!(Some(MaxSize::Percent(20)), parse("memory://?max_size=20"));
         // A value with a unit is an absolute size, even a small one: `5mb`
         // used to be read as "5 percent" and clamped up to the whole budget.
@@ -441,8 +471,19 @@ mod tests {
             Some(MaxSize::Bytes(100_000_000)),
             parse("memory://?max_size=100mb")
         );
+        // The unit is matched without regard to case. `kb` is SI, `kib` is
+        // a power of two.
+        assert_eq!(
+            Some(MaxSize::Bytes(1_000)),
+            parse("memory://?max_size=1KB")
+        );
+        assert_eq!(
+            Some(MaxSize::Bytes(1_024)),
+            parse("memory://?max_size=1kib")
+        );
 
         let budget = 1_000_000_000;
+        assert_eq!(0, MaxSize::Percent(0).resolve(budget));
         assert_eq!(200_000_000, MaxSize::Percent(20).resolve(budget));
         // Percentages above 100 are clamped rather than overshooting.
         assert_eq!(budget, MaxSize::Percent(500).resolve(budget));
