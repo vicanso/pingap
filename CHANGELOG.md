@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.16.2](https://github.com/vicanso/pingap/compare/v0.16.1..v0.16.2) - 2026-11-08
+
+### ⛰️  Features
+
+- *(proxy)* Add server `strict_sni` (421 Misdirected Request) and `tls_server_name` ([#279](https://github.com/vicanso/pingap/issues/279)) - ([1779a39](https://github.com/vicanso/pingap/commit/1779a395ecc2f2cce639654facf31dc3573b77ad))
+- Accept unix sockets for static upstreams and listeners - ([8ba9556](https://github.com/vicanso/pingap/commit/8ba95567f5967417b15cc9941cd40e5ee60c840c))
+
+### 🐛 Bug Fixes
+
+- *(compression)* Finish brotli streams that pingora leaves open ([#256](https://github.com/vicanso/pingap/issues/256)) - ([0f7a981](https://github.com/vicanso/pingap/commit/0f7a981b6943b949810a18e52896e979ee8b95c6))
+- *(plugin)* Refuse a plugin category that is already registered - ([8082ab8](https://github.com/vicanso/pingap/commit/8082ab84b62d5d758662f2bd54e825ec093bea75))
+- Match an ipv4-mapped prefix as the ipv4 network - ([22d4196](https://github.com/vicanso/pingap/commit/22d4196aefe688efcf2d86ca9cb4597770e972e9))
+
+### 🚜 Refactor
+
+- *(acme)* Register each DNS provider once - ([73a5a61](https://github.com/vicanso/pingap/commit/73a5a61d562cc2601b05bb786b21694bc684deb6))
+- *(web)* Restyle the admin as a framed sheet - ([a074e62](https://github.com/vicanso/pingap/commit/a074e625c0603b025df103d7ef107be6642c1213))
+- Start the control panel with the same server construction - ([1b2a61c](https://github.com/vicanso/pingap/commit/1b2a61c6dce2e1c8756bbcdf9fe0de18758b03d0))
+- Register plugins without ctor; workspace lints for the style rules - ([c23b491](https://github.com/vicanso/pingap/commit/c23b491d5890e8177d7fb75bdb7cf5104b85f2e4))
+- Follow more of the Google Rust style guide - ([a32a248](https://github.com/vicanso/pingap/commit/a32a2484626550e2171b57c38fc9c56258098128))
+
+### 📚 Documentation
+
+- Link the CLA by full URL in the pull request template - ([3afbbd0](https://github.com/vicanso/pingap/commit/3afbbd06e67d142074a312f96db2df7286a41f1f))
+- Correct steps, examples, and the module graph - ([821cd87](https://github.com/vicanso/pingap/commit/821cd874f80c1e295eb8daac3f29c6000ef25b03))
+- Rename CLAUDE.md to AGENTS.md - ([f734d49](https://github.com/vicanso/pingap/commit/f734d49f46eb2b115c69c84cba78dc03de64a873))
+- Changelog - ([a9d4358](https://github.com/vicanso/pingap/commit/a9d435836f47843c8edccfad56801dfa7a269915))
+
+### ⚡ Performance
+
+- *(proxy)* Call plugins only at their step, and weigh cache meta - ([fa786da](https://github.com/vicanso/pingap/commit/fa786dac84018050e8bd3d348ba60c3e8ff5a13e))
+
+### 🧪 Testing
+
+- *(acme)* Cover the dns providers that had no tests - ([847b2c7](https://github.com/vicanso/pingap/commit/847b2c76f204c3f97c4905c0c6faf9de9cf8c706))
+- *(cache)* Cover error text, max size edges, and seek bounds - ([ad723cd](https://github.com/vicanso/pingap/commit/ad723cd4183cb401ed3b65b8b4948de73a4451ee))
+- *(certificate)* Cover a blank tls setting - ([4b618d3](https://github.com/vicanso/pingap/commit/4b618d33a45e2dd545a5418a1f57183b4a996f61))
+- *(config)* Cover category names, duplicate blocks, and separation - ([c6c2ff0](https://github.com/vicanso/pingap/commit/c6c2ff05288ab53603289125c77c9650a9d645a4))
+- *(core)* Cover notification, identity, and service edges - ([3ab963e](https://github.com/vicanso/pingap/commit/3ab963ed14db806a7ebdad6f2104b37ef765277f))
+- *(discovery)* Cover default ports, dns servers, and docker ports - ([e1da37e](https://github.com/vicanso/pingap/commit/e1da37e310c28f1ffd8d77276a9f9ea00b105012))
+- *(e2e)* Allow one dropped request per hand-over - ([cfdf5f7](https://github.com/vicanso/pingap/commit/cfdf5f763010492f63b9b1170b5d0ee51b5ecf88))
+- *(health)* Cover url edges, peer options, and status callbacks - ([cf1bbd0](https://github.com/vicanso/pingap/commit/cf1bbd09795e51ed93548b4e11eb61c072fa2728))
+- *(location)* Cover a regex that does not compile - ([f22406b](https://github.com/vicanso/pingap/commit/f22406b2e3c139f423aad2be6a9a9e9ab078130e))
+- *(logger)* Cover a level that is not one - ([38fccbc](https://github.com/vicanso/pingap/commit/38fccbcc5d18e9d2338f80fbac9fde4b9ef2c923))
+- *(otel)* Cover compression, propagator flags, and defaults - ([acb7e44](https://github.com/vicanso/pingap/commit/acb7e44c8605cf3230b726bdb1a2685e110952cd))
+- *(proxy)* Cover tracing when no provider is set - ([3e15733](https://github.com/vicanso/pingap/commit/3e15733889c323278b25c2b5af05a2080fa7d0d5))
+- *(pyroscope)* Cover a url that does not parse - ([20e0f6c](https://github.com/vicanso/pingap/commit/20e0f6cacee49c4e2785b9adca523ad1aaf4f6c0))
+- *(sentry)* Cover the dsn and the options left at their defaults - ([5f35f5c](https://github.com/vicanso/pingap/commit/5f35f5c04282b5fc62ebb851019597a57cde180b))
+- *(util)* Cover pem, paths, ip networks, and aes edges - ([8d7f1dd](https://github.com/vicanso/pingap/commit/8d7f1dd3f4734dee84bd58a0a87f4a947a173494))
+- *(webhook)* Cover a quiet url and a batch of one - ([ca37d18](https://github.com/vicanso/pingap/commit/ca37d181c6501789cc1d51d2f644b0ff3a93a1a2))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(security)* Fix RustSec advisories, hold tokio below 1.54 - ([6e565ab](https://github.com/vicanso/pingap/commit/6e565ab92668a27e49549d436bc87bfd389e6d43))
+- Drop the unused FullyReplaced response result - ([1bf8979](https://github.com/vicanso/pingap/commit/1bf89795ac3258dada10deaa645a002a5787e02c))
+
 ## [0.16.1](https://github.com/vicanso/pingap/compare/v0.16.0..v0.16.1) - 2026-10-19
 
 ### ⛰️  Features
