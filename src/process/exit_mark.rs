@@ -170,7 +170,9 @@ fn write_mark(path: &Path, mark: &Mark) -> std::io::Result<()> {
 /// When the process `pid` started, if it runs.
 fn process_started(pid: u32) -> Option<u64> {
     let pid = Pid::from_u32(pid);
-    let mut system = System::new();
+    let Ok(mut system) = System::new() else {
+        return None;
+    };
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,

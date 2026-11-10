@@ -614,13 +614,11 @@ impl BackgroundService for TracerService {
                     Box<dyn TextMapPropagator + Send + Sync>,
                 > = vec![Box::new(TraceContextPropagator::new())];
                 if self.config.support_jaeger_propagator {
-                    // The Jaeger propagation format is deprecated upstream in
-                    // favor of W3C TraceContext, but we keep it as an opt-in
-                    // for interop with existing Jaeger deployments.
-                    #[allow(deprecated)]
-                    propagators.push(Box::new(
-                        opentelemetry_jaeger_propagator::Propagator::new(),
-                    ));
+                    // The Jaeger format is deprecated upstream in favor of
+                    // W3C TraceContext. It stays opt-in for deployments that
+                    // still send `uber-trace-id`.
+                    propagators
+                        .push(Box::new(crate::jaeger::Propagator::new()));
                 }
                 if self.config.support_baggage_propagator {
                     propagators.push(Box::new(BaggagePropagator::new()));

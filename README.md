@@ -116,7 +116,7 @@ The same can be written in HCL or KDL. Every key is described in the [configurat
 | | |
 | --- | --- |
 | `--autoreload` | A change is applied without a restart: within ten seconds from files, at once from etcd. What takes a restart is reported, and waits for one. The mode for containers |
-| `-a`, `--autorestart` | The same, and a restart that drops no request for what a reload cannot change, a listen address for one. For a daemon (`-d`) on Linux; anywhere else it reloads, and reports what waits |
+| `-a`, `--autorestart` | The same, and a restart for what a reload cannot change, a listen address for one. Listening sockets are handed over and the service stays up; one connection already accepted, whose request has not been read, may be closed when the old process stops accepting. For a daemon (`-d`) on Linux; anywhere else it reloads, and reports what waits |
 | `-t` | Builds every upstream, location, plugin, certificate and server as a start does, and binds nothing |
 | `--strict` | A key Pingap does not know, or one this build has no feature for, is an error, where it is otherwise a warning. For `-t` in CI |
 | `--diff <other>` | Prints what would change if `<other>` took the place of the configuration, credentials shown as checksums |

@@ -115,12 +115,11 @@ What is on `main` and in no release yet.
   A lookup of pingora's `ResponseCompression` finds nothing, and your
   plugin leaves compression as it is without an error. It derefs to
   pingora's `ResponseCompressionCtx`, so the calls on it stay the same.
-- **tokio below 1.54**: the crates here that use tokio now ask for
-  `tokio = ">=1.53.3, <1.54"`. tokio 1.54 refuses the buffers of no capacity
-  that pingora 0.9.0 creates for each connection, and the first connection
-  panics ([cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)).
-  A project that requires tokio 1.54 or later cannot use these crates until
-  pingora is fixed.
+- **tokio 1.54 is allowed again.** pingora 0.9.1 no longer builds a
+  connection with a buffer of no capacity, so the requirement is no longer
+  `tokio = ">=1.53.3, <1.54"`
+  ([cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)).
+  A project that pins tokio below 1.54 can move to 1.54.1.
 
 ## From 0.15 to 0.16
 

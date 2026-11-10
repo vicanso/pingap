@@ -912,12 +912,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         return run_admin_node(args);
     }
 
-    let mut sys = System::new();
-    sys.refresh_memory();
-    pingap_cache::update_available_memory(available_memory(
-        sys.available_memory(),
-        sys.cgroup_limits().map(|limits| limits.total_memory),
-    ));
+    let memory = match System::new() {
+        Ok(mut sys) => {
+            sys.refresh_memory();
+            available_memory(
+                sys.available_memory(),
+                sys.cgroup_limits().map(|limits| limits.total_memory),
+            )
+        },
+        // The cache then uses its own fallback budget.
+        Err(_) => 0,
+    };
+    pingap_cache::update_available_memory(memory);
 
     // Initialize configuration. With `--upstream` the whole config is built
     // from the command line and kept in memory, so no config file is needed.
