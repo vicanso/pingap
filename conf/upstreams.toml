@@ -91,7 +91,7 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - Enables practical HTTP/2 multiplexing (gRPC, Connect RPC, h2c backends,
 #   long-lived streaming) instead of one active stream per connection.
 # - Must be greater than 0.
-# - Default: 1 (Pingora default, one stream per connection)
+# - Default: 100 (set to 1 to disable multiplexing per connection)
 # max_h2_streams = 100
 
 # Request header policy towards this upstream. The defaults are what RFC 9110

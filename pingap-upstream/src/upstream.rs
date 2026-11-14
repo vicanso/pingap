@@ -80,6 +80,8 @@ use tracing::{debug, error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+const DEFAULT_MAX_H2_STREAMS: usize = 100;
+
 pub struct BackendObserveNotification {
     name: String,
     sender: Arc<NotificationSender>,
@@ -1670,11 +1672,11 @@ impl Upstream {
         // HTTP/2 flow-control windows advertised to this upstream
         p.options.h2_stream_window_size = self.h2_stream_window_size;
         p.options.h2_connection_window_size = self.h2_connection_window_size;
-        // Override the default number of concurrent h2 streams per
-        // connection to enable practical HTTP/2 multiplexing to the backend
-        if let Some(max_h2_streams) = self.max_h2_streams {
-            p.options.max_h2_streams = max_h2_streams;
-        }
+        // Default to 100 concurrent HTTP/2 streams per connection instead
+        // of Pingora's default of 1 so H2/H2H1 upstreams multiplex out of
+        // the box; an explicit `max_h2_streams = 1` restores single-stream.
+        p.options.max_h2_streams =
+            self.max_h2_streams.unwrap_or(DEFAULT_MAX_H2_STREAMS);
         // Configure TCP-specific options
         p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
         p.options.tcp_recv_buf = self.tcp_recv_buf;
@@ -2438,7 +2440,7 @@ mod tests {
             &UpstreamConf {
                 addrs: vec!["192.168.1.1:8001".to_string()],
                 alpn: Some("H2".to_string()),
-                max_h2_streams: Some(100),
+                max_h2_streams: Some(256),
                 ..Default::default()
             },
             None,
@@ -2449,9 +2451,28 @@ mod tests {
             .new_http_peer(&session, &mut client_ip, true)
             .await
             .unwrap();
-        assert_eq!(100, peer.options.max_h2_streams);
+        assert_eq!(256, peer.options.max_h2_streams);
 
-        // Unset falls back to Pingora's default of 1.
+        // Explicit 1 disables multiplexing per connection.
+        let up = Upstream::new(
+            "h2single",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                alpn: Some("H2".to_string()),
+                max_h2_streams: Some(1),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let mut client_ip = None;
+        let peer = up
+            .new_http_peer(&session, &mut client_ip, true)
+            .await
+            .unwrap();
+        assert_eq!(1, peer.options.max_h2_streams);
+
+        // Unset defaults to DEFAULT_MAX_H2_STREAMS (100) for out-of-box H2 multiplexing.
         let up = Upstream::new(
             "h2default",
             &UpstreamConf {
@@ -2467,7 +2488,7 @@ mod tests {
             .new_http_peer(&session, &mut client_ip, true)
             .await
             .unwrap();
-        assert_eq!(1, peer.options.max_h2_streams);
+        assert_eq!(DEFAULT_MAX_H2_STREAMS, peer.options.max_h2_streams);
     }
 
     #[tokio::test]
