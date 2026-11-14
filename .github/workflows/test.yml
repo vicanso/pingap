@@ -62,7 +62,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
+          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler libprotobuf-dev
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@master
         with:

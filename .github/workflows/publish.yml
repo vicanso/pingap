@@ -143,7 +143,7 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE:/home/rust/src" \
             messense/rust-musl-cross:x86_64-musl sh -ec '
             apt-get update
-            apt-get install protobuf-compiler -y
+            apt-get install protobuf-compiler libprotobuf-dev -y
             printf "[safe]\n\tdirectory = *\n" >> ~/.gitconfig
             make release-full
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86-full
@@ -221,7 +221,7 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE:/home/rust/src" \
             messense/rust-musl-cross:aarch64-musl sh -ec '
             apt-get update
-            apt-get install protobuf-compiler -y
+            apt-get install protobuf-compiler libprotobuf-dev -y
             printf "[safe]\n\tdirectory = *\n" >> ~/.gitconfig
             make release-full
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64-full
@@ -296,7 +296,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
+          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler libprotobuf-dev
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@master
         with:

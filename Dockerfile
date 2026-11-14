@@ -16,7 +16,7 @@ ARG BUILD_ARGS=""
 COPY --from=webbuilder /pingap /pingap
 
 RUN apt update \
-  && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler --no-install-recommends
+  && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler libprotobuf-dev --no-install-recommends
 RUN rustup target list --installed
 RUN cd /pingap \
   && cargo build --release ${BUILD_ARGS} \
