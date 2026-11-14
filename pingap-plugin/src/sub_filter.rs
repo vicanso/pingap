@@ -33,9 +33,15 @@ use regex::Regex;
 use regex::bytes::RegexBuilder;
 use std::borrow::Cow;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 const PLUGIN_ID: &str = "_sub_filter_";
+/// Coalesce small incoming chunks up to 8 KiB before streaming literal rules.
+const STREAM_FLUSH_SIZE: usize = 8 * 1024;
+/// Default total buffered memory cap per SubFilter instance (64 MiB) for
+/// regex/max_size full-body buffering.
+const DEFAULT_MAX_BUFFER_MEMORY: usize = 64 * 1024 * 1024;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -76,6 +82,14 @@ pub struct SubFilter {
     /// it came: the rules are applied to a whole body, which is held in
     /// memory until its end. `None` is no limit.
     max_size: Option<usize>,
+
+    /// Whether every rule is a literal `sub_filter` and `max_size` is unset,
+    /// allowing bounded-memory sliding-window streaming replacement.
+    can_stream: bool,
+
+    /// Shared concurrent memory budget for buffered replacement mode.
+    buffered_bytes: Arc<AtomicUsize>,
+    max_buffer_memory: usize,
 }
 
 // Regular expression for parsing filter rules in the format:
@@ -168,12 +182,58 @@ fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
     Some(params)
 }
 
+struct BufferBudget {
+    used: Arc<AtomicUsize>,
+    reserved: usize,
+    limit: usize,
+}
+
+impl BufferBudget {
+    fn new(used: Arc<AtomicUsize>, limit: usize) -> Self {
+        Self {
+            used,
+            reserved: 0,
+            limit,
+        }
+    }
+
+    fn try_reserve(&mut self, bytes: usize) -> bool {
+        if bytes == 0 {
+            return true;
+        }
+        let ok = self
+            .used
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+                cur.checked_add(bytes).filter(|&next| next <= self.limit)
+            })
+            .is_ok();
+        if ok {
+            self.reserved += bytes;
+        }
+        ok
+    }
+
+    fn release(&mut self) {
+        if self.reserved > 0 {
+            self.used.fetch_sub(self.reserved, Ordering::Release);
+            self.reserved = 0;
+        }
+    }
+}
+
+impl Drop for BufferBudget {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// Buffers one response's body and applies the rules to it at the end.
 struct SubFilterReplacer {
     filters: Arc<[SubFilterParams]>,
     buffer: BytesMut,
     /// The most that is held, see `SubFilter::max_size`.
     max_size: Option<usize>,
+    budget: BufferBudget,
     /// The body turned out larger than that: what was held has gone out
     /// as it came, and the rest follows as it comes.
     passing: bool,
@@ -189,14 +249,18 @@ impl ModifyResponseBody for SubFilterReplacer {
         if self.passing {
             return Ok(());
         }
+        let mut added = 0;
         if let Some(data) = body {
+            added = data.len();
             self.buffer.extend_from_slice(data);
             data.clear();
         }
-        // A body whose length was not known when the response began, and
-        // that is larger than what is rewritten: nothing of it is.
-        if self.max_size.is_some_and(|max| self.buffer.len() > max) {
+        // Exceeded either per-response `max_size` or the plugin-wide concurrent
+        // memory budget: release buffered bytes as-is and stream the rest.
+        let over_max = self.max_size.is_some_and(|max| self.buffer.len() > max);
+        if over_max || !self.budget.try_reserve(added) {
             self.passing = true;
+            self.budget.release();
             *body = Some(std::mem::take(&mut self.buffer).freeze());
             return Ok(());
         }
@@ -206,10 +270,117 @@ impl ModifyResponseBody for SubFilterReplacer {
         // The buffer becomes the working copy outright instead of being
         // duplicated, and a rule only allocates when it changes something.
         let mut data: Vec<u8> = std::mem::take(&mut self.buffer).into();
+        self.budget.release();
         for item in self.filters.iter() {
             data = item.apply(data);
         }
         *body = Some(Bytes::from(data));
+        Ok(())
+    }
+    fn name(&self) -> &str {
+        "sub_filter"
+    }
+}
+
+#[derive(Default)]
+struct LiteralStage {
+    rem: Vec<u8>,
+    done: bool,
+}
+
+impl LiteralStage {
+    fn feed(
+        &mut self,
+        input: &[u8],
+        eof: bool,
+        rule: &SubFilterParams,
+        out: &mut Vec<u8>,
+    ) {
+        if self.done {
+            out.extend_from_slice(input);
+            return;
+        }
+        let mut combined = Vec::new();
+        let work: &[u8] = if self.rem.is_empty() {
+            input
+        } else {
+            combined.reserve(self.rem.len() + input.len());
+            combined.extend_from_slice(&self.rem);
+            combined.extend_from_slice(input);
+            self.rem.clear();
+            &combined
+        };
+        let pat = rule.pattern.as_slice();
+        let mut cursor = 0;
+        while let Some(pos) = work[cursor..].find(pat) {
+            let start = cursor + pos;
+            out.extend_from_slice(&work[cursor..start]);
+            out.extend_from_slice(&rule.replacement);
+            cursor = start + pat.len();
+            if !rule.global {
+                self.done = true;
+                out.extend_from_slice(&work[cursor..]);
+                return;
+            }
+        }
+        let rem = &work[cursor..];
+        let keep = if eof {
+            0
+        } else {
+            rem.len().min(pat.len().saturating_sub(1))
+        };
+        let emit_end = rem.len() - keep;
+        out.extend_from_slice(&rem[..emit_end]);
+        self.rem.extend_from_slice(&rem[emit_end..]);
+    }
+}
+
+fn run_literal_stages(
+    stages: &mut [LiteralStage],
+    filters: &[SubFilterParams],
+    input: &[u8],
+    eof: bool,
+) -> Vec<u8> {
+    let mut current = input.to_vec();
+    let mut next = Vec::with_capacity(current.len());
+    for (stage, rule) in stages.iter_mut().zip(filters.iter()) {
+        next.clear();
+        stage.feed(&current, eof, rule, &mut next);
+        std::mem::swap(&mut current, &mut next);
+    }
+    current
+}
+
+/// Sliding-window streaming replacer for literal `sub_filter` rules.
+/// Holds only `pattern.len() - 1` overlap bytes per rule across flushes.
+struct SubFilterStreamReplacer {
+    filters: Arc<[SubFilterParams]>,
+    stages: Vec<LiteralStage>,
+    pending: BytesMut,
+}
+
+impl ModifyResponseBody for SubFilterStreamReplacer {
+    fn handle(
+        &mut self,
+        _session: &Session,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        if let Some(data) = body {
+            self.pending.extend_from_slice(data);
+            data.clear();
+        }
+        if !end_of_stream && self.pending.len() < STREAM_FLUSH_SIZE {
+            return Ok(());
+        }
+        let chunk = self.pending.split();
+        let out = run_literal_stages(
+            &mut self.stages,
+            &self.filters,
+            &chunk,
+            end_of_stream,
+        );
+        *body = Some(Bytes::from(out));
         Ok(())
     }
     fn name(&self) -> &str {
@@ -233,6 +404,23 @@ fn has_no_rewritable_body(
         || upstream_response.headers.get(CONTENT_ENCODING).is_some_and(
             |value| !value.as_bytes().eq_ignore_ascii_case(b"identity"),
         )
+}
+
+fn parse_optional_size(value: &PluginConf, key: &str) -> Result<Option<usize>> {
+    let invalid = |message: String| Error::Invalid {
+        category: PluginCategory::SubFilter.to_string(),
+        message,
+    };
+    let raw = get_str_conf(value, key);
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    let size = ByteSize::from_str(raw.trim())
+        .map_err(|e| invalid(format!("invalid {key}({raw}): {e}")))?;
+    if size.as_u64() == 0 {
+        return Err(invalid(format!("{key} should be more than 0")));
+    }
+    Ok(Some(usize::try_from(size.as_u64()).unwrap_or(usize::MAX)))
 }
 
 impl TryFrom<&PluginConf> for SubFilter {
@@ -285,21 +473,11 @@ impl TryFrom<&PluginConf> for SubFilter {
             .map(|item| item.trim().to_ascii_lowercase())
             .filter(|item| !item.is_empty())
             .collect();
-        let max_size = get_str_conf(value, "max_size");
-        let max_size = if max_size.trim().is_empty() {
-            None
-        } else {
-            let size = ByteSize::from_str(max_size.trim()).map_err(|e| {
-                invalid(format!("invalid max_size({max_size}): {e}"))
-            })?;
-            // Nothing would ever be rewritten.
-            if size.as_u64() == 0 {
-                return Err(invalid(
-                    "max_size should be more than 0".to_string(),
-                ));
-            }
-            Some(usize::try_from(size.as_u64()).unwrap_or(usize::MAX))
-        };
+        let max_size = parse_optional_size(value, "max_size")?;
+        let max_buffer_memory = parse_optional_size(value, "max_buffer_size")?
+            .unwrap_or(DEFAULT_MAX_BUFFER_MEMORY);
+        let can_stream = max_size.is_none()
+            && filters.iter().all(|f| f.regex_pattern.is_none());
         let hash_value = get_hash_key(value);
 
         Ok(Self {
@@ -310,6 +488,9 @@ impl TryFrom<&PluginConf> for SubFilter {
             status_codes,
             types: (!types.is_empty()).then_some(types),
             max_size,
+            can_stream,
+            buffered_bytes: Arc::new(AtomicUsize::new(0)),
+            max_buffer_memory,
         })
     }
 }
@@ -324,6 +505,30 @@ impl SubFilter {
     /// * `Result<Self>` - Configured SubFilter instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         Self::try_from(params)
+    }
+
+    fn new_body_modifier(&self) -> Box<dyn ModifyResponseBody> {
+        if self.can_stream {
+            let stages = (0..self.filters.len())
+                .map(|_| LiteralStage::default())
+                .collect();
+            Box::new(SubFilterStreamReplacer {
+                filters: self.filters.clone(),
+                stages,
+                pending: BytesMut::new(),
+            })
+        } else {
+            Box::new(SubFilterReplacer {
+                filters: self.filters.clone(),
+                buffer: BytesMut::new(),
+                max_size: self.max_size,
+                budget: BufferBudget::new(
+                    self.buffered_bytes.clone(),
+                    self.max_buffer_memory,
+                ),
+                passing: false,
+            })
+        }
     }
 }
 
@@ -432,15 +637,7 @@ impl Plugin for SubFilter {
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
         // Set up the response body modifier
-        ctx.add_modify_body_handler(
-            &self.handler_id,
-            Box::new(SubFilterReplacer {
-                filters: self.filters.clone(),
-                buffer: BytesMut::new(),
-                max_size: self.max_size,
-                passing: false,
-            }),
-        );
+        ctx.add_modify_body_handler(&self.handler_id, self.new_body_modifier());
         Ok(ResponsePluginResult::Modified)
     }
 
@@ -923,5 +1120,101 @@ mod tests {
         assert_eq!(ResponsePluginResult::Modified, result);
         assert_eq!("W/\"v1\"", whole.headers.get("ETag").unwrap());
         assert_eq!(false, whole.headers.contains_key("Accept-Ranges"));
+    }
+
+    #[tokio::test]
+    async fn test_sub_filter_streaming_across_chunks() {
+        let plugin = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "filters = [\"sub_filter 'old_token' 'new_val' g\", \"sub_filter 'once' 'ONCE'\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(true, plugin.can_stream);
+
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        plugin
+            .handle_response(&mut session, &mut ctx, &mut resp)
+            .await
+            .unwrap();
+
+        let prefix = "x".repeat(STREAM_FLUSH_SIZE);
+        // Split `old_token` across chunk boundary: `... once ... old_` | `token once`
+        let chunk1 = format!("{prefix} once old_");
+        let chunk2 = "token once";
+
+        let mut out = Vec::new();
+        let mut b1 = Some(Bytes::from(chunk1));
+        plugin
+            .handle_response_body(&mut session, &mut ctx, &mut b1, false)
+            .unwrap();
+        // Flushed mid-stream before EOF!
+        let emitted1 = b1.unwrap();
+        assert_eq!(false, emitted1.is_empty());
+        out.extend_from_slice(&emitted1);
+
+        let mut b2 = Some(Bytes::from_static(chunk2.as_bytes()));
+        plugin
+            .handle_response_body(&mut session, &mut ctx, &mut b2, true)
+            .unwrap();
+        out.extend_from_slice(&b2.unwrap());
+
+        assert_eq!(
+            format!("{prefix} ONCE new_val once").as_bytes(),
+            out.as_slice()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sub_filter_buffer_budget_overflow() {
+        let plugin = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "filters = [\"subs_filter 'old' 'new' g\"]\nmax_buffer_size = \"16b\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(false, plugin.can_stream);
+
+        let mut s1 = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut c1 = Ctx::default();
+        let mut r1 = ResponseHeader::build(200, None).unwrap();
+        plugin
+            .handle_response(&mut s1, &mut c1, &mut r1)
+            .await
+            .unwrap();
+
+        let mut s2 = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut c2 = Ctx::default();
+        let mut r2 = ResponseHeader::build(200, None).unwrap();
+        plugin
+            .handle_response(&mut s2, &mut c2, &mut r2)
+            .await
+            .unwrap();
+
+        // First in-flight response holds 12 bytes of the 16-byte budget.
+        let mut b1 = Some(Bytes::from_static(b"old_12_bytes"));
+        plugin
+            .handle_response_body(&mut s1, &mut c1, &mut b1, false)
+            .unwrap();
+        assert_eq!(12, plugin.buffered_bytes.load(Ordering::Relaxed));
+
+        // Second concurrent response asks for 8 bytes (12 + 8 > 16): passes through as-is.
+        let mut b2 = Some(Bytes::from_static(b"old_over"));
+        plugin
+            .handle_response_body(&mut s2, &mut c2, &mut b2, true)
+            .unwrap();
+        assert_eq!(b"old_over".as_ref(), b2.unwrap().as_ref());
+
+        // First response finishes normally and releases its reservation.
+        let mut b1_end = Some(Bytes::new());
+        plugin
+            .handle_response_body(&mut s1, &mut c1, &mut b1_end, true)
+            .unwrap();
+        assert_eq!(b"new_12_bytes".as_ref(), b1_end.unwrap().as_ref());
+        assert_eq!(0, plugin.buffered_bytes.load(Ordering::Relaxed));
     }
 }
