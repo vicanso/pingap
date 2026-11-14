@@ -39,7 +39,8 @@ use pingap_core::PluginProvider;
 use pingap_core::new_internal_error;
 use pingap_core::{
     CompressionStat, Ctx, PluginStep, RequestPluginResult,
-    ResponseBodyPluginResult, ResponsePluginResult, get_cache_key,
+    ResponseBodyPluginResult, ResponsePluginResult, downstream_will_reuse,
+    get_cache_key,
 };
 use pingap_core::{HTTP_HEADER_NAME_X_REQUEST_ID, get_digest_detail};
 use pingap_location::LocationProvider;
@@ -1790,6 +1791,77 @@ fn has_routable_target(header: &RequestHeader) -> bool {
     )
 }
 
+/// Closes an HTTP/1.1 upstream connection right after this response when the
+/// upstream sends a per-client PROXY protocol header and the downstream TCP
+/// connection is closing after this request: such an upstream connection is
+/// pinned to a client `(ip, port)` that will never send another request, so
+/// pooling it only evicts reusable keepalive connections and holds dead sockets
+/// open on the backend.
+fn close_unreusable_proxy_protocol_upstream(
+    session: &Session,
+    upstream_request: &mut RequestHeader,
+    ctx: &Ctx,
+) {
+    let sends_pp = ctx
+        .upstream
+        .upstream_instance
+        .as_ref()
+        .is_some_and(|u| u.sends_proxy_protocol());
+    if !sends_pp || downstream_will_reuse(session) {
+        return;
+    }
+    if upstream_request.version != http::Version::HTTP_11
+        || session.is_upgrade_req()
+        || session.client_addr().and_then(|a| a.as_inet()).is_none()
+        || upstream_request
+            .headers
+            .contains_key(http::header::CONNECTION)
+        || upstream_request.headers.contains_key(http::header::UPGRADE)
+    {
+        return;
+    }
+    let _ = upstream_request.insert_header(http::header::CONNECTION, "close");
+}
+
+impl Server {
+    fn write_access_log(&self, buf: BytesMut) {
+        let Some(logger) = &self.access_logger else {
+            let msg = buf.as_bstr();
+            info!(target: LOG_TARGET, "{msg}");
+            return;
+        };
+        let Err(err) = logger.try_send(buf) else {
+            return;
+        };
+        // At shutdown the async logger task stops taking lines (`Closed`):
+        // write draining requests to the application log so final access lines
+        // are preserved. Under live overload (`Full`), drop rather than block
+        // Tokio worker threads on synchronous stdout/stderr writes.
+        if self.access_log_to_application
+            && let tokio::sync::mpsc::error::TrySendError::Closed(msg) = err
+        {
+            info!(target: LOG_TARGET, "{}", msg.as_bstr());
+            return;
+        }
+        // Channel full: drop the line rather than block the request path, but
+        // surface the loss so operators can size the buffer.
+        let dropped = ACCESS_LOG_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+        #[cfg(feature = "tracing")]
+        if let Some(prom) = &self.prometheus {
+            prom.on_access_log_dropped();
+        }
+        // Rate-limit the warning: log every power-of-two drop so a saturated
+        // channel does not flood the error log.
+        if dropped.is_power_of_two() {
+            error!(
+                target: LOG_TARGET,
+                dropped,
+                "access log channel full, dropping lines"
+            );
+        }
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = Ctx;
@@ -2252,6 +2324,11 @@ impl ProxyHttp for Server {
         #[cfg(feature = "tracing")]
         inject_trace_context(ctx, upstream_response);
         set_append_proxy_headers(session, ctx, upstream_response);
+        close_unreusable_proxy_protocol_upstream(
+            session,
+            upstream_response,
+            ctx,
+        );
         // A cache that makes its key of a part of the query asks the
         // upstream with that part, so that what is stored under a key
         // can not depend on a parameter the key leaves out.
@@ -3112,38 +3189,7 @@ impl ProxyHttp for Server {
                 }
             }
             let buf = p.format(session, ctx);
-            if let Some(logger) = &self.access_logger {
-                if let Err(e) = logger.try_send(buf) {
-                    // A line for the application log is not dropped: with
-                    // the task behind, or no longer taking lines (it stops
-                    // at the shutdown signal), this request writes its own.
-                    if self.access_log_to_application {
-                        let msg = e.into_inner();
-                        info!(target: LOG_TARGET, "{}", msg.as_bstr());
-                        return;
-                    }
-                    // Channel full: drop the line rather than block the request
-                    // path, but surface the loss so operators can size the buffer.
-                    let dropped =
-                        ACCESS_LOG_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
-                    #[cfg(feature = "tracing")]
-                    if let Some(prom) = &self.prometheus {
-                        prom.on_access_log_dropped();
-                    }
-                    // Rate-limit the warning: log every power-of-two drop so a
-                    // saturated channel does not flood the error log.
-                    if dropped.is_power_of_two() {
-                        error!(
-                            target: LOG_TARGET,
-                            dropped,
-                            "access log channel full, dropping lines"
-                        );
-                    }
-                }
-            } else {
-                let msg = buf.as_bstr();
-                info!(target: LOG_TARGET, "{msg}");
-            }
+            self.write_access_log(buf);
         }
     }
 }
@@ -6681,5 +6727,31 @@ addr = "127.0.0.1:6188"
             run(&server, Some("a.example.com"), "b.example.com").await;
         assert_eq!(true, res.is_ok());
         assert_eq!(true, ctx.upstream.location_instance.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_write_access_log_overload_vs_shutdown() {
+        let mut server = new_server();
+        server.access_log_to_application = true;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<BytesMut>(1);
+        server.access_logger = Some(tx);
+
+        let before = ACCESS_LOG_DROPPED.load(Ordering::Relaxed);
+        // First message fills the channel without dropping.
+        server.write_access_log(BytesMut::from("first"));
+        assert_eq!(before, ACCESS_LOG_DROPPED.load(Ordering::Relaxed));
+
+        // Second message hits `TrySendError::Full`: dropped without blocking
+        // even when `access_log_to_application` is true.
+        server.write_access_log(BytesMut::from("second"));
+        let after_full = ACCESS_LOG_DROPPED.load(Ordering::Relaxed);
+        assert_eq!(before + 1, after_full);
+
+        // Once the receiver shuts down (`TrySendError::Closed`), draining
+        // requests write inline instead of being counted as dropped.
+        drop(rx);
+        server.write_access_log(BytesMut::from("draining"));
+        assert_eq!(after_full, ACCESS_LOG_DROPPED.load(Ordering::Relaxed));
     }
 }

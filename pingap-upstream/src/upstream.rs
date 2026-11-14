@@ -37,7 +37,7 @@ use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
     ProxyProtocolConnectOptions, ProxyProtocolConnector, ProxyProtocolVersion,
-    new_proxy_protocol_header, new_tcp_keepalive,
+    downstream_will_reuse, new_proxy_protocol_header, new_tcp_keepalive,
 };
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
@@ -124,6 +124,22 @@ impl HealthObserve for BackendObserveNotification {
 const FAST_SELECT_STEPS: usize = 4;
 /// Candidates per backend that a consistent-hash selection may look at.
 const CONSISTENT_SELECT_STEPS_PER_BACKEND: usize = 16;
+/// Above this backend count, `least_conn` uses O(1) weighted Power of Two
+/// Choices (P2C) on the normal healthy path instead of scanning all backends.
+const P2C_BACKEND_THRESHOLD: usize = 32;
+
+#[inline]
+fn weighted_load(counts: &InflightCounts, backend: &Backend) -> (u64, u64) {
+    (
+        u64::from(counts.load(backend)),
+        backend.weight.max(1) as u64,
+    )
+}
+
+#[inline]
+fn is_less_loaded(a: (u64, u64), b: (u64, u64)) -> bool {
+    a.0 * b.1 < b.0 * a.1
+}
 
 /// The requests in flight on each backend of an upstream that chooses
 /// by them (`algo = "least_conn"`).
@@ -1436,44 +1452,69 @@ impl Upstream {
     /// the weights it has. Taken in turn, one each, a backend of weight
     /// nine got as many as one of weight one.
     ///
-    /// Every backend is looked at for every request, which is what
-    /// "least" takes; an upstream has few of them.
-    fn select_least_conn(
+    /// O(1) weighted Power of Two Choices (P2C) for large backend sets
+    /// (`> P2C_BACKEND_THRESHOLD`). Draws up to two distinct healthy backends
+    /// from Pingora's weighted round-robin selector and picks the lighter one.
+    fn try_select_least_conn_p2c(
         &self,
         lb: &LoadBalancer<RoundRobin>,
         counts: &InflightCounts,
-        failed: &[String],
-    ) -> Option<(Backend, Arc<AtomicU32>)> {
-        let backends = lb.backends();
-        let set = backends.get_backend();
-        if set.is_empty() {
-            return None;
-        }
-        // What a backend carries for its weight, as the two numbers of
-        // the fraction: compared without dividing.
-        let load_of = |backend: &Backend| {
-            (
-                u64::from(counts.load(backend)),
-                backend.weight.max(1) as u64,
-            )
+    ) -> Option<Backend> {
+        let first =
+            lb.select_with(b"", FAST_SELECT_STEPS, |_, health| health)?;
+        let first_load = weighted_load(counts, &first);
+        let best = if first_load.0 == 0 {
+            first
+        } else if let Some(second) =
+            lb.select_with(b"", FAST_SELECT_STEPS, |b, health| {
+                health && b != &first
+            })
+            && is_less_loaded(weighted_load(counts, &second), first_load)
+        {
+            second
+        } else {
+            first
         };
-        let less = |a: (u64, u64), b: (u64, u64)| a.0 * b.1 < b.0 * a.1;
-        // One of those that `allow` lets through and that carry the
-        // least.
+        self.accept_backend(&best, true).then_some(best)
+    }
+
+    fn select_least_conn_exact(
+        &self,
+        lb: &LoadBalancer<RoundRobin>,
+        counts: &InflightCounts,
+        set: &BTreeSet<Backend>,
+        failed: &[String],
+    ) -> Option<Backend> {
+        let backends = lb.backends();
+        // Snapshot per-backend loads once so `level` and `select_with` do not
+        // repeatedly hash and lock DashMap shards for every candidate check.
+        let loads: AHashMap<&BackendAddr, (u64, u64)> = set
+            .iter()
+            .map(|b| (&b.addr, weighted_load(counts, b)))
+            .collect();
+        let load_of = |backend: &Backend| {
+            loads
+                .get(&backend.addr)
+                .copied()
+                .unwrap_or((0, backend.weight.max(1) as u64))
+        };
+        // One of those that `allow` lets through and that carry the least.
         let pick = |allow: &dyn Fn(&Backend) -> bool| {
             let least = set
                 .iter()
                 .filter(|backend| allow(backend))
                 .map(load_of)
-                .reduce(
-                    |least, load| if less(load, least) { load } else { least },
-                )?;
+                .reduce(|least, load| {
+                    if is_less_loaded(load, least) {
+                        load
+                    } else {
+                        least
+                    }
+                })?;
             let level = |backend: &Backend| {
-                allow(backend) && !less(least, load_of(backend))
+                allow(backend) && !is_less_loaded(least, load_of(backend))
             };
             lb.select_with(b"", set.len() + 1, |backend, _| level(backend))
-                // The counts move while they are read: whoever is level
-                // by now, or whoever is allowed at all.
                 .or_else(|| set.iter().find(|backend| level(backend)).cloned())
                 .or_else(|| set.iter().find(|backend| allow(backend)).cloned())
         };
@@ -1493,7 +1534,7 @@ impl Upstream {
                 refused.push(backend);
             }
         };
-        let chosen = (!failed.is_empty())
+        (!failed.is_empty())
             .then(|| {
                 choose(&|backend| {
                     healthy(backend) && !has_failed(backend, failed)
@@ -1507,7 +1548,31 @@ impl Upstream {
                 }
                 pick(&|backend| !has_failed(backend, failed))
                     .or_else(|| pick(&|_| true))
-            })?;
+            })
+    }
+
+    /// Small clusters (`<= P2C_BACKEND_THRESHOLD`) examine all backends with a
+    /// single-pass load snapshot; large clusters (`> P2C_BACKEND_THRESHOLD`)
+    /// use O(1) weighted P2C on the healthy path and fall back to exact scan on
+    /// retries or circuit-breaker rejections.
+    fn select_least_conn(
+        &self,
+        lb: &LoadBalancer<RoundRobin>,
+        counts: &InflightCounts,
+        failed: &[String],
+    ) -> Option<(Backend, Arc<AtomicU32>)> {
+        let set = lb.backends().get_backend();
+        if set.is_empty() {
+            return None;
+        }
+        if failed.is_empty()
+            && set.len() > P2C_BACKEND_THRESHOLD
+            && let Some(chosen) = self.try_select_least_conn_p2c(lb, counts)
+        {
+            let count = counts.of(&chosen, &set);
+            return Some((chosen, count));
+        }
+        let chosen = self.select_least_conn_exact(lb, counts, &set, failed)?;
         let count = counts.of(&chosen, &set);
         Some((chosen, count))
     }
@@ -1695,6 +1760,7 @@ impl Upstream {
                 &mut p,
                 version,
                 client_addresses(session),
+                downstream_will_reuse(session),
             );
         }
         Some(p)
@@ -1709,14 +1775,24 @@ impl Upstream {
     /// goes with it, and what is set on the peer later does not reach it.
     /// The keepalive, the tracer and the rest pingora applies to the
     /// connection it gets back, whoever made it.
+    ///
+    /// When `addresses` names a specific client connection and that client
+    /// connection will close after this request (`!downstream_reusable`),
+    /// `idle_timeout` is set to zero so an upstream connection pinned to a
+    /// one-off ephemeral port expires immediately instead of occupying
+    /// Pingora's shared keepalive pool.
     fn send_proxy_protocol_to(
         &self,
         peer: &mut HttpPeer,
         version: ProxyProtocolVersion,
         addresses: Option<(SocketAddr, SocketAddr)>,
+        downstream_reusable: bool,
     ) {
         let header = new_proxy_protocol_header(version, addresses);
         peer.group_key = proxy_protocol_group_key(self.ca_key, &header);
+        if addresses.is_some() && !downstream_reusable {
+            peer.options.idle_timeout = Some(Duration::ZERO);
+        }
         peer.options.custom_l4 = Some(Arc::new(ProxyProtocolConnector::new(
             header,
             ProxyProtocolConnectOptions {
@@ -1883,6 +1959,9 @@ impl UpstreamInstance for Upstream {
     fn completed(&self) -> i32 {
         // `fetch_sub` returns the previous value; subtract 1 for the new one.
         self.processing.fetch_sub(1, Ordering::Relaxed) - 1
+    }
+    fn sends_proxy_protocol(&self) -> bool {
+        self.send_proxy_protocol.is_some()
     }
     fn on_transport_failure(&self, address: &str) {
         let Some(backend_stats) = &self.backend_stats else {
@@ -2651,11 +2730,22 @@ mod tests {
                 &mut peer,
                 version,
                 Some((client.parse().unwrap(), server)),
+                true,
             );
             peer
         };
         let v2 = ProxyProtocolVersion::V2;
         let first = peer_for("192.0.2.1:56324", v2);
+        assert_eq!(None, first.options.idle_timeout);
+        let mut short_lived = peer.clone();
+        up.send_proxy_protocol_to(
+            &mut short_lived,
+            v2,
+            Some(("192.0.2.1:56324".parse().unwrap(), server)),
+            false,
+        );
+        assert_eq!(Some(Duration::ZERO), short_lived.options.idle_timeout);
+        assert_eq!(first.group_key, short_lived.group_key);
         let again = peer_for("192.0.2.1:56324", v2);
         let other_port = peer_for("192.0.2.1:56325", v2);
         let other_client = peer_for("192.0.2.2:56324", v2);
@@ -2701,6 +2791,7 @@ mod tests {
             &mut other_ca,
             v2,
             Some(("192.0.2.1:56324".parse().unwrap(), server)),
+            true,
         );
         assert_ne!(first.group_key, other_ca.group_key);
     }
@@ -2787,6 +2878,7 @@ mod tests {
                 v2,
                 Some((client.parse().unwrap(), server)),
             )
+            .to_vec()
         };
         let header_len = header_of("192.0.2.1:56324").len();
         let listener =
@@ -2845,6 +2937,7 @@ mod tests {
                 &mut peer,
                 v2,
                 Some((client.parse().unwrap(), server)),
+                true,
             );
             peer
         };
@@ -3770,6 +3863,58 @@ mod tests {
         drop(slot);
         drop(held);
         assert_eq!(0, total());
+    }
+
+    #[tokio::test]
+    async fn test_least_conn_large_cluster_p2c() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(P2C_BACKEND_THRESHOLD + 8);
+        let up = Upstream::new(
+            "least-p2c",
+            &UpstreamConf {
+                addrs: addrs.clone(),
+                algo: Some("least_conn".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.run_health_check().await.unwrap();
+
+        let mut held = Vec::new();
+        for _ in 0..64 {
+            let mut slot = None;
+            let peer = up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed: &[],
+                        inflight: Some(&mut slot),
+                        sticky_cookie: None,
+                        location: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, addrs.contains(&peer.address().to_string()));
+            held.push(slot);
+        }
+        let counts = up.least_conn.as_ref().unwrap();
+        let total: u32 = counts
+            .counts
+            .iter()
+            .map(|item| item.value().load(Ordering::Relaxed))
+            .sum();
+        assert_eq!(64, total);
+        drop(held);
+        let after: u32 = counts
+            .counts
+            .iter()
+            .map(|item| item.value().load(Ordering::Relaxed))
+            .sum();
+        assert_eq!(0, after);
     }
 
     /// `sticky:<cookie>`: a client stays on the backend it was given

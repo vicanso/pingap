@@ -296,6 +296,11 @@ pub trait UpstreamInstance: Send + Sync {
     /// Returns the number of in-flight requests still being processed *after*
     /// releasing this one (so a zero means the upstream is idle).
     fn completed(&self) -> i32;
+    /// Whether connections to this upstream start with a per-client PROXY
+    /// protocol header (`send_proxy_protocol`).
+    fn sends_proxy_protocol(&self) -> bool {
+        false
+    }
 }
 
 /// Trait for location instance

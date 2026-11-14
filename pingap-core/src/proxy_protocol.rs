@@ -36,6 +36,7 @@ use pingora::protocols::l4::ext::{set_recv_buf, set_tcp_fastopen_connect};
 use pingora::protocols::l4::socket::SocketAddr as PeerAddr;
 use pingora::protocols::l4::stream::Stream;
 use pingora::{Error, ErrorType, OrErr, Result};
+use std::fmt::Write as _;
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
 #[cfg(unix)]
@@ -49,6 +50,10 @@ use tokio::net::TcpSocket;
 /// The names a configuration has for the versions, in lower case.
 pub const PROXY_PROTOCOL_VERSIONS: [&str; 2] = ["v1", "v2"];
 
+/// Maximum byte length of a version 1 or version 2 PROXY protocol header
+/// written by [`new_proxy_protocol_header`].
+pub const MAX_PROXY_PROTOCOL_HEADER_LEN: usize = 107;
+
 const V2_SIGNATURE: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";
 /// Version 2 and the command: `LOCAL` for a connection of the proxy's
 /// own, `PROXY` for one that is passed on.
@@ -57,6 +62,106 @@ const V2_PROXY: u8 = 0x21;
 /// The address family and the transport: TCP over IPv4, TCP over IPv6.
 const V2_TCP4: u8 = 0x11;
 const V2_TCP6: u8 = 0x21;
+
+/// A PROXY protocol header stored inline on the stack without heap allocation.
+#[derive(Clone, Copy, Eq)]
+pub struct ProxyProtocolHeader {
+    buf: [u8; MAX_PROXY_PROTOCOL_HEADER_LEN],
+    len: u8,
+}
+
+impl ProxyProtocolHeader {
+    const fn empty() -> Self {
+        Self {
+            buf: [0u8; MAX_PROXY_PROTOCOL_HEADER_LEN],
+            len: 0,
+        }
+    }
+
+    fn from_slice(bytes: &[u8]) -> Self {
+        let mut header = Self::empty();
+        header.push_slice(bytes);
+        header
+    }
+
+    fn push_slice(&mut self, bytes: &[u8]) {
+        let start = self.len as usize;
+        let count = bytes.len().min(MAX_PROXY_PROTOCOL_HEADER_LEN - start);
+        self.buf[start..start + count].copy_from_slice(&bytes[..count]);
+        self.len = (start + count) as u8;
+    }
+
+    fn push_byte(&mut self, byte: u8) {
+        self.push_slice(&[byte]);
+    }
+
+    /// Returns the encoded header bytes.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len as usize]
+    }
+}
+
+impl std::fmt::Debug for ProxyProtocolHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_slice().fmt(f)
+    }
+}
+
+impl std::ops::Deref for ProxyProtocolHeader {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[u8]> for ProxyProtocolHeader {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl PartialEq for ProxyProtocolHeader {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<[u8]> for ProxyProtocolHeader {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl PartialEq<&[u8]> for ProxyProtocolHeader {
+    fn eq(&self, other: &&[u8]) -> bool {
+        self.as_slice() == *other
+    }
+}
+
+impl PartialEq<Vec<u8>> for ProxyProtocolHeader {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<ProxyProtocolHeader> for Vec<u8> {
+    fn eq(&self, other: &ProxyProtocolHeader) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+struct HeaderWriter<'a>(&'a mut ProxyProtocolHeader);
+
+impl std::fmt::Write for HeaderWriter<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.push_slice(s.as_bytes());
+        Ok(())
+    }
+}
 
 /// The form of the header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,20 +206,76 @@ fn same_family(
     (mapped(source), mapped(destination))
 }
 
-/// An address as version 1 writes it. An IPv6 address is groups of
-/// hexadecimal digits there and nothing else: `Display` ends an
-/// IPv4-mapped one in dotted decimals.
-fn v1_ip(ip: IpAddr) -> String {
+/// Writes an address as version 1 formats it directly into `out`. An IPv6
+/// address is groups of hexadecimal digits there and nothing else: `Display`
+/// ends an IPv4-mapped one in dotted decimals.
+fn write_v1_ip(out: &mut ProxyProtocolHeader, ip: IpAddr) {
+    let mut writer = HeaderWriter(out);
     match ip {
         IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some() => {
             let segments = v6.segments();
-            format!("::ffff:{:x}:{:x}", segments[6], segments[7])
+            let _ =
+                write!(writer, "::ffff:{:x}:{:x}", segments[6], segments[7]);
         },
-        _ => ip.to_string(),
+        _ => {
+            let _ = write!(writer, "{ip}");
+        },
     }
 }
 
-/// The header a connection starts with.
+fn new_v1_header(
+    source: SocketAddr,
+    destination: SocketAddr,
+) -> ProxyProtocolHeader {
+    let mut header = ProxyProtocolHeader::empty();
+    let family = if source.is_ipv4() {
+        b"PROXY TCP4 ".as_slice()
+    } else {
+        b"PROXY TCP6 ".as_slice()
+    };
+    header.push_slice(family);
+    write_v1_ip(&mut header, source.ip());
+    header.push_byte(b' ');
+    write_v1_ip(&mut header, destination.ip());
+    let _ = write!(
+        HeaderWriter(&mut header),
+        " {} {}\r\n",
+        source.port(),
+        destination.port()
+    );
+    header
+}
+
+fn new_v2_header(
+    source: SocketAddr,
+    destination: SocketAddr,
+) -> ProxyProtocolHeader {
+    let mut header = ProxyProtocolHeader::from_slice(V2_SIGNATURE);
+    header.push_byte(V2_PROXY);
+    match (source.ip(), destination.ip()) {
+        (IpAddr::V4(src_ip), IpAddr::V4(dst_ip)) => {
+            header.push_byte(V2_TCP4);
+            header.push_slice(&12u16.to_be_bytes());
+            header.push_slice(&src_ip.octets());
+            header.push_slice(&dst_ip.octets());
+        },
+        (src_ip, dst_ip) => {
+            // of one family by now: neither is IPv4
+            header.push_byte(V2_TCP6);
+            header.push_slice(&36u16.to_be_bytes());
+            for ip in [src_ip, dst_ip] {
+                if let IpAddr::V6(v6) = ip {
+                    header.push_slice(&v6.octets());
+                }
+            }
+        },
+    }
+    header.push_slice(&source.port().to_be_bytes());
+    header.push_slice(&destination.port().to_be_bytes());
+    header
+}
+
+/// The header a connection starts with, formatted inline without heap allocation.
 ///
 /// `addresses` are where the client comes from and what of this proxy it
 /// came to. `None` is for a connection that is made for nobody, a health
@@ -127,55 +288,43 @@ fn v1_ip(ip: IpAddr) -> String {
 pub fn new_proxy_protocol_header(
     version: ProxyProtocolVersion,
     addresses: Option<(SocketAddr, SocketAddr)>,
-) -> Vec<u8> {
+) -> ProxyProtocolHeader {
     let addresses =
         addresses.map(|(source, destination)| same_family(source, destination));
     match (version, addresses) {
-        (ProxyProtocolVersion::V1, None) => b"PROXY UNKNOWN\r\n".to_vec(),
+        (ProxyProtocolVersion::V1, None) => {
+            ProxyProtocolHeader::from_slice(b"PROXY UNKNOWN\r\n")
+        },
         (ProxyProtocolVersion::V1, Some((source, destination))) => {
-            let family = if source.is_ipv4() { "TCP4" } else { "TCP6" };
-            format!(
-                "PROXY {family} {} {} {} {}\r\n",
-                v1_ip(source.ip()),
-                v1_ip(destination.ip()),
-                source.port(),
-                destination.port()
-            )
-            .into_bytes()
+            new_v1_header(source, destination)
         },
         (ProxyProtocolVersion::V2, None) => {
-            let mut header = V2_SIGNATURE.to_vec();
+            let mut header = ProxyProtocolHeader::from_slice(V2_SIGNATURE);
             // LOCAL, no family, nothing that follows
-            header.extend_from_slice(&[V2_LOCAL, 0, 0, 0]);
+            header.push_slice(&[V2_LOCAL, 0, 0, 0]);
             header
         },
         (ProxyProtocolVersion::V2, Some((source, destination))) => {
-            let mut addresses = Vec::with_capacity(36);
-            let family = match (source.ip(), destination.ip()) {
-                (IpAddr::V4(source), IpAddr::V4(destination)) => {
-                    addresses.extend_from_slice(&source.octets());
-                    addresses.extend_from_slice(&destination.octets());
-                    V2_TCP4
-                },
-                (source, destination) => {
-                    // of one family by now: neither is IPv4
-                    for ip in [source, destination] {
-                        if let IpAddr::V6(ip) = ip {
-                            addresses.extend_from_slice(&ip.octets());
-                        }
-                    }
-                    V2_TCP6
-                },
-            };
-            addresses.extend_from_slice(&source.port().to_be_bytes());
-            addresses.extend_from_slice(&destination.port().to_be_bytes());
-            let mut header = V2_SIGNATURE.to_vec();
-            header.push(V2_PROXY);
-            header.push(family);
-            header.extend_from_slice(&(addresses.len() as u16).to_be_bytes());
-            header.extend_from_slice(&addresses);
-            header
+            new_v2_header(source, destination)
         },
+    }
+}
+
+/// Whether `session`'s client TCP connection can carry another request after
+/// this one finishes.
+///
+/// An upstream connection that starts with a per-client PROXY protocol header
+/// is pinned to that client `(ip, port)` and cannot be handed to any other
+/// client connection. When the downstream connection is closing after this
+/// request (for example HTTP/1.0 without `Connection: keep-alive`, HTTP/1.1
+/// with `Connection: close`, or a connection that has reached its keepalive
+/// reuse limit), keeping the upstream connection in Pingora's shared idle pool
+/// can never produce a hit and only evicts reusable pooled connections.
+pub fn downstream_will_reuse(session: &pingora::proxy::Session) -> bool {
+    match session.as_downstream() {
+        pingora::protocols::http::ServerSession::H1(h1) => h1.will_keepalive(),
+        pingora::protocols::http::ServerSession::H2(_) => true,
+        _ => false,
     }
 }
 
@@ -197,7 +346,7 @@ pub struct ProxyProtocolConnectOptions {
 /// bytes of the connection.
 #[derive(Debug)]
 pub struct ProxyProtocolConnector {
-    header: Vec<u8>,
+    header: ProxyProtocolHeader,
     options: ProxyProtocolConnectOptions,
 }
 
@@ -221,13 +370,16 @@ fn new_connect_error(e: std::io::Error, addr: &PeerAddr) -> Box<Error> {
 
 impl ProxyProtocolConnector {
     /// A connector that starts every connection with `header`.
-    pub fn new(header: Vec<u8>, options: ProxyProtocolConnectOptions) -> Self {
+    pub fn new(
+        header: ProxyProtocolHeader,
+        options: ProxyProtocolConnectOptions,
+    ) -> Self {
         Self { header, options }
     }
 
     /// The header every connection of this connector starts with.
     pub fn header(&self) -> &[u8] {
-        &self.header
+        self.header.as_slice()
     }
 
     fn set_socket(&self, socket: &TcpSocket) -> Result<()> {
@@ -358,11 +510,15 @@ mod tests {
 
     #[test]
     fn test_header_v1() {
+        assert_eq!(108, std::mem::size_of::<ProxyProtocolHeader>());
         let v1 = |source: &str, destination: &str| {
-            String::from_utf8(new_proxy_protocol_header(
-                ProxyProtocolVersion::V1,
-                Some((addr(source), addr(destination))),
-            ))
+            String::from_utf8(
+                new_proxy_protocol_header(
+                    ProxyProtocolVersion::V1,
+                    Some((addr(source), addr(destination))),
+                )
+                .to_vec(),
+            )
             .unwrap()
         };
         assert_eq!(
@@ -466,7 +622,7 @@ mod tests {
                 Some((addr("192.0.2.1:56324"), addr("198.51.100.1:443"))),
             );
             let connector = ProxyProtocolConnector::new(
-                header.clone(),
+                header,
                 ProxyProtocolConnectOptions {
                     connection_timeout: Some(Duration::from_secs(5)),
                     tcp_recv_buf: Some(64 * 1024),
@@ -496,7 +652,7 @@ mod tests {
             let (mut accepted, _) = listener.accept().await.unwrap();
             let mut received = Vec::new();
             accepted.read_to_end(&mut received).await.unwrap();
-            let mut expected = header;
+            let mut expected = header.to_vec();
             expected.extend_from_slice(b"GET / HTTP/1.1\r\n\r\n");
             assert_eq!(expected, received);
         }
@@ -555,7 +711,7 @@ mod tests {
             Some((addr("192.0.2.1:56324"), addr("198.51.100.1:443"))),
         );
         let connector = ProxyProtocolConnector::new(
-            header.clone(),
+            header,
             ProxyProtocolConnectOptions::default(),
         );
         let addr: PeerAddr =
@@ -566,5 +722,43 @@ mod tests {
         let mut received = Vec::new();
         accepted.read_to_end(&mut received).await.unwrap();
         assert_eq!(header, received);
+    }
+
+    #[tokio::test]
+    async fn test_downstream_will_reuse() {
+        use pingora::proxy::Session;
+        use tokio_test::io::Builder;
+
+        let parse_session = async |raw: &'static [u8]| {
+            let mock_io = Builder::new().read(raw).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            session
+        };
+
+        let h11_keepalive =
+            parse_session(b"GET / HTTP/1.1\r\nHost: pp.test\r\n\r\n").await;
+        assert_eq!(true, downstream_will_reuse(&h11_keepalive));
+
+        let h11_close = parse_session(
+            b"GET / HTTP/1.1\r\nHost: pp.test\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(false, downstream_will_reuse(&h11_close));
+
+        let h10_default =
+            parse_session(b"GET / HTTP/1.0\r\nHost: pp.test\r\n\r\n").await;
+        assert_eq!(false, downstream_will_reuse(&h10_default));
+
+        let h10_keepalive = parse_session(
+            b"GET / HTTP/1.0\r\nHost: pp.test\r\nConnection: keep-alive\r\n\r\n",
+        )
+        .await;
+        assert_eq!(true, downstream_will_reuse(&h10_keepalive));
+
+        let mut h11_exhausted =
+            parse_session(b"GET / HTTP/1.1\r\nHost: pp.test\r\n\r\n").await;
+        h11_exhausted.set_keepalive_reuses_remaining(Some(0));
+        assert_eq!(false, downstream_will_reuse(&h11_exhausted));
     }
 }

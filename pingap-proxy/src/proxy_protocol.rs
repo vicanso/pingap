@@ -606,7 +606,7 @@ mod tests {
                         destination.parse().unwrap(),
                     )),
                 );
-                let mut buf = header.clone();
+                let mut buf = header.to_vec();
                 buf.extend_from_slice(b"GET / HTTP/1.1\r\n\r\n");
                 assert_eq!(
                     Parsed::Header {
