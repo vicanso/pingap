@@ -162,6 +162,14 @@ async fn update_certificate_lets_encrypt(
             })?;
     }
 
+    if params.server.url() == LetsEncrypt::Staging.url() {
+        warn!(
+            target: LOG_TARGET,
+            name = params.name,
+            "using Let's Encrypt staging directory; issued certificates are not trusted by browsers"
+        );
+    }
+
     // get new certificate from lets encrypt
     let (pem, key) =
         new_lets_encrypt(config_manager.clone(), params.clone()).await?;

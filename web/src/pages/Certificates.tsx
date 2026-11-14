@@ -262,7 +262,19 @@ export default function Certificates() {
       tips: certificateI18n("acmeDirectoryTips"),
       defaultValue: certificateConfig.acme_directory,
       span: 3,
-      category: ExFormItemCategory.TEXT,
+      category: ExFormItemCategory.INPUT_SELECT,
+      options: [
+        {
+          label: "Let's Encrypt Production",
+          option: "https://acme-v02.api.letsencrypt.org/directory",
+          value: "https://acme-v02.api.letsencrypt.org/directory",
+        },
+        {
+          label: "Let's Encrypt Staging",
+          option: "https://acme-staging-v02.api.letsencrypt.org/directory",
+          value: "https://acme-staging-v02.api.letsencrypt.org/directory",
+        },
+      ],
     },
     {
       name: "acme_ca",

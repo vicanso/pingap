@@ -665,7 +665,7 @@ export default {
     bufferDaysPlaceholder: "输入证书有效期校验、更新预留时长",
     acmeDirectory: "ACME 目录地址",
     acmeDirectoryPlaceholder:
-      "输入 CA 的 directory 地址，如 https://acme.zerossl.com/v2/DV90",
+      "选择 ACME 目录环境 : 输入 CA 的 directory 地址，如 https://acme.zerossl.com/v2/DV90",
     acmeDirectoryTips:
       "证书向哪个 ACME 服务申请：其他 CA、Let's Encrypt 的 staging 环境，或者自建的 CA。不填时是 Let's Encrypt 的生产环境。",
     acmeCa: "ACME 服务的根证书",

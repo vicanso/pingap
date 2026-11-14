@@ -727,7 +727,7 @@ export default {
     bufferDaysPlaceholder: "Input the buffer days for certificate",
     acmeDirectory: "ACME Directory",
     acmeDirectoryPlaceholder:
-      "Input the directory url of the CA, e.g. https://acme.zerossl.com/v2/DV90",
+      "Select ACME directory : Input the directory url of the CA, e.g. https://acme.zerossl.com/v2/DV90",
     acmeDirectoryTips:
       "The ACME server the certificate is ordered from: another CA, Let's Encrypt's staging environment, or a CA of your own. Let's Encrypt's production directory when empty.",
     acmeCa: "ACME Server Root",
