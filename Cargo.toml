@@ -376,6 +376,7 @@ pem = "4.0.0"
 psl = "2.1.250"
 prometheus = { version = "0.14.0", default-features = false }
 rand = "0.10.3"
+rayon = "1.12.0"
 # aws_lc_rs: the backend that can make RSA keys (ACME, `acme_key_type`)
 rcgen = { version = "0.14.10", features = ["pem", "x509-parser", "aws_lc_rs"] }
 regex = { version = "1.13.1", default-features = false }

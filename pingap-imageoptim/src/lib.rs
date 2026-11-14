@@ -27,12 +27,14 @@ use pingap_core::{ModifyResponseBody, ResponseBodyPluginResult};
 use pingap_plugin::{
     Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
 };
+use pingora::cache::NoCacheReason;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::convert::TryFrom;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 use tracing::{debug, warn};
 
 mod optimizer;
@@ -49,6 +51,43 @@ const OUTPUT_FORMATS: &[&str] = &["avif", "webp", "jpeg", "png"];
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+struct InFlightGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl InFlightGuard {
+    fn try_acquire(counter: &Arc<AtomicUsize>, max: usize) -> Option<Self> {
+        counter
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < max).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| Self {
+                counter: counter.clone(),
+            })
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Release);
+    }
+}
+
+/// Dedicated bounded worker pool for CPU-intensive image decoding, palette
+/// quantization, and encoding. Lazily created on the first request (post-fork
+/// in daemon mode) so `fork()` never orphans its threads.
+static OPTIM_POOL: LazyLock<Option<rayon::ThreadPool>> = LazyLock::new(|| {
+    let threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|idx| format!("pingap-imageoptim-{idx}"))
+        .build()
+        .ok()
+});
+
 struct ImageOptimizer {
     /// The format of the original, `png` or `jpeg`.
     image_type: String,
@@ -63,23 +102,24 @@ struct ImageOptimizer {
     /// The original turned out too large to convert: what was held back
     /// has been released, and the rest goes through as it comes.
     passthrough: bool,
+    /// Released once optimization completes, falls back to passthrough, or
+    /// the request is dropped.
+    in_flight: Option<InFlightGuard>,
 }
 
-/// Runs `f`, a long computation, without holding up the other connections
-/// of this worker thread.
-///
-/// Decoding and encoding an image takes from tens of milliseconds to
-/// seconds, and the body filter it happens in is not async. On the
-/// work-stealing runtime `block_in_place` moves the worker's other tasks to
-/// another thread first. A runtime without work stealing has no such
-/// thread to move them to, and there `f` simply runs.
-fn run_blocking<T>(f: impl FnOnce() -> T) -> T {
+/// Runs `f`, a long computation, inside the bounded `OPTIM_POOL` without
+/// holding up the other connections of a multi-thread worker.
+fn run_blocking<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    let run = || match OPTIM_POOL.as_ref() {
+        Some(pool) => pool.install(f),
+        None => f(),
+    };
     use tokio::runtime::{Handle, RuntimeFlavor};
     match Handle::try_current() {
         Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(f)
+            tokio::task::block_in_place(run)
         },
-        _ => f(),
+        _ => run(),
     }
 }
 
@@ -127,6 +167,7 @@ impl ModifyResponseBody for ImageOptimizer {
             // its size.
             if self.buffer.len() + data.len() > MAX_IMAGE_SIZE {
                 self.passthrough = true;
+                self.in_flight = None;
                 self.buffer.extend_from_slice(data);
                 *data = self.buffer.split().freeze();
                 return Ok(());
@@ -139,10 +180,12 @@ impl ModifyResponseBody for ImageOptimizer {
         }
         // No body at all, the answer to a HEAD request for one.
         if self.buffer.is_empty() {
+            self.in_flight = None;
             return Ok(());
         }
         let original = self.buffer.split().freeze();
         let optimized = run_blocking(|| self.optimize(&original));
+        self.in_flight = None;
         let same_format = self.format_type == self.image_type;
         *body = Some(match optimized {
             Ok(data) => worth_sending(original, data, same_format),
@@ -184,6 +227,8 @@ pub struct ImageOptim {
     jpeg_quality: u8,
     avif_quality: u8,
     avif_speed: u8,
+    max_concurrent: usize,
+    in_flight: Arc<AtomicUsize>,
 }
 
 /// Every selection of `mimes`, the empty one first, each in sorted order.
@@ -201,6 +246,23 @@ fn selections(mimes: &[String]) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+fn parse_max_concurrent(value: &PluginConf) -> Result<usize> {
+    let default_concurrent = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4)
+        .saturating_mul(2);
+    match get_int_conf(value, "max_concurrent") {
+        0 => Ok(default_concurrent),
+        n if (1..=1024).contains(&n) => Ok(n as usize),
+        n => Err(Error::Invalid {
+            category: "image_optim".to_string(),
+            message: format!(
+                "max_concurrent should be between 1 and 1024, got {n}"
+            ),
+        }),
+    }
 }
 
 impl TryFrom<&PluginConf> for ImageOptim {
@@ -254,6 +316,7 @@ impl TryFrom<&PluginConf> for ImageOptim {
         let jpeg_quality = level("jpeg_quality", 100, 80)?;
         let avif_quality = level("avif_quality", 100, 75)?;
         let avif_speed = level("avif_speed", 10, 3)?;
+        let max_concurrent = parse_max_concurrent(value)?;
         Ok(Self {
             hash_value,
             handler_id: pingap_plugin::new_body_handler_id(PLUGIN_ID),
@@ -268,6 +331,8 @@ impl TryFrom<&PluginConf> for ImageOptim {
             jpeg_quality,
             avif_quality,
             avif_speed,
+            max_concurrent,
+            in_flight: Arc::new(AtomicUsize::new(0)),
         })
     }
 }
@@ -275,6 +340,42 @@ impl TryFrom<&PluginConf> for ImageOptim {
 impl ImageOptim {
     pub fn new(params: &PluginConf) -> Result<Self> {
         Self::try_from(params)
+    }
+
+    fn convertible_image(
+        &self,
+        upstream_response: &ResponseHeader,
+    ) -> Option<(String, Option<usize>)> {
+        // A partial or an empty response is not an image to convert, and
+        // neither are the bytes of a compressed one: decoding those can
+        // only fail, after the header has promised the new format.
+        if upstream_response.status != http::StatusCode::OK
+            || upstream_response
+                .headers
+                .contains_key(http::header::CONTENT_ENCODING)
+        {
+            return None;
+        }
+        let content_type = upstream_response
+            .headers
+            .get(http::header::CONTENT_TYPE)?
+            .to_str()
+            .ok()?;
+        let media_type = content_type.split(';').next().unwrap_or_default();
+        let image_type = media_type.trim().strip_prefix("image/")?;
+        if !self.support_types.contains(image_type) {
+            return None;
+        }
+        // Too large an image is left alone, headers included.
+        let content_length = upstream_response
+            .headers
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok());
+        if content_length.is_some_and(|size| size > MAX_IMAGE_SIZE) {
+            return None;
+        }
+        Some((image_type.to_string(), content_length))
     }
 }
 
@@ -332,54 +433,26 @@ impl Plugin for ImageOptim {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // A partial or an empty response is not an image to convert, and
-        // neither are the bytes of a compressed one: decoding those can
-        // only fail, after the header has promised the new format.
-        if upstream_response.status != http::StatusCode::OK
-            || upstream_response
-                .headers
-                .contains_key(http::header::CONTENT_ENCODING)
-        {
+        let Some((image_type, content_length)) =
+            self.convertible_image(upstream_response)
+        else {
             return Ok(ResponsePluginResult::Unchanged);
-        }
-        let content_type = if let Some(value) =
-            upstream_response.headers.get(http::header::CONTENT_TYPE)
-        {
-            value.to_str().unwrap_or_default()
-        } else {
+        };
+        let Some(accept_str) = session
+            .get_header(http::header::ACCEPT)
+            .and_then(|accept| accept.to_str().ok())
+        else {
             return Ok(ResponsePluginResult::Unchanged);
         };
 
-        // The media type without its parameters.
-        let media_type = content_type.split(';').next().unwrap_or_default();
-        let Some(image_type) = media_type.trim().strip_prefix("image/") else {
+        let Some(guard) =
+            InFlightGuard::try_acquire(&self.in_flight, self.max_concurrent)
+        else {
+            if session.cache.enabled() {
+                session.cache.disable(NoCacheReason::Deferred);
+            }
             return Ok(ResponsePluginResult::Unchanged);
         };
-
-        if !self.support_types.contains(image_type) {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-
-        let Some(accept) = session.get_header(http::header::ACCEPT) else {
-            return Ok(ResponsePluginResult::Unchanged);
-        };
-        let Ok(accept_str) = accept.to_str() else {
-            return Ok(ResponsePluginResult::Unchanged);
-        };
-
-        // The size the upstream announces. It used to be the size of the
-        // buffer allocated right here, whatever it said. Too large an
-        // image is left alone, headers included.
-        let content_length = upstream_response
-            .headers
-            .get(http::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<usize>().ok());
-        if content_length.is_some_and(|size| size > MAX_IMAGE_SIZE) {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-
-        let image_type = image_type.to_string();
         // The first of the configured formats the client accepts, else the
         // format the image already has. This is the format's name; the
         // media type, with `image/` in front, used to be kept in its place,
@@ -422,6 +495,7 @@ impl Plugin for ImageOptim {
                 format_type,
                 buffer: BytesMut::with_capacity(capacity),
                 passthrough: false,
+                in_flight: Some(guard),
             }),
         );
         Ok(ResponsePluginResult::Modified)
@@ -965,6 +1039,7 @@ png_quality = 90
             format_type: format_type.to_string(),
             buffer: BytesMut::new(),
             passthrough: false,
+            in_flight: None,
         };
         let png = sample_png();
 
@@ -1077,6 +1152,7 @@ png_quality = 90
                 format_type: "webp".to_string(),
                 buffer: BytesMut::new(),
                 passthrough: false,
+                in_flight: None,
             };
             let mut body = Some(Bytes::from(png));
             optimizer.handle(&session, &mut body, true).unwrap();

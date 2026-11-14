@@ -30,6 +30,7 @@ pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-plugin = { workspace = true }
 pingora = { workspace = true }
+rayon = { workspace = true }
 rgb = { workspace = true }
 snafu = { workspace = true }
 # `block_in_place`, which only the multi-thread runtime has

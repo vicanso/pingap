@@ -130,7 +130,7 @@ pub(crate) fn load_image(data: &[u8], ext: &str) -> Result<ImageInfo> {
     let di = reader.decode().context(ImageSnafu {
         category: "load_image",
     })?;
-    Ok(di.to_rgba8().into())
+    Ok(di.into_rgba8().into())
 }
 
 /// Encodes the image as a png of a palette, 256 colours at most. The
@@ -163,19 +163,15 @@ pub(crate) fn optimize_png(
 }
 
 pub(crate) fn optimize_jpeg(info: &ImageInfo, quality: u8) -> Result<Vec<u8>> {
-    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
+    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_EXT_RGBA);
     comp.set_size(info.width, info.height);
     comp.set_quality(quality as f32);
     let mut comp = comp
         .start_compress(Vec::with_capacity(info.buffer.len() * 3 / 4))
         .context(IoSnafu {})?;
 
-    let rgb_buffer: Vec<u8> = info
-        .buffer
-        .iter()
-        .flat_map(|rgba| [rgba.r, rgba.g, rgba.b])
-        .collect();
-    comp.write_scanlines(&rgb_buffer).context(IoSnafu {})?;
+    comp.write_scanlines(info.buffer.as_bytes())
+        .context(IoSnafu {})?;
 
     let data = comp.finish().context(IoSnafu {})?;
     Ok(data)
@@ -186,7 +182,7 @@ pub(crate) fn optimize_avif(
     quality: u8,
     speed: u8,
 ) -> Result<Vec<u8>> {
-    let mut w = Vec::new();
+    let mut w = Vec::with_capacity(info.buffer.len() / 2);
     let mut sp = speed;
     if sp == 0 {
         sp = 3;
@@ -207,7 +203,7 @@ pub(crate) fn optimize_avif(
 }
 
 pub(crate) fn optimize_webp(info: &ImageInfo, _quality: u8) -> Result<Vec<u8>> {
-    let mut w = Vec::new();
+    let mut w = Vec::with_capacity(info.buffer.len() / 2);
 
     let img = webp::WebPEncoder::new_lossless(&mut w);
 

@@ -4255,6 +4255,7 @@ dependencies = [
  "pingap-plugin",
  "pingora",
  "pretty_assertions",
+ "rayon",
  "rgb",
  "snafu",
  "tempfile",
