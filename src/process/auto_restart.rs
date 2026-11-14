@@ -1245,19 +1245,18 @@ impl ConfigObserverService {
     /// waits in between.
     async fn next_change(
         &self,
-        observer: &mut Option<Observer>,
-    ) -> Result<WatchEvent, pingap_config::Error> {
-        let Some(current) = observer.as_mut() else {
-            *observer = Some(self.config_manager.observe().await?);
-            return Ok(WatchEvent::Started);
+        observer: Option<Observer>,
+    ) -> (Option<Observer>, Result<WatchEvent, pingap_config::Error>) {
+        let Some(mut current) = observer else {
+            return match self.config_manager.observe().await {
+                Ok(obs) => (Some(obs), Ok(WatchEvent::Started)),
+                Err(e) => (None, Err(e)),
+            };
         };
         match current.watch().await {
-            Ok(true) => Ok(WatchEvent::Changed),
-            Ok(false) => Ok(WatchEvent::Idle),
-            Err(e) => {
-                *observer = None;
-                Err(e)
-            },
+            Ok(true) => (Some(current), Ok(WatchEvent::Changed)),
+            Ok(false) => (Some(current), Ok(WatchEvent::Idle)),
+            Err(e) => (None, Err(e)),
         }
     }
 }
@@ -1278,13 +1277,13 @@ impl BackgroundService for ConfigObserverService {
         );
         let mut period = interval(self.interval);
 
-        // Created by `next_change`, and created again whenever the watch
-        // ends. It used to be created here, once: a failure ended the whole
-        // service, the periodic check included, and a watch that broke
-        // later was never replaced.
-        let mut observer = None;
         // When the current watch was started.
         let mut watching_since: Option<Instant> = None;
+
+        // Keep one watch future across `select!` rounds so `period.tick()`
+        // does not drop an in-flight `watch()` call mid-stream.
+        let next = self.next_change(None);
+        tokio::pin!(next);
 
         loop {
             tokio::select! {
@@ -1302,7 +1301,7 @@ impl BackgroundService for ConfigObserverService {
                         );
                     }
                 }
-                result = self.next_change(&mut observer) => {
+                (observer, result) = &mut next => {
                     let mut delay = self.delay.load(Ordering::Relaxed);
                     match result {
                         Ok(event) => {
@@ -1325,11 +1324,10 @@ impl BackgroundService for ConfigObserverService {
                                 // of these, and proves as little.
                                 WatchEvent::Idle => {},
                             }
-                            if matches!(event, WatchEvent::Idle) {
-                                continue;
+                            if !matches!(event, WatchEvent::Idle) {
+                                // only hot reload for observe updated
+                                run_diff_and_update_config(self.config_manager.clone(), true).await;
                             }
-                            // only hot reload for observe updated
-                            run_diff_and_update_config(self.config_manager.clone(), true).await;
                         },
                         Err(e) => {
                             error!(
@@ -1349,6 +1347,7 @@ impl BackgroundService for ConfigObserverService {
                             self.delay.store((delay * 2).min(MAX_DELAY), Ordering::Relaxed);
                         }
                     }
+                    next.set(self.next_change(observer));
                 }
             }
         }
