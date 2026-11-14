@@ -16,6 +16,7 @@ use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{LOG_TARGET, Result};
 use ahash::RandomState;
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use pingap_core::TinyUfo;
 use std::sync::atomic::{AtomicU64, Ordering};
 use strum::EnumString;
@@ -42,7 +43,7 @@ pub(crate) struct MemoryCache {
 
 /// TinyUFO variant. `normal` (also `default`) is the lock-free index,
 /// `compact` trades some speed for a smaller footprint.
-#[derive(Debug, Clone, Copy, Default, EnumString)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, EnumString)]
 #[strum(ascii_case_insensitive)]
 pub enum CacheMode {
     #[default]
@@ -122,14 +123,14 @@ impl MemoryCache {
 
 /// The in-memory backend: a `MemoryCache` behind `HttpCacheStorage`.
 pub struct TinyUfoCache {
-    cache: MemoryCache,
+    cache: RwLock<MemoryCache>,
 }
 
 impl TinyUfoCache {
     /// `total_weight_limit` is in 4 KB pages.
     pub fn new(mode: CacheMode, total_weight_limit: usize) -> Self {
         Self {
-            cache: MemoryCache::new(mode, total_weight_limit),
+            cache: RwLock::new(MemoryCache::new(mode, total_weight_limit)),
         }
     }
 }
@@ -145,7 +146,8 @@ impl HttpCacheStorage for TinyUfoCache {
             target: LOG_TARGET,
             key, namespace, "getting cache entry from TinyUfo storage"
         );
-        Ok(self.cache.get(key))
+        let obj = self.cache.read().get(key);
+        Ok(obj)
     }
 
     async fn put(
@@ -162,7 +164,7 @@ impl HttpCacheStorage for TinyUfoCache {
             weight,
             "storing cache entry in TinyUfo storage"
         );
-        self.cache.put(key, data, weight);
+        self.cache.read().put(key, data, weight);
         Ok(())
     }
 
@@ -175,7 +177,12 @@ impl HttpCacheStorage for TinyUfoCache {
             target: LOG_TARGET,
             key, namespace, "removing cache entry from TinyUfo storage"
         );
-        Ok(self.cache.remove(key))
+        let obj = self.cache.read().remove(key);
+        Ok(obj)
+    }
+
+    fn retire(&self) {
+        *self.cache.write() = MemoryCache::new(CacheMode::Normal, 1);
     }
 }
 

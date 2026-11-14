@@ -23,7 +23,8 @@ let file   = new_cache_backend("/opt/pingap/cache?inactive=1h&reading_max=1000")
 ```
 
 Backends are process-wide singletons: there is one file backend per directory,
-and exactly **one** memory backend, created by whoever asks first.
+and one active memory backend (rebuilt on reload if `max_size` or `mode`
+changes, retiring the previous one first so the two never coexist at full size).
 
 A file backend belongs to its directory. The same directory with the same
 parameters is the same backend, however the path is spelled (`d`, `./d`) and
@@ -48,15 +49,15 @@ which makes it a better fit than an LRU for proxy workloads.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `max_size` | 1/4 of available memory, else 256 MB, capped at 1 GB | Cache budget |
+| `max_size` | 1/4 of available memory, else 256 MB, capped at 1 GiB | Cache budget; an explicit value may exceed 1 GiB up to a safety ceiling of 1/2 of available memory (1 GiB when unknown) |
 | `mode` | `normal` | TinyUFO variant: `normal` (also `default`), or `compact` for a smaller index at some speed cost |
 
 `max_size` accepts either form:
 
 | Value | Meaning |
 | --- | --- |
-| `max_size=20` | 20 % of the memory budget — a bare number is a percentage, clamped to 100 |
-| `max_size=100mb` | An absolute size — anything with a unit is taken literally, however small |
+| `max_size=20` | 20 % of the safe memory ceiling (1/2 of available memory) — a bare number is a percentage, clamped to 100 |
+| `max_size=100mb` | An absolute size — anything with a unit is taken literally up to the safe ceiling (1/2 of available memory), so TinyUFO's upfront index/sketch allocation cannot exceed available memory at startup |
 
 `update_available_memory()` is called once at startup with the memory that is
 available: what the machine reports, and no more than the container is allowed

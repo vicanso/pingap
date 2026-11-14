@@ -20,10 +20,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use tracing::info;
+use tracing::{info, warn};
 
 mod file;
 mod http_cache;
@@ -118,9 +117,27 @@ type FileBackends =
 static BACKENDS: LazyLock<Mutex<FileBackends>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static MEMORY_BACKEND: OnceLock<HttpCache> = OnceLock::new();
+type MemoryBackendEntry = ((CacheMode, usize), &'static HttpCache);
+static MEMORY_BACKEND: LazyLock<Mutex<Option<MemoryBackendEntry>>> =
+    LazyLock::new(|| Mutex::new(None));
 
-const MAX_MEMORY_SIZE: usize = 1024 * 1024 * 1024;
+/// Default cap when `max_size` is omitted (or when available memory is unknown).
+const DEFAULT_MAX_MEMORY_SIZE: usize = 1024 * 1024 * 1024;
+
+/// Maximum safe memory budget for TinyUFO so upfront index/sketch allocation
+/// and cached pages never exceed host/container memory and fail startup.
+pub(crate) fn max_safe_memory_bytes(available_memory: usize) -> usize {
+    if available_memory > 0 {
+        (available_memory / 2).max(PAGE_SIZE)
+    } else {
+        DEFAULT_MAX_MEMORY_SIZE
+    }
+}
+
+pub(crate) fn max_safe_memory_pages() -> usize {
+    let available = AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
+    max_safe_memory_bytes(available) / PAGE_SIZE
+}
 
 pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
     BACKENDS
@@ -207,34 +224,155 @@ impl MemoryCacheParams {
     }
 }
 
-fn try_init_memory_backend(
+/// Resolves the memory cache size in bytes, returning `(size, Some(requested))`
+/// when an explicit byte request had to be clamped to `safe_ceiling` to avoid
+/// exceeding available memory at startup.
+fn resolve_memory_cache_size(
+    max_size: Option<MaxSize>,
+    available_memory: usize,
+) -> (usize, Option<usize>) {
+    let safe_ceiling = max_safe_memory_bytes(available_memory);
+    match max_size {
+        None => {
+            let default_budget = if available_memory > 0 {
+                available_memory / 4
+            } else {
+                ByteSize::mb(256).as_u64() as usize
+            };
+            (
+                default_budget
+                    .min(DEFAULT_MAX_MEMORY_SIZE)
+                    .min(safe_ceiling),
+                None,
+            )
+        },
+        Some(MaxSize::Percent(percent)) => {
+            (MaxSize::Percent(percent).resolve(safe_ceiling), None)
+        },
+        Some(MaxSize::Bytes(requested)) => {
+            if requested > safe_ceiling {
+                (safe_ceiling, Some(requested))
+            } else {
+                (requested, None)
+            }
+        },
+    }
+}
+
+fn get_or_update_memory_backend(
     params: MemoryCacheParams,
     cache_mode: CacheMode,
-) -> &'static HttpCache {
-    MEMORY_BACKEND.get_or_init(|| {
-        let available_memory =
-            AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
-        let max_memory = if available_memory > 0 {
-            available_memory / 4
-        } else {
-            ByteSize::mb(256).as_u64() as usize
-        };
-
-        // Determine cache size from config, or take the whole budget
-        let mut size = params
-            .max_size
-            .map(|max_size| max_size.resolve(max_memory))
-            .unwrap_or(max_memory);
-
-        size = size.min(MAX_MEMORY_SIZE);
+) -> Result<&'static HttpCache> {
+    let mut guard = MEMORY_BACKEND.lock().map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    if is_dry_run() {
+        return Ok(guard
+            .as_ref()
+            .map_or(&*DRY_RUN_BACKEND, |(_, backend)| *backend));
+    }
+    let available_memory = AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
+    let (size, capped_from) =
+        resolve_memory_cache_size(params.max_size, available_memory);
+    if let Some(((mode, current_size), backend)) = *guard
+        && mode == cache_mode
+        && current_size == size
+    {
+        return Ok(backend);
+    }
+    if let Some(requested) = capped_from {
+        warn!(
+            target: LOG_TARGET,
+            requested = ByteSize(requested as u64).to_string(),
+            capped = ByteSize(size as u64).to_string(),
+            available = ByteSize(available_memory as u64).to_string(),
+            "memory cache max_size exceeds safe available memory, capping"
+        );
+    }
+    // Retire the previous TinyUFO storage BEFORE allocating the new one so
+    // old + new caches never coexist at full size during hot-reload resizing.
+    if let Some((previous, replaced)) = guard.take() {
+        replaced.cache.retire();
         info!(
             target: LOG_TARGET,
+            previous = ?previous,
             size = ByteSize(size as u64).to_string(),
             cache_mode = ?cache_mode,
-            "init memory cache backend success"
+            "memory cache backend retired for resize"
         );
-        new_tiny_ufo_cache(cache_mode, size)
-    })
+    }
+    let cache = new_tiny_ufo_cache(cache_mode, size);
+    info!(
+        target: LOG_TARGET,
+        size = ByteSize(size as u64).to_string(),
+        cache_mode = ?cache_mode,
+        "init memory cache backend success"
+    );
+    let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
+    *guard = Some(((cache_mode, size), cache_ref));
+    Ok(cache_ref)
+}
+
+fn get_or_init_file_backend(directory: &str) -> Result<&'static HttpCache> {
+    // What a setting says, not how it is written: the same directory with
+    // the same parameters is the same cache, whatever the spelling of the
+    // path or the order of the parameters.
+    let params = file::FileCacheParams::try_from(directory)?;
+    {
+        let cache_backends = BACKENDS.lock().map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+        let existing = cache_backends.get(&params.directory);
+        if is_dry_run() {
+            return Ok(
+                existing.map_or(&*DRY_RUN_BACKEND, |(_, backend)| *backend)
+            );
+        }
+        if let Some((_, backend)) = existing.filter(|(used, _)| *used == params)
+        {
+            return Ok(backend);
+        }
+    }
+
+    // Build outside BACKENDS lock so initial directory walk (`measure_dir_size`)
+    // does not stall other cache backends or background sweep lookups.
+    let cache = new_file_cache(directory).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    info!(
+        target: LOG_TARGET,
+        inactive = cache.cache.inactive().map(|v| v.as_secs()),
+        "init file cache backend success"
+    );
+
+    let mut cache_backends = BACKENDS.lock().map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    if let Some((_, backend)) = cache_backends
+        .get(&params.directory)
+        .filter(|(used, _)| *used == params)
+    {
+        return Ok(backend);
+    }
+    let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
+    // Other parameters take the directory over. The cache they replace
+    // stays valid for the requests still using it, but is swept no more
+    // and gives up its hot layer.
+    let replaced =
+        cache_backends.insert(params.directory.clone(), (params, cache_ref));
+    drop(cache_backends);
+
+    if let Some((previous, old)) = replaced {
+        info!(
+            target: LOG_TARGET,
+            previous = ?previous,
+            current = directory,
+            "file cache backend replaced"
+        );
+        old.cache.retire();
+    }
+
+    Ok(cache_ref)
 }
 
 /// Returns the backend for `directory`: the process-wide memory backend for
@@ -247,53 +385,9 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     if directory.is_empty() || directory.starts_with("memory://") {
         let params = MemoryCacheParams::try_from(directory)?;
         let cache_mode = params.cache_mode()?;
-        if is_dry_run() {
-            return Ok(MEMORY_BACKEND.get().unwrap_or(&DRY_RUN_BACKEND));
-        }
-        return Ok(try_init_memory_backend(params, cache_mode));
+        return get_or_update_memory_backend(params, cache_mode);
     }
-    let mut cache_backends = BACKENDS.lock().map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
-    // What a setting says, not how it is written: the same directory with
-    // the same parameters is the same cache, whatever the spelling of the
-    // path or the order of the parameters.
-    let params = file::FileCacheParams::try_from(directory)?;
-    let existing = cache_backends.get(&params.directory);
-    if is_dry_run() {
-        return Ok(existing.map_or(&*DRY_RUN_BACKEND, |(_, backend)| *backend));
-    }
-    if let Some((_, backend)) = existing.filter(|(used, _)| *used == params) {
-        return Ok(backend);
-    }
-
-    // Use file-based cache if directory is specified
-    let cache = new_file_cache(directory).map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
-    info!(
-        target: LOG_TARGET,
-        inactive = cache.cache.inactive().map(|v| v.as_secs()),
-        "init file cache backend success"
-    );
-
-    let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
-    // Other parameters take the directory over. The cache they replace
-    // stays valid for the requests still using it, but is swept no more
-    // and gives up its hot layer.
-    if let Some((previous, replaced)) =
-        cache_backends.insert(params.directory.clone(), (params, cache_ref))
-    {
-        info!(
-            target: LOG_TARGET,
-            previous = ?previous,
-            current = directory,
-            "file cache backend replaced"
-        );
-        replaced.cache.retire();
-    }
-
-    Ok(cache_ref)
+    get_or_init_file_backend(directory)
 }
 
 pub use http_cache::{
@@ -517,5 +611,96 @@ mod tests {
                 .cache_mode()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn test_resolve_memory_cache_size() {
+        let gib = 1024 * 1024 * 1024;
+        let mib = 1024 * 1024;
+
+        // Large-RAM host (64 GiB): unset stays capped at 1 GiB, explicit >1 GiB
+        // works up to safe ceiling (32 GiB), and >32 GiB clamps safely.
+        let host_64g = 64 * gib;
+        assert_eq!((gib, None), resolve_memory_cache_size(None, host_64g));
+        assert_eq!(
+            (8 * gib, None),
+            resolve_memory_cache_size(Some(MaxSize::Bytes(8 * gib)), host_64g)
+        );
+        assert_eq!(
+            (32 * gib, Some(40 * gib)),
+            resolve_memory_cache_size(Some(MaxSize::Bytes(40 * gib)), host_64g)
+        );
+        assert_eq!(
+            (16 * gib, None),
+            resolve_memory_cache_size(Some(MaxSize::Percent(50)), host_64g)
+        );
+
+        // Constrained container (512 MiB): explicit 2 GiB clamps to 256 MiB so
+        // TinyUFO never allocates beyond available memory at startup.
+        let container_512m = 512 * mib;
+        assert_eq!(
+            (128 * mib, None),
+            resolve_memory_cache_size(None, container_512m)
+        );
+        assert_eq!(
+            (256 * mib, Some(2 * gib)),
+            resolve_memory_cache_size(
+                Some(MaxSize::Bytes(2 * gib)),
+                container_512m
+            )
+        );
+
+        // Unknown available memory (0): default 256 MB, safe ceiling 1 GiB.
+        assert_eq!(
+            (ByteSize::mb(256).as_u64() as usize, None),
+            resolve_memory_cache_size(None, 0)
+        );
+        assert_eq!(
+            (gib, Some(4 * gib)),
+            resolve_memory_cache_size(Some(MaxSize::Bytes(4 * gib)), 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_resize_and_retire() {
+        let first = new_cache_backend("memory://?max_size=64kib").unwrap();
+        let same = new_cache_backend("memory://?max_size=64kib").unwrap();
+        assert_eq!(true, std::ptr::eq(first, same));
+        assert_eq!(64 * 1024, first.max_size);
+
+        first
+            .cache
+            .put(
+                "k1",
+                b"ns",
+                CacheObject {
+                    meta: (
+                        bytes::Bytes::from_static(b"m1"),
+                        bytes::Bytes::from_static(b"m2"),
+                    ),
+                    body: bytes::Bytes::from_static(b"hello"),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, first.cache.get("k1", b"ns").await.unwrap().is_some());
+
+        // Dry run validates without replacing or retiring the live backend.
+        let tried =
+            dry_run(|| new_cache_backend("memory://?max_size=128kib")).unwrap();
+        assert_eq!(true, std::ptr::eq(first, tried));
+        assert_eq!(true, first.cache.get("k1", b"ns").await.unwrap().is_some());
+
+        // Changing max_size retires `first`'s storage and installs a new backend.
+        let resized = new_cache_backend("memory://?max_size=128kib").unwrap();
+        assert_eq!(false, std::ptr::eq(first, resized));
+        assert_eq!(128 * 1024, resized.max_size);
+        assert_eq!(true, first.cache.get("k1", b"ns").await.unwrap().is_none());
+
+        // Changing mode also replaces the backend.
+        let compact =
+            new_cache_backend("memory://?max_size=128kib&mode=compact")
+                .unwrap();
+        assert_eq!(false, std::ptr::eq(resized, compact));
     }
 }

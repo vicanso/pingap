@@ -285,6 +285,31 @@ fn measure_dir_size(directory: &str) -> u64 {
         .sum()
 }
 
+/// Partitions and sorts only the oldest prefix of `files` needed to free at
+/// least `bytes_to_free` bytes, avoiding an O(N log N) full sort of the entire
+/// directory when evicting a small fraction (~10%) of a large file cache.
+fn order_oldest_for_eviction(files: &mut [CacheFile], bytes_to_free: u64) {
+    if files.len() <= 256 || bytes_to_free == 0 {
+        files.sort_unstable_by_key(|file| file.accessed);
+        return;
+    }
+    let window = (files.len() / 8).max(256);
+    let mut ordered = 0usize;
+    let mut covered_bytes = 0u64;
+    while ordered < files.len() && covered_bytes < bytes_to_free {
+        let remaining = &mut files[ordered..];
+        let take = window.min(remaining.len());
+        if take < remaining.len() {
+            remaining.select_nth_unstable_by_key(take - 1, |f| f.accessed);
+        }
+        let chunk = &mut remaining[..take];
+        chunk.sort_unstable_by_key(|f| f.accessed);
+        covered_bytes = covered_bytes
+            .saturating_add(chunk.iter().map(|f| f.len).sum::<u64>());
+        ordered += take;
+    }
+}
+
 /// Removes every directory under `dir` that is empty, deepest first, and
 /// finally `dir` itself. Best effort: a concurrent write recreates what it
 /// needs.
@@ -337,8 +362,20 @@ impl FileCache {
             current_size,
             "new file cache"
         );
-        let cache = (params.cache_max > 0).then(|| {
-            RwLock::new(MemoryCache::new(CacheMode::Normal, params.cache_max))
+        let max_pages = crate::max_safe_memory_pages();
+        let cache_max = if params.cache_max > max_pages {
+            warn!(
+                target: LOG_TARGET,
+                requested_pages = params.cache_max,
+                capped_pages = max_pages,
+                "file cache hot-layer cache_max exceeds safe available memory, capping"
+            );
+            max_pages
+        } else {
+            params.cache_max
+        };
+        let cache = (cache_max > 0).then(|| {
+            RwLock::new(MemoryCache::new(CacheMode::Normal, cache_max))
         });
 
         Ok(FileCache {
@@ -357,7 +394,7 @@ impl FileCache {
             #[cfg(feature = "tracing")]
             write_time: CACHE_WRITING_TIME.clone(),
             cache,
-            cache_max: params.cache_max,
+            cache_max,
             cache_inactive: params
                 .inactive
                 .unwrap_or(Duration::from_secs(48 * 3600)),
@@ -461,9 +498,11 @@ impl FileCache {
         // The counter is an estimate: two writes of one key, a file removed
         // by another process or by hand, and it is off, for good. With the
         // whole directory listed here anyway, it is set to what is there.
-        self.current_size
-            .store(files.iter().map(|file| file.len).sum(), Ordering::Relaxed);
-        files.sort_by_key(|file| file.accessed);
+        let real_size: u64 = files.iter().map(|file| file.len).sum();
+        self.current_size.store(real_size, Ordering::Relaxed);
+        if real_size.saturating_add(need) <= self.max_size {
+            return true;
+        }
         // Room for this object, and when that is less, for a tenth of the
         // budget. With no more freed than the one object needed the cache
         // was full again after it, and every write from then on walked the
@@ -471,6 +510,11 @@ impl FileCache {
         // twenty thousand files.
         let room = need.max(self.max_size / EVICT_ROOM_DIVISOR);
         let keep = self.max_size.saturating_sub(room);
+        let bytes_to_free = real_size.saturating_sub(keep);
+        order_oldest_for_eviction(
+            &mut files,
+            bytes_to_free.saturating_add(bytes_to_free / 4),
+        );
         let mut evicted = 0u64;
         let mut count = 0u32;
         for file in files {
@@ -1768,5 +1812,25 @@ mod tests {
         let path = resolve_path("../pingap");
         assert_eq!(true, path.ends_with("/pingap"));
         assert_eq!(false, path.starts_with(".."));
+    }
+
+    #[test]
+    fn test_order_oldest_for_eviction() {
+        let base = SystemTime::UNIX_EPOCH;
+        let mut files: Vec<CacheFile> = (0..1000u64)
+            .rev()
+            .map(|i| CacheFile {
+                len: 100,
+                accessed: base + Duration::from_secs(i),
+                path: PathBuf::from(format!("f-{i}")),
+            })
+            .collect();
+
+        // Freeing 10% (10,000 of 100,000 bytes) needs the oldest 100 files in
+        // exact ascending access-time order without sorting all 1000 entries.
+        order_oldest_for_eviction(&mut files, 10_000);
+        for (idx, item) in files.iter().take(100).enumerate() {
+            assert_eq!(base + Duration::from_secs(idx as u64), item.accessed);
+        }
     }
 }
