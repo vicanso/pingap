@@ -60,10 +60,11 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC key error");
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .map_err(|e| new_error(format!("invalid HMAC key: {e}")))?;
     mac.update(msg);
-    mac.finalize().into_bytes().to_vec()
+    Ok(mac.finalize().into_bytes().to_vec())
 }
 
 fn new_error(err: impl ToString) -> Error {
@@ -111,11 +112,12 @@ async fn tencent_cloud_api_request(
     );
 
     let secret_date =
-        hmac_sha256(format!("TC3{secret_key}").as_bytes(), date.as_bytes());
-    let secret_service = hmac_sha256(&secret_date, SERVICE.as_bytes());
-    let secret_signing = hmac_sha256(&secret_service, "tc3_request".as_bytes());
+        hmac_sha256(format!("TC3{secret_key}").as_bytes(), date.as_bytes())?;
+    let secret_service = hmac_sha256(&secret_date, SERVICE.as_bytes())?;
+    let secret_signing =
+        hmac_sha256(&secret_service, "tc3_request".as_bytes())?;
     let signature =
-        hex::encode(hmac_sha256(&secret_signing, string_to_sign.as_bytes()));
+        hex::encode(hmac_sha256(&secret_signing, string_to_sign.as_bytes())?);
 
     // authorization header
     let authorization = format!(
@@ -366,7 +368,7 @@ mod tests {
         let key = [0x0bu8; 20];
         assert_eq!(
             "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
-            hex::encode(hmac_sha256(&key, b"Hi There"))
+            hex::encode(hmac_sha256(&key, b"Hi There").unwrap())
         );
     }
 
