@@ -51,8 +51,12 @@ type Result<T> = std::result::Result<T, Error>;
 // Singleton instances using OnceCell for thread-safe lazy initialization
 // Predictor: Determines if a response should be cached based on patterns/rules
 static PREDICTOR: OnceLock<Predictor<32>> = OnceLock::new();
-// EvictionManager: Handles removing entries when cache is full using LRU strategy
-static EVICTION_MANAGER: OnceLock<Manager> = OnceLock::new();
+// EvictionManager: Handles removing entries when cache is full using LRU strategy.
+// `session.cache.enable` wants a `&'static` eviction manager, so one is leaked
+// per distinct `max_size` and reused from then on — allowing hot reloads that
+// resize `max_size` to take effect without leaking on repeated reloads.
+static EVICTION_MANAGERS: LazyLock<Mutex<HashMap<u64, &'static Manager>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 // CacheLock: Prevents multiple requests from generating the same cache entry
 // simultaneously. `session.cache.enable` wants a `&'static` lock, so one is
 // leaked per distinct duration and reused from then on — bounded by the number
@@ -180,10 +184,19 @@ fn wants_fresh(header: &pingora::http::RequestHeader) -> bool {
 /// is sized by whoever asks first, for good, and that must not be a
 /// configuration that is only being checked.
 fn get_eviction_manager(cache_max_size: u64) -> Option<&'static Manager> {
-    if pingap_cache::is_dry_run() {
-        return EVICTION_MANAGER.get();
+    let mut managers = EVICTION_MANAGERS.lock().ok()?;
+    if let Some(manager) = managers.get(&cache_max_size) {
+        return Some(*manager);
     }
-    Some(EVICTION_MANAGER.get_or_init(|| Manager::new(cache_max_size as usize)))
+    // An eviction manager is kept for the life of the process; one is not
+    // made for a configuration that is only being checked.
+    if pingap_cache::is_dry_run() {
+        return None;
+    }
+    let manager: &'static Manager =
+        Box::leak(Box::new(Manager::new(cache_max_size as usize)));
+    managers.insert(cache_max_size, manager);
+    Some(manager)
 }
 
 /// Returns the cache lock for `lock`, creating it on first use.
