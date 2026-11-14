@@ -17,7 +17,7 @@ use path_absolutize::*;
 use snafu::Snafu;
 use std::borrow::Cow;
 use std::path::Path;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 mod crypto;
 mod format;
@@ -47,9 +47,16 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+static PKG_VERSION: OnceLock<&'static str> = OnceLock::new();
+
+/// Sets the binary package version so all workspace crates report the same version.
+pub fn set_pkg_version(version: &'static str) {
+    let _ = PKG_VERSION.set(version);
+}
+
 /// Gets the package version.
 pub fn get_pkg_version() -> &'static str {
-    VERSION
+    PKG_VERSION.get().copied().unwrap_or(VERSION)
 }
 
 static RUSTC_VERSION: LazyLock<String> =

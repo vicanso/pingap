@@ -1596,6 +1596,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    pingap_util::set_pkg_version(env!("CARGO_PKG_VERSION"));
     if let Err(e) = run() {
         // stderr, and unbuffered: everything that can fail here can fail before
         // `logger_try_init`, in which case the `error!` below reaches nobody.
