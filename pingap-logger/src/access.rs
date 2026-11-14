@@ -21,6 +21,7 @@ use pingap_core::{
 use pingap_util::format_byte_size;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
+use std::cell::Cell;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -97,6 +98,7 @@ impl Tag {
 #[derive(Debug, Default, Clone)]
 pub struct Parser {
     pub needs_timestamp: bool,
+    pub needs_latency: bool,
     pub capacity: usize,
     pub tags: Vec<Tag>,
     /// The format is a JSON object: values are escaped, and a missing one
@@ -305,8 +307,12 @@ impl From<&str> for Parser {
                 TagCategory::When
                     | TagCategory::WhenUtcIso
                     | TagCategory::WhenUnix
-                    | TagCategory::Latency
-                    | TagCategory::LatencyHuman
+            )
+        });
+        let needs_latency = tags.iter().any(|t| {
+            matches!(
+                t.category,
+                TagCategory::Latency | TagCategory::LatencyHuman
             )
         });
         let capacity = if *LOG_CAPACITY > 0 {
@@ -318,6 +324,7 @@ impl From<&str> for Parser {
             capacity,
             tags,
             needs_timestamp,
+            needs_latency,
             json,
         }
     }
@@ -356,11 +363,23 @@ fn put_digits(buf: &mut BytesMut, mut value: u32, width: usize) {
 /// or `Z` for an offset of zero when `use_z` - appended without an
 /// intermediate `String`. Matches chrono's
 /// `to_rfc3339_opts(SecondsFormat::Millis, use_z)`.
+#[cfg(test)]
 fn put_rfc3339_millis<Tz: TimeZone>(
     buf: &mut BytesMut,
     time: &DateTime<Tz>,
     use_z: bool,
 ) {
+    let _ = put_rfc3339_millis_pos(buf, time, use_z);
+}
+
+/// Like [`put_rfc3339_millis`], returning the byte offset in `buf` where the
+/// 3 millisecond digits start so callers can patch milliseconds in place
+/// within the same second.
+fn put_rfc3339_millis_pos<Tz: TimeZone>(
+    buf: &mut BytesMut,
+    time: &DateTime<Tz>,
+    use_z: bool,
+) -> usize {
     let local = time.naive_local();
     let year = local.year();
     if (0..=9999).contains(&year) {
@@ -379,17 +398,93 @@ fn put_rfc3339_millis<Tz: TimeZone>(
     buf.put_u8(b':');
     put_digits(buf, local.second(), 2);
     buf.put_u8(b'.');
+    let ms_pos = buf.len();
     put_digits(buf, local.nanosecond() / 1_000_000, 3);
     let offset = time.offset().fix().local_minus_utc();
     if offset == 0 && use_z {
         buf.put_u8(b'Z');
-        return;
+        return ms_pos;
     }
     buf.put_u8(if offset < 0 { b'-' } else { b'+' });
     let offset = offset.unsigned_abs();
     put_digits(buf, offset / 3600, 2);
     buf.put_u8(b':');
     put_digits(buf, (offset % 3600) / 60, 2);
+    ms_pos
+}
+
+const RFC3339_CACHE_CAP: usize = 40;
+
+#[derive(Clone, Copy)]
+struct CachedRfc3339 {
+    sec: i64,
+    millis: i64,
+    len: u8,
+    ms_pos: u8,
+    bytes: [u8; RFC3339_CACHE_CAP],
+}
+
+impl CachedRfc3339 {
+    const EMPTY: Self = Self {
+        sec: i64::MIN,
+        millis: i64::MIN,
+        len: 0,
+        ms_pos: 0,
+        bytes: [0; RFC3339_CACHE_CAP],
+    };
+}
+
+thread_local! {
+    static LOCAL_RFC3339_CACHE: Cell<CachedRfc3339> =
+        const { Cell::new(CachedRfc3339::EMPTY) };
+    static UTC_RFC3339_CACHE: Cell<CachedRfc3339> =
+        const { Cell::new(CachedRfc3339::EMPTY) };
+}
+
+#[inline]
+fn put_cached_rfc3339(
+    buf: &mut BytesMut,
+    now_ms: i64,
+    utc_mode: bool,
+    slot: &Cell<CachedRfc3339>,
+) -> bool {
+    let mut cached = slot.get();
+    if cached.len > 0 && cached.millis == now_ms {
+        buf.put_slice(&cached.bytes[..usize::from(cached.len)]);
+        return true;
+    }
+    let sec = now_ms.div_euclid(1_000);
+    if cached.len > 0 && cached.sec == sec {
+        let subsec_ms = now_ms.rem_euclid(1_000) as u32;
+        let pos = usize::from(cached.ms_pos);
+        cached.bytes[pos] = b'0' + (subsec_ms / 100) as u8;
+        cached.bytes[pos + 1] = b'0' + ((subsec_ms / 10) % 10) as u8;
+        cached.bytes[pos + 2] = b'0' + (subsec_ms % 10) as u8;
+        cached.millis = now_ms;
+        slot.set(cached);
+        buf.put_slice(&cached.bytes[..usize::from(cached.len)]);
+        return true;
+    }
+    let Some(utc) = DateTime::<Utc>::from_timestamp_millis(now_ms) else {
+        return false;
+    };
+    let start = buf.len();
+    let ms_pos_abs = if utc_mode {
+        put_rfc3339_millis_pos(buf, &utc, true)
+    } else {
+        put_rfc3339_millis_pos(buf, &utc.with_timezone(&Local), false)
+    };
+    let formatted = &buf[start..];
+    if formatted.len() <= RFC3339_CACHE_CAP {
+        let mut next = CachedRfc3339::EMPTY;
+        next.sec = sec;
+        next.millis = now_ms;
+        next.len = formatted.len() as u8;
+        next.ms_pos = (ms_pos_abs - start) as u8;
+        next.bytes[..formatted.len()].copy_from_slice(formatted);
+        slot.set(next);
+    }
+    true
 }
 
 /// Appends `value` and returns true, or returns false when it is empty.
@@ -615,7 +710,7 @@ struct LineSource<'a> {
     session: &'a Session,
     req_header: &'a RequestHeader,
     ctx: &'a Ctx,
-    now: Option<DateTime<Utc>>,
+    now_ms: Option<i64>,
     latency: Option<Duration>,
 }
 
@@ -688,20 +783,16 @@ impl LineSource<'_> {
             TagCategory::UserAgent => {
                 put_value(buf, session.get_header_bytes("user-agent"))
             },
-            TagCategory::When => self.now.is_some_and(|now| {
-                put_rfc3339_millis(buf, &now.with_timezone(&Local), false);
-                true
+            TagCategory::When => self.now_ms.is_some_and(|now_ms| {
+                LOCAL_RFC3339_CACHE
+                    .with(|slot| put_cached_rfc3339(buf, now_ms, false, slot))
             }),
-            TagCategory::WhenUtcIso => self.now.is_some_and(|now| {
-                put_rfc3339_millis(buf, &now, true);
-                true
+            TagCategory::WhenUtcIso => self.now_ms.is_some_and(|now_ms| {
+                UTC_RFC3339_CACHE
+                    .with(|slot| put_cached_rfc3339(buf, now_ms, true, slot))
             }),
-            TagCategory::WhenUnix => self.now.is_some_and(|now| {
-                buf.put_slice(
-                    itoa::Buffer::new()
-                        .format(now.timestamp_millis())
-                        .as_bytes(),
-                );
+            TagCategory::WhenUnix => self.now_ms.is_some_and(|now_ms| {
+                buf.put_slice(itoa::Buffer::new().format(now_ms).as_bytes());
                 true
             }),
             TagCategory::Size => {
@@ -840,23 +931,17 @@ impl Parser {
     /// format values are escaped and a missing one is empty or `null`.
     pub fn format(&self, session: &Session, ctx: &Ctx) -> BytesMut {
         let mut buf = BytesMut::with_capacity(self.capacity);
-        // Only read the clocks when a tag needs them.
-        let (now, latency) = if self.needs_timestamp {
-            (
-                Some(Utc::now()),
-                Some(
-                    Instant::now()
-                        .saturating_duration_since(ctx.timing.created_at),
-                ),
-            )
-        } else {
-            (None, None)
-        };
+        // Only read each clock when a tag actually needs it.
+        let now_ms =
+            self.needs_timestamp.then(|| Utc::now().timestamp_millis());
+        let latency = self.needs_latency.then(|| {
+            Instant::now().saturating_duration_since(ctx.timing.created_at)
+        });
         let source = LineSource {
             session,
             req_header: session.req_header(),
             ctx,
-            now,
+            now_ms,
             latency,
         };
         for tag in self.tags.iter() {
@@ -1102,7 +1187,7 @@ mod tests {
             },
             upstream: UpstreamInfo {
                 reused: true,
-                address: "192.186.1.1:6188".to_string(),
+                address: "192.186.1.1:6188".into(),
                 location: "test".to_string().into(),
                 ..Default::default()
             },
@@ -1330,6 +1415,48 @@ mod tests {
             "2024-01-02T11:04:05.006+08:00",
             std::str::from_utf8(&buf).unwrap()
         );
+
+        // Cached RFC3339 formatting matches chrono across same-millisecond,
+        // intra-second millisecond updates, second rollovers, and negative epochs.
+        for ms in [
+            1_704_164_645_006_i64,
+            1_704_164_645_006,
+            1_704_164_645_000,
+            1_704_164_645_999,
+            1_704_164_646_000,
+            -1_500,
+            -1_000,
+            -1,
+            0,
+        ] {
+            let utc_dt =
+                chrono::DateTime::<Utc>::from_timestamp_millis(ms).unwrap();
+            let mut utc_buf = BytesMut::new();
+            assert_eq!(
+                true,
+                super::UTC_RFC3339_CACHE.with(|slot| {
+                    super::put_cached_rfc3339(&mut utc_buf, ms, true, slot)
+                })
+            );
+            assert_eq!(
+                utc_dt.to_rfc3339_opts(SecondsFormat::Millis, true),
+                std::str::from_utf8(&utc_buf).unwrap()
+            );
+
+            let mut local_buf = BytesMut::new();
+            assert_eq!(
+                true,
+                super::LOCAL_RFC3339_CACHE.with(|slot| {
+                    super::put_cached_rfc3339(&mut local_buf, ms, false, slot)
+                })
+            );
+            assert_eq!(
+                utc_dt
+                    .with_timezone(&chrono::Local)
+                    .to_rfc3339_opts(SecondsFormat::Millis, false),
+                std::str::from_utf8(&local_buf).unwrap()
+            );
+        }
     }
 
     #[test]

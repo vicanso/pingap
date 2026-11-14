@@ -42,6 +42,7 @@
 - **pingap-core**：代理只在 `Plugin::step()` 等于当前回调时调用 `handle_request`，默认是 `request`。请求阶段不是 `request`、又没有实现 `step()` 的插件不再被调用。`handle_response_body` 和 `handle_upstream_response_body` 只在 `handles_response_body()` 或 `handles_upstream_response_body()` 返回 `true` 时调用，默认都是 `false`。改写了 body 方法但标记仍是 `false` 的插件不再被调用。改响应头的回调不变。
 - **pingap-proxy**：服务器的压缩模块换成了 `pingap_core::ResponseCompression`（它会补全 brotli 流，[#256](https://github.com/vicanso/pingap/issues/256)），不再是 pingora 的。自己写的插件如果要调整压缩，得按这个类型取：`downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`。按 pingora 的 `ResponseCompression` 取会拿到空，插件也就静默地不再调整压缩，不会报错。它 deref 到 pingora 的 `ResponseCompressionCtx`，上面的调用不用改。
 - **tokio 可以回到 1.54。** pingora 0.9.1 不再给连接建容量为 0 的缓冲区，这些 crate 不再要求 `tokio = ">=1.53.3, <1.54"`（[cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)）。原先把 tokio 限制在 1.54 以下的项目可以升到 1.54.1。
+- **pingap-core / pingap-logger**：`UpstreamInfo.address` 改为 `Arc<str>`（与 `location`、`name` 一致），`OtelTracer::new_upstream_span` 接受 `impl Into<Cow<'static, str>>`，`Parser` 新增 `needs_latency` 字段。
 
 ## 从 0.15 升级到 0.16
 

@@ -1449,7 +1449,7 @@ mod tests {
                 .await;
         let default_state = Ctx {
             upstream: UpstreamInfo {
-                address: "10.1.1.3:4123".to_string(),
+                address: "10.1.1.3:4123".into(),
                 ..Default::default()
             },
             conn: ConnectionInfo {
@@ -1582,7 +1582,7 @@ mod tests {
             &session,
             &Ctx {
                 upstream: UpstreamInfo {
-                    address: "10.1.1.1:8001".to_string(),
+                    address: "10.1.1.1:8001".into(),
                     ..Default::default()
                 },
                 ..Default::default()

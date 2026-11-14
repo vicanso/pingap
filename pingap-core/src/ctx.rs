@@ -352,8 +352,17 @@ pub trait LocationInstance: Send + Sync {
     }
 }
 
+/// Returns a shared empty `Arc<str>` cached per thread so [`UpstreamInfo::default`]
+/// avoids heap allocations and cross-core refcount contention on every request.
+#[inline]
+pub fn empty_arc_str() -> Arc<str> {
+    thread_local! {
+        static EMPTY: Arc<str> = Arc::from("");
+    }
+    EMPTY.with(Arc::clone)
+}
+
 /// Information about the upstream (backend) server.
-#[derive(Default)]
 pub struct UpstreamInfo {
     /// Upstream instance
     pub upstream_instance: Option<Arc<dyn UpstreamInstance>>,
@@ -364,7 +373,7 @@ pub struct UpstreamInfo {
     /// The name of the upstream server or group.
     pub name: Arc<str>,
     /// The address of the upstream server.
-    pub address: String,
+    pub address: Arc<str>,
     /// Indicates if the connection to the upstream was reused.
     pub reused: bool,
     /// The number of requests currently being processed by the upstream.
@@ -404,6 +413,32 @@ pub struct UpstreamInfo {
     /// to be set on the response when the client does not have it yet,
     /// or has it for another backend.
     pub sticky_cookie: Option<String>,
+}
+
+impl Default for UpstreamInfo {
+    #[inline]
+    fn default() -> Self {
+        let empty = empty_arc_str();
+        Self {
+            upstream_instance: None,
+            location_instance: None,
+            location: empty.clone(),
+            name: empty.clone(),
+            address: empty,
+            reused: false,
+            processing_count: None,
+            connected_count: None,
+            status: None,
+            retries: 0,
+            fallback: false,
+            fallback_from: None,
+            max_retries: None,
+            max_retry_window: None,
+            failed_addresses: Vec::new(),
+            backend_inflight: None,
+            sticky_cookie: None,
+        }
+    }
 }
 
 /// One request in flight on a backend, for as long as this is kept: the
@@ -885,9 +920,12 @@ pub struct OtelTracer {
 impl OtelTracer {
     /// Creates a new child span for an upstream request.
     #[inline]
-    pub fn new_upstream_span(&self, name: &str) -> BoxedSpan {
+    pub fn new_upstream_span(
+        &self,
+        name: impl Into<Cow<'static, str>>,
+    ) -> BoxedSpan {
         self.tracer
-            .span_builder(name.to_string())
+            .span_builder(name)
             .with_kind(SpanKind::Client)
             .start_with_context(
                 &self.tracer,
@@ -2676,9 +2714,26 @@ mod tests {
         assert_eq!(b"true", buf.as_ref());
 
         buf = BytesMut::new();
-        ctx.upstream.address = "192.168.1.1:80".to_string();
+        ctx.upstream.address = "192.168.1.1:80".into();
         ctx.append_log_value(&mut buf, "upstream_addr");
         assert_eq!(b"192.168.1.1:80", buf.as_ref());
+
+        let first_default = Ctx::default();
+        let second_default = Ctx::default();
+        assert_eq!(
+            true,
+            Arc::ptr_eq(
+                &first_default.upstream.address,
+                &second_default.upstream.address
+            )
+        );
+        assert_eq!(
+            true,
+            Arc::ptr_eq(
+                &first_default.upstream.location,
+                &first_default.upstream.name
+            )
+        );
 
         buf = BytesMut::new();
         ctx.upstream.name = "standby".into();

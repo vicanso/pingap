@@ -1727,8 +1727,8 @@ async fn new_peer(
     if let Some(features) = &ctx.features
         && let Some(tracer) = &features.otel_tracer
     {
-        let name = format!("upstream.{}", upstream.name);
-        let mut span = tracer.new_upstream_span(&name);
+        let mut span =
+            tracer.new_upstream_span(String::from(&*upstream.span_name));
         span.set_attribute(KeyValue::new(
             "upstream.connected",
             ctx.upstream.connected_count.unwrap_or_default() as i64,
@@ -1736,8 +1736,8 @@ async fn new_peer(
         let features = ctx.features.get_or_insert_default();
         features.upstream_span = Some(span);
     }
+    ctx.upstream.address = upstream.address_of(peer.address());
     ctx.upstream.upstream_instance = Some(upstream);
-    ctx.upstream.address = peer.address().to_string();
     Some(peer)
 }
 
@@ -1750,7 +1750,7 @@ fn start_connect(ctx: &mut Ctx, peer: HttpPeer) -> HttpPeer {
 /// Notes the backend of the attempt that has just failed, for the next
 /// one to go to another.
 fn remember_failed_backend(ctx: &mut Ctx) {
-    let address = &ctx.upstream.address;
+    let address = ctx.upstream.address.as_ref();
     if !address.is_empty()
         && !ctx
             .upstream
@@ -1758,7 +1758,7 @@ fn remember_failed_backend(ctx: &mut Ctx) {
             .iter()
             .any(|item| item == address)
     {
-        ctx.upstream.failed_addresses.push(address.clone());
+        ctx.upstream.failed_addresses.push(address.to_string());
     }
 }
 
@@ -2090,9 +2090,10 @@ impl ProxyHttp for Server {
                     // A retry goes to a backend that has not failed this
                     // request where there is one: one that has is all the
                     // upstream has left, and the fallback is tried first.
-                    let address = peer.address().to_string();
                     if fallback.is_none()
-                        || !ctx.upstream.failed_addresses.contains(&address)
+                        || !ctx.upstream.failed_addresses.iter().any(|failed| {
+                            failed == ctx.upstream.address.as_ref()
+                        })
                     {
                         return Ok(Box::new(start_connect(ctx, peer)));
                     }
@@ -4738,7 +4739,7 @@ value = 'proxy_set_headers = ["name:value"]'
             let mut ctx = Ctx::default();
             ctx.state.proxying = true;
             ctx.upstream.upstream_instance = Some(recorder.clone());
-            ctx.upstream.address = "127.0.0.1:5000".to_string();
+            ctx.upstream.address = "127.0.0.1:5000".into();
             let plugins: Vec<pingap_core::NamedPlugin> =
                 vec![("pages".into(), Arc::new(Intercepts))];
             ctx.plugins = Some(Arc::from(plugins));
@@ -5299,7 +5300,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 let mut session = Session::new_h1(Box::new(mock_io));
                 session.read_request().await.unwrap();
                 let mut ctx = Ctx::default();
-                ctx.upstream.address = "127.0.0.1:9".to_string();
+                ctx.upstream.address = "127.0.0.1:9".into();
                 let mut e = Error::new_up(etype);
                 e.retry = retry;
                 let e = server.error_while_proxy(
@@ -5607,7 +5608,7 @@ addr = "127.0.0.1:6188"
         let failed_connect =
             |server: &Server, session: &mut Session, ctx: &mut Ctx| {
                 let peer = HttpPeer::new(
-                    ctx.upstream.address.as_str(),
+                    ctx.upstream.address.as_ref(),
                     false,
                     String::new(),
                 );

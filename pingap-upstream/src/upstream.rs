@@ -38,6 +38,7 @@ use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
     ProxyProtocolConnectOptions, ProxyProtocolConnector, ProxyProtocolVersion,
     downstream_will_reuse, new_proxy_protocol_header, new_tcp_keepalive,
+    now_ms,
 };
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
@@ -171,6 +172,31 @@ impl InflightCounts {
     }
 }
 
+const MAX_CACHED_BACKEND_ADDRESSES: usize = 2048;
+
+/// Cached `Arc<str>` representations of backend addresses so per-request peer
+/// bookkeeping, access logs, and OpenTelemetry attributes avoid formatting
+/// `peer.address().to_string()` on every request.
+#[derive(Default)]
+struct BackendAddressCache {
+    addrs: DashMap<BackendAddr, Arc<str>>,
+}
+
+impl BackendAddressCache {
+    #[inline]
+    fn of(&self, addr: &BackendAddr) -> Arc<str> {
+        if let Some(cached) = self.addrs.get(addr) {
+            return cached.clone();
+        }
+        let formatted: Arc<str> = Arc::from(addr.to_string());
+        if self.addrs.len() >= MAX_CACHED_BACKEND_ADDRESSES {
+            self.addrs.clear();
+        }
+        self.addrs.insert(addr.clone(), formatted.clone());
+        formatted
+    }
+}
+
 /// What a request has been through before it asks for a backend, and
 /// where what the upstream gives it for this attempt is put.
 pub struct PeerAttempt<'a> {
@@ -296,6 +322,9 @@ pub struct Upstream {
     /// Unique identifier for this upstream group
     pub name: Arc<str>,
 
+    /// Preformatted OpenTelemetry span name (`upstream.<name>`)
+    pub span_name: Box<str>,
+
     /// Hash key used to detect configuration changes
     pub key: String,
 
@@ -414,6 +443,10 @@ pub struct Upstream {
     /// Set until the first health check round has checked a backend;
     /// during it one failed check is enough to mark a backend unhealthy.
     first_round: Arc<FirstRound>,
+
+    /// Cached `Arc<str>` per backend socket address for zero-allocation lookup.
+    #[debug(skip)]
+    address_cache: BackendAddressCache,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -983,12 +1016,22 @@ fn split_host_port(host: &str, default_port: u16) -> (&str, u16) {
 /// Whether `backend` is one of the addresses in `failed`, which are
 /// written as a peer shows its address. A unix socket is that path,
 /// without the `unix:` prefix both sides print.
-fn has_failed(backend: &Backend, failed: &[String]) -> bool {
+#[inline]
+fn has_failed_cached(
+    cache: &BackendAddressCache,
+    backend: &Backend,
+    failed: &[String],
+) -> bool {
     if failed.is_empty() {
         return false;
     }
-    let addr = backend.addr.to_string();
-    failed.contains(&addr)
+    let addr = cache.of(&backend.addr);
+    failed.iter().any(|item| item == addr.as_ref())
+}
+
+#[cfg(test)]
+fn has_failed(backend: &Backend, failed: &[String]) -> bool {
+    has_failed_cached(&BackendAddressCache::default(), backend, failed)
 }
 
 /// The peer for `backend`. `HttpPeer::new` only builds an IP peer, and
@@ -1030,9 +1073,93 @@ fn host_name(host: &str) -> &str {
     split_host_port(host, 0).0
 }
 
+/// Short TTL for transparent-proxy hostname lookups so concurrent bursts to
+/// the same `Host` avoid dispatching `getaddrinfo` onto Tokio's blocking pool
+/// on every request while picking up DNS changes within seconds.
+const TRANSPARENT_DNS_TTL_MS: u64 = 5_000;
+const MAX_TRANSPARENT_DNS_ENTRIES: usize = 4096;
+const MAX_DNS_NAME_LEN: usize = 253;
+
+#[derive(Clone, Copy, Default)]
+struct CachedHostIp {
+    any: Option<(IpAddr, u64)>,
+    ipv4: Option<(IpAddr, u64)>,
+}
+
+impl CachedHostIp {
+    #[inline]
+    fn get(&self, ipv4_only: bool, now: u64) -> Option<IpAddr> {
+        let (ip, expires_at) = if ipv4_only { self.ipv4? } else { self.any? };
+        (now < expires_at).then_some(ip)
+    }
+
+    #[inline]
+    fn record(&mut self, ip: IpAddr, ipv4_only: bool, expires_at: u64) {
+        if ipv4_only {
+            self.ipv4 = Some((ip, expires_at));
+        } else {
+            self.any = Some((ip, expires_at));
+            if ip.is_ipv4() {
+                self.ipv4 = Some((ip, expires_at));
+            }
+        }
+    }
+
+    #[inline]
+    fn is_expired(&self, now: u64) -> bool {
+        self.any.is_none_or(|(_, exp)| now >= exp)
+            && self.ipv4.is_none_or(|(_, exp)| now >= exp)
+    }
+}
+
+static TRANSPARENT_DNS_CACHE: LazyLock<DashMap<Box<str>, CachedHostIp>> =
+    LazyLock::new(DashMap::new);
+
+#[inline]
+fn normalize_dns_cache_key<'a>(
+    name: &'a str,
+    lower_buf: &'a mut [u8; 256],
+) -> Option<&'a str> {
+    if name.is_empty() || name.len() > MAX_DNS_NAME_LEN {
+        return None;
+    }
+    if !name.bytes().any(|b| b.is_ascii_uppercase()) {
+        return Some(name);
+    }
+    let slice = &mut lower_buf[..name.len()];
+    slice.copy_from_slice(name.as_bytes());
+    slice.make_ascii_lowercase();
+    std::str::from_utf8(slice).ok()
+}
+
+#[inline]
+fn lookup_cached_host_ip(key: &str, ipv4_only: bool) -> Option<IpAddr> {
+    let entry = TRANSPARENT_DNS_CACHE.get(key)?;
+    entry.get(ipv4_only, now_ms())
+}
+
+fn store_cached_host_ip(key: &str, ip: IpAddr, ipv4_only: bool) {
+    let expires_at = now_ms().saturating_add(TRANSPARENT_DNS_TTL_MS);
+    if let Some(mut entry) = TRANSPARENT_DNS_CACHE.get_mut(key) {
+        entry.record(ip, ipv4_only, expires_at);
+        return;
+    }
+    if TRANSPARENT_DNS_CACHE.len() >= MAX_TRANSPARENT_DNS_ENTRIES {
+        let now = now_ms();
+        TRANSPARENT_DNS_CACHE.retain(|_, v| !v.is_expired(now));
+        if TRANSPARENT_DNS_CACHE.len() >= MAX_TRANSPARENT_DNS_ENTRIES {
+            TRANSPARENT_DNS_CACHE.clear();
+        }
+    }
+    let mut cached = CachedHostIp::default();
+    cached.record(ip, ipv4_only, expires_at);
+    TRANSPARENT_DNS_CACHE.insert(Box::from(key), cached);
+}
+
 /// Resolves a `Host` value to a socket address. An IP literal is parsed;
-/// a name is looked up on tokio's blocking pool, taking the first address
-/// (the first IPv4 one with `ipv4_only`). `None` when it does not resolve.
+/// a name checks the short-TTL transparent DNS cache first and otherwise
+/// looks up on tokio's blocking pool, taking the first address (the first
+/// IPv4 one with `ipv4_only`). `None` when it does not resolve.
 async fn resolve_host(
     host: &str,
     default_port: u16,
@@ -1042,7 +1169,14 @@ async fn resolve_host(
     if let Ok(ip) = name.parse::<IpAddr>() {
         return Some(SocketAddr::new(ip, port));
     }
-    match tokio::net::lookup_host((name, port)).await {
+    let mut lower_buf = [0u8; 256];
+    let cache_key = normalize_dns_cache_key(name, &mut lower_buf);
+    if let Some(key) = cache_key
+        && let Some(ip) = lookup_cached_host_ip(key, ipv4_only)
+    {
+        return Some(SocketAddr::new(ip, port));
+    }
+    let resolved = match tokio::net::lookup_host((name, port)).await {
         Ok(mut addrs) => addrs.find(|addr| !ipv4_only || addr.is_ipv4()),
         Err(e) => {
             debug!(
@@ -1053,7 +1187,11 @@ async fn resolve_host(
             );
             None
         },
+    }?;
+    if let Some(key) = cache_key {
+        store_cached_host_ip(key, resolved.ip(), ipv4_only);
     }
+    Some(resolved)
 }
 
 impl Upstream {
@@ -1162,6 +1300,7 @@ impl Upstream {
 
         let up = Self {
             name: name.into(),
+            span_name: format!("upstream.{name}").into_boxed_str(),
             key,
             tls,
             sni,
@@ -1214,6 +1353,7 @@ impl Upstream {
             },
             circuit_breaker_states,
             first_round,
+            address_cache: BackendAddressCache::default(),
         };
         debug!(
             target: LOG_TARGET,
@@ -1221,6 +1361,13 @@ impl Upstream {
             "new upstream: {up:?}"
         );
         Ok(up)
+    }
+
+    /// Returns a cached `Arc<str>` representation of `addr` so callers do not
+    /// allocate a new `String` on every request.
+    #[inline]
+    pub fn address_of(&self, addr: &BackendAddr) -> Arc<str> {
+        self.address_cache.of(addr)
     }
 
     #[inline]
@@ -1299,7 +1446,7 @@ impl Upstream {
         if !failed.is_empty()
             && let Some(backend) =
                 self.select_accepted(lb, key, max_steps, |backend| {
-                    !has_failed(backend, failed)
+                    !has_failed_cached(&self.address_cache, backend, failed)
                 })
         {
             return Some(backend);
@@ -1334,7 +1481,9 @@ impl Upstream {
             let mut turn = set.iter().skip(start).chain(set.iter().take(start));
             return turn
                 .clone()
-                .find(|backend| !has_failed(backend, failed))
+                .find(|backend| {
+                    !has_failed_cached(&self.address_cache, backend, failed)
+                })
                 .or_else(|| turn.next())
                 .cloned();
         }
@@ -1342,8 +1491,10 @@ impl Upstream {
         // also one whose key is empty (the cookie it is taken from is
         // not there).
         let steps = max_steps(set.len());
-        lb.select_with(key, steps, |backend, _| !has_failed(backend, failed))
-            .or_else(|| lb.select_with(key, steps, |_, _| true))
+        lb.select_with(key, steps, |backend, _| {
+            !has_failed_cached(&self.address_cache, backend, failed)
+        })
+        .or_else(|| lb.select_with(key, steps, |_, _| true))
     }
 
     /// The selection of [`Self::select_backend`] among the backends that
@@ -1414,7 +1565,9 @@ impl Upstream {
             if let Some(backend) = set
                 .iter()
                 .find(|backend| backend_id(backend) == wanted)
-                .filter(|backend| !has_failed(backend, failed))
+                .filter(|backend| {
+                    !has_failed_cached(&self.address_cache, backend, failed)
+                })
             {
                 if self.accept_backend(backend, backends.ready(backend)) {
                     return Some((backend.clone(), None));
@@ -1537,7 +1690,12 @@ impl Upstream {
         (!failed.is_empty())
             .then(|| {
                 choose(&|backend| {
-                    healthy(backend) && !has_failed(backend, failed)
+                    healthy(backend)
+                        && !has_failed_cached(
+                            &self.address_cache,
+                            backend,
+                            failed,
+                        )
                 })
             })
             .flatten()
@@ -1546,8 +1704,10 @@ impl Upstream {
                 if !self.fail_open {
                     return None;
                 }
-                pick(&|backend| !has_failed(backend, failed))
-                    .or_else(|| pick(&|_| true))
+                pick(&|backend| {
+                    !has_failed_cached(&self.address_cache, backend, failed)
+                })
+                .or_else(|| pick(&|_| true))
             })
     }
 
@@ -3153,7 +3313,49 @@ mod tests {
         let addr = resolve_host("localhost", 80, true).await.unwrap();
         assert_eq!(true, addr.is_ipv4());
         assert_eq!(80, addr.port());
+        // Mixed-case lookup hits the same normalized cache entry and applies
+        // the caller's port.
+        let cached_addr =
+            resolve_host("LocalHost:8088", 80, true).await.unwrap();
+        assert_eq!(addr.ip(), cached_addr.ip());
+        assert_eq!(8088, cached_addr.port());
         assert_eq!(None, resolve_host("nonexistent.invalid", 80, false).await);
+    }
+
+    #[test]
+    fn test_address_cache_and_dns_cache_helpers() {
+        let up = Upstream::new(
+            "api",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:8001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!("upstream.api", &*up.span_name);
+        let addr: super::BackendAddr = "127.0.0.1:8001".parse().unwrap();
+        let first = up.address_of(&addr);
+        let second = up.address_of(&addr);
+        assert_eq!("127.0.0.1:8001", first.as_ref());
+        assert_eq!(true, Arc::ptr_eq(&first, &second));
+
+        let mut buf = [0u8; 256];
+        assert_eq!(
+            Some("example.com"),
+            super::normalize_dns_cache_key("Example.COM", &mut buf)
+        );
+        assert_eq!(None, super::normalize_dns_cache_key("", &mut buf));
+        let overlong = "a".repeat(254);
+        assert_eq!(None, super::normalize_dns_cache_key(&overlong, &mut buf));
+
+        let mut entry = super::CachedHostIp::default();
+        let v4: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        entry.record(v4, false, 1_000);
+        assert_eq!(Some(v4), entry.get(false, 999));
+        assert_eq!(Some(v4), entry.get(true, 999));
+        assert_eq!(None, entry.get(false, 1_000));
+        assert_eq!(true, entry.is_expired(1_000));
     }
 
     /// A transparent upstream resolves the request's host itself: an IP
