@@ -198,35 +198,65 @@ impl BackgroundService for BackgroundTaskService {
                 {
                     started[index] = None;
                     let task_name = self.tasks[index].0.as_str();
-                    match result {
-                        Ok(true) => {
-                            debug!(
-                                target: LOG_TARGET,
-                                name = self.name,
-                                task = task_name,
-                                elapsed = duration_to_string(elapsed),
-                                "background task executed successfully"
-                            );
-                        }
-                        Ok(false) => {
-                            // Task was skipped, do nothing.
-                        }
-                        Err(e) => {
-                            error!(
-                                target: LOG_TARGET,
-                                name = self.name,
-                                task = task_name,
-                                error = %e,
-                                "background task failed"
-                            );
-                        }
+                    log_task_result(&self.name, task_name, result, elapsed);
+                }
+            }
+        }
+        // Drain in-flight tasks with a bounded timeout so a hung task cannot
+        // block shutdown indefinitely.
+        if !running.is_empty() {
+            let drain_deadline = tokio::time::sleep(Duration::from_secs(5));
+            tokio::pin!(drain_deadline);
+            while !running.is_empty() {
+                tokio::select! {
+                    _ = &mut drain_deadline => {
+                        warn!(
+                            target: LOG_TARGET,
+                            name = self.name,
+                            remaining = running.len(),
+                            "background service drain timeout expired"
+                        );
+                        break;
+                    }
+                    Some((index, result, elapsed)) = running.next() => {
+                        started[index] = None;
+                        let task_name = self.tasks[index].0.as_str();
+                        log_task_result(&self.name, task_name, result, elapsed);
                     }
                 }
             }
         }
-        // Nothing is cancelled: a task is not stopped halfway through its
-        // work, as it was not when a round was waited for.
-        while running.next().await.is_some() {}
+    }
+}
+
+fn log_task_result(
+    service_name: &str,
+    task_name: &str,
+    result: Result<bool, Error>,
+    elapsed: Duration,
+) {
+    match result {
+        Ok(true) => {
+            debug!(
+                target: LOG_TARGET,
+                name = service_name,
+                task = task_name,
+                elapsed = duration_to_string(elapsed),
+                "background task executed successfully"
+            );
+        },
+        Ok(false) => {
+            // Task was skipped, do nothing.
+        },
+        Err(e) => {
+            error!(
+                target: LOG_TARGET,
+                name = service_name,
+                task = task_name,
+                error = %e,
+                "background task failed"
+            );
+        },
     }
 }
 
