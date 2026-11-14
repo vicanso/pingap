@@ -644,7 +644,11 @@ export default {
     h2ConnectionWindowSizePlaceholder:
       "Input the HTTP/2 connection-level flow-control window, e.g. 8mib",
     sni: "Sni",
-    sniPlaceholder: "Input server name indication for tls protocol",
+    sniPlaceholder: "Input server name indication (e.g. api.example.com or $host)",
+    sniTips:
+      "Upstream TLS is only enabled when SNI is set; use $host to forward the request Host for multi-domain backends",
+    sniPort443Warning:
+      "Port 443 detected in upstream addresses without SNI. Pingap only enables upstream TLS when SNI is configured — expand TLS settings below and set SNI (e.g. a hostname or $host), otherwise plain HTTP will be used.",
     verifyCert: "Verify Certificate",
     ipv4Only: "Ipv4 Only",
     enableTracer: "Enable Tracer",

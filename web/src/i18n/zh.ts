@@ -592,7 +592,11 @@ export default {
     h2ConnectionWindowSize: "H2 连接窗口大小",
     h2ConnectionWindowSizePlaceholder: "输入 HTTP/2 连接级流控窗口，如 8mib",
     sni: "Sni",
-    sniPlaceholder: "输入sni的名称",
+    sniPlaceholder: "输入sni的名称（如 api.example.com 或 $host）",
+    sniTips:
+      "Pingap 仅在配置 SNI 时对上游启用 TLS；多域名后端可填写 $host 透传请求 Host",
+    sniPort443Warning:
+      "检测到上游地址使用了 443 端口，但尚未配置 SNI。Pingap 仅在设置 SNI 时启用上游 TLS，请展开下方的「TLS」设置并填写 SNI（如域名或 $host），否则将以明文 HTTP 连接 443 端口。",
     verifyCert: "证书校验",
     ipv4Only: "仅使用ipv4",
     enableTracer: "启用跟踪器",

@@ -1,3 +1,5 @@
+import React from "react";
+import { TriangleAlert } from "lucide-react";
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
@@ -32,6 +34,26 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   return (upstreams[name] || {}) as Upstream;
 }
 
+function hasPort443(addrs?: string[]): boolean {
+  return (addrs || []).some((entry) => {
+    const hostPort = entry.trim().split(/\s+/)[0] || "";
+    if (!hostPort || hostPort.startsWith("unix:")) {
+      return false;
+    }
+    if (hostPort.startsWith("[")) {
+      const idx = hostPort.indexOf("]:");
+      return idx !== -1 && hostPort.slice(idx + 2) === "443";
+    }
+    const firstColon = hostPort.indexOf(":");
+    const lastColon = hostPort.lastIndexOf(":");
+    return (
+      firstColon !== -1 &&
+      firstColon === lastColon &&
+      hostPort.slice(lastColon + 1) === "443"
+    );
+  });
+}
+
 export default function Upstreams() {
   const upstreamI18n = useI18n("upstream");
   const i18n = useI18n();
@@ -63,6 +85,11 @@ export default function Upstreams() {
   upstreams.sort();
   // No `name` in the url means the category overview, `*` means the create form.
   const currentUpstream = searchParams.get("name") || "";
+  const [livePatch, setLivePatch] = React.useState<Record<string, unknown>>({});
+
+  React.useEffect(() => {
+    setLivePatch({});
+  }, [currentUpstream, version]);
 
   if (!initialized) {
     return <LoadingPage />;
@@ -441,6 +468,7 @@ export default function Upstreams() {
       section: sec.tls,
       label: upstreamI18n("sni"),
       placeholder: upstreamI18n("sniPlaceholder"),
+      tips: upstreamI18n("sniTips"),
       defaultValue: upstreamConfig.sni,
       span: 2,
       category: ExFormItemCategory.TEXT,
@@ -724,6 +752,15 @@ export default function Upstreams() {
     });
   };
 
+  const liveAddrs = (
+    "addrs" in livePatch ? livePatch.addrs : upstreamConfig.addrs
+  ) as string[] | undefined;
+  const liveSni = (
+    "sni" in livePatch ? livePatch.sni : upstreamConfig.sni
+  ) as string | undefined;
+  const showPort443SniWarning =
+    hasPort443(liveAddrs) && !(liveSni || "").trim();
+
   return (
     <PageShell
       title={upstreamI18n("title")}
@@ -783,12 +820,22 @@ export default function Upstreams() {
           ]}
         />
       )}
+      {showPort443SniWarning && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>{upstreamI18n("sniPort443Warning")}</span>
+        </div>
+      )}
       <ExForm
         category="upstream"
         key={`${currentUpstream}-${version}`}
         items={items}
         schema={schema}
         defaultShow={defaultShow}
+        onValueChange={setLivePatch}
         onRemove={currentUpstream === newUpstream ? undefined : onRemove}
         onSave={async (value) => {
           let name = currentUpstream;

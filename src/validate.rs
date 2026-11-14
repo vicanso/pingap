@@ -641,11 +641,56 @@ pub fn check_build_keys(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
 /// And of what goes by a fingerprint where there is none.
 static JA4_REPORTED: AtomicU64 = AtomicU64::new(0);
 
+/// Returns whether an upstream `addrs` entry targets port 443 (`host:443`,
+/// `ipv4:443`, or `[ipv6]:443`, ignoring trailing weight and bare IPv6 literals).
+fn addr_uses_port_443(addr: &str) -> bool {
+    let host_port = addr.split_whitespace().next().unwrap_or("");
+    if host_port.is_empty() || host_port.starts_with("unix:") {
+        return false;
+    }
+    if let Some(rest) = host_port.strip_prefix('[') {
+        return rest.split_once("]:").is_some_and(|(_, port)| port == "443");
+    }
+    if let Some((host, port)) = host_port.split_once(':') {
+        // A bare IPv6 literal without brackets has more than one colon and no port.
+        return !host.contains(':') && port == "443";
+    }
+    false
+}
+
+/// Upstreams that connect to port 443 without `sni`: Pingap only enables
+/// upstream TLS when `sni` is set, so omitting `sni` sends plain HTTP to :443.
+fn upstreams_port_443_without_sni(config: &PingapConfig) -> Vec<String> {
+    let mut names: Vec<&String> = config.upstreams.keys().collect();
+    names.sort();
+    let mut found = vec![];
+    for name in names {
+        let upstream = &config.upstreams[name];
+        if upstream
+            .sni
+            .as_deref()
+            .is_some_and(|sni| !sni.trim().is_empty())
+        {
+            continue;
+        }
+        if upstream.addrs.iter().any(|addr| addr_uses_port_443(addr)) {
+            found.push(format!(
+                "upstream.{name}: addr uses port 443 without `sni`; Pingap only enables upstream TLS when `sni` is set (set `sni` or \"$host\")"
+            ));
+        }
+    }
+    found
+}
+
 /// And of what plugins have and do not read.
 static UNREAD_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
 
+/// And of upstreams targeting port 443 without `sni`.
+static PORT_443_WITHOUT_SNI_REPORTED: AtomicU64 = AtomicU64::new(0);
+
 /// Warns about the settings of `config` that have no effect - what
-/// [`ja4_without_fingerprint`] and [`unread_plugin_keys`] find - once for
+/// [`ja4_without_fingerprint`], [`unread_plugin_keys`], and
+/// [`upstreams_port_443_without_sni`] find - once for
 /// the same findings, at the places of [`check_build_keys`]: `running` is
 /// `config` itself at a start, the configuration in use at a reload. Said
 /// there and not where a plugin is built, which is every reload and every
@@ -658,6 +703,10 @@ pub fn check_settings_without_effect(
     // Each list on its own: a change of one does not say the other again.
     warn_once(&JA4_REPORTED, &ja4_without_fingerprint(config, running));
     warn_once(&UNREAD_KEYS_REPORTED, &unread_plugin_keys(config));
+    warn_once(
+        &PORT_443_WITHOUT_SNI_REPORTED,
+        &upstreams_port_443_without_sni(config),
+    );
 }
 
 /// The answer to a change the admin is about to store, for
@@ -1179,5 +1228,42 @@ max = 10
         // and one that does not yet.
         assert_eq!(true, check_change(&broken, &valid).is_ok());
         assert_eq!(true, check_change(&broken, &broken).is_ok());
+    }
+
+    #[test]
+    fn test_upstreams_port_443_without_sni() {
+        let cfg = toml_config(
+            r#"
+[upstreams.no_sni_host]
+addrs = ["api.example.com:443 2"]
+
+[upstreams.no_sni_v6]
+addrs = ["[::1]:443"]
+
+[upstreams.bare_v6_443]
+addrs = ["2001:db8::443"]
+
+[upstreams.with_sni]
+addrs = ["api.example.com:443"]
+sni = "api.example.com"
+
+[upstreams.with_host_sni]
+addrs = ["10.0.0.1:443"]
+sni = "$host"
+
+[upstreams.plain_80]
+addrs = ["127.0.0.1:80", "127.0.0.1:8443"]
+"#,
+        )
+        .to_pingap_config(false)
+        .unwrap();
+        let warnings = upstreams_port_443_without_sni(&cfg);
+        assert_eq!(
+            vec![
+                "upstream.no_sni_host: addr uses port 443 without `sni`; Pingap only enables upstream TLS when `sni` is set (set `sni` or \"$host\")".to_string(),
+                "upstream.no_sni_v6: addr uses port 443 without `sni`; Pingap only enables upstream TLS when `sni` is set (set `sni` or \"$host\")".to_string(),
+            ],
+            warnings
+        );
     }
 }
