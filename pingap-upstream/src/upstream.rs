@@ -2374,10 +2374,10 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        InflightGuard, PeerAttempt, Upstream, UpstreamConf, UpstreamProvider,
-        ca_group_key, has_failed, host_name, http_peer_for_backend,
-        new_backends, new_client_cert, new_load_balancer, resolve_host,
-        split_host_port,
+        DEFAULT_MAX_H2_STREAMS, InflightGuard, P2C_BACKEND_THRESHOLD,
+        PeerAttempt, Upstream, UpstreamConf, UpstreamProvider, ca_group_key,
+        has_failed, host_name, http_peer_for_backend, new_backends,
+        new_client_cert, new_load_balancer, resolve_host, split_host_port,
     };
     use crate::first_round::FirstRound;
     use crate::new_ahash_upstreams;

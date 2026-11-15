@@ -203,7 +203,7 @@ impl BufferBudget {
         }
         let ok = self
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |cur| {
                 cur.checked_add(bytes).filter(|&next| next <= self.limit)
             })
             .is_ok();

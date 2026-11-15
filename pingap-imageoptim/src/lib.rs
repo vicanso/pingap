@@ -58,7 +58,7 @@ struct InFlightGuard {
 impl InFlightGuard {
     fn try_acquire(counter: &Arc<AtomicUsize>, max: usize) -> Option<Self> {
         counter
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current < max).then_some(current + 1)
             })
             .ok()
