@@ -1293,14 +1293,8 @@ impl Server {
             ctx.features.get_or_insert_default().original_uri = original_uri;
         }
 
-        if self
-            .handle_request_plugin(PluginStep::Request, session, ctx)
-            .await?
-        {
-            return Ok(true);
-        }
-
-        Ok(false)
+        self.handle_request_plugin(PluginStep::Request, session, ctx)
+            .await
     }
 }
 
