@@ -2896,7 +2896,7 @@ mod tests {
         };
         let v2 = ProxyProtocolVersion::V2;
         let first = peer_for("192.0.2.1:56324", v2);
-        assert_eq!(None, first.options.idle_timeout);
+        assert_eq!(Some(Duration::from_secs(60)), first.options.idle_timeout);
         let mut short_lived = peer.clone();
         up.send_proxy_protocol_to(
             &mut short_lived,
