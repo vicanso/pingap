@@ -64,6 +64,7 @@ export default function Plugins() {
   const [currentCategory, setCurrentCategory] = React.useState(
     (pluginConfig.category as string) || "",
   );
+  const [draftName, setDraftName] = React.useState("");
 
   if (!initialized) {
     return <LoadingPage />;
@@ -139,16 +140,16 @@ export default function Plugins() {
         label: pluginI18n("category"),
         placeholder: "",
         defaultValue: currentCategory,
-        category: ExFormItemCategory.RADIOS,
+        category: ExFormItemCategory.PLUGIN_CATEGORY,
         span: 6,
-        options: newStringOptions(basicInfo.supported_plugins, true),
+        options: newStringOptions(basicInfo.supported_plugins, false),
       },
       {
         name: "_name_",
         section: sec.basic,
         label: pluginI18n("name"),
         placeholder: pluginI18n("namePlaceholder"),
-        defaultValue: "",
+        defaultValue: draftName,
         span: 6,
         category: ExFormItemCategory.TEXT,
       },
@@ -300,7 +301,18 @@ export default function Plugins() {
         items={items}
         schema={schema}
         defaultShow={defaultShow}
+        allowSave={
+          currentPlugin === newPlugin &&
+          Boolean(currentCategory) &&
+          Boolean(draftName.trim())
+        }
         onValueChange={(value) => {
+          if (
+            currentPlugin === newPlugin &&
+            typeof value["_name_"] === "string"
+          ) {
+            setDraftName(value["_name_"]);
+          }
           const category = value.category as string;
           if (category && category !== currentCategory) {
             setCurrentCategory(category);
@@ -315,6 +327,10 @@ export default function Plugins() {
           delete value["_name_"];
           omitEmptyArrayString(value);
           await update("plugin", name, value);
+          if (currentPlugin === newPlugin) {
+            setDraftName("");
+            setCurrentCategory("");
+          }
           handleSelectPlugin(name);
         }}
       />

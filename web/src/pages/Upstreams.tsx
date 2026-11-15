@@ -85,11 +85,15 @@ export default function Upstreams() {
   upstreams.sort();
   // No `name` in the url means the category overview, `*` means the create form.
   const currentUpstream = searchParams.get("name") || "";
-  const [livePatch, setLivePatch] = React.useState<Record<string, unknown>>({});
-
-  React.useEffect(() => {
-    setLivePatch({});
-  }, [currentUpstream, version]);
+  const patchScope = `${currentUpstream}-${version}`;
+  const [liveState, setLiveState] = React.useState<{
+    scope: string;
+    patch: Record<string, unknown>;
+  }>({ scope: patchScope, patch: {} });
+  const livePatch = React.useMemo(
+    () => (liveState.scope === patchScope ? liveState.patch : {}),
+    [liveState, patchScope],
+  );
 
   if (!initialized) {
     return <LoadingPage />;
@@ -755,9 +759,8 @@ export default function Upstreams() {
   const liveAddrs = (
     "addrs" in livePatch ? livePatch.addrs : upstreamConfig.addrs
   ) as string[] | undefined;
-  const liveSni = (
-    "sni" in livePatch ? livePatch.sni : upstreamConfig.sni
-  ) as string | undefined;
+  const liveSni = ("sni" in livePatch ? livePatch.sni : upstreamConfig.sni) as
+    string | undefined;
   const showPort443SniWarning =
     hasPort443(liveAddrs) && !(liveSni || "").trim();
 
@@ -835,7 +838,7 @@ export default function Upstreams() {
         items={items}
         schema={schema}
         defaultShow={defaultShow}
-        onValueChange={setLivePatch}
+        onValueChange={(patch) => setLiveState({ scope: patchScope, patch })}
         onRemove={currentUpstream === newUpstream ? undefined : onRemove}
         onSave={async (value) => {
           let name = currentUpstream;

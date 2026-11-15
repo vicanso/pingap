@@ -1,5 +1,25 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { ChevronRight, Plus, Search, X } from "lucide-react";
+
+function matchesKeyword(value: unknown, keyword: string): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value).toLowerCase().includes(keyword);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => matchesKeyword(item, keyword));
+  }
+  if (typeof value === "object") {
+    return Object.values(value).some((v) => matchesKeyword(v, keyword));
+  }
+  return false;
+}
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -74,8 +94,12 @@ export function ConfigEntityList<T>({
     if (!keyword) {
       return names;
     }
-    return names.filter((name) => name.toLowerCase().includes(keyword));
-  }, [names, keyword]);
+    return names.filter(
+      (name) =>
+        name.toLowerCase().includes(keyword) ||
+        matchesKeyword(values[name], keyword),
+    );
+  }, [names, values, keyword]);
 
   const entityUrl = (name: string) =>
     `${basePath}?name=${encodeURIComponent(name)}`;
@@ -113,16 +137,33 @@ export function ConfigEntityList<T>({
         </div>
       ) : (
         <div className="space-y-3">
-          {names.length >= 5 && (
-            <div className="relative max-w-sm">
-              <Input
-                type="search"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder={i18n("listFilterPlaceholder")}
-                className="h-9 pl-8"
-              />
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground opacity-70" />
+          {names.length >= 2 && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative w-full max-w-sm">
+                <Input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder={i18n("listFilterPlaceholder")}
+                  className="h-9 pl-8 pr-8"
+                />
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground opacity-70" />
+                {filter && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter("")}
+                    aria-label={i18n("multiSelect.clear")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+              {keyword && (
+                <span className="figure text-xs text-muted-foreground">
+                  {filteredNames.length} / {names.length}
+                </span>
+              )}
             </div>
           )}
           {filteredNames.length === 0 ? (
@@ -142,13 +183,14 @@ export function ConfigEntityList<T>({
                         {column.label}
                       </TableHead>
                     ))}
+                    <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredNames.map((name) => (
                     <TableRow
                       key={name}
-                      className="cursor-pointer transition-colors hover:bg-accent/50"
+                      className="group cursor-pointer transition-colors hover:bg-accent/50"
                       onClick={() => navigate(entityUrl(name))}
                     >
                       <TableCell className="py-3 font-medium">
@@ -174,6 +216,9 @@ export function ConfigEntityList<T>({
                           {column.render(values[name], name)}
                         </TableCell>
                       ))}
+                      <TableCell className="w-8 py-3 pr-3 text-right">
+                        <ChevronRight className="inline size-4 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

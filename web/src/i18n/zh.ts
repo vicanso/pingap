@@ -47,8 +47,42 @@ export default {
   unsavedDescription: "此表单有未保存的修改，离开后将会丢失",
   leave: "离开",
   backToList: "返回列表",
-  listFilterPlaceholder: "按名称筛选…",
-  listFilterEmpty: "没有匹配的名称",
+  listFilterPlaceholder: "搜索名称、地址或配置内容…",
+  listFilterEmpty: "没有匹配的条目",
+  commandPalette: {
+    placeholder: "跳转到页面、配置实体或新建条目…",
+    empty: "没有匹配的结果",
+    pagesGroup: "页面",
+    entitiesGroup: "配置实体",
+    createGroup: "快速新建",
+    shortcutHint: "快捷键 ⌘K / Ctrl+K",
+  },
+  multiSelect: {
+    searchPlaceholder: "搜索选项…",
+    empty: "无匹配选项",
+    selectAll: "全选",
+    clear: "清空",
+    close: "关闭",
+    moreCount: "+{{count}}",
+  },
+  formControls: {
+    addItem: "添加一项",
+    removeItem: "删除此项",
+    customInputTips: "切换为手动输入",
+    presetSelectTips: "切换为预设列表",
+    availableOptions: "可选项",
+    selectedOrder: "已选顺序",
+    emptySelected: "尚未选择任何选项",
+    moveUp: "上移",
+    moveDown: "下移",
+    reset: "重置修改",
+  },
+  configPage: {
+    importConfirmTitle: "确认导入并覆盖当前配置？",
+    importConfirmDescription:
+      "该操作会使用粘贴的 TOML 整体替换已保存的代理配置，请确认无误后继续。",
+    linesCount: "{{count}} 行",
+  },
   includes: "引入配置",
   includesPlaceholder: "选择要引入的配置",
   full: "全配置",
@@ -86,6 +120,13 @@ export default {
   header: {
     live: "运行中",
     active: "并发",
+    tools: "加解密与编码工具",
+    config: "TOML / HCL 配置",
+    settings: "外观与系统操作",
+    search: "快速跳转",
+    computeAndCopy: "计算并复制",
+    copy: "复制结果",
+    copied: "已复制到剪贴板",
   },
   nav: {
     home: "概览",
@@ -108,6 +149,8 @@ export default {
     description: "请输入管理员账号与密码",
     account: "账号",
     password: "密码",
+    showPassword: "显示密码",
+    hidePassword: "隐藏密码",
     submit: "登录",
     fail: "登录失败",
   },
@@ -336,7 +379,8 @@ export default {
       "dingtalk：开启了加签的机器人的密钥。wecom、ntfy 之外的其他类型：对正文签名，放在 X-Pingap-Signature 请求头里。",
     webhookHeaders: "Webhook请求头",
     webhookHeadersPlaceholder: "Name: value",
-    webhookHeadersTips: "Webhook 请求带的请求头，如 Authorization: Bearer token。",
+    webhookHeadersTips:
+      "Webhook 请求带的请求头，如 Authorization: Bearer token。",
     webhookTemplate: "Webhook消息模板",
     webhookTemplatePlaceholder: "输入消息模板，如 **{{title}}** {{message}}",
     webhookTemplateTips:
@@ -584,8 +628,7 @@ export default {
     clientCertTips:
       "用于要求客户端出示证书的上游（双向 TLS）。需和私钥一起配置；https 健康检查同样会出示它。",
     clientKey: "客户端私钥",
-    clientKeyPlaceholder:
-      "输入客户端证书的私钥（PEM、base64 或 PEM 文件路径）",
+    clientKeyPlaceholder: "输入客户端证书的私钥（PEM、base64 或 PEM 文件路径）",
     h2StreamWindowSize: "H2 流窗口大小",
     h2StreamWindowSizePlaceholder:
       "输入 HTTP/2 每个流的流控窗口，如 8mib（1 至 2GiB - 1）",
@@ -708,6 +751,14 @@ export default {
     plugin: "插件",
     pluginPlaceholder: "选择插件",
     category: "类型",
+    categorySearchPlaceholder: "搜索插件名称或标识（如 jwt, limit, cors）…",
+    categoryEmpty: "没有匹配的插件类型",
+    groupAll: "全部",
+    groupAuth: "认证与安全",
+    groupGuard: "访问控制",
+    groupTraffic: "流量与缓存",
+    groupContent: "请求头与内容",
+    groupSystem: "运维与系统",
     step: "执行步骤",
     statsPath: "路径",
     statsPathPlaceholder: "输入响应统计对应的路径",
@@ -951,8 +1002,7 @@ export default {
     jwtPublicKeyTips: "校验由对应私钥签发的令牌，需要选择非对称算法。",
     jwtJwksUrl: "JWKS 地址",
     jwtJwksUrlPlaceholder: "输入 JWKS 接口的地址",
-    jwtJwksUrlTips:
-      "从该地址获取密钥，并按令牌的 kid 选择。优先于公钥和密钥。",
+    jwtJwksUrlTips: "从该地址获取密钥，并按令牌的 kid 选择。优先于公钥和密钥。",
     jwtJwksTtl: "JWKS 有效期",
     jwtJwksTtlPlaceholder: "获取到的密钥的有效时长，默认: 1h",
     jwtRequireExp: "要求过期时间",
@@ -984,8 +1034,7 @@ export default {
     forwardAuthTimeoutPlaceholder: "认证请求的超时时长，默认: 10s",
     forwardAuthRequestHeaders: "请求头",
     forwardAuthRequestHeadersPlaceholder: "输入请求头名称",
-    forwardAuthRequestHeadersTips:
-      "转发给认证服务的请求头，留空表示全部转发。",
+    forwardAuthRequestHeadersTips: "转发给认证服务的请求头，留空表示全部转发。",
     forwardAuthAddHeaders: "添加请求头",
     forwardAuthAddHeadersPlaceholder: "输入认证响应中的响应头名称",
     forwardAuthAddHeadersTips:
@@ -1035,8 +1084,7 @@ export default {
       "通过这个请求头把国家码告诉上游。客户端自己发来的同名请求头会被去掉。",
     hmacAuthKeys: "密钥",
     hmacAuthKeysPlaceholder: "key_id:secret",
-    hmacAuthKeysTips:
-      "每个客户端一项：key id、冒号、给请求签名用的密钥。",
+    hmacAuthKeysTips: "每个客户端一项：key id、冒号、给请求签名用的密钥。",
     hmacAuthSignedHeaders: "必须签名的请求头",
     hmacAuthSignedHeadersPlaceholder: "请求头名称，如 host",
     hmacAuthSignedHeadersTips:
@@ -1172,7 +1220,8 @@ export default {
     requestHeadersRemoveHeader: "删除请求头",
     requestHeadersRemoveHeaderPlaceholder: "输入请求头名称",
     requestHeadersRenameHeader: "修改请求头",
-    requestHeadersRenamePlaceholder: "输入原来的请求头名称 : 输入新的请求头名称",
+    requestHeadersRenamePlaceholder:
+      "输入原来的请求头名称 : 输入新的请求头名称",
     uriBlockPaths: "路径",
     uriBlockPathsPlaceholder: "正则表达式，例如 \\.env$",
     uriBlockPathsTips:
@@ -1224,7 +1273,7 @@ export default {
       "匹配请求路径的正则，如 \\.(mp4|zip)$；留空表示所有请求",
     errorPageJson: "JSON",
     errorPageJsonTips:
-      "请求要的是 JSON（Accept 里有 application/json 且没有 text/html）时，错误以 {\"status\":502,\"message\":\"Bad Gateway\"} 返回。",
+      '请求要的是 JSON（Accept 里有 application/json 且没有 text/html）时，错误以 {"status":502,"message":"Bad Gateway"} 返回。',
     errorPageIntercept: "拦截上游的错误",
     errorPageInterceptTips:
       "上游响应的状态码在“页面”里有对应页面时，丢弃上游的响应并用该页面应答（需要配置页面）。上游的响应头一并丢弃，该响应不进缓存，HTTP/1.1 客户端连接在应答后关闭。关闭时上游的响应原样转发。",
@@ -1287,7 +1336,12 @@ export default {
     description: "此配置的历史记录",
     show: "查看历史记录",
     noHistory: "暂无历史记录",
+    latest: "最近",
+    copyJson: "复制 JSON",
+    copiedJson: "已复制历史配置",
     restore: "恢复",
+    restoreConfirmTitle: "确认恢复到此历史版本？",
+    restoreConfirmDescription: "当前配置将被该历史快照覆盖并立即保存。",
     restoreSuccess: "恢复成功",
   },
 };

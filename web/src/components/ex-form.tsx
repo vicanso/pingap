@@ -1,4 +1,11 @@
-import { LoaderCircle, UnfoldVertical, FoldVertical, CircleHelp } from "lucide-react";
+import {
+  LoaderCircle,
+  UnfoldVertical,
+  FoldVertical,
+  CircleHelp,
+  RotateCcw,
+} from "lucide-react";
+import { PluginCategoryPicker } from "@/components/plugin-category-picker";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -108,7 +115,6 @@ export interface ExFormItem {
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
-
 function FieldLabel({ label, tips }: { label: string; tips?: string }) {
   if (!tips) {
     return <FormLabel>{label}</FormLabel>;
@@ -152,6 +158,7 @@ interface ExFormProps {
   items: ExFormItem[];
   defaultShow?: number;
   onlyModified?: boolean;
+  allowSave?: boolean;
   cols?: number;
   onSave?: FormContextValue["onSave"];
   onValueChange?: FormContextValue["onValueChange"];
@@ -164,6 +171,7 @@ export function ExForm({
   items,
   defaultShow = 0,
   onlyModified,
+  allowSave = false,
   onSave,
   onRemove,
   onValueChange,
@@ -193,6 +201,7 @@ export function ExForm({
     {} as Record<string, unknown>,
   );
   const [updatedCount, setUpdatedCount] = React.useState(0);
+  const [resetNonce, setResetNonce] = React.useState(0);
   const defaultValues: Record<string, unknown> = {};
   const originalValues: Record<string, unknown> = {};
   items.forEach((item) => {
@@ -347,20 +356,55 @@ export function ExForm({
           control={form.control}
           render={({ field }) => {
             switch (item.category) {
+              case ExFormItemCategory.PLUGIN_CATEGORY: {
+                const selectedValue =
+                  (field.value as string | undefined) ??
+                  (item.defaultValue as string) ??
+                  "";
+                return (
+                  <FormItem>
+                    <FieldLabel label={item.label} tips={item.tips} />
+                    <FormControl>
+                      <PluginCategoryPicker
+                        options={item.options || []}
+                        disabled={item.readOnly || false}
+                        value={selectedValue}
+                        onChange={(value) => {
+                          form.setValue(item.name, value);
+                          setUpdated(item.name, value);
+                        }}
+                      />
+                    </FormControl>
+                  </FormItem>
+                );
+              }
               case ExFormItemCategory.RADIOS: {
+                const rawValue =
+                  field.value !== undefined ? field.value : item.defaultValue;
+                const selectedOption =
+                  getOption(
+                    rawValue as string | number | boolean | null | undefined,
+                    item.options,
+                  ) || "";
                 const radios = item.options?.map(
                   (opt: ExFormOption, index: number) => {
                     const id = `${item.name}-${index}`;
+                    const checked = selectedOption === opt.option;
                     return (
-                      <div className="mr-4 flex items-center" key={id}>
+                      <Label
+                        key={id}
+                        htmlFor={id}
+                        className={cn(
+                          "inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-[13px] font-normal transition-colors",
+                          checked
+                            ? "border-primary/60 bg-primary/[0.06] font-medium text-foreground"
+                            : "border-border bg-card text-muted-foreground hover:border-foreground/25 hover:text-foreground",
+                          item.readOnly && "pointer-events-none opacity-60",
+                        )}
+                      >
                         <RadioGroupItem value={opt.option} id={id} />
-                        <Label
-                          className="cursor-pointer pl-2 text-[13px] font-normal text-foreground"
-                          htmlFor={id}
-                        >
-                          {opt.label}
-                        </Label>
-                      </div>
+                        <span>{opt.label}</span>
+                      </Label>
                     );
                   },
                 );
@@ -370,11 +414,8 @@ export function ExForm({
                     <FormControl>
                       <RadioGroup
                         disabled={item.readOnly || false}
-                        defaultValue={getOption(
-                          item.defaultValue as string,
-                          item.options,
-                        )}
-                        className="flex flex-wrap items-start pt-2"
+                        value={selectedOption}
+                        className="flex flex-wrap items-center gap-2 pt-1.5"
                         onValueChange={(option) => {
                           const value = getOptionValue(option, item.options);
                           form.setValue(item.name, value);
@@ -584,11 +625,18 @@ export function ExForm({
                 );
               }
               case ExFormItemCategory.LABEL: {
+                const text =
+                  item.defaultValue !== undefined &&
+                  item.defaultValue !== null &&
+                  item.defaultValue !== ""
+                    ? String(item.defaultValue)
+                    : "—";
                 return (
                   <FormItem>
-                    <FormLabel>
-                      {item.label}: {item.defaultValue}
-                    </FormLabel>
+                    <FieldLabel label={item.label} tips={item.tips} />
+                    <div className="machine flex min-h-9 items-center rounded-md border border-border bg-muted/40 px-3 py-1.5 text-[13px] text-foreground">
+                      {text}
+                    </div>
                   </FormItem>
                 );
               }
@@ -679,21 +727,21 @@ export function ExForm({
   return (
     <TooltipProvider delayDuration={200}>
       <Form {...form}>
-      {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
-      <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6 col-span-full" />
-      <form
-        // Built inside the handler, not during render: onSubmit now touches a
-        // ref, and calling handleSubmit() while rendering would read it there.
-        onSubmit={(e) => form.handleSubmit(onSubmit)(e)}
-        className="relative space-y-0"
-      >
-        <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
-          {updatedCount > 0 && (
-            <div className="machine mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
-              {updatedCount} {t("modified") || "modified"}
-            </div>
-          )}
-          {/*
+        {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
+        <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6 col-span-full" />
+        <form
+          // Built inside the handler, not during render: onSubmit now touches a
+          // ref, and calling handleSubmit() while rendering would read it there.
+          onSubmit={(e) => form.handleSubmit(onSubmit)(e)}
+          className="relative space-y-0"
+        >
+          <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
+            {updatedCount > 0 && (
+              <div className="machine mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                {updatedCount} {t("modified") || "modified"}
+              </div>
+            )}
+            {/*
             The template is inline, not `grid-cols-${cols}`: that class is built
             at runtime so tailwind never emits a rule for it, leaving the grid
             with no explicit columns. Spans then created implicit columns of
@@ -701,122 +749,141 @@ export function ExForm({
             against the empty explicit grid, so section headers spanned one
             column instead of the row.
           */}
-          <div
-            className="grid gap-x-8 gap-y-5"
-            style={{
-              gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
-            }}
-          >
-            {fields}
+            <div
+              key={resetNonce}
+              className="grid gap-x-8 gap-y-5"
+              style={{
+                gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
+              }}
+            >
+              {fields}
+            </div>
           </div>
-        </div>
 
-        {(onSave || onRemove || showButton) && (
-          <div
-            className={cn(
-              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 sm:gap-3",
-              // Keep the bar clear of the home indicator on notched phones.
-              "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
-              updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
-            )}
-          >
-            {readOnly && (onSave || onRemove) && (
-              <span className="text-sm text-muted-foreground">
-                {t("readOnlyTips")}
-              </span>
-            )}
-            {onSave && !readOnly && (
-              <Button
-                className="min-w-[120px] cursor-pointer"
-                type="submit"
-                disabled={updatedCount === 0}
-              >
-                {processing && (
-                  <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
-                )}
-                {t("save")}
-                {updatedCount > 0 && (
-                  <span className="ml-1.5 rounded bg-primary-foreground/20 px-1.5 text-xs">
-                    {updatedCount}
-                  </span>
-                )}
-              </Button>
-            )}
-            {onRemove && !readOnly && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    type="button"
-                    className="min-w-[100px] cursor-pointer text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    {processing && (
-                      <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
-                    )}
-                    {t("remove")}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-64" align="start">
-                  <div className="grid gap-3">
-                    <div className="space-y-1">
-                      <h4 className="font-medium leading-none">
-                        {t("removeConfirm")}
-                      </h4>
-                      <p className="text-sm text-muted-foreground">
-                        {t("removeTips")}
-                      </p>
-                    </div>
+          {(onSave || onRemove || showButton) && (
+            <div
+              className={cn(
+                "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 sm:gap-3",
+                // Keep the bar clear of the home indicator on notched phones.
+                "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+                updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
+              )}
+            >
+              {readOnly && (onSave || onRemove) && (
+                <span className="text-sm text-muted-foreground">
+                  {t("readOnlyTips")}
+                </span>
+              )}
+              {onSave && !readOnly && updatedCount > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="cursor-pointer"
+                  disabled={processing}
+                  onClick={() => {
+                    form.reset(defaultValues);
+                    setUpdatedValues({});
+                    setUpdatedCount(0);
+                    setResetNonce((prev) => prev + 1);
+                    onValueChange?.({});
+                  }}
+                >
+                  <RotateCcw className="mr-1.5 size-3.5" />
+                  {t("formControls.reset")}
+                </Button>
+              )}
+              {onSave && !readOnly && (
+                <Button
+                  className="min-w-[120px] cursor-pointer"
+                  type="submit"
+                  disabled={updatedCount === 0 && !allowSave}
+                >
+                  {processing && (
+                    <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                  )}
+                  {t("save")}
+                  {updatedCount > 0 && (
+                    <span className="ml-1.5 rounded bg-primary-foreground/20 px-1.5 text-xs">
+                      {updatedCount}
+                    </span>
+                  )}
+                </Button>
+              )}
+              {onRemove && !readOnly && (
+                <Popover>
+                  <PopoverTrigger asChild>
                     <Button
-                      size="sm"
-                      variant="destructive"
-                      className="cursor-pointer"
-                      onClick={async () => {
-                        await handleRemove();
-                      }}
+                      variant="outline"
+                      type="button"
+                      className="min-w-[100px] cursor-pointer text-destructive hover:bg-destructive/10 hover:text-destructive"
                     >
-                      {t("confirm")}
+                      {processing && (
+                        <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                      )}
+                      {t("remove")}
                     </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            )}
-            {showButton && <div className="ml-auto">{showButton}</div>}
-          </div>
-        )}
-      </form>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64" align="start">
+                    <div className="grid gap-3">
+                      <div className="space-y-1">
+                        <h4 className="font-medium leading-none">
+                          {t("removeConfirm")}
+                        </h4>
+                        <p className="text-sm text-muted-foreground">
+                          {t("removeTips")}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="cursor-pointer"
+                        onClick={async () => {
+                          await handleRemove();
+                        }}
+                      >
+                        {t("confirm")}
+                      </Button>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+              {showButton && <div className="ml-auto">{showButton}</div>}
+            </div>
+          )}
+        </form>
 
-      <AlertDialog
-        open={blocker.state === "blocked"}
-        onOpenChange={(open) => {
-          if (!open) {
-            blocker.reset?.();
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("unsavedTitle")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("unsavedDescription")}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              className="cursor-pointer"
-              onClick={() => blocker.reset?.()}
-            >
-              {t("cancel")}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="cursor-pointer"
-              onClick={() => blocker.proceed?.()}
-            >
-              {t("leave")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Form>
-      </TooltipProvider>
+        <AlertDialog
+          open={blocker.state === "blocked"}
+          onOpenChange={(open) => {
+            if (!open) {
+              blocker.reset?.();
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("unsavedTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("unsavedDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                className="cursor-pointer"
+                onClick={() => blocker.reset?.()}
+              >
+                {t("cancel")}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="cursor-pointer"
+                onClick={() => blocker.proceed?.()}
+              >
+                {t("leave")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </Form>
+    </TooltipProvider>
   );
 }

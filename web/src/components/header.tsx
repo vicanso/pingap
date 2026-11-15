@@ -8,9 +8,10 @@ import {
   LoaderCircle,
   Cog,
   FileCode2,
-  AudioWaveform,
+  Wrench,
   ClipboardCopy,
   PowerOff,
+  Search,
 } from "lucide-react";
 import { goToConfig } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
@@ -34,8 +35,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import request from "@/helpers/request";
 import { formatUptime } from "@/helpers/util";
 import {
@@ -54,13 +60,18 @@ import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 export function MainHeader({
   className,
-}: React.HTMLAttributes<HTMLDivElement>) {
+  onOpenCommandPalette,
+}: React.HTMLAttributes<HTMLDivElement> & {
+  onOpenCommandPalette?: () => void;
+}) {
   const { t } = useTranslation();
 
   const iconClassName = "mr-2 h-4 w-4";
   const { setTheme, theme } = useTheme();
   const lang = i18n.language;
-  const [aesType, setAesType] = React.useState("encrypt");
+  const [aesType, setAesType] = React.useState<"encrypt" | "decrypt">(
+    "encrypt",
+  );
   const [aesProcessing, setAesProcessing] = React.useState(false);
   const [aesData, setAesData] = React.useState({
     key: "",
@@ -68,7 +79,10 @@ export function MainHeader({
   });
   const [aesResult, setAesResult] = React.useState("");
 
-  const [base64Type, setBase64Type] = React.useState("encode");
+  const [base64Type, setBase64Type] = React.useState<"encode" | "decode">(
+    "encode",
+  );
+  const [base64Input, setBase64Input] = React.useState("");
   const [base64Data, setBase64Data] = React.useState("");
 
   const [restart, basicInfo, initialized] = useBasicState(
@@ -209,18 +223,55 @@ export function MainHeader({
     </div>
   );
 
+  const computeBase64 = (mode: "encode" | "decode", raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setBase64Data("");
+      return;
+    }
+    try {
+      setBase64Data(
+        mode === "encode" ? window.btoa(trimmed) : window.atob(trimmed),
+      );
+    } catch {
+      // Half-typed or non-base64 input is the normal case here,
+      // not a fault: just show nothing until it decodes.
+      setBase64Data("");
+    }
+  };
+
+  const copyText = async (value: string) => {
+    if (!value) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(t("header.copied"));
+    } catch (err) {
+      toast(t("copyConfigFail"), {
+        description: formatError(err),
+      });
+    }
+  };
+
   const settingsMenu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={iconBtnClass}
-          aria-label="Settings"
-        >
-          <Cog className="size-4" strokeWidth={1.8} />
-        </Button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={iconBtnClass}
+              aria-label={t("header.settings")}
+            >
+              <Cog className="size-4" strokeWidth={1.8} />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{t("header.settings")}</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end">
         <DropdownMenuGroup>
           <DropdownMenuItem
@@ -315,78 +366,113 @@ export function MainHeader({
   );
 
   const aesTab = (
-    <TabsContent value="aes" className="mt-2">
-      <div className="grid gap-4">
-        <div className="space-y-2">
-          <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
-          <p className="text-sm text-muted-foreground">{t("aesTips")}</p>
+    <TabsContent value="aes" className="mt-3">
+      <div className="space-y-3">
+        <div>
+          <h4 className="text-sm font-medium leading-none">{t("aesGcm")}</h4>
+          <p className="mt-1 text-xs text-muted-foreground">{t("aesTips")}</p>
         </div>
-        <div className="grid gap-2">
-          <RadioGroup
-            className="flex flex-wrap items-start"
-            onValueChange={(option) => {
-              setAesType(option);
-            }}
-            defaultValue={aesType}
-          >
-            <RadioGroupItem value="encrypt" id="encrypt" />
-            <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
-              {t("encrypt")}
-            </Label>
-            <RadioGroupItem value="decrypt" id="decrypt" />
-            <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
-              {t("decrypt")}
-            </Label>
-          </RadioGroup>
-          <div className="flex">
-            <Label htmlFor="secret" className="flex-none leading-9 mr-4">
+        <div
+          className="inline-flex rounded-lg bg-accent p-[3px]"
+          role="group"
+          aria-label={t("aesGcm")}
+        >
+          {(["encrypt", "decrypt"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={cn(
+                "cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                aesType === mode
+                  ? "bg-card text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={aesType === mode}
+              onClick={() => setAesType(mode)}
+            >
+              {t(mode)}
+            </button>
+          ))}
+        </div>
+        <div className="space-y-2.5">
+          <div className="space-y-1">
+            <Label
+              htmlFor="aes-secret"
+              className="text-xs text-muted-foreground"
+            >
               {t("secret")}
             </Label>
             <Input
-              id="secret"
-              className="grow"
+              id="aes-secret"
+              className="machine"
+              value={aesData.key}
               onChange={(e) => {
                 const key = e.target.value.trim();
                 setAesData((prev) => ({ ...prev, key }));
               }}
             />
           </div>
-          <div className="flex">
-            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+          <div className="space-y-1">
+            <Label
+              htmlFor="aes-input"
+              className="text-xs text-muted-foreground"
+            >
               {t("value")}
             </Label>
             <Input
-              id="value"
-              className="grow"
+              id="aes-input"
+              className="machine"
+              value={aesData.data}
               onChange={(e) => {
                 const data = e.target.value.trim();
                 setAesData((prev) => ({ ...prev, data }));
               }}
             />
           </div>
-          <div className="flex">
-            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+          <Button
+            type="button"
+            size="sm"
+            className="w-full cursor-pointer"
+            disabled={aesProcessing || !aesData.key || !aesData.data}
+            onClick={(e) => {
+              e.preventDefault();
+              handleAes();
+            }}
+          >
+            {aesProcessing && (
+              <LoaderCircle className="mr-2 size-3.5 animate-spin" />
+            )}
+            {t("header.computeAndCopy")}
+          </Button>
+          <div className="space-y-1">
+            <Label
+              htmlFor="aes-output"
+              className="text-xs text-muted-foreground"
+            >
               {t("result")}
             </Label>
-            <p className="grow text-sm text-muted-foreground leading-9 relative">
+            <div className="relative">
+              <Input
+                id="aes-output"
+                className="machine pr-9"
+                value={aesResult}
+                readOnly
+              />
               <Button
-                className="absolute right-0"
+                type="button"
                 variant="ghost"
                 size="icon"
-                onClick={async (e) => {
+                aria-label={t("header.copy")}
+                disabled={!aesResult}
+                className="absolute right-0.5 top-1/2 size-8 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
                   e.preventDefault();
-                  handleAes();
+                  copyText(aesResult);
                 }}
               >
-                <ClipboardCopy />
+                <ClipboardCopy className="size-3.5" />
               </Button>
-              {!aesProcessing && (
-                <Input id="value" className="grow" value={aesResult} readOnly />
-              )}
-              {aesProcessing && (
-                <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-              )}
-            </p>
+            </div>
           </div>
         </div>
       </div>
@@ -394,70 +480,87 @@ export function MainHeader({
   );
 
   const base64Tab = (
-    <TabsContent value="base64" className="mt-2">
-      <div className="grid gap-4">
-        <div className="space-y-2">
-          <h4 className="font-medium leading-none">{t("base64")}</h4>
-          <p className="text-sm text-muted-foreground">{t("base64Tips")}</p>
+    <TabsContent value="base64" className="mt-3">
+      <div className="space-y-3">
+        <div>
+          <h4 className="text-sm font-medium leading-none">{t("base64")}</h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("base64Tips")}
+          </p>
         </div>
-        <div className="grid gap-2">
-          <RadioGroup
-            className="flex flex-wrap items-start"
-            onValueChange={(option) => {
-              setBase64Type(option);
-            }}
-            defaultValue={base64Type}
-          >
-            <RadioGroupItem value="encode" id="encode" />
-            <Label className="pl-2 cursor-pointer" htmlFor="encode">
-              {t("encode")}
-            </Label>
-            <RadioGroupItem value="decode" id="decode" />
-            <Label className="pl-2 cursor-pointer" htmlFor="decode">
-              {t("decode")}
-            </Label>
-          </RadioGroup>
-          <div className="flex">
-            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+        <div
+          className="inline-flex rounded-lg bg-accent p-[3px]"
+          role="group"
+          aria-label={t("base64")}
+        >
+          {(["encode", "decode"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={cn(
+                "cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                base64Type === mode
+                  ? "bg-card text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={base64Type === mode}
+              onClick={() => {
+                setBase64Type(mode);
+                computeBase64(mode, base64Input);
+              }}
+            >
+              {t(mode)}
+            </button>
+          ))}
+        </div>
+        <div className="space-y-2.5">
+          <div className="space-y-1">
+            <Label
+              htmlFor="b64-input"
+              className="text-xs text-muted-foreground"
+            >
               {t("value")}
             </Label>
             <Input
-              id="value"
-              className="grow"
+              id="b64-input"
+              className="machine"
+              value={base64Input}
               onChange={(e) => {
-                const value = e.target.value.trim();
-                try {
-                  if (base64Type == "encode") {
-                    setBase64Data(window.btoa(value));
-                  } else {
-                    setBase64Data(window.atob(value));
-                  }
-                } catch {
-                  // Half-typed or non-base64 input is the normal case here,
-                  // not a fault: just show nothing until it decodes.
-                  setBase64Data("");
-                }
+                const raw = e.target.value;
+                setBase64Input(raw);
+                computeBase64(base64Type, raw);
               }}
             />
           </div>
-          <div className="flex">
-            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+          <div className="space-y-1">
+            <Label
+              htmlFor="b64-output"
+              className="text-xs text-muted-foreground"
+            >
               {t("result")}
             </Label>
-            <p className="grow text-sm text-muted-foreground leading-9 relative">
+            <div className="relative">
+              <Input
+                id="b64-output"
+                className="machine pr-9"
+                value={base64Data}
+                readOnly
+              />
               <Button
-                className="absolute right-0"
+                type="button"
                 variant="ghost"
                 size="icon"
-                onClick={async (e) => {
+                aria-label={t("header.copy")}
+                disabled={!base64Data}
+                className="absolute right-0.5 top-1/2 size-8 -translate-y-1/2 cursor-pointer text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
                   e.preventDefault();
-                  await navigator.clipboard.writeText(base64Data);
+                  copyText(base64Data);
                 }}
               >
-                <ClipboardCopy />
+                <ClipboardCopy className="size-3.5" />
               </Button>
-              <Input id="value" className="grow" value={base64Data} readOnly />
-            </p>
+            </div>
           </div>
         </div>
       </div>
@@ -465,58 +568,85 @@ export function MainHeader({
   );
 
   return (
-    <header
-      className={cn(
-        "flex h-12 shrink-0 items-center gap-1.5 bg-background px-3 transition-[width,height] ease-linear sm:gap-2 sm:px-5",
-        className,
-      )}
-    >
-      <SidebarTrigger className={cn(iconBtnClass, "-ml-0.5")} />
-      <div className="mx-1 h-4 w-px shrink-0 bg-border" />
-      {liveReadout}
-      <div className="flex-1" />
-      <div className="flex items-center gap-1 sm:gap-2">
-        {/* Language pill is wide; on phones it moves into Settings. */}
-        <div className="hidden sm:block">{languageSwitch}</div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={iconBtnClass}
-              aria-label="Tools"
+    <TooltipProvider delayDuration={200}>
+      <header
+        className={cn(
+          "flex h-12 shrink-0 items-center gap-1.5 bg-background px-3 transition-[width,height] ease-linear sm:gap-2 sm:px-5",
+          className,
+        )}
+      >
+        <SidebarTrigger className={cn(iconBtnClass, "-ml-0.5")} />
+        <div className="mx-1 h-4 w-px shrink-0 bg-border" />
+        {liveReadout}
+        <div className="flex-1" />
+        <div className="flex items-center gap-1 sm:gap-2">
+          {onOpenCommandPalette && (
+            <button
+              type="button"
+              onClick={onOpenCommandPalette}
+              className="hidden h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-card/70 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground md:inline-flex"
             >
-              <AudioWaveform className="size-4" strokeWidth={1.8} />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            className="w-[min(400px,calc(100vw-2rem))]"
-            align="end"
-          >
-            <Tabs defaultValue="base64" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="base64">Base64</TabsTrigger>
-                <TabsTrigger value="aes">AES</TabsTrigger>
-              </TabsList>
-              {base64Tab}
-              {aesTab}
-            </Tabs>
-          </PopoverContent>
-        </Popover>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={iconBtnClass}
-          aria-label="Config"
-          onClick={(e) => {
-            e.preventDefault();
-            goToConfig();
-          }}
-        >
-          <FileCode2 className="size-4" strokeWidth={1.8} />
-        </Button>
-        {settingsMenu}
-      </div>
-    </header>
+              <Search className="size-3.5 shrink-0" />
+              <span>{t("header.search")}</span>
+              <kbd className="machine rounded border border-border bg-muted px-1 py-0.5 text-[10px] leading-none">
+                ⌘K
+              </kbd>
+            </button>
+          )}
+          {/* Language pill is wide; on phones it moves into Settings. */}
+          <div className="hidden sm:block">{languageSwitch}</div>
+          <Popover>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={iconBtnClass}
+                    aria-label={t("header.tools")}
+                  >
+                    <Wrench className="size-4" strokeWidth={1.8} />
+                  </Button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t("header.tools")}</TooltipContent>
+            </Tooltip>
+            <PopoverContent
+              className="w-[min(400px,calc(100vw-2rem))]"
+              align="end"
+            >
+              <Tabs defaultValue="base64" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="base64">Base64</TabsTrigger>
+                  <TabsTrigger value="aes">AES</TabsTrigger>
+                </TabsList>
+                {base64Tab}
+                {aesTab}
+              </Tabs>
+            </PopoverContent>
+          </Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={iconBtnClass}
+                aria-label={t("header.config")}
+                onClick={(e) => {
+                  e.preventDefault();
+                  goToConfig();
+                }}
+              >
+                <FileCode2 className="size-4" strokeWidth={1.8} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t("header.config")}</TooltipContent>
+          </Tooltip>
+          {settingsMenu}
+        </div>
+      </header>
+    </TooltipProvider>
   );
 }

@@ -1,10 +1,12 @@
 import * as React from "react";
+import { Plus, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { random } from "@/helpers/util";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useI18n } from "@/i18n";
-import { Button } from "./ui/button";
 
 interface CombinedAuth {
   app_id: string;
@@ -13,165 +15,188 @@ interface CombinedAuth {
   deviation: number;
 }
 
-interface CombinedAuthsProps {
+interface CombinedAuthRow extends CombinedAuth {
+  id: string;
+  ipText: string;
+}
+
+interface CombinedAuthsProps extends Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  "defaultValue"
+> {
   defaultValue?: CombinedAuth[];
   onValueChange: (values: CombinedAuth[]) => void;
   className?: string;
 }
 
-export const CombinedAuths = React.forwardRef<
-  HTMLInputElement,
-  CombinedAuthsProps
->(({ defaultValue = [], className, onValueChange, ...props }, ref) => {
-  const pluginI18n = useI18n("plugin");
-  const arr = defaultValue.map((item) => {
-    return {
-      id: random(),
-      app_id: item.app_id,
-      ip_list: item.ip_list,
-      secret: item.secret,
-      deviation: item.deviation,
-    };
-  });
-  if (arr.length === 0) {
-    arr.push({
+function buildAuthRows(defaultValue: CombinedAuth[]): CombinedAuthRow[] {
+  const rows = defaultValue.map((item) => ({
+    id: random(),
+    app_id: item.app_id || "",
+    ip_list: item.ip_list || [],
+    ipText: (item.ip_list || []).join(","),
+    secret: item.secret || "",
+    deviation: item.deviation ?? 10,
+  }));
+  if (rows.length === 0) {
+    rows.push({
       id: random(),
       app_id: "",
       ip_list: [],
+      ipText: "",
       secret: "",
       deviation: 10,
     });
   }
-  const [inputs, setInputs] = React.useState(arr);
-  const setUpdate = (
-    values: {
-      id: string;
-      app_id: string;
-      ip_list: string[];
-      secret: string;
-      deviation: number;
-    }[],
-  ) => {
-    setInputs(values);
-    const arr: CombinedAuth[] = [];
+  return rows;
+}
 
-    values.forEach((item) => {
+export const CombinedAuths = React.forwardRef<
+  HTMLDivElement,
+  CombinedAuthsProps
+>(({ defaultValue = [], className, onValueChange, ...props }, ref) => {
+  const { t } = useTranslation();
+  const pluginI18n = useI18n("plugin");
+  const [inputs, setInputs] = React.useState(() => buildAuthRows(defaultValue));
+
+  const commit = (next: CombinedAuthRow[]) => {
+    setInputs(next);
+    const out: CombinedAuth[] = [];
+    next.forEach((item) => {
       if (!item.app_id || !item.secret) {
         return;
       }
-      arr.push({
+      out.push({
         app_id: item.app_id,
         ip_list: item.ip_list,
         secret: item.secret,
         deviation: item.deviation,
       });
     });
-    onValueChange(arr);
+    onValueChange(out);
   };
 
-  const items = inputs.map((item, index) => {
-    const last = index === inputs.length - 1;
-    const mb = last ? "" : "mb-4";
-    return (
-      <Card key={item.id} className={cn(mb)}>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 px-5 pt-4 pb-2">
-          <CardTitle className="text-sm font-medium ">
-            {pluginI18n("combinedAuthAuthParameters")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          <Input
-            className="mb-4"
-            defaultValue={item.app_id || ""}
-            placeholder={pluginI18n("combinedAuthAuthAppIdPlaceholder")}
-            onInput={(e) => {
-              const value = (e.target as HTMLInputElement).value || "";
-              const arr = inputs.slice(0);
-              arr[index].app_id = value.trim();
-              setUpdate(arr);
-            }}
-          />
-          <Input
-            className="mb-4"
-            defaultValue={(item.ip_list || []).join(",")}
-            placeholder={pluginI18n("combinedAuthAuthIpListPlaceholder")}
-            onInput={(e) => {
-              const value = (e.target as HTMLInputElement).value || "";
-              const arr = inputs.slice(0);
-              const ipList: string[] = [];
-              value.split(",").forEach((item) => {
-                const ip = item.trim();
-                if (ip) {
-                  ipList.push(ip);
-                }
-              });
-              arr[index].ip_list = ipList;
-              setUpdate(arr);
-            }}
-          />
-          <Input
-            className="mb-4"
-            defaultValue={item.secret || ""}
-            placeholder={pluginI18n("combinedAuthAuthSecretPlaceholder")}
-            onInput={(e) => {
-              const value = (e.target as HTMLInputElement).value || "";
-              const arr = inputs.slice(0);
-              arr[index].secret = value.trim();
-              setUpdate(arr);
-            }}
-          />
-          <Input
-            className="mb-4"
-            type="number"
-            defaultValue={item.deviation}
-            placeholder={pluginI18n("combinedAuthAuthDeviationPlaceholder")}
-            onInput={(e) => {
-              const value = (e.target as HTMLInputElement).value || "";
-              const arr = inputs.slice(0);
-              arr[index].deviation = Number(value.trim());
-              setUpdate(arr);
-            }}
-          />
-          {!last && (
-            <Button
-              className="w-full"
-              onClick={(e) => {
-                const arr = inputs.slice(0);
-                arr.splice(index, 1);
-                setUpdate(arr);
-                e.preventDefault();
-              }}
-            >
-              {pluginI18n("combinedAuthAuthRemove")}
-            </Button>
-          )}
-          {last && (
-            <Button
-              className="w-full"
-              onClick={(e) => {
-                const arr = inputs.slice(0);
-                arr.push({
-                  id: random(),
-                  app_id: "",
-                  ip_list: [],
-                  secret: "",
-                  deviation: 10,
-                });
-                setUpdate(arr);
-                e.preventDefault();
-              }}
-            >
-              {pluginI18n("combinedAuthAuthAdd")}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+  const updateRow = (
+    index: number,
+    patch: Partial<Omit<CombinedAuthRow, "id">>,
+  ) => {
+    const next = inputs.map((row, idx) =>
+      idx === index ? { ...row, ...patch } : row,
     );
-  });
+    commit(next);
+  };
+
+  const addRow = () => {
+    setInputs((prev) => [
+      ...prev,
+      {
+        id: random(),
+        app_id: "",
+        ip_list: [],
+        ipText: "",
+        secret: "",
+        deviation: 10,
+      },
+    ]);
+  };
+
+  const removeRow = (index: number) => {
+    const next = inputs.filter((_, idx) => idx !== index);
+    commit(next);
+  };
 
   return (
-    <div className={cn(className)} ref={ref} {...props}>
-      {items}
+    <div className={cn("space-y-3", className)} ref={ref} {...props}>
+      {inputs.map((item, index) => (
+        <div
+          key={item.id}
+          className="rounded-lg border border-border bg-background/50 p-4"
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="figure text-xs font-medium text-muted-foreground">
+              {pluginI18n("combinedAuthAuthParameters")} #{index + 1}
+            </span>
+            {inputs.length > 1 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={t("formControls.removeItem")}
+                className="size-7 cursor-pointer text-muted-foreground hover:text-destructive"
+                onClick={() => removeRow(index)}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">App ID</Label>
+              <Input
+                className="machine"
+                value={item.app_id}
+                placeholder={pluginI18n("combinedAuthAuthAppIdPlaceholder")}
+                onChange={(e) =>
+                  updateRow(index, { app_id: e.target.value.trim() })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Secret</Label>
+              <Input
+                className="machine"
+                value={item.secret}
+                placeholder={pluginI18n("combinedAuthAuthSecretPlaceholder")}
+                onChange={(e) =>
+                  updateRow(index, { secret: e.target.value.trim() })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">IP List</Label>
+              <Input
+                className="machine"
+                value={item.ipText}
+                placeholder={pluginI18n("combinedAuthAuthIpListPlaceholder")}
+                onChange={(e) => {
+                  const ipText = e.target.value;
+                  const ipList = ipText
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  updateRow(index, { ipText, ip_list: ipList });
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                Deviation (s)
+              </Label>
+              <Input
+                className="machine"
+                type="number"
+                value={Number.isFinite(item.deviation) ? item.deviation : ""}
+                placeholder={pluginI18n("combinedAuthAuthDeviationPlaceholder")}
+                onChange={(e) =>
+                  updateRow(index, {
+                    deviation: Number(e.target.value.trim() || 0),
+                  })
+                }
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 cursor-pointer gap-1.5 text-xs"
+        onClick={addRow}
+      >
+        <Plus className="size-3.5" />
+        {pluginI18n("combinedAuthAuthAdd")}
+      </Button>
     </div>
   );
 });

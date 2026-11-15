@@ -49,8 +49,42 @@ export default {
     "The changes on this form have not been saved and will be lost.",
   leave: "Leave",
   backToList: "Back to list",
-  listFilterPlaceholder: "Filter by name…",
-  listFilterEmpty: "No names match this filter",
+  listFilterPlaceholder: "Filter by name, address, or value…",
+  listFilterEmpty: "No matching entries",
+  commandPalette: {
+    placeholder: "Jump to a page, entity, or create action…",
+    empty: "No matching results",
+    pagesGroup: "Pages",
+    entitiesGroup: "Entities",
+    createGroup: "Quick Create",
+    shortcutHint: "Shortcut ⌘K / Ctrl+K",
+  },
+  multiSelect: {
+    searchPlaceholder: "Search options…",
+    empty: "No results found",
+    selectAll: "Select All",
+    clear: "Clear",
+    close: "Close",
+    moreCount: "+{{count}}",
+  },
+  formControls: {
+    addItem: "Add item",
+    removeItem: "Remove item",
+    customInputTips: "Switch to custom text input",
+    presetSelectTips: "Switch to preset list",
+    availableOptions: "Available",
+    selectedOrder: "Selected order",
+    emptySelected: "No options selected",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    reset: "Reset",
+  },
+  configPage: {
+    importConfirmTitle: "Import and overwrite current config?",
+    importConfirmDescription:
+      "This replaces the stored proxy configuration with the pasted TOML document. Continue?",
+    linesCount: "{{count}} lines",
+  },
   includes: "Includes",
   includesPlaceholder: "Select the include config",
   full: "Full",
@@ -89,6 +123,13 @@ export default {
   header: {
     live: "Live",
     active: "active",
+    tools: "Encoding & Crypto Tools",
+    config: "TOML / HCL Config",
+    settings: "Theme & System",
+    search: "Quick Jump",
+    computeAndCopy: "Compute & Copy",
+    copy: "Copy Result",
+    copied: "Copied to clipboard",
   },
   nav: {
     home: "Dashboard",
@@ -111,6 +152,8 @@ export default {
     description: "Please enter the administrator account and password.",
     account: "Account",
     password: "Password",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     submit: "Login",
     fail: "Login Fail",
   },
@@ -219,7 +262,8 @@ export default {
     nameTips:
       "What this deployment is called, pingap unless set: who a notification is from, {$name} in an access log. May be $ENV:NAME. Takes a restart to change.",
     labels: "Labels",
-    labelsPlaceholder: "key, e.g. cluster : value, e.g. sh-prod or $ENV:CLUSTER",
+    labelsPlaceholder:
+      "key, e.g. cluster : value, e.g. sh-prod or $ENV:CLUSTER",
     labelsTips:
       "What tells this deployment from the others (cluster, env, region). They go into notifications, into the access log where its format has {$label:key}, and into the traces. A value may come from the environment as $ENV:NAME, so that several deployments run one configuration. Takes a restart to change.",
     threads: "Threads",
@@ -644,7 +688,8 @@ export default {
     h2ConnectionWindowSizePlaceholder:
       "Input the HTTP/2 connection-level flow-control window, e.g. 8mib",
     sni: "Sni",
-    sniPlaceholder: "Input server name indication (e.g. api.example.com or $host)",
+    sniPlaceholder:
+      "Input server name indication (e.g. api.example.com or $host)",
     sniTips:
       "Upstream TLS is only enabled when SNI is set; use $host to forward the request Host for multi-domain backends",
     sniPort443Warning:
@@ -680,7 +725,7 @@ export default {
     tcpFastOpen: "Tcp Fast Open",
     sendProxyProtocol: "Send PROXY Protocol",
     sendProxyProtocolTips:
-      "Start every connection to a backend with a PROXY protocol header that says which client it is made for: v1 is a line of text, v2 the binary form. Only for backends that read one (nginx \"listen ... proxy_protocol\", HAProxy \"accept-proxy\"); any other backend takes the header for a broken request. A kept connection is then reused for the same client connection only, and the health check sends a header that names no client.",
+      'Start every connection to a backend with a PROXY protocol header that says which client it is made for: v1 is a line of text, v2 the binary form. Only for backends that read one (nginx "listen ... proxy_protocol", HAProxy "accept-proxy"); any other backend takes the header for a broken request. A kept connection is then reused for the same client connection only, and the health check sends a header that names no client.',
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",
     tcpUserTimeout: "Tcp User Timeout",
@@ -770,6 +815,15 @@ export default {
     plugin: "Plugin",
     pluginPlaceholder: "Select the plugin",
     category: "Category",
+    categorySearchPlaceholder:
+      "Search plugin name or key (e.g. jwt, limit, cors)…",
+    categoryEmpty: "No matching plugin category",
+    groupAll: "All",
+    groupAuth: "Auth & Security",
+    groupGuard: "Access Guard",
+    groupTraffic: "Traffic & Cache",
+    groupContent: "Headers & Body",
+    groupSystem: "System & Ops",
     step: "Plugin Step",
     statsPath: "Stats Path",
     statsPathPlaceholder: "Input the path for stats",
@@ -815,7 +869,8 @@ export default {
     dirHiddenTips:
       "Whether what begins with a dot is served (.env, anything below .git/). Unset or no answers such a path 404; .well-known is served either way.",
     dirFallback: "Fallback",
-    dirFallbackPlaceholder: "File for a path that does not exist, e.g. /index.html",
+    dirFallbackPlaceholder:
+      "File for a path that does not exist, e.g. /index.html",
     dirFallbackTips:
       "For a single page application: a path that does not exist is answered with this file and 200. Only a path whose last segment has no extension, so a missing script or image is still 404.",
     dirPrecompressed: "Precompressed",
@@ -878,7 +933,8 @@ export default {
     healthPath: "Path",
     healthPathPlaceholder: "The path that is answered, e.g. /ready",
     healthMinHealthy: "Min Healthy",
-    healthMinHealthyPlaceholder: "Healthy backends each upstream needs, default: 1",
+    healthMinHealthyPlaceholder:
+      "Healthy backends each upstream needs, default: 1",
     healthUpstreams: "Upstreams",
     healthUpstreamsPlaceholder: "Name of an upstream",
     healthUpstreamsTips:
@@ -1050,7 +1106,8 @@ export default {
     jwtRequiredClaimsTips:
       "Claims a token has to carry, whatever their value. A claim that is null counts as missing.",
     jwtClaimsToHeaders: "Claims To Headers",
-    jwtClaimsToHeadersPlaceholder: "Input claim:Header-Name, e.g. sub:X-User-Id",
+    jwtClaimsToHeadersPlaceholder:
+      "Input claim:Header-Name, e.g. sub:X-User-Id",
     jwtClaimsToHeadersTips:
       "After a token is verified, the claim is sent to the upstream under this header. A header of that name sent by the client is always removed, also when the token has no such claim. The header name comes after the last colon, so a claim may be named by a url.",
     forwardAuthUrl: "Auth Url",
@@ -1120,8 +1177,7 @@ export default {
     hmacAuthSignedHeadersTips:
       "Headers a signature has to cover; host and date when none are listed. The method, path and query are always covered. date is satisfied by x-date.",
     hmacAuthClockSkew: "Clock Skew",
-    hmacAuthClockSkewPlaceholder:
-      "How far the signed date may be off, e.g. 5m",
+    hmacAuthClockSkewPlaceholder: "How far the signed date may be off, e.g. 5m",
     hmacAuthValidateBody: "Validate Body",
     hmacAuthValidateBodyTips:
       "A request with a body has to sign its Content-Digest (or Digest) header, and the body is checked against it.",
@@ -1182,7 +1238,8 @@ export default {
     oidcScopesPlaceholder: "A scope, e.g. email",
     oidcScopesTips: "Asked for besides openid, which is always asked for.",
     oidcClaimsToHeaders: "Claims To Headers",
-    oidcClaimsToHeadersPlaceholder: "claim:Header-Name, e.g. email:X-User-Email",
+    oidcClaimsToHeadersPlaceholder:
+      "claim:Header-Name, e.g. email:X-User-Email",
     oidcClaimsToHeadersTips:
       "What the provider says of the user, sent to the upstream. A header of that name written by the client is removed.",
     refererRestrictionMode: "Restriction Mode",
@@ -1309,7 +1366,7 @@ export default {
       "A regex on the request path, e.g. \\.(mp4|zip)$; empty for every request",
     errorPageJson: "JSON",
     errorPageJsonTips:
-      "A request that asks for JSON (Accept: application/json, and not text/html) gets the error as {\"status\":502,\"message\":\"Bad Gateway\"}.",
+      'A request that asks for JSON (Accept: application/json, and not text/html) gets the error as {"status":502,"message":"Bad Gateway"}.',
     errorPageIntercept: "Intercept Upstream Errors",
     errorPageInterceptTips:
       "An upstream response with a status listed in Pages is dropped and answered with that page (needs Pages). Its headers go with it, it is not cached, and an HTTP/1.1 client connection is closed after it. Off, a response of the upstream is passed on as it is.",
@@ -1376,7 +1433,13 @@ export default {
     description: "The history of the config",
     show: "Show History",
     noHistory: "No history",
+    latest: "Latest",
+    copyJson: "Copy JSON",
+    copiedJson: "History JSON copied",
     restore: "Restore",
+    restoreConfirmTitle: "Restore this historical version?",
+    restoreConfirmDescription:
+      "The current entry will be overwritten with this snapshot and saved immediately.",
     restoreSuccess: "Configuration restored successfully",
   },
 };

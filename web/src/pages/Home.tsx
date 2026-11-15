@@ -1,5 +1,5 @@
 import useConfigState, { getLocationWeight } from "@/states/config";
-import { CheckCircle2, ChevronRight } from "lucide-react";
+import { CheckCircle2, ChevronRight, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -556,12 +556,8 @@ export default function Home() {
     }
     return true;
   });
-  const colSize = Math.ceil(runtimeVisible.length / 3) || 1;
-  const runtimeColumns = [
-    runtimeVisible.slice(0, colSize),
-    runtimeVisible.slice(colSize, colSize * 2),
-    runtimeVisible.slice(colSize * 2),
-  ];
+  const runtimeSmFillers = runtimeVisible.length % 2 === 1 ? 1 : 0;
+  const runtimeLgFillers = (3 - (runtimeVisible.length % 3)) % 3;
 
   // Uptime is already in the top bar on every page, so this line carries the
   // two facts that are not shown anywhere else at a glance: which build is
@@ -659,57 +655,71 @@ export default function Home() {
               >
                 {item.title}
               </Link>
-              <span className="figure text-[13px] text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {item.count}
-                </span>{" "}
-                {item.unit}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="figure text-[13px] text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    {item.count}
+                  </span>{" "}
+                  {item.unit}
+                </span>
+                {!basicInfo.read_only && (
+                  <Link
+                    to={`${item.path}?name=*`}
+                    aria-label={`+ ${item.title}`}
+                    className="inline-flex size-6 items-center justify-center rounded border border-border bg-background text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                  >
+                    <Plus className="size-3.5" />
+                  </Link>
+                )}
+              </div>
             </div>
             {item.summary.length > 0 ? (
               <ul className="flex-1 divide-y divide-border/60 px-4">
                 {item.summary.slice(0, 4).map((entry) => (
-                  <li
-                    key={entry.name}
-                    className="flex items-baseline gap-2 py-2 text-[13px]"
-                  >
+                  <li key={entry.name}>
                     <Link
                       to={entry.link}
-                      className={cn(
-                        "shrink-0 font-medium hover:text-primary hover:underline",
-                        entry.nameClass,
-                      )}
+                      className="-mx-4 flex items-center justify-between gap-2 px-4 py-2 text-[13px] transition-colors hover:bg-accent/50"
                     >
-                      {entry.name}
+                      <span
+                        className={cn(
+                          "shrink-0 font-medium text-foreground",
+                          entry.nameClass,
+                        )}
+                      >
+                        {entry.name}
+                      </span>
+                      <span
+                        className={cn(
+                          "machine flex min-w-0 items-center gap-1.5",
+                          entry.valueTone === "down"
+                            ? "font-medium text-down"
+                            : entry.valueTone === "warn"
+                              ? "font-medium text-warn"
+                              : "text-muted-foreground",
+                        )}
+                        title={entry.valueTitle}
+                      >
+                        {entry.valueTone && (
+                          <span
+                            className={cn(
+                              "size-1.5 shrink-0 rounded-full",
+                              entry.valueTone === "down"
+                                ? "bg-down"
+                                : "bg-warn",
+                            )}
+                          />
+                        )}
+                        <span className="truncate">{entry.value}</span>
+                      </span>
                     </Link>
-                    <span
-                      className={cn(
-                        "machine flex min-w-0 items-center gap-1.5 self-center",
-                        entry.valueTone === "down"
-                          ? "font-medium text-down"
-                          : entry.valueTone === "warn"
-                            ? "font-medium text-warn"
-                            : "text-muted-foreground",
-                      )}
-                      title={entry.valueTitle}
-                    >
-                      {entry.valueTone && (
-                        <span
-                          className={cn(
-                            "size-1.5 shrink-0 rounded-full",
-                            entry.valueTone === "down" ? "bg-down" : "bg-warn",
-                          )}
-                        />
-                      )}
-                      <span className="truncate">{entry.value}</span>
-                    </span>
                   </li>
                 ))}
                 {item.summary.length > 4 && (
-                  <li className="py-2">
+                  <li>
                     <Link
                       to={item.path}
-                      className="figure text-[13px] text-muted-foreground hover:text-primary"
+                      className="figure -mx-4 block px-4 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-primary"
                     >
                       +{item.summary.length - 4}
                     </Link>
@@ -734,32 +744,37 @@ export default function Home() {
         <div className="border-b border-border px-4 py-2.5 sm:px-5">
           <h2 className="region-label">{homeI18n("runtime")}</h2>
         </div>
-        <div className="grid gap-x-10 px-4 py-1 text-[13px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
-          {runtimeColumns.map((column, columnIndex) => (
-            <div key={columnIndex} className="min-w-0">
-              {column.map((item, rowIndex) => (
-                <div
-                  key={item.name}
-                  className={cn(
-                    "flex items-center justify-between gap-3 py-2",
-                    rowIndex !== column.length - 1 &&
-                      "border-b border-border/50",
-                  )}
-                >
-                  <span className="shrink-0 text-muted-foreground">
-                    {homeI18n(item.name)}
-                  </span>
-                  <span
-                    className={cn(
-                      "figure min-w-0 truncate text-right",
-                      item.value === "—" && "text-muted-foreground",
-                    )}
-                  >
-                    {item.value}
-                  </span>
-                </div>
-              ))}
+        <div className="grid gap-px bg-border/60 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+          {runtimeVisible.map((item) => (
+            <div
+              key={item.name}
+              className="flex items-center justify-between gap-3 bg-card px-4 py-2 sm:px-5"
+            >
+              <span className="shrink-0 text-muted-foreground">
+                {homeI18n(item.name)}
+              </span>
+              <span
+                className={cn(
+                  "figure min-w-0 truncate text-right",
+                  item.value === "—" && "text-muted-foreground",
+                )}
+              >
+                {item.value}
+              </span>
             </div>
+          ))}
+          {runtimeSmFillers > 0 && (
+            <div
+              aria-hidden="true"
+              className="hidden bg-card sm:block lg:hidden"
+            />
+          )}
+          {Array.from({ length: runtimeLgFillers }).map((_, idx) => (
+            <div
+              key={`runtime-lg-filler-${idx}`}
+              aria-hidden="true"
+              className="hidden bg-card lg:block"
+            />
           ))}
         </div>
       </section>

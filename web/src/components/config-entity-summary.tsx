@@ -36,9 +36,12 @@ export function ConfigEntitySummary({
     return null;
   }
 
+  const smFillers = visible.length % 2 === 1 ? 1 : 0;
+  const lgFillers = (3 - (visible.length % 3)) % 3;
+
   return (
-    <Card className={cn("mb-4 overflow-hidden border-border", className)}>
-      <CardContent className="grid gap-x-9 px-4 py-1 text-[12.5px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
+    <Card className={cn("mb-4 overflow-hidden border-border p-0", className)}>
+      <CardContent className="grid gap-px bg-border/60 p-0 text-[12.5px] sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((field, idx) => {
           const empty =
             field.value === undefined ||
@@ -48,7 +51,7 @@ export function ConfigEntitySummary({
           return (
             <div
               key={`${field.label}-${idx}`}
-              className="flex items-baseline justify-between gap-3 border-b border-border/50 py-[7px] last:border-b-0"
+              className="flex items-baseline justify-between gap-3 bg-card px-4 py-2 sm:px-5"
             >
               <span className="shrink-0 text-muted-foreground">
                 {field.label}
@@ -65,6 +68,19 @@ export function ConfigEntitySummary({
             </div>
           );
         })}
+        {smFillers > 0 && (
+          <div
+            aria-hidden="true"
+            className="hidden bg-card sm:block lg:hidden"
+          />
+        )}
+        {Array.from({ length: lgFillers }).map((_, idx) => (
+          <div
+            key={`lg-filler-${idx}`}
+            aria-hidden="true"
+            className="hidden bg-card lg:block"
+          />
+        ))}
       </CardContent>
     </Card>
   );

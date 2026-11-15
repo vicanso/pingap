@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/sidebar";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { MainHeader } from "@/components/header";
+import { CommandPalette } from "@/components/command-palette";
 import Logo from "@/assets/pingap.png";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
@@ -47,7 +48,12 @@ function BrandHeader({
   const onDashboard = useLocation().pathname === HOME;
 
   return (
-    <SidebarHeader className="h-12 shrink-0 justify-center border-b border-sidebar-border p-0">
+    <SidebarHeader
+      className={cn(
+        "h-12 shrink-0 justify-center p-0",
+        isMobile && "border-b border-sidebar-border",
+      )}
+    >
       <div
         className={
           showBrand
@@ -109,6 +115,7 @@ export default function Root() {
   const key = "sidebarOpen";
   const sidebarOpen = window.localStorage.getItem(key);
   const [open, setOpen] = useState(sidebarOpen == "true" || !sidebarOpen);
+  const [commandOpen, setCommandOpen] = useState(false);
   // The mobile sheet is always full width; ignore the desktop collapse state there.
   const isMobile = useIsCompact();
   const showBrand = open || isMobile;
@@ -146,25 +153,32 @@ export default function Root() {
     >
       {/* The sidebar and the top bar are one frame, with no rule between
           them and the sheet the page sits on. */}
-      <Sidebar collapsible="icon" className="border-r-0">
+      <Sidebar
+        collapsible="icon"
+        className="border-r-0 group-data-[side=left]:border-r-0"
+      >
         {/* h-12 matches MainHeader so brand row and top bar share one baseline */}
         <BrandHeader
           showBrand={showBrand}
           initialized={initialized}
           version={basicInfo.version}
         />
-        <MainSidebar sidebarOpen={open} />
+        <MainSidebar
+          sidebarOpen={open}
+          onOpenCommandPalette={() => setCommandOpen(true)}
+        />
       </Sidebar>
 
       <SidebarInset className="min-h-0 overflow-hidden bg-background">
-        <MainHeader />
+        <MainHeader onOpenCommandPalette={() => setCommandOpen(true)} />
         {/* The sheet: inset 8px from the window's right and bottom edges,
             a 1px edge, 16px corners, no shadow. On a phone or a tablet the
             frame goes and the sheet is the screen. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card lg:mr-2 lg:mb-2 lg:rounded-2xl lg:border lg:border-border">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card lg:mx-2 lg:mb-2 lg:rounded-2xl lg:border lg:border-border">
           <Outlet />
         </div>
       </SidebarInset>
+      <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
     </SidebarProvider>
   );
 }

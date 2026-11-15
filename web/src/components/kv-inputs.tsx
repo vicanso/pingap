@@ -1,10 +1,12 @@
 import * as React from "react";
+import { Plus, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
-import { X, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { random } from "@/helpers/util";
 
-interface KvInputsProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface KvInputsProps extends React.HTMLAttributes<HTMLDivElement> {
   defaultValue?: string[];
   separator?: string;
   onValueChange: (values: string[]) => void;
@@ -14,7 +16,31 @@ interface KvInputsProps extends React.InputHTMLAttributes<HTMLInputElement> {
   cols?: number[];
 }
 
-export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
+interface KvRow {
+  id: string;
+  key: string;
+  value: string;
+}
+
+function buildKvRows(defaultValue: string[], separator: string): KvRow[] {
+  const arr = defaultValue.map((item) => {
+    // Split at the first separator only. A value may contain the separator
+    // itself (a header value such as http://host), and cutting it there
+    // would drop the rest of the value the next time the list is saved.
+    const index = item.indexOf(separator);
+    return {
+      id: random(),
+      key: index === -1 ? item : item.slice(0, index),
+      value: index === -1 ? "" : item.slice(index + separator.length),
+    };
+  });
+  if (arr.length === 0) {
+    arr.push({ id: random(), key: "", value: "" });
+  }
+  return arr;
+}
+
+export const KvInputs = React.forwardRef<HTMLDivElement, KvInputsProps>(
   (
     {
       defaultValue = [],
@@ -28,130 +54,118 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
     },
     ref,
   ) => {
-    const arr = defaultValue.map((item) => {
-      // Split at the first separator only. A value may contain the separator
-      // itself (a header value such as http://host), and cutting it there
-      // would drop the rest of the value the next time the list is saved.
-      const index = item.indexOf(separator);
-      return {
-        id: random(),
-        key: index === -1 ? item : item.slice(0, index),
-        value: index === -1 ? "" : item.slice(index + separator.length),
-      };
-    });
-    if (arr.length === 0) {
-      arr.push({
-        id: random(),
-        key: "",
-        value: "",
-      });
-    }
-    const [inputs, setInputs] = React.useState(arr);
-    const handleValueChange = (
-      arr: {
-        id: string;
-        key: string;
-        value: string;
-      }[],
-    ) => {
+    const { t } = useTranslation();
+    const [inputs, setInputs] = React.useState(() =>
+      buildKvRows(defaultValue, separator),
+    );
+
+    const emit = (rows: KvRow[]) => {
       const values: string[] = [];
-      arr.forEach((item) => {
-        const { key, value } = item;
-        if (key || value) {
-          values.push(`${key}${separator}${value}`.trim());
+      rows.forEach((item) => {
+        const k = item.key.trim();
+        const v = item.value.trim();
+        if (k || v) {
+          values.push(`${k}${separator}${v}`.trim());
         }
       });
       onValueChange(values);
     };
-    const updateKeyValue = (index: number, value: string, isKey: boolean) => {
-      const arr = inputs.slice(0);
-      if (isKey) {
-        arr[index].key = value.trim();
-      } else {
-        arr[index].value = value.trim();
-      }
-      setInputs(arr);
-      handleValueChange(arr);
-    };
-    const updateKey = (index: number, value: string) => {
-      updateKeyValue(index, value, true);
-    };
-    const updateValue = (index: number, value: string) => {
-      updateKeyValue(index, value, false);
-    };
-    const items = inputs.map((item, index) => {
-      const { id, key, value } = item;
-      const last = index === inputs.length - 1;
-      let mbClass = "mb-4";
-      if (last) {
-        mbClass = "";
-      }
-      const col1 = "col-span-" + (cols[0] || 2);
-      const col2 = "col-span-" + (cols[1] || 2);
 
-      return (
-        <div key={id} className={cn("grid grid-cols-4 gap-4", mbClass)}>
-          <Input
-            type="text"
-            className={col1}
-            placeholder={keyPlaceholder}
-            defaultValue={key}
-            onChange={(e) => {
-              updateKey(index, e.target.value);
-            }}
-          />
-          <div className={cn("relative", col2)}>
-            <span
-              className="absolute pt-1"
-              style={{
-                marginLeft: "-10px",
-              }}
-            >
-              {separator}
-            </span>
-            <Input
-              type="text"
-              defaultValue={value}
-              placeholder={valuePlaceholder}
-              className="pr-8"
-              onChange={(e) => {
-                updateValue(index, e.target.value);
-              }}
-            />
-            {last && (
-              <Plus
-                onClick={(e) => {
-                  e.preventDefault();
-                  const arr = inputs.slice(0);
-                  arr.push({
-                    id: random(),
-                    key: "",
-                    value: "",
-                  });
-                  setInputs(arr);
-                }}
-                className="absolute right-2 top-2 h-5 w-5 text-muted-foreground cursor-pointer"
-              />
-            )}
-            {!last && (
-              <X
-                onClick={(e) => {
-                  e.preventDefault();
-                  const arr = inputs.slice(0);
-                  arr.splice(index, 1);
-                  setInputs(arr);
-                  handleValueChange(arr);
-                }}
-                className="absolute right-2 top-2 h-5 w-5 text-muted-foreground cursor-pointer"
-              />
-            )}
-          </div>
-        </div>
-      );
-    });
+    const updateKeyValue = (
+      index: number,
+      rawValue: string,
+      isKey: boolean,
+    ) => {
+      const next = inputs.map((row, idx) => {
+        if (idx !== index) {
+          return row;
+        }
+        return isKey ? { ...row, key: rawValue } : { ...row, value: rawValue };
+      });
+      setInputs(next);
+      emit(next);
+    };
+
+    const addRow = () => {
+      setInputs((prev) => [...prev, { id: random(), key: "", value: "" }]);
+    };
+
+    const removeRow = (index: number) => {
+      if (inputs.length === 1) {
+        const cleared = [{ ...inputs[0], key: "", value: "" }];
+        setInputs(cleared);
+        emit(cleared);
+        return;
+      }
+      const next = inputs.filter((_, idx) => idx !== index);
+      setInputs(next);
+      emit(next);
+    };
+
+    const wideKey = (cols[0] ?? 2) > (cols[1] ?? 2);
+    const trimmedSep = separator.trim();
+
     return (
-      <div className={cn(className)} ref={ref} {...props}>
-        {items}
+      <div className={cn("space-y-2", className)} ref={ref} {...props}>
+        {inputs.map((item, index) => (
+          <div key={item.id} className="flex items-center gap-2">
+            <div className={wideKey ? "min-w-0 flex-[3]" : "min-w-0 flex-1"}>
+              <Input
+                type="text"
+                className="machine"
+                placeholder={keyPlaceholder}
+                value={item.key}
+                onChange={(e) => updateKeyValue(index, e.target.value, true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addRow();
+                  }
+                }}
+              />
+            </div>
+            {trimmedSep && (
+              <span className="machine shrink-0 text-xs text-muted-foreground select-none">
+                {trimmedSep}
+              </span>
+            )}
+            <div className="min-w-0 flex-1">
+              <Input
+                type="text"
+                className="machine"
+                placeholder={valuePlaceholder}
+                value={item.value}
+                onChange={(e) => updateKeyValue(index, e.target.value, false)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addRow();
+                  }
+                }}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={t("formControls.removeItem")}
+              className="size-9 shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+              onClick={() => removeRow(index)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 cursor-pointer gap-1.5 text-xs"
+          onClick={addRow}
+        >
+          <Plus className="size-3.5" />
+          {t("formControls.addItem")}
+        </Button>
       </div>
     );
   },

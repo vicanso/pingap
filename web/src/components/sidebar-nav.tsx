@@ -10,6 +10,8 @@ import {
   ShieldCheck,
   Container,
   Search,
+  LayoutDashboard,
+  X,
 } from "lucide-react";
 import {
   HOME,
@@ -296,8 +298,10 @@ function CollapsedNavFlyout({
 export function MainSidebar({
   className,
   sidebarOpen,
+  onOpenCommandPalette,
 }: React.HTMLAttributes<HTMLDivElement> & {
   sidebarOpen: boolean;
+  onOpenCommandPalette?: () => void;
 }) {
   const navI18n = useI18n("nav");
   // The mobile sheet is always full width, so the icon-rail rendering driven by
@@ -490,19 +494,95 @@ export function MainSidebar({
   return (
     <SidebarContent className={className}>
       <SidebarGroup>
-        {expanded && (
+        {expanded ? (
           <div className="relative m-2 mt-0">
             <Input
-              type="search"
+              type="text"
               placeholder={navI18n("searchPlaceholder")}
-              className="h-9 border-border bg-card/60 pl-8 focus-visible:bg-card"
+              className="h-9 border-border bg-card/60 pr-12 pl-8 focus-visible:bg-card"
               value={keyword}
               onChange={(e) => {
                 setKeyword(e.target.value);
               }}
             />
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 select-none text-muted-foreground opacity-70" />
+            {keyword ? (
+              <button
+                type="button"
+                aria-label={navI18n("searchPlaceholder")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setKeyword("")}
+              >
+                <X className="size-3.5" />
+              </button>
+            ) : (
+              onOpenCommandPalette && (
+                <button
+                  type="button"
+                  onClick={onOpenCommandPalette}
+                  className="machine absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded border border-border bg-background/80 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                >
+                  ⌘K
+                </button>
+              )
+            )}
           </div>
+        ) : (
+          onOpenCommandPalette && (
+            <div className="mb-1 flex justify-center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={navI18n("searchPlaceholder")}
+                    onClick={onOpenCommandPalette}
+                    className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring outline-none"
+                  >
+                    <Search className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" align="center" sideOffset={8}>
+                  {navI18n("searchPlaceholder")} (⌘K)
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          )
+        )}
+        {!activeKeyword && (
+          <SidebarGroupContent className="mb-2">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                {expanded ? (
+                  <SidebarMenuButton
+                    className="h-9 gap-2.5 px-3"
+                    isActive={pathname === HOME}
+                    asChild
+                  >
+                    <Link
+                      to={HOME}
+                      onClick={closeMobileNav}
+                      aria-current={pathname === HOME ? "page" : undefined}
+                    >
+                      <LayoutDashboard />
+                      <span>{navI18n("home")}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                ) : (
+                  <CollapsedNavFlyout
+                    item={{
+                      title: navI18n("home"),
+                      icon: LayoutDashboard,
+                      path: HOME,
+                      variant: pathname === HOME ? "default" : "ghost",
+                      group: "path",
+                    }}
+                    isActive={pathname === HOME}
+                    currentName={currentName}
+                  />
+                )}
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
         )}
         {expanded && activeKeyword && matchCount === 0 && (
           <p className="mx-2 mb-2 text-xs text-muted-foreground">

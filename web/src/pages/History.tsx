@@ -21,7 +21,24 @@ import {
   ItemHeader,
   ItemFooter,
 } from "@/components/ui/item";
-import { History as HistoryIcon, Inbox } from "lucide-react";
+import {
+  Check,
+  ClipboardCopy,
+  History as HistoryIcon,
+  Inbox,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +58,20 @@ export default function HistoryPage(props: {
   const [fetching, setFetching] = React.useState(false);
   const [history, setHistory] = React.useState<History[]>([]);
   const [open, setOpen] = React.useState(false);
+  const [copiedAt, setCopiedAt] = React.useState<number | null>(null);
+  const copyTimerRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+  const { t } = useTranslation();
+  const historyI18n = useI18n("history");
+  if (!basicInfo.support_history) {
+    return <></>;
+  }
   const fetchHistory = async () => {
     if (fetching) {
       return;
@@ -56,10 +87,6 @@ export default function HistoryPage(props: {
       setFetching(false);
     }
   };
-  const historyI18n = useI18n("history");
-  if (!basicInfo.support_history) {
-    return <></>;
-  }
   const handleRestore = async (data: Record<string, unknown>) => {
     try {
       await props.onRestore(data);
@@ -69,28 +96,92 @@ export default function HistoryPage(props: {
       toast.error(formatError(err));
     }
   };
-  const items = history.map((item) => {
+  const handleCopyJson = async (createdAt: number, jsonText: string) => {
+    try {
+      await navigator.clipboard.writeText(jsonText);
+      setCopiedAt(createdAt);
+      toast.success(historyI18n("copiedJson"));
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopiedAt(null);
+      }, 1500);
+    } catch (err) {
+      toast.error(formatError(err));
+    }
+  };
+  const items = history.map((item, index) => {
     const date = new Date(item.created_at * 1000).toLocaleString();
+    const jsonText = JSON.stringify(item.data, null, 2);
+    const isCopied = copiedAt === item.created_at;
     return (
       <Item key={item.created_at} variant="outline" className="bg-card">
-        <ItemHeader className="text-[13px] font-medium">{date}</ItemHeader>
+        <ItemHeader className="flex items-center justify-between gap-2 text-[13px] font-medium">
+          <div className="flex items-center gap-2">
+            <span>{date}</span>
+            {index === 0 && (
+              <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                {historyI18n("latest")}
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 cursor-pointer text-muted-foreground hover:text-foreground"
+            aria-label={historyI18n("copyJson")}
+            title={historyI18n("copyJson")}
+            onClick={() => handleCopyJson(item.created_at, jsonText)}
+          >
+            {isCopied ? (
+              <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <ClipboardCopy className="size-3.5" />
+            )}
+          </Button>
+        </ItemHeader>
         <ItemContent>
           <pre className="max-h-48 max-w-full overflow-auto break-words whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {JSON.stringify(item.data, null, 2)}
+            {jsonText}
           </pre>
         </ItemContent>
         {!basicInfo.read_only && (
           <ItemFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full cursor-pointer"
-              onClick={() => {
-                handleRestore(item.data);
-              }}
-            >
-              {historyI18n("restore")}
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full cursor-pointer"
+                >
+                  {historyI18n("restore")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {historyI18n("restoreConfirmTitle")}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {historyI18n("restoreConfirmDescription")}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel className="cursor-pointer">
+                    {t("cancel")}
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    className="cursor-pointer"
+                    onClick={() => {
+                      handleRestore(item.data);
+                    }}
+                  >
+                    {t("confirm")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </ItemFooter>
         )}
       </Item>

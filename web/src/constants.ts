@@ -128,6 +128,7 @@ export enum ExFormItemCategory {
   KV_LIST = "kvList",
   SORT_CHECKBOXS = "sortCheckboxs",
   COMBINED_AUTHS = "combinedAuths",
+  PLUGIN_CATEGORY = "pluginCategory",
 }
 
 export enum PluginCategory {

@@ -6,8 +6,19 @@ import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useShallow } from "zustand/react/shallow";
-import { ClipboardCopy, LoaderCircle } from "lucide-react";
+import { Check, ClipboardCopy, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import { PageShell } from "@/components/page-shell";
@@ -25,23 +36,56 @@ function CodePanel({
   onCopy,
 }: {
   content: string;
-  onCopy?: () => void;
+  onCopy?: () => Promise<boolean> | void;
 }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = React.useState(false);
+  const timerRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const linesCount = content ? content.split("\n").length : 0;
+
   return (
-    <Card className="relative flex min-h-0 flex-1 flex-col overflow-hidden border-border">
-      {onCopy && content && (
-        <Button
-          className="absolute top-3 right-3 z-10 cursor-pointer"
-          variant="secondary"
-          size="icon"
-          onClick={async (e) => {
-            e.preventDefault();
-            onCopy();
-          }}
-        >
-          <ClipboardCopy className="h-4 w-4" />
-        </Button>
-      )}
+    <Card className="relative flex min-h-0 flex-1 flex-col gap-0 overflow-hidden border-border py-0">
+      <div className="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
+        <span className="figure">
+          {t("configPage.linesCount", { count: linesCount })}
+        </span>
+        {onCopy && content && (
+          <Button
+            className="h-7 cursor-pointer gap-1.5 px-2 text-xs"
+            variant="ghost"
+            size="sm"
+            aria-label={t("header.copy")}
+            onClick={async (e) => {
+              e.preventDefault();
+              const ok = await onCopy();
+              if (ok !== false) {
+                setCopied(true);
+                if (timerRef.current !== null) {
+                  window.clearTimeout(timerRef.current);
+                }
+                timerRef.current = window.setTimeout(() => {
+                  setCopied(false);
+                }, 1500);
+              }
+            }}
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <ClipboardCopy className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        )}
+      </div>
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
         <pre className="h-full min-h-[min(60vh,480px)] overflow-auto p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap sm:text-sm">
           {content || <span className="text-muted-foreground">—</span>}
@@ -85,26 +129,21 @@ export default function Config() {
     }
   }, []);
 
-  const copyToml = async () => {
+  const copyContent = async (value: string) => {
     try {
-      await navigator.clipboard.writeText(originalToml);
+      await navigator.clipboard.writeText(value);
       toast(t("copyConfigSuccess"));
+      return true;
     } catch (err) {
       toast(t("copyConfigFail"), {
         description: formatError(err),
       });
+      return false;
     }
   };
-  const copyHcl = async () => {
-    try {
-      await navigator.clipboard.writeText(hcl);
-      toast(t("copyConfigSuccess"));
-    } catch (err) {
-      toast(t("copyConfigFail"), {
-        description: formatError(err),
-      });
-    }
-  };
+  const copyToml = () => copyContent(originalToml);
+  const copyFullToml = () => copyContent(fullToml);
+  const copyHcl = () => copyContent(hcl);
   const handleImportToml = async (value: string) => {
     if (importing) {
       return;
@@ -187,7 +226,7 @@ export default function Config() {
         {/* Fill remaining height under tabs; only the panel body scrolls */}
         <div className="relative min-h-0 flex-1">
           <TabsContent value="full" className={panelClass}>
-            <CodePanel content={fullToml} />
+            <CodePanel content={fullToml} onCopy={copyFullToml} />
           </TabsContent>
           <TabsContent value="original" className={panelClass}>
             <CodePanel content={originalToml} onCopy={copyToml} />
@@ -210,18 +249,42 @@ export default function Config() {
                     setNewToml(value);
                   }}
                 />
-                <Button
-                  className="w-full shrink-0 cursor-pointer sm:w-auto"
-                  disabled={importing || !newToml}
-                  onClick={() => {
-                    handleImportToml(newToml);
-                  }}
-                >
-                  {importing && (
-                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                  )}
-                  {importText}
-                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      className="w-full shrink-0 cursor-pointer sm:w-auto"
+                      disabled={importing || !newToml}
+                    >
+                      {importing && (
+                        <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                      )}
+                      {importText}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        {t("configPage.importConfirmTitle")}
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {t("configPage.importConfirmDescription")}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel className="cursor-pointer">
+                        {t("cancel")}
+                      </AlertDialogCancel>
+                      <AlertDialogAction
+                        className="cursor-pointer"
+                        onClick={() => {
+                          handleImportToml(newToml);
+                        }}
+                      >
+                        {t("confirm")}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </CardContent>
             </Card>
           </TabsContent>
