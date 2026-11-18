@@ -321,6 +321,95 @@ pub fn restore_acme_certificate(
     true
 }
 
+fn ensure_save_target_available(save_path: &str) -> Result<()> {
+    let trimmed = save_path.trim();
+    if trimmed.is_empty() {
+        return Err("--save-conf path should not be empty".into());
+    }
+    if trimmed.starts_with(pingap_config::ETCD_PROTOCOL) {
+        return Ok(());
+    }
+    let raw_path = trimmed.split('?').next().unwrap_or(trimmed);
+    let resolved = PathBuf::from(resolve_path(raw_path));
+    if resolved.is_file() {
+        let len = std::fs::metadata(&resolved).map(|m| m.len()).unwrap_or(0);
+        if len > 0 {
+            return Err(format!(
+                "--save-conf target {} already exists; use --conf to load it or choose a new path",
+                resolved.display()
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    if resolved.is_dir() && dir_has_config_files(&resolved)? {
+        return Err(format!(
+            "--save-conf directory {} already contains configuration files; use --conf to load it or choose a new path",
+            resolved.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn dir_has_config_files(dir: &Path) -> Result<bool> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if matches!(ext, "toml" | "hcl" | "kdl") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Validates and persists a generated quick-start configuration to a file,
+/// directory, or etcd storage URL so subsequent runs and Web Admin edits work
+/// against persistent storage instead of memory-only state.
+pub async fn save_config(config: &PingapConfig, save_path: &str) -> Result<()> {
+    ensure_save_target_available(save_path)?;
+    let toml_text = toml::to_string_pretty(config)?;
+    let toml_config: pingap_config::PingapTomlConfig =
+        toml::from_str(&toml_text)?;
+    crate::validate::validate_stored(&toml_config)?;
+    let manager = pingap_config::new_config_manager(save_path)?;
+    manager.save_all(&toml_config).await?;
+    Ok(())
+}
+
+/// Blocking wrapper around [`save_config`] for startup before Pingora's
+/// service runtimes are created.
+pub fn save_config_blocking(
+    config: &PingapConfig,
+    save_path: &str,
+) -> Result<()> {
+    let config = config.clone();
+    let save_path = save_path.to_string();
+    let handle =
+        std::thread::spawn(move || -> std::result::Result<(), String> {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| e.to_string())?;
+            rt.block_on(async move {
+                save_config(&config, &save_path)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+        });
+    match handle.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err("save quick-start config thread panicked".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,6 +698,68 @@ mod tests {
             resolve_tls_files(&no_key.path().to_string_lossy(), None)
                 .unwrap_err()
                 .to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_save_config_to_directory_and_file() {
+        let config = build_config(&QuickStartParams {
+            upstreams: "127.0.0.1:3000".to_string(),
+            addr: Some("127.0.0.1:18080".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let dir_target = dir.path().join("conf");
+        save_config(&config, &dir_target.to_string_lossy())
+            .await
+            .unwrap();
+        let loaded =
+            pingap_config::new_config_manager(&dir_target.to_string_lossy())
+                .unwrap()
+                .load_all()
+                .await
+                .unwrap()
+                .to_pingap_config(false)
+                .unwrap();
+        assert_eq!("127.0.0.1:18080", loaded.servers.get(NAME).unwrap().addr);
+        assert_eq!(
+            vec!["127.0.0.1:3000".to_string()],
+            loaded.upstreams.get(NAME).unwrap().addrs
+        );
+
+        let file_target = dir.path().join("pingap.toml");
+        save_config(&config, &file_target.to_string_lossy())
+            .await
+            .unwrap();
+        assert!(file_target.is_file());
+    }
+
+    #[tokio::test]
+    async fn test_save_config_refuses_non_empty_target() {
+        let config = build_config(&QuickStartParams {
+            upstreams: "127.0.0.1:3000".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let existing_file = dir.path().join("existing.toml");
+        fs::write(&existing_file, "[basic]\nname = \"x\"\n").unwrap();
+        let err = save_config(&config, &existing_file.to_string_lossy())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("already exists"), "unexpected error: {err}");
+
+        let err = save_config(&config, &dir.path().to_string_lossy())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("already contains configuration files"),
+            "unexpected error: {err}"
         );
     }
 }

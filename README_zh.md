@@ -83,7 +83,7 @@ pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 
 - 不带 `--cert` 时通过 HTTP-01 申请证书：域名必须解析到本机，且 80 端口可从公网访问。证书保存在 `~/.pingap/acme/<domains>.toml`，下次启动时复用。申请有速率限制，请勿删除。
 - `--cert` 可以是证书文件或它所在的目录（自动识别 `fullchain.pem` / `privkey.pem`、`cert.pem` / `key.pem`、`tls.crt` / `tls.key`，其他命名用 `--key` 指定）。`--upstream` 和 `--domain` 是逗号分隔的列表，`--addr` 指定监听地址。
-- 配置在每次启动时重新生成，所以不能通过管理后台修改。超过一个 server 的需求请使用 `--conf`，它不能和这些参数同时使用。
+- 默认情况下配置在每次启动时于内存中重新生成，不能通过管理后台持久化修改。传入 `--save-conf <path>`（文件、目录或 `etcd://` 地址）可将生成的配置落盘并以该持久化存储运行，后续可直接用 `--conf` 启动。超过一个 server 的需求请使用 `--conf`，它不能和这些参数同时使用。
 
 ## 📝 配置
 

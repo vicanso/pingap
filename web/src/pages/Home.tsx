@@ -28,6 +28,7 @@ import {
   type PathStage,
 } from "@/components/traffic-path";
 import { TrafficPanel } from "@/components/traffic-panel";
+import { QuickSiteWizard } from "@/components/quick-site-wizard";
 
 interface Summary {
   name: string;
@@ -572,16 +573,21 @@ export default function Home() {
       title={homeI18n("dashboard")}
       description={config.basic?.name || undefined}
       actions={
-        buildTags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {buildTags.map((tag) => (
-              <span
-                key={tag}
-                className="machine inline-flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-[11.5px] font-medium text-secondary-foreground"
-              >
-                {tag}
-              </span>
-            ))}
+        (buildTags.length > 0 || !basicInfo.read_only) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {buildTags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {buildTags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="machine inline-flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-[11.5px] font-medium text-secondary-foreground"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+            {!basicInfo.read_only && <QuickSiteWizard />}
           </div>
         )
       }

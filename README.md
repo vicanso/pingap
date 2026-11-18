@@ -83,7 +83,7 @@ pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
 
 - Without `--cert` the certificate is ordered by HTTP-01: the domain has to resolve to this host, with port 80 reachable. It is kept in `~/.pingap/acme/<domains>.toml` and used again at the next start. Do not delete it, issuing is rate limited.
 - `--cert` is the certificate or the directory it is in (`fullchain.pem` / `privkey.pem`, `cert.pem` / `key.pem` and `tls.crt` / `tls.key` are found; `--key` names anything else). `--upstream` and `--domain` take lists separated by commas, `--addr` the address to listen on.
-- The configuration is made anew at every start, so the admin cannot edit it. For more than one server use `--conf`, which these flags cannot be combined with.
+- By default the configuration is made anew in memory at every start, so the admin cannot persist edits. Pass `--save-conf <path>` (a file, directory, or `etcd://` URL) to persist the generated configuration and run Pingap backed by that storage; on subsequent runs load it with `--conf`. For more than one server use `--conf`, which these flags cannot be combined with.
 
 ## 📝 Configuration
 

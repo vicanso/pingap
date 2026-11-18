@@ -161,6 +161,15 @@ struct Args {
     /// a certificate and 0.0.0.0:80 without
     #[arg(long, requires = "upstream", conflicts_with = "conf")]
     addr: Option<String>,
+    /// Persist the generated quick-start configuration to a file, directory,
+    /// or etcd URL, then run Pingap backed by that storage
+    #[arg(
+        long,
+        requires = "upstream",
+        conflicts_with = "conf",
+        conflicts_with = "sync"
+    )]
+    save_conf: Option<String>,
     /// Run server in background mode
     #[arg(short, long)]
     daemon: bool,
@@ -488,18 +497,29 @@ fn restart_arguments(args: &Args) -> Vec<String> {
             pingap_util::resolve_path(conf)
         };
         new_args.push(format!("-c={conf_path}"));
+    } else if let Some(save_conf) = &args.save_conf {
+        // Quick-start config was already persisted to `save_conf`; reload from
+        // that storage on restart so any Admin edits survive.
+        let conf_path = if save_conf.starts_with(ETCD_PROTOCOL) {
+            save_conf.clone()
+        } else {
+            pingap_util::resolve_path(save_conf)
+        };
+        new_args.push(format!("-c={conf_path}"));
     }
-    // The command line proxy has no config file to point the new process
-    // at, so pass the arguments it was built from instead.
-    for (name, value) in [
-        ("upstream", &args.upstream),
-        ("domain", &args.domain),
-        ("cert", &args.cert),
-        ("key", &args.key),
-        ("addr", &args.addr),
-    ] {
-        if let Some(value) = value {
-            new_args.push(format!("--{name}={value}"));
+    // The command line proxy without `--save-conf` has no config file to point
+    // the new process at, so pass the arguments it was built from instead.
+    if args.save_conf.is_none() {
+        for (name, value) in [
+            ("upstream", &args.upstream),
+            ("domain", &args.domain),
+            ("cert", &args.cert),
+            ("key", &args.key),
+            ("addr", &args.addr),
+        ] {
+            if let Some(value) = value {
+                new_args.push(format!("--{name}={value}"));
+            }
         }
     }
     if let Some(log) = &args.log {
@@ -954,10 +974,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             );
         }
-        try_init_memory_config_manager(
-            &toml::to_string_pretty(&config)?,
-            acme_state_path,
-        )?
+        if let Some(save_path) = &args.save_conf
+            && !args.test
+        {
+            quick_start::save_config_blocking(&config, save_path)?;
+            println!("saved quick-start config to: {save_path}");
+            try_init_config_manager(save_path)?
+        } else {
+            try_init_memory_config_manager(
+                &toml::to_string_pretty(&config)?,
+                acme_state_path,
+            )?
+        }
     } else {
         try_init_config_manager(&args.conf.clone().unwrap_or_default())?
     };
@@ -1819,6 +1847,20 @@ addr = "127.0.0.1:80"
         };
         assert_eq!(
             vec!["-d", "-u", "--autoreload", "--strict"],
+            restart_arguments(&args)
+        );
+    }
+
+    #[test]
+    fn test_restart_arguments_use_saved_conf() {
+        let args = Args {
+            upstream: Some("127.0.0.1:3000".to_string()),
+            domain: Some("app.example.com".to_string()),
+            save_conf: Some("/tmp/pingap-quick-conf".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            vec!["-d", "-u", "-c=/tmp/pingap-quick-conf"],
             restart_arguments(&args)
         );
     }

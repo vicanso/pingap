@@ -1068,6 +1068,371 @@ impl AdminServe {
 
         Ok(HttpResponse::no_content())
     }
+    async fn create_quick_site(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<HttpResponse> {
+        let buf = get_request_body(session).await?;
+        let refuse = |message: String| {
+            error!(
+                target: LOG_TARGET,
+                error = message,
+                "quick site create fail"
+            );
+            pingap_core::new_internal_error(400, message)
+        };
+        let req: QuickSiteRequest =
+            serde_json::from_slice(&buf).map_err(|e| refuse(e.to_string()))?;
+        let mut config = self
+            .manager
+            .load_all()
+            .await
+            .map_err(|e| refuse(e.to_string()))?;
+        let resp = apply_quick_site(&mut config, &req).map_err(refuse)?;
+        let config = tokio::task::spawn_blocking(move || {
+            crate::validate::validate_stored(&config)
+                .map(|_| config)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| refuse(e.to_string()))?
+        .map_err(refuse)?;
+        self.manager.save_all(&config).await.map_err(|e| {
+            error!(
+                target: LOG_TARGET,
+                error = e.to_string(),
+                "quick site save fail"
+            );
+            pingap_core::new_internal_error(400, e)
+        })?;
+        crate::validate::apply_stored_trusted_proxies(&self.manager).await;
+
+        HttpResponse::try_from_json_status(&resp, StatusCode::CREATED)
+            .map_err(|e| pingap_core::new_internal_error(500, e))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct QuickSiteRequest {
+    name: String,
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    upstreams: Vec<String>,
+    path: Option<String>,
+    addr: Option<String>,
+    existing_server: Option<String>,
+    tls_mode: Option<String>,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+    enable_reverse_proxy_headers: Option<bool>,
+    enable_compression: Option<bool>,
+    enable_security_headers: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct QuickSiteResponse {
+    server: String,
+    server_created: bool,
+    location: String,
+    upstream: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certificate: Option<String>,
+    plugins: Vec<String>,
+}
+
+fn clean_list(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn validate_quick_site_name(name: &str) -> std::result::Result<&str, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("site name should not be empty".to_string());
+    }
+    if trimmed == "."
+        || trimmed == ".."
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(
+            "site name may only contain letters, digits, '.', '-' and '_'"
+                .to_string(),
+        );
+    }
+    Ok(trimmed)
+}
+
+fn toml_value_of<T: Serialize>(
+    value: &T,
+) -> std::result::Result<toml::Value, String> {
+    toml::Value::try_from(value).map_err(|e| e.to_string())
+}
+
+fn insert_unique_entry(
+    section: &mut Option<toml::map::Map<String, toml::Value>>,
+    category: &str,
+    name: &str,
+    value: toml::Value,
+) -> std::result::Result<(), String> {
+    let map = section.get_or_insert_with(toml::map::Map::new);
+    if map.contains_key(name) {
+        return Err(format!("{category} '{name}' already exists"));
+    }
+    map.insert(name.to_string(), value);
+    Ok(())
+}
+
+fn build_quick_site_certificate(
+    req: &QuickSiteRequest,
+    domains: &[String],
+) -> std::result::Result<Option<CertificateConf>, String> {
+    let mode = req
+        .tls_mode
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("none")
+        .to_ascii_lowercase();
+    match mode.as_str() {
+        "" | "none" => Ok(None),
+        "acme" => {
+            if domains.is_empty() {
+                return Err(
+                    "domains are required when tls_mode is acme".to_string()
+                );
+            }
+            Ok(Some(CertificateConf {
+                domains: Some(domains.join(",")),
+                acme: Some("lets_encrypt".to_string()),
+                ..Default::default()
+            }))
+        },
+        "custom" => {
+            let cert = req
+                .tls_cert
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    "tls_cert is required when tls_mode is custom".to_string()
+                })?;
+            let key = req
+                .tls_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| {
+                    "tls_key is required when tls_mode is custom".to_string()
+                })?;
+            Ok(Some(CertificateConf {
+                domains: (!domains.is_empty()).then(|| domains.join(",")),
+                tls_cert: Some(cert.to_string()),
+                tls_key: Some(key.to_string()),
+                ..Default::default()
+            }))
+        },
+        other => Err(format!(
+            "invalid tls_mode: {other} (expected none, acme, or custom)"
+        )),
+    }
+}
+
+fn insert_quick_site_plugins(
+    plugins_section: &mut Option<toml::map::Map<String, toml::Value>>,
+    req: &QuickSiteRequest,
+    name: &str,
+) -> std::result::Result<Vec<String>, String> {
+    let mut created = Vec::new();
+    if req.enable_compression.unwrap_or(false) {
+        let plugin_name = format!("{name}-compression");
+        let mut table = toml::map::Map::new();
+        table.insert(
+            "category".to_string(),
+            toml::Value::String("compression".to_string()),
+        );
+        table.insert("gzip_level".to_string(), toml::Value::Integer(6));
+        table.insert("br_level".to_string(), toml::Value::Integer(6));
+        table.insert("zstd_level".to_string(), toml::Value::Integer(3));
+        insert_unique_entry(
+            plugins_section,
+            CATEGORY_PLUGIN,
+            &plugin_name,
+            toml::Value::Table(table),
+        )?;
+        created.push(plugin_name);
+    }
+    if req.enable_security_headers.unwrap_or(false) {
+        let plugin_name = format!("{name}-security-headers");
+        let mut table = toml::map::Map::new();
+        table.insert(
+            "category".to_string(),
+            toml::Value::String("response_headers".to_string()),
+        );
+        table.insert(
+            "preset".to_string(),
+            toml::Value::String("security".to_string()),
+        );
+        insert_unique_entry(
+            plugins_section,
+            CATEGORY_PLUGIN,
+            &plugin_name,
+            toml::Value::Table(table),
+        )?;
+        created.push(plugin_name);
+    }
+    Ok(created)
+}
+
+fn attach_location_to_server(
+    servers_section: &mut Option<toml::map::Map<String, toml::Value>>,
+    req: &QuickSiteRequest,
+    name: &str,
+    has_tls: bool,
+) -> std::result::Result<(String, bool), String> {
+    if let Some(existing) = req
+        .existing_server
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        let map = servers_section
+            .as_mut()
+            .ok_or_else(|| format!("server '{existing}' does not exist"))?;
+        let entry = map
+            .get_mut(existing)
+            .ok_or_else(|| format!("server '{existing}' does not exist"))?;
+        let table = entry
+            .as_table_mut()
+            .ok_or_else(|| format!("server '{existing}' is not a table"))?;
+        let locations = table
+            .entry("locations".to_string())
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        let list = locations.as_array_mut().ok_or_else(|| {
+            format!("server '{existing}' locations is not an array")
+        })?;
+        let loc_value = toml::Value::String(name.to_string());
+        if !list.contains(&loc_value) {
+            list.push(loc_value);
+        }
+        if has_tls && !table.contains_key("global_certificates") {
+            table.insert(
+                "global_certificates".to_string(),
+                toml::Value::Boolean(true),
+            );
+        }
+        return Ok((existing.to_string(), false));
+    }
+
+    let addr = req
+        .addr
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if has_tls {
+                "0.0.0.0:443".to_string()
+            } else {
+                "0.0.0.0:80".to_string()
+            }
+        });
+    let server = ServerConf {
+        addr,
+        access_log: Some("combined".to_string()),
+        locations: Some(vec![name.to_string()]),
+        global_certificates: has_tls.then_some(true),
+        enabled_h2: has_tls.then_some(true),
+        ..Default::default()
+    };
+    insert_unique_entry(
+        servers_section,
+        CATEGORY_SERVER,
+        name,
+        toml_value_of(&server)?,
+    )?;
+    Ok((name.to_string(), true))
+}
+
+fn apply_quick_site(
+    config: &mut PingapTomlConfig,
+    req: &QuickSiteRequest,
+) -> std::result::Result<QuickSiteResponse, String> {
+    let name = validate_quick_site_name(&req.name)?;
+    let upstreams = clean_list(&req.upstreams);
+    if upstreams.is_empty() {
+        return Err("at least one upstream address is required".to_string());
+    }
+    let domains = clean_list(&req.domains);
+    let cert = build_quick_site_certificate(req, &domains)?;
+    let has_tls = cert.is_some();
+
+    let upstream = UpstreamConf {
+        addrs: upstreams,
+        ..Default::default()
+    };
+    insert_unique_entry(
+        &mut config.upstreams,
+        CATEGORY_UPSTREAM,
+        name,
+        toml_value_of(&upstream)?,
+    )?;
+
+    let plugins = insert_quick_site_plugins(&mut config.plugins, req, name)?;
+
+    let path = req
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("/")
+        .to_string();
+    let location = LocationConf {
+        path: Some(path),
+        host: (!domains.is_empty()).then(|| domains.join(",")),
+        upstream: Some(name.to_string()),
+        enable_reverse_proxy_headers: req
+            .enable_reverse_proxy_headers
+            .unwrap_or(true)
+            .then_some(true),
+        plugins: (!plugins.is_empty()).then(|| plugins.clone()),
+        ..Default::default()
+    };
+    insert_unique_entry(
+        &mut config.locations,
+        CATEGORY_LOCATION,
+        name,
+        toml_value_of(&location)?,
+    )?;
+
+    let certificate = if let Some(cert_conf) = cert {
+        insert_unique_entry(
+            &mut config.certificates,
+            CATEGORY_CERTIFICATE,
+            name,
+            toml_value_of(&cert_conf)?,
+        )?;
+        Some(name.to_string())
+    } else {
+        None
+    };
+
+    let (server, server_created) =
+        attach_location_to_server(&mut config.servers, req, name, has_tls)?;
+
+    Ok(QuickSiteResponse {
+        server,
+        server_created,
+        location: name.to_string(),
+        upstream: name.to_string(),
+        certificate,
+        plugins,
+    })
 }
 
 /// The answer to a config request that failed: the status the error was
@@ -1269,6 +1634,8 @@ async fn handle_request_admin(
             Method::POST => {
                 if category == "import" {
                     plugin.import_config(session).await
+                } else if category == "quick-site" {
+                    plugin.create_quick_site(session).await
                 } else if params.len() < 4 {
                     Err(pingap_core::new_internal_error(
                         400,
@@ -2901,5 +3268,143 @@ path = "/api"
         );
         // An entry the file never had.
         assert_eq!(true, versions("none").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_quick_site_creates_entities_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let (admin, manager) = new_admin_on(dir.path(), "");
+
+        let (code, body) = post(
+            &admin,
+            "/api/configs/quick-site",
+            &serde_json::json!({
+                "name": "blog",
+                "domains": ["blog.example.com"],
+                "upstreams": ["127.0.0.1:3000"],
+                "addr": "127.0.0.1:18443",
+                "tls_mode": "acme",
+                "enable_reverse_proxy_headers": true,
+                "enable_compression": true,
+                "enable_security_headers": true
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(201, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!("blog", resp["server"].as_str().unwrap());
+        assert_eq!(true, resp["server_created"].as_bool().unwrap());
+        assert_eq!("blog", resp["certificate"].as_str().unwrap());
+        assert_eq!(2, resp["plugins"].as_array().unwrap().len());
+
+        let stored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(
+            vec!["127.0.0.1:3000".to_string()],
+            stored.upstreams["blog"].addrs
+        );
+        assert_eq!(
+            Some("blog.example.com".to_string()),
+            stored.locations["blog"].host
+        );
+        assert_eq!(
+            Some(true),
+            stored.locations["blog"].enable_reverse_proxy_headers
+        );
+        assert_eq!(
+            Some("lets_encrypt".to_string()),
+            stored.certificates["blog"].acme
+        );
+        assert_eq!("127.0.0.1:18443", stored.servers["blog"].addr);
+        assert_eq!(Some(true), stored.servers["blog"].global_certificates);
+        assert_eq!(Some(true), stored.servers["blog"].enabled_h2);
+        assert_eq!(true, stored.plugins.contains_key("blog-compression"));
+        assert_eq!(true, stored.plugins.contains_key("blog-security-headers"));
+    }
+
+    #[tokio::test]
+    async fn test_quick_site_existing_server_and_atomic_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let (admin, manager) = new_admin_on(dir.path(), "");
+
+        let (code, body) = post(
+            &admin,
+            "/api/configs/quick-site",
+            &serde_json::json!({
+                "name": "site_a",
+                "domains": ["a.example.com"],
+                "upstreams": ["127.0.0.1:3001"],
+                "addr": "127.0.0.1:18080",
+                "tls_mode": "none"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(201, code, "{body}");
+
+        // Attach a second site onto the existing server.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/quick-site",
+            &serde_json::json!({
+                "name": "site_b",
+                "domains": ["b.example.com"],
+                "upstreams": ["127.0.0.1:3002"],
+                "existing_server": "site_a",
+                "tls_mode": "none"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(201, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!("site_a", resp["server"].as_str().unwrap());
+        assert_eq!(false, resp["server_created"].as_bool().unwrap());
+
+        // Duplicate name must be refused without mutating stored config.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/quick-site",
+            &serde_json::json!({
+                "name": "site_b",
+                "upstreams": ["127.0.0.1:3003"],
+                "addr": "127.0.0.1:18081"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, code, "{body}");
+        assert!(body.contains("already exists"), "{body}");
+
+        // Invalid listen address must fail validation atomically (no partial upstream/location saved).
+        let (code, body) = post(
+            &admin,
+            "/api/configs/quick-site",
+            &serde_json::json!({
+                "name": "broken",
+                "upstreams": ["127.0.0.1:3004"],
+                "addr": "not-a-valid-addr"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, code, "{body}");
+        let stored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(false, stored.upstreams.contains_key("broken"));
+        assert_eq!(false, stored.locations.contains_key("broken"));
+        assert_eq!(
+            vec!["site_a".to_string(), "site_b".to_string()],
+            stored.servers["site_a"].locations.clone().unwrap()
+        );
     }
 }

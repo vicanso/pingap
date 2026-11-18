@@ -22,6 +22,7 @@ import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
+import { QuickSiteWizard } from "@/components/quick-site-wizard";
 import { SERVERS } from "@/routers";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
@@ -84,6 +85,7 @@ export default function Servers() {
         newValue={newServer}
         names={servers}
         values={values}
+        extraActions={<QuickSiteWizard variant="outline" size="default" />}
         columns={[
           {
             key: "addr",

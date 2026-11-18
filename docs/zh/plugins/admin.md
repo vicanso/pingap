@@ -186,6 +186,7 @@ curl -H "Authorization: $TOKEN:$TS" http://127.0.0.1:3018/api/basic
 
 - **空的 `authorizations` 会禁用认证。** 切勿把此类实例暴露到 localhost 之外；此时哪些请求会被拒绝、哪些不会，见[不设凭据时](#不设凭据时)。
 - API 可改证书、上游与 server，并可重启进程。绑定私有接口，或在 admin location 前加 [`ip_restriction`](ip_restriction.md)。
-- 经 API 写入的配置进入 `-c` 指向的后端。`file://` 存储下，用 `--upstream` 启动的无配置文件快速启动没有可编辑的后端存储，UI 无法改配置。
+- 经 API 写入的配置进入 `-c` 指向的后端。仅用 `--upstream` 启动的无配置文件快速启动运行在内存存储中，UI 无法持久化修改配置；如同时传入 `--save-conf <path>`，则会自动落盘并以该文件/etcd 存储运行，之后即可在管理后台继续编辑。
+- `POST /api/configs/quick-site`（对应 Web Admin 仪表盘与 Servers 页的**快速建站向导**）可在单次请求中原子化校验并生成 Upstream、Location、可选 TLS 证书、可选压缩/安全头插件与 Server 绑定。
 - 令牌嵌入时间戳但不绑定请求；它是 bearer 凭证。请通过 TLS 提供管理 UI。
 - `/configs/{category}/{name}` 与 `/config-history/{category}/{name}` 都需要 name 段；省略会返回错误而非结果。

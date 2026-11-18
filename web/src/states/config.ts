@@ -247,6 +247,30 @@ export interface History {
   data: Record<string, unknown>;
 }
 
+export interface QuickSitePayload {
+  name: string;
+  domains: string[];
+  upstreams: string[];
+  path?: string;
+  addr?: string;
+  existing_server?: string;
+  tls_mode: "none" | "acme" | "custom";
+  tls_cert?: string;
+  tls_key?: string;
+  enable_reverse_proxy_headers?: boolean;
+  enable_compression?: boolean;
+  enable_security_headers?: boolean;
+}
+
+export interface QuickSiteResult {
+  server: string;
+  server_created: boolean;
+  location: string;
+  upstream: string;
+  certificate?: string;
+  plugins: string[];
+}
+
 interface ConfigState {
   data: Config;
   certificateInfos: Record<string, CertificateInfo>;
@@ -263,6 +287,7 @@ interface ConfigState {
     data: Record<string, unknown>,
   ) => Promise<void>;
   importToml: (data: string) => Promise<void>;
+  createQuickSite: (payload: QuickSitePayload) => Promise<QuickSiteResult>;
   remove: (category: string, name: string) => Promise<void>;
   getIncludeOptions: () => string[];
   getCertificateInfos: () => Promise<Record<string, CertificateInfo>>;
@@ -320,6 +345,22 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   },
   importToml: async (data: string) => {
     await request.post(`/configs/import`, data);
+  },
+  createQuickSite: async (payload: QuickSitePayload) => {
+    const { data } = await request.post<QuickSiteResult>(
+      `/configs/quick-site`,
+      payload,
+    );
+    await get().fetch();
+    try {
+      await get().getCertificateInfos();
+    } catch {
+      // Certificate metadata refresh is best-effort.
+    }
+    set({
+      version: random(),
+    });
+    return data;
   },
   remove: async (category: string, name: string) => {
     await request.delete(`/configs/${category}/${name}`);

@@ -338,9 +338,13 @@ control-panel node.
   process. Bind it to a private interface, or put
   [`ip_restriction`](ip_restriction.md) in front of the admin location.
 - Configuration written through the API goes to whatever backend `-c` points at.
-  With `file://` storage, a proxy started with `--upstream` (the config-file-less
-  quick start) has no editable backing store and the UI cannot be used to change
-  it.
+  A proxy started with `--upstream` alone (the config-file-less quick start) runs
+  on in-memory storage and the UI cannot persist edits unless `--save-conf <path>`
+  was passed to persist and back it with file or etcd storage.
+- `POST /api/configs/quick-site` (used by the **Quick Site** wizard in the Web
+  Admin Dashboard and Servers page) atomically validates and creates an upstream,
+  location, optional TLS certificate, optional compression/security-header
+  plugins, and server binding in a single request.
 - The token embeds a timestamp but not the request; it is a bearer credential.
   Serve the admin UI over TLS.
 - `/configs/{category}/{name}` and `/config-history/{category}/{name}` both

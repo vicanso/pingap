@@ -58,6 +58,7 @@ interface ConfigEntityListProps<T> {
   names: string[];
   values: Record<string, T>;
   columns: ConfigEntityColumn<T>[];
+  extraActions?: ReactNode;
 }
 
 /** Value cell content with a muted em dash for anything empty, so columns stay aligned. */
@@ -83,6 +84,7 @@ export function ConfigEntityList<T>({
   names,
   values,
   columns,
+  extraActions,
 }: ConfigEntityListProps<T>) {
   const navigate = useNavigate();
   const i18n = useI18n();
@@ -112,12 +114,15 @@ export function ConfigEntityList<T>({
       // the header button appears once there is already something to browse.
       actions={
         names.length > 0 && !readOnly ? (
-          <Button asChild className="cursor-pointer">
-            <Link to={entityUrl(newValue)}>
-              <Plus className="size-4" />
-              {addLabel}
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {extraActions}
+            <Button asChild className="cursor-pointer">
+              <Link to={entityUrl(newValue)}>
+                <Plus className="size-4" />
+                {addLabel}
+              </Link>
+            </Button>
+          </div>
         ) : undefined
       }
     >
@@ -127,12 +132,15 @@ export function ConfigEntityList<T>({
         <div className="flex flex-col items-start rounded-lg border border-dashed border-border px-5 py-6">
           <p className="text-sm text-muted-foreground">{emptyText}</p>
           {!readOnly && (
-            <Button asChild className="mt-4 cursor-pointer">
-              <Link to={entityUrl(newValue)}>
-                <Plus className="size-4" />
-                {addLabel}
-              </Link>
-            </Button>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {extraActions}
+              <Button asChild className="cursor-pointer">
+                <Link to={entityUrl(newValue)}>
+                  <Plus className="size-4" />
+                  {addLabel}
+                </Link>
+              </Button>
+            </div>
           )}
         </div>
       ) : (
