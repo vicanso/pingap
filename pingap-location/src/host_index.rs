@@ -29,8 +29,173 @@
 
 use super::location::{HostIndexEntry, Location, host_matches_suffix};
 use ahash::AHashMap;
-use std::borrow::Cow;
+use smallvec::SmallVec;
+use std::ops::Deref;
 use std::sync::Arc;
+
+/// Weight-ordered location indices returned by [`LocationHostIndex::candidate_indices`].
+///
+/// Borrows a precomputed slice in the common cases (no host buckets, an exact
+/// host hit, or at most one matching wildcard suffix) and falls back to a
+/// stack-backed [`SmallVec`] only when two or more wildcard suffixes match
+/// the same non-exact host.
+#[derive(Debug, Clone)]
+pub enum CandidateIndices<'a> {
+    Borrowed(&'a [usize]),
+    Inline(SmallVec<[usize; 16]>),
+}
+
+impl CandidateIndices<'_> {
+    #[inline]
+    pub fn as_slice(&self) -> &[usize] {
+        match self {
+            Self::Borrowed(slice) => slice,
+            Self::Inline(vec) => vec.as_slice(),
+        }
+    }
+}
+
+impl Deref for CandidateIndices<'_> {
+    type Target = [usize];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl PartialEq for CandidateIndices<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl Eq for CandidateIndices<'_> {}
+
+impl PartialEq<[usize]> for CandidateIndices<'_> {
+    #[inline]
+    fn eq(&self, other: &[usize]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl PartialEq<&[usize]> for CandidateIndices<'_> {
+    #[inline]
+    fn eq(&self, other: &&[usize]) -> bool {
+        self.as_slice() == *other
+    }
+}
+
+impl PartialEq<Vec<usize>> for CandidateIndices<'_> {
+    #[inline]
+    fn eq(&self, other: &Vec<usize>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl PartialEq<CandidateIndices<'_>> for Vec<usize> {
+    #[inline]
+    fn eq(&self, other: &CandidateIndices<'_>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+/// Iterator over [`CandidateIndices`], yielding `usize` indices in weight order.
+pub enum CandidateIndicesIter<'a> {
+    Borrowed(std::slice::Iter<'a, usize>),
+    Inline(smallvec::IntoIter<[usize; 16]>),
+}
+
+impl Iterator for CandidateIndicesIter<'_> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Borrowed(iter) => iter.next().copied(),
+            Self::Inline(iter) => iter.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Borrowed(iter) => iter.size_hint(),
+            Self::Inline(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for CandidateIndicesIter<'_> {}
+
+impl<'a> IntoIterator for CandidateIndices<'a> {
+    type Item = usize;
+    type IntoIter = CandidateIndicesIter<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Self::Borrowed(slice) => {
+                CandidateIndicesIter::Borrowed(slice.iter())
+            },
+            Self::Inline(vec) => CandidateIndicesIter::Inline(vec.into_iter()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SuffixBucket {
+    domain: String,
+    raw: Vec<usize>,
+    with_always: Vec<usize>,
+}
+
+#[derive(Default)]
+struct RawBuckets {
+    exact: AHashMap<String, Vec<usize>>,
+    suffix: AHashMap<String, Vec<usize>>,
+    always: Vec<usize>,
+}
+
+fn collect_raw_buckets(
+    ordered_names: &[String],
+    mut resolve: impl FnMut(&str) -> Option<Arc<Location>>,
+) -> RawBuckets {
+    let mut raw = RawBuckets::default();
+    for (idx, name) in ordered_names.iter().enumerate() {
+        let Some(location) = resolve(name.as_str()) else {
+            continue;
+        };
+        for entry in location.host_index_entries() {
+            match entry {
+                HostIndexEntry::Exact(host) => {
+                    raw.exact.entry(host).or_default().push(idx);
+                },
+                HostIndexEntry::Suffix(domain) => {
+                    raw.suffix.entry(domain).or_default().push(idx);
+                },
+                HostIndexEntry::Regex | HostIndexEntry::Any => {
+                    if raw.always.last().copied() != Some(idx) {
+                        raw.always.push(idx);
+                    }
+                },
+            }
+        }
+    }
+    raw.always.sort_unstable();
+    raw.always.dedup();
+    raw
+}
+
+fn merge_with_always(base: &[usize], always: &[usize]) -> Vec<usize> {
+    let mut merged = Vec::with_capacity(base.len() + always.len());
+    merged.extend_from_slice(base);
+    merged.extend_from_slice(always);
+    merged.sort_unstable();
+    merged.dedup();
+    merged
+}
 
 /// Precomputed host buckets for a weight-ordered location list.
 #[derive(Debug, Clone, Default)]
@@ -38,14 +203,12 @@ pub struct LocationHostIndex {
     /// Weight-descending location names (same order as the server's list),
     /// shared with the [`ServerLocationRoute`] built from it.
     ordered: Arc<Vec<String>>,
-    /// Exact host → indices into `ordered`.
-    exact: AHashMap<String, Vec<u16>>,
-    /// `(domain, indices)` for `*.domain` patterns.
-    suffixes: Vec<(String, Vec<u16>)>,
-    /// Locations with at least one regex host pattern.
-    regex: Vec<u16>,
-    /// Locations with no host restriction.
-    any: Vec<u16>,
+    /// Exact host (lowercased) → pre-merged indices into `ordered`.
+    exact: AHashMap<String, Vec<usize>>,
+    /// `(domain, bucket)` for `*.domain` patterns, longer domains first.
+    suffixes: Vec<SuffixBucket>,
+    /// Sorted, deduplicated indices for regex-host and any-host locations.
+    always: Vec<usize>,
 }
 
 impl LocationHostIndex {
@@ -55,53 +218,51 @@ impl LocationHostIndex {
     /// are skipped (they cannot match at runtime either).
     pub fn build(
         ordered_names: &[String],
-        mut resolve: impl FnMut(&str) -> Option<Arc<Location>>,
+        resolve: impl FnMut(&str) -> Option<Arc<Location>>,
     ) -> Self {
-        let mut exact: AHashMap<String, Vec<u16>> = AHashMap::new();
-        let mut suffix_map: AHashMap<String, Vec<u16>> = AHashMap::new();
-        let mut regex = Vec::new();
-        let mut any = Vec::new();
-
-        for (i, name) in ordered_names.iter().enumerate() {
-            let Some(location) = resolve(name.as_str()) else {
-                continue;
-            };
-            let idx = i as u16;
-            for entry in location.host_index_entries() {
-                match entry {
-                    HostIndexEntry::Exact(host) => {
-                        exact.entry(host).or_default().push(idx);
-                    },
-                    HostIndexEntry::Suffix(domain) => {
-                        suffix_map.entry(domain).or_default().push(idx);
-                    },
-                    HostIndexEntry::Regex => {
-                        if !regex.contains(&idx) {
-                            regex.push(idx);
-                        }
-                    },
-                    HostIndexEntry::Any => {
-                        if !any.contains(&idx) {
-                            any.push(idx);
-                        }
-                    },
-                }
-            }
-        }
-
-        let mut suffixes: Vec<(String, Vec<u16>)> =
-            suffix_map.into_iter().collect();
+        let raw = collect_raw_buckets(ordered_names, resolve);
+        let mut suffix_pairs: Vec<(String, Vec<usize>)> =
+            raw.suffix.into_iter().collect();
         // Longer suffixes first so more specific wildcards are easy to reason
         // about when debugging (order among suffixes does not affect correctness
-        // because we re-sort candidate indices by weight).
-        suffixes.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
+        // because indices are kept in weight order).
+        suffix_pairs.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
+
+        let suffixes: Vec<SuffixBucket> = suffix_pairs
+            .into_iter()
+            .map(|(domain, mut indices)| {
+                indices.sort_unstable();
+                indices.dedup();
+                let with_always = merge_with_always(&indices, &raw.always);
+                SuffixBucket {
+                    domain,
+                    raw: indices,
+                    with_always,
+                }
+            })
+            .collect();
+
+        let exact = raw
+            .exact
+            .into_iter()
+            .map(|(host, mut indices)| {
+                for bucket in &suffixes {
+                    if host_matches_suffix(&host, &bucket.domain) {
+                        indices.extend_from_slice(&bucket.raw);
+                    }
+                }
+                indices.extend_from_slice(&raw.always);
+                indices.sort_unstable();
+                indices.dedup();
+                (host, indices)
+            })
+            .collect();
 
         Self {
             ordered: Arc::new(ordered_names.to_vec()),
             exact,
             suffixes,
-            regex,
-            any,
+            always: raw.always,
         }
     }
 
@@ -111,38 +272,74 @@ impl LocationHostIndex {
         &self.ordered
     }
 
+    #[inline]
+    fn lookup_exact(&self, host: &str) -> Option<&[usize]> {
+        if self.exact.is_empty() {
+            return None;
+        }
+        if !host.bytes().any(|b| b.is_ascii_uppercase()) {
+            return self.exact.get(host).map(Vec::as_slice);
+        }
+        if host.len() <= 256 {
+            let mut buf = [0u8; 256];
+            for (dst, src) in buf.iter_mut().zip(host.as_bytes()) {
+                *dst = src.to_ascii_lowercase();
+            }
+            let lower = std::str::from_utf8(&buf[..host.len()]).ok()?;
+            return self.exact.get(lower).map(Vec::as_slice);
+        }
+        let lower = host.to_ascii_lowercase();
+        self.exact.get(lower.as_str()).map(Vec::as_slice)
+    }
+
+    #[inline]
+    fn lookup_suffixes(&self, host: &str) -> CandidateIndices<'_> {
+        let mut first: Option<&SuffixBucket> = None;
+        let mut merged: Option<SmallVec<[usize; 16]>> = None;
+        for bucket in &self.suffixes {
+            if !host_matches_suffix(host, &bucket.domain) {
+                continue;
+            }
+            if let Some(buf) = merged.as_mut() {
+                buf.extend_from_slice(&bucket.raw);
+            } else if let Some(prev) = first.take() {
+                let mut buf = SmallVec::with_capacity(
+                    prev.with_always.len() + bucket.raw.len(),
+                );
+                buf.extend_from_slice(&prev.with_always);
+                buf.extend_from_slice(&bucket.raw);
+                merged = Some(buf);
+            } else {
+                first = Some(bucket);
+            }
+        }
+        if let Some(mut buf) = merged {
+            buf.sort_unstable();
+            buf.dedup();
+            return CandidateIndices::Inline(buf);
+        }
+        if let Some(bucket) = first {
+            return CandidateIndices::Borrowed(&bucket.with_always);
+        }
+        CandidateIndices::Borrowed(&self.always)
+    }
+
     /// Indices into [`Self::ordered`] that may match `host`, in weight order.
     ///
     /// Always includes regex-host and any-host locations. Exact and suffix
-    /// buckets contribute only when the request host matches. One small
-    /// `Vec` per call: the host is lowercased only when it has to be (the
-    /// exact map is keyed lowercase; a suffix compares in place), and the
-    /// buckets are merged by a sort rather than through a tree.
-    pub fn candidate_indices(&self, host: &str) -> Vec<usize> {
-        let mut candidates: Vec<usize> =
-            Vec::with_capacity(self.regex.len() + self.any.len() + 4);
-        if !self.exact.is_empty() {
-            let host_lower: Cow<str> =
-                if host.bytes().any(|b| b.is_ascii_uppercase()) {
-                    Cow::Owned(host.to_ascii_lowercase())
-                } else {
-                    Cow::Borrowed(host)
-                };
-            if let Some(idxs) = self.exact.get(host_lower.as_ref()) {
-                candidates.extend(idxs.iter().map(|&i| i as usize));
-            }
+    /// buckets contribute only when the request host matches. Common lookups
+    /// borrow a pre-merged slice with zero heap allocation; only a non-exact
+    /// host matching two or more wildcard suffixes merges into an inline
+    /// `SmallVec`.
+    #[inline]
+    pub fn candidate_indices(&self, host: &str) -> CandidateIndices<'_> {
+        if self.exact.is_empty() && self.suffixes.is_empty() {
+            return CandidateIndices::Borrowed(&self.always);
         }
-        for (domain, idxs) in &self.suffixes {
-            if host_matches_suffix(host, domain) {
-                candidates.extend(idxs.iter().map(|&i| i as usize));
-            }
+        if let Some(merged) = self.lookup_exact(host) {
+            return CandidateIndices::Borrowed(merged);
         }
-        candidates.extend(self.regex.iter().map(|&i| i as usize));
-        candidates.extend(self.any.iter().map(|&i| i as usize));
-        // weight order of `ordered`; a location in several buckets once
-        candidates.sort_unstable();
-        candidates.dedup();
-        candidates
+        self.lookup_suffixes(host)
     }
 
     /// Convenience: candidate location names in weight order.
@@ -355,5 +552,61 @@ mod tests {
         let index = LocationHostIndex::build(&ordered, |n| map.get(n).cloned());
         assert!(index.candidate_names("example.com").is_empty());
         assert_eq!(index.candidate_names("a.example.com"), vec!["wild"]);
+    }
+
+    #[test]
+    fn test_candidate_indices_borrowed_vs_multi_suffix_inline() {
+        let map: HashMap<&str, Arc<Location>> = [
+            (
+                "sub_wild",
+                loc("sub_wild", Some("*.sub.example.com"), Some("/")),
+            ),
+            (
+                "exact",
+                loc("exact", Some("api.sub.example.com"), Some("/")),
+            ),
+            (
+                "top_wild",
+                loc("top_wild", Some("*.example.com"), Some("/")),
+            ),
+            ("any", loc("any", None, Some("/"))),
+        ]
+        .into_iter()
+        .collect();
+        let ordered = vec![
+            "sub_wild".to_string(),
+            "exact".to_string(),
+            "top_wild".to_string(),
+            "any".to_string(),
+        ];
+        let index = LocationHostIndex::build(&ordered, |n| map.get(n).cloned());
+
+        // Exact host also matching two wildcards and `any`: pre-merged, borrowed.
+        let exact = index.candidate_indices("API.sub.example.com");
+        assert_eq!(true, matches!(exact, CandidateIndices::Borrowed(_)));
+        assert_eq!(vec![0, 1, 2, 3], exact);
+
+        // Non-exact host matching two wildcards: inline SmallVec merge.
+        let multi = index.candidate_indices("other.sub.example.com");
+        assert_eq!(true, matches!(multi, CandidateIndices::Inline(_)));
+        assert_eq!(vec![0, 2, 3], multi);
+
+        // Single wildcard match: pre-merged, borrowed.
+        let single = index.candidate_indices("other.example.com");
+        assert_eq!(true, matches!(single, CandidateIndices::Borrowed(_)));
+        assert_eq!(vec![2, 3], single);
+
+        // Zero wildcard/exact match: borrows `always`.
+        let none = index.candidate_indices("unrelated.org");
+        assert_eq!(true, matches!(none, CandidateIndices::Borrowed(_)));
+        assert_eq!(vec![3], none);
+
+        // Pure any-host index: fast path borrows `always` directly.
+        let any_only = LocationHostIndex::build(&["any".to_string()], |n| {
+            map.get(n).cloned()
+        });
+        let res = any_only.candidate_indices("anything.test");
+        assert_eq!(true, matches!(res, CandidateIndices::Borrowed(_)));
+        assert_eq!(vec![0], res);
     }
 }

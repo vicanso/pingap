@@ -443,6 +443,11 @@ export default {
     h1Pipelining: "HTTP/1.1 流水线",
     h1PipeliningTips:
       "在同一连接上依次应答客户端流水线发送的 HTTP/1.1 请求；关闭时只应答第一个请求就关闭连接，其余由客户端重试。",
+    keepaliveRequestLimit: "长连接请求上限",
+    keepaliveRequestLimitPlaceholder:
+      "单条HTTP/1.x连接最多处理的请求数(不填则不限制)",
+    keepaliveRequestLimitTips:
+      "下游 HTTP/1.x keep-alive 连接处理满该请求数后关闭（至少为 1），用于定期回收连接资源；留空则不限制。",
     h2InitialWindowSize: "H2初始流窗口",
     h2InitialWindowSizePlaceholder:
       "每个流的HTTP/2流控窗口(如1mib，最大2gib - 1)",

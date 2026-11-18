@@ -119,7 +119,7 @@ fn bench_logger_format_json(c: &mut Criterion) {
             ..Default::default()
         },
         conn: ConnectionInfo {
-            remote_addr: Some("10.0.0.1".to_string()),
+            remote_addr: Some("10.0.0.1".into()),
             ..Default::default()
         },
         ..Default::default()

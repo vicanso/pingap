@@ -202,6 +202,8 @@ pub struct Server {
     h2_idle_timeout: Option<Duration>,
     /// Serve HTTP/1.1 pipelined requests sequentially on a keep-alive connection
     h1_pipelining: bool,
+    /// Maximum number of HTTP/1.x requests per downstream keep-alive connection
+    keepalive_request_limit: Option<u32>,
 
     /// Whether Let's Encrypt certificate automation is enabled
     lets_encrypt_enabled: bool,
@@ -724,6 +726,7 @@ impl Server {
                 .h2_initial_connection_window_size,
             h2_idle_timeout: conf.h2_idle_timeout,
             h1_pipelining: conf.h1_pipelining,
+            keepalive_request_limit: conf.keepalive_request_limit,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
             #[cfg(feature = "tracing")]
@@ -774,6 +777,17 @@ impl Server {
             options.initial_connection_window_size(value);
         }
         Some(options)
+    }
+    fn http_server_options(&self, is_tls: bool) -> HttpServerOptions {
+        let mut options = HttpServerOptions::default();
+        // use h2c if not tls and enable http2
+        options.h2c = !is_tls && self.enabled_h2;
+        options.h2_idle_timeout = self.h2_idle_timeout;
+        // pingora's keepalive_request_limit is passed to
+        // set_keepalive_reuses_remaining (reuses *after* the first request).
+        options.keepalive_request_limit =
+            self.keepalive_request_limit.map(|n| n.saturating_sub(1));
+        options
     }
     /// Lets this server answer ACME http-01 challenges at
     /// `/.well-known/acme-challenge`: for a server on port 80, where a CA
@@ -881,10 +895,7 @@ impl Server {
             );
         }
         let h2_options = self.new_h2_options();
-        let mut http_server_options = HttpServerOptions::default();
-        // use h2c if not tls and enable http2
-        http_server_options.h2c = !is_tls && enabled_h2;
-        http_server_options.h2_idle_timeout = self.h2_idle_timeout;
+        let http_server_options = self.http_server_options(is_tls);
         let listeners = ListenerParams {
             name: name.clone(),
             addr,
@@ -1029,7 +1040,7 @@ impl Server {
         ctx.state.accepted_count =
             self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some((remote_addr, remote_port)) =
-            pingap_core::get_remote_addr(session)
+            pingap_core::get_remote_addr_str(session)
         {
             ctx.conn.remote_addr = Some(remote_addr);
             ctx.conn.remote_port = Some(remote_port);
@@ -1037,7 +1048,7 @@ impl Server {
         if let Some(addr) =
             session.server_addr().and_then(|addr| addr.as_inet())
         {
-            ctx.conn.server_addr = Some(addr.ip().to_string());
+            ctx.conn.server_addr = Some(pingap_core::AddrStr::from(addr.ip()));
             ctx.conn.server_port = Some(addr.port());
         }
     }
@@ -2905,7 +2916,7 @@ impl ProxyHttp for Server {
             info!(
                 target: LOG_TARGET,
                 error = %e,
-                remote_addr = ctx.conn.remote_addr,
+                remote_addr = ctx.conn.remote_addr.as_deref(),
                 client_ip = ctx.conn.client_ip,
                 user_agent,
                 error_type,
@@ -2937,7 +2948,7 @@ impl ProxyHttp for Server {
             info!(
                 target: LOG_TARGET,
                 error = %e,
-                remote_addr = ctx.conn.remote_addr,
+                remote_addr = ctx.conn.remote_addr.as_deref(),
                 client_ip = ctx.conn.client_ip,
                 user_agent,
                 error_type,
@@ -2952,7 +2963,7 @@ impl ProxyHttp for Server {
             error!(
                 target: LOG_TARGET,
                 error = %e,
-                remote_addr = ctx.conn.remote_addr,
+                remote_addr = ctx.conn.remote_addr.as_deref(),
                 client_ip = ctx.conn.client_ip,
                 user_agent,
                 error_type,
@@ -6748,5 +6759,118 @@ addr = "127.0.0.1:6188"
         drop(rx);
         server.write_access_log(BytesMut::from("draining"));
         assert_eq!(after_full, ACCESS_LOG_DROPPED.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_keepalive_request_limit_closes_after_n_requests() {
+        use pingora::apps::ServerApp;
+        use pingora::protocols::GetSocketDigest;
+        use pingora::protocols::l4::stream::Stream as L4Stream;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        struct PongPlugin;
+        #[async_trait]
+        impl Plugin for PongPlugin {
+            async fn handle_request(
+                &self,
+                step: PluginStep,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+            ) -> pingora::Result<RequestPluginResult> {
+                if step != PluginStep::Request {
+                    return Ok(RequestPluginResult::Skipped);
+                }
+                Ok(RequestPluginResult::Respond(
+                    pingap_core::HttpResponse::text("pong"),
+                ))
+            }
+        }
+        struct PongProvider;
+        impl PluginProvider for PongProvider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                Some(Arc::new(PongPlugin))
+            }
+        }
+
+        async fn read_one_response(
+            stream: &mut tokio::net::TcpStream,
+        ) -> String {
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 512];
+            loop {
+                let n = stream.read(&mut tmp).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(pos) =
+                    buf.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    let head_end = pos + 4;
+                    if buf.len() >= head_end + 4 {
+                        break;
+                    }
+                }
+            }
+            String::from_utf8_lossy(&buf).into_owned()
+        }
+
+        async fn spawn_with_limit(
+            limit: Option<u32>,
+        ) -> (tokio::net::TcpStream, tokio::task::JoinHandle<()>) {
+            let mut server = new_server_with(Some(Arc::new(PongProvider)));
+            server.keepalive_request_limit = limit;
+            let options = server.http_server_options(false);
+            let conf = Arc::new(configuration::ServerConf::default());
+            let mut http_logic = http_proxy(&conf, server);
+            http_logic.server_options = Some(options);
+            let app = Arc::new(http_logic);
+
+            let listener =
+                tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let (accepted, _) = listener.accept().await.unwrap();
+            let task = tokio::spawn(async move {
+                let mut stream = L4Stream::from(accepted);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::io::AsRawFd;
+                    let fd = stream.as_raw_fd();
+                    stream.set_socket_digest(
+                        pingora::protocols::SocketDigest::from_raw_fd(fd),
+                    );
+                }
+                let (_tx, rx) = tokio::sync::watch::channel(false);
+                let _ = app.process_new(Box::new(stream), &rx).await;
+            });
+            (client, task)
+        }
+
+        let req = b"GET /vicanso/pingap HTTP/1.1\r\nHost: test\r\n\r\n";
+
+        // Limit of 1 closes after the very first response.
+        let (mut client, task) = spawn_with_limit(Some(1)).await;
+        client.write_all(req).await.unwrap();
+        let resp1 = read_one_response(&mut client).await.to_lowercase();
+        assert_eq!(true, resp1.starts_with("http/1.1 200 ok"));
+        assert_eq!(true, resp1.contains("connection: close"), "{resp1}");
+        let mut eof = [0u8; 8];
+        assert_eq!(0, client.read(&mut eof).await.unwrap());
+        task.await.unwrap();
+
+        // Limit of 2 keeps alive after the 1st request and closes after the 2nd.
+        let (mut client, task) = spawn_with_limit(Some(2)).await;
+        client.write_all(req).await.unwrap();
+        let resp1 = read_one_response(&mut client).await.to_lowercase();
+        assert_eq!(true, resp1.starts_with("http/1.1 200 ok"));
+        assert_eq!(false, resp1.contains("connection: close"), "{resp1}");
+
+        client.write_all(req).await.unwrap();
+        let resp2 = read_one_response(&mut client).await.to_lowercase();
+        assert_eq!(true, resp2.starts_with("http/1.1 200 ok"));
+        assert_eq!(true, resp2.contains("connection: close"), "{resp2}");
+        assert_eq!(0, client.read(&mut eof).await.unwrap());
+        task.await.unwrap();
     }
 }

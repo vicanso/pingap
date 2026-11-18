@@ -472,6 +472,11 @@ export default {
     h1Pipelining: "HTTP/1.1 Pipelining",
     h1PipeliningTips:
       "Answer pipelined HTTP/1.1 requests one after another on the same connection. Off, the connection is closed after the first one and the client retries the rest.",
+    keepaliveRequestLimit: "Keepalive Request Limit",
+    keepaliveRequestLimitPlaceholder:
+      "Max HTTP/1.x requests per connection (unlimited when unset)",
+    keepaliveRequestLimitTips:
+      "Close a downstream HTTP/1.x keep-alive connection after serving this many requests (at least 1). Unset imposes no limit.",
     h2InitialWindowSize: "H2 Initial Window Size",
     h2InitialWindowSizePlaceholder:
       "HTTP/2 flow-control window per stream(e.g. 1mib, max 2gib - 1)",

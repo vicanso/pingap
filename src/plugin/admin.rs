@@ -2075,7 +2075,7 @@ mod tests {
     ) -> (u16, String) {
         let mut session = new_admin_session(request).await;
         let mut ctx = Ctx::default();
-        ctx.conn.server_addr = Some(server_addr.to_string());
+        ctx.conn.server_addr = Some(server_addr.into());
         let resp = handle_request_admin(admin, &mut session, &mut ctx)
             .await
             .unwrap()
@@ -2770,7 +2770,7 @@ path = "/api"
             ))
             .await;
             let mut ctx = Ctx::default();
-            ctx.conn.remote_addr = Some("192.0.2.7".to_string());
+            ctx.conn.remote_addr = Some("192.0.2.7".into());
             handle_request_admin(&admin, &mut session, &mut ctx)
                 .await
                 .unwrap()

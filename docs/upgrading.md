@@ -86,7 +86,14 @@ What is on `main` and in no release yet.
   with. `IpRules` stores an IPv4-mapped prefix as the IPv4 network:
   `::ffff:192.168.1.0/120` matches `192.168.1.7`.
 - **pingap-core**: `basic.trusted_proxies` stores a mapped prefix the same
-  way.
+  way. `ConnectionInfo::remote_addr` and `ConnectionInfo::server_addr` changed
+  from `Option<String>` to `Option<AddrStr>` (stack-inlined up to 45 bytes with
+  `Deref<Target = str>`), and `get_remote_addr_str` is available alongside
+  `get_remote_addr` to avoid per-request `String` allocations.
+- **pingap-location**: `LocationHostIndex::candidate_indices` now returns
+  `CandidateIndices<'_>` (`Deref<Target = [usize]>` and `IntoIterator`)
+  instead of `Vec<usize>`, returning borrowed pre-merged slices on single-bucket
+  hits and inline `SmallVec` storage on multi-bucket merges.
 - **pingap-imageoptim**: the `image_optim` plugin is no longer registered by
   a constructor before `main`. A program of its own that uses the crate calls
   `pingap_imageoptim::register()` before it creates the plugin; one that does

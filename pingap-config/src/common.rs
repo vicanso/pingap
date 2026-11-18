@@ -1522,6 +1522,11 @@ pub struct ServerConf {
     /// the first request, closes the connection and drops the rest.
     pub h1_pipelining: Option<bool>,
 
+    /// Maximum number of HTTP/1.x requests served on a single downstream
+    /// keep-alive connection before closing it. Unset imposes no limit,
+    /// which is pingora's default.
+    pub keepalive_request_limit: Option<u32>,
+
     /// TCP keepalive idle timeout
     #[serde(default)]
     #[serde(with = "pingap_util::duration_serde")]
@@ -1727,6 +1732,12 @@ impl ServerConf {
     /// does not check them itself: a zero or an oversized value would only
     /// surface as a protocol error on the first client connection.
     fn validate_h2(&self) -> Result<()> {
+        if self.keepalive_request_limit == Some(0) {
+            return Err(Error::Invalid {
+                message: "keepalive_request_limit should be greater than 0"
+                    .to_string(),
+            });
+        }
         if self.h2_max_concurrent_streams == Some(0) {
             return Err(Error::Invalid {
                 message: "h2 max concurrent streams should be greater than 0"
@@ -4343,6 +4354,7 @@ h2_initial_window_size = "1mb"
 h2_initial_connection_window_size = "4mb"
 h2_idle_timeout = "2m"
 h1_pipelining = true
+keepalive_request_limit = 1000
 "#,
         )
         .unwrap();
@@ -4355,11 +4367,13 @@ h1_pipelining = true
         );
         assert_eq!(Some(Duration::from_secs(120)), conf.h2_idle_timeout);
         assert_eq!(Some(true), conf.h1_pipelining);
+        assert_eq!(Some(1000), conf.keepalive_request_limit);
         assert_eq!(true, conf.validate().is_ok());
         let restored: ServerConf =
             toml::from_str(&toml::to_string(&conf).unwrap()).unwrap();
         assert_eq!(Some(256), restored.h2_max_concurrent_streams);
         assert_eq!(Some(ByteSize::kb(128)), restored.h2_max_header_list_size);
+        assert_eq!(Some(1000), restored.keepalive_request_limit);
 
         // Unset is the default and validates.
         let base = ServerConf {
@@ -4370,7 +4384,14 @@ h1_pipelining = true
         assert_eq!(true, base.validate().is_ok());
 
         // Out-of-range values are refused up front.
-        let cases: [(ServerConf, &str); 3] = [
+        let cases: [(ServerConf, &str); 4] = [
+            (
+                ServerConf {
+                    keepalive_request_limit: Some(0),
+                    ..base.clone()
+                },
+                "Invalid error keepalive_request_limit should be greater than 0",
+            ),
             (
                 ServerConf {
                     h2_max_concurrent_streams: Some(0),

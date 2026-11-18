@@ -415,7 +415,7 @@ secret = "*"
         // configured here, so the peer's address is the one that counts.
         let from_peer = |peer: &str| {
             let mut ctx = Ctx::default();
-            ctx.conn.remote_addr = Some(peer.to_string());
+            ctx.conn.remote_addr = Some(peer.into());
             ctx
         };
 

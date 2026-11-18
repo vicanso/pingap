@@ -4233,6 +4233,7 @@ dependencies = [
  "pingora",
  "pretty_assertions",
  "regex",
+ "smallvec",
  "snafu",
  "tokio",
  "tokio-test",

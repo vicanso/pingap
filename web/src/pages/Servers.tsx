@@ -261,6 +261,16 @@ export default function Servers() {
       options: newBooleanOptions(),
     },
     {
+      name: "keepalive_request_limit",
+      section: sec.connection,
+      label: serverI18n("keepaliveRequestLimit"),
+      placeholder: serverI18n("keepaliveRequestLimitPlaceholder"),
+      tips: serverI18n("keepaliveRequestLimitTips"),
+      defaultValue: serverConfig.keepalive_request_limit,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "h2_initial_window_size",
       section: sec.connection,
       label: serverI18n("h2InitialWindowSize"),

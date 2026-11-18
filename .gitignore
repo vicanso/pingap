@@ -46,3 +46,4 @@ website/_navbar.md
 
 # tsc -b incremental caches, rewritten by every web build
 web/*.tsbuildinfo
+.agents

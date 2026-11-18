@@ -35,7 +35,8 @@
 ### 使用这些 crate 的开发者
 
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。`IpRules` 把 IPv4 映射前缀存成对应的 IPv4 网段：`::ffff:192.168.1.0/120` 匹配 `192.168.1.7`。
-- **pingap-core**：`basic.trusted_proxies` 对映射前缀做同样的处理。
+- **pingap-core**：`basic.trusted_proxies` 对映射前缀做同样的处理。`ConnectionInfo::remote_addr` 与 `ConnectionInfo::server_addr` 类型从 `Option<String>` 改为 `Option<AddrStr>`（最高 45 字节栈内联存储并实现 `Deref<Target = str>`），同时新增无堆分配的 `get_remote_addr_str`（与 `get_remote_addr` 并存）。
+- **pingap-location**：`LocationHostIndex::candidate_indices` 返回类型由 `Vec<usize>` 改为 `CandidateIndices<'_>`（实现 `Deref<Target = [usize]>` 与 `IntoIterator`），在单桶命中时零分配返回借用切片，多桶归并时使用栈内 `SmallVec`。
 - **pingap-imageoptim**：`image_optim` 插件不再由 `main` 之前的构造函数注册。自己写程序使用这个 crate 的，要在创建插件之前调用 `pingap_imageoptim::register()`；不调用的话，工厂里没有 `image_optim`。
 - **pingap-plugin**：它的插件改为在第一次调用 `get_plugin_factory()` 时放进工厂，不再在 `main` 之前，对调用方没有影响。`PluginFactory` 现在是公开导出的。这些 crate 不再依赖 `ctor`。
 - **pingap-plugin**：`PluginFactory::register` 现在返回 `Result`，category 为空或已经登记过就拒绝，不再换掉原来的构造函数。配置不用改。同名再登记一次是 `Plugin {category} invalid, message: category is already registered`。

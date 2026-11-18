@@ -1179,7 +1179,7 @@ mod tests {
 
         let ctx = Ctx {
             conn: ConnectionInfo {
-                remote_addr: Some("10.1.1.1".to_string()),
+                remote_addr: Some("10.1.1.1".into()),
                 client_ip: Some("1.1.1.1".to_string()),
                 tls_version: Some("1.2".into()),
                 ..Default::default()

@@ -130,6 +130,7 @@ export interface Server {
   h2_initial_connection_window_size?: string;
   h2_idle_timeout?: string;
   h1_pipelining?: boolean;
+  keepalive_request_limit?: number;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
   strict_sni?: boolean;

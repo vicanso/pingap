@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Import necessary modules and types from supervisors and external crates.
-use super::{Ctx, get_hostname};
+use super::{AddrStr, Ctx, get_hostname};
 use ahash::AHashSet;
 use arc_swap::ArcSwapOption;
 use bytes::BytesMut;
@@ -515,6 +515,15 @@ pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
         .and_then(|addr| addr.as_inet())
         // Map it to a tuple of (String, u16).
         .map(|addr| (addr.ip().to_canonical().to_string(), addr.port()))
+}
+
+/// Returns the canonical peer IP address as an inline [`AddrStr`] and port,
+/// without heap allocation.
+pub fn get_remote_addr_str(session: &Session) -> Option<(AddrStr, u16)> {
+    session
+        .client_addr()
+        .and_then(|addr| addr.as_inet())
+        .map(|addr| (AddrStr::from(addr.ip().to_canonical()), addr.port()))
 }
 
 /// An IPv4-mapped prefix is the IPv4 network it stands for.
@@ -1454,9 +1463,9 @@ mod tests {
             },
             conn: ConnectionInfo {
                 id: 102,
-                remote_addr: Some("10.1.1.1".to_string()),
+                remote_addr: Some("10.1.1.1".into()),
                 remote_port: Some(6000),
-                server_addr: Some("10.1.1.2".to_string()),
+                server_addr: Some("10.1.1.2".into()),
                 server_port: Some(6001),
                 tls_version: Some("tls1.3".into()),
                 ..Default::default()
@@ -1549,7 +1558,7 @@ mod tests {
             &session,
             &Ctx {
                 conn: ConnectionInfo {
-                    remote_addr: Some("10.1.1.1".to_string()),
+                    remote_addr: Some("10.1.1.1".into()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -1567,7 +1576,7 @@ mod tests {
             &session,
             &Ctx {
                 conn: ConnectionInfo {
-                    remote_addr: Some("10.1.1.1".to_string()),
+                    remote_addr: Some("10.1.1.1".into()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -1727,7 +1736,7 @@ mod tests {
         ];
         let session = new_test_session(&claims, "/").await;
         let mut ctx = Ctx::default();
-        ctx.conn.remote_addr = Some("10.1.1.1".to_string());
+        ctx.conn.remote_addr = Some("10.1.1.1".into());
         let resolve = |name: &'static str, session: &Session, ctx: &Ctx| {
             convert_header_value(&HeaderValue::from_static(name), session, ctx)
                 .map(|value| value.to_str().unwrap().to_string())
@@ -2134,7 +2143,7 @@ mod tests {
             &session,
             &Ctx {
                 conn: ConnectionInfo {
-                    remote_addr: Some("10.0.0.1".to_string()),
+                    remote_addr: Some("10.0.0.1".into()),
                     ..Default::default()
                 },
                 ..Default::default()

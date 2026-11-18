@@ -155,6 +155,214 @@ pub trait HandleRequestBody: Sync + Send {
     fn restart(&mut self);
 }
 
+/// Maximum byte length of any IPv4 or IPv6 literal (including IPv4-mapped IPv6).
+const ADDR_INLINE_CAP: usize = 45;
+
+#[derive(Clone)]
+enum AddrStrRepr {
+    Inline { buf: [u8; ADDR_INLINE_CAP], len: u8 },
+    Heap(Arc<str>),
+}
+
+/// Text of a connection's peer or local address, stored inline on the stack
+/// for every IPv4 and IPv6 literal so per-request context initialization
+/// never allocates on the heap.
+#[derive(Clone)]
+pub struct AddrStr(AddrStrRepr);
+
+impl AddrStr {
+    /// Returns the address text as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        match &self.0 {
+            AddrStrRepr::Inline { buf, len } => {
+                std::str::from_utf8(&buf[..usize::from(*len)])
+                    .unwrap_or_default()
+            },
+            AddrStrRepr::Heap(s) => s.as_ref(),
+        }
+    }
+}
+
+impl Default for AddrStr {
+    #[inline]
+    fn default() -> Self {
+        Self(AddrStrRepr::Inline {
+            buf: [0; ADDR_INLINE_CAP],
+            len: 0,
+        })
+    }
+}
+
+impl std::ops::Deref for AddrStr {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for AddrStr {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::borrow::Borrow<str> for AddrStr {
+    #[inline]
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for AddrStr {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::fmt::Debug for AddrStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl PartialEq for AddrStr {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for AddrStr {}
+
+impl PartialEq<str> for AddrStr {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for AddrStr {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for AddrStr {
+    #[inline]
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq<AddrStr> for str {
+    #[inline]
+    fn eq(&self, other: &AddrStr) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<AddrStr> for &str {
+    #[inline]
+    fn eq(&self, other: &AddrStr) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<AddrStr> for String {
+    #[inline]
+    fn eq(&self, other: &AddrStr) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl std::hash::Hash for AddrStr {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl From<&str> for AddrStr {
+    #[inline]
+    fn from(value: &str) -> Self {
+        if value.len() <= ADDR_INLINE_CAP {
+            let mut buf = [0u8; ADDR_INLINE_CAP];
+            buf[..value.len()].copy_from_slice(value.as_bytes());
+            Self(AddrStrRepr::Inline {
+                buf,
+                len: value.len() as u8,
+            })
+        } else {
+            Self(AddrStrRepr::Heap(Arc::from(value)))
+        }
+    }
+}
+
+impl From<String> for AddrStr {
+    #[inline]
+    fn from(value: String) -> Self {
+        if value.len() <= ADDR_INLINE_CAP {
+            Self::from(value.as_str())
+        } else {
+            Self(AddrStrRepr::Heap(Arc::from(value)))
+        }
+    }
+}
+
+#[inline]
+fn format_ipv4(v4: std::net::Ipv4Addr) -> AddrStr {
+    let mut buf = [0u8; ADDR_INLINE_CAP];
+    let mut len = 0usize;
+    for (idx, octet) in v4.octets().into_iter().enumerate() {
+        if idx > 0 {
+            buf[len] = b'.';
+            len += 1;
+        }
+        let mut num = itoa::Buffer::new();
+        let s = num.format(octet).as_bytes();
+        buf[len..len + s.len()].copy_from_slice(s);
+        len += s.len();
+    }
+    AddrStr(AddrStrRepr::Inline {
+        buf,
+        len: len as u8,
+    })
+}
+
+#[inline]
+fn format_ipv6(v6: std::net::Ipv6Addr) -> AddrStr {
+    let mut buf = [0u8; ADDR_INLINE_CAP];
+    let written = {
+        let mut rest = &mut buf[..];
+        std::io::Write::write_fmt(&mut rest, format_args!("{v6}"))
+            .ok()
+            .map(|()| ADDR_INLINE_CAP - rest.len())
+    };
+    match written {
+        Some(len) => AddrStr(AddrStrRepr::Inline {
+            buf,
+            len: len as u8,
+        }),
+        None => AddrStr(AddrStrRepr::Heap(Arc::from(v6.to_string()))),
+    }
+}
+
+impl From<std::net::IpAddr> for AddrStr {
+    #[inline]
+    fn from(addr: std::net::IpAddr) -> Self {
+        match addr {
+            std::net::IpAddr::V4(v4) => format_ipv4(v4),
+            std::net::IpAddr::V6(v6) => format_ipv6(v6),
+        }
+    }
+}
+
 /// Information about a single client connection.
 #[derive(Default)]
 pub struct ConnectionInfo {
@@ -163,11 +371,11 @@ pub struct ConnectionInfo {
     /// The IP address of the client.
     pub client_ip: Option<String>,
     /// The remote address of the client connection.
-    pub remote_addr: Option<String>,
+    pub remote_addr: Option<AddrStr>,
     /// The remote port of the client connection.
     pub remote_port: Option<u16>,
     /// The server address the client connected to.
-    pub server_addr: Option<String>,
+    pub server_addr: Option<AddrStr>,
     /// The server port the client connected to.
     pub server_port: Option<u16>,
     /// The TLS version used for the connection, if any.
@@ -3109,5 +3317,42 @@ mod tests {
 
         ctx.add_modify_body_handler("test", Box::new(TestHandler {}));
         assert_eq!(true, ctx.get_modify_body_handler("test").is_some());
+    }
+
+    #[test]
+    fn test_addr_str() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+        assert_eq!("", AddrStr::default().as_str());
+
+        for addr in [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6("2001:db8::1".parse().unwrap()),
+            IpAddr::V6("::ffff:192.168.1.7".parse().unwrap()),
+            IpAddr::V6(
+                "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap(),
+            ),
+        ] {
+            let expected = addr.to_string();
+            let actual = AddrStr::from(addr);
+            assert_eq!(expected.as_str(), actual.as_str());
+            assert_eq!(expected, actual.to_string());
+            assert_eq!(actual, expected.as_str());
+            assert_eq!(actual, expected);
+        }
+
+        // Exact inline boundary (45 bytes) and heap fallback (> 45 bytes).
+        let max_inline = "a".repeat(ADDR_INLINE_CAP);
+        let inline_addr = AddrStr::from(max_inline.as_str());
+        assert_eq!(true, matches!(inline_addr.0, AddrStrRepr::Inline { .. }));
+        assert_eq!(max_inline.as_str(), inline_addr.as_str());
+
+        let long_addr = "a".repeat(ADDR_INLINE_CAP + 1);
+        let heap_addr = AddrStr::from(long_addr.clone());
+        assert_eq!(true, matches!(heap_addr.0, AddrStrRepr::Heap(_)));
+        assert_eq!(long_addr.as_str(), heap_addr.as_str());
+        assert_eq!(heap_addr, AddrStr::from(long_addr.as_str()));
     }
 }

@@ -252,7 +252,7 @@ type = "deny"
         session.read_request().await.unwrap();
         let mut ctx = Ctx {
             conn: ConnectionInfo {
-                remote_addr: peer.map(|addr| addr.to_string()),
+                remote_addr: peer.map(Into::into),
                 ..Default::default()
             },
             ..Default::default()

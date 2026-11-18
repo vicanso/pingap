@@ -248,7 +248,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let mut ctx = Ctx::default();
-        ctx.conn.remote_addr = Some(peer.to_string());
+        ctx.conn.remote_addr = Some(peer.into());
         match plugin
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await

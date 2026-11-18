@@ -390,6 +390,10 @@ Notes on a few of these:
   startup / `--test` / auto-restart (see
   [pingap-certificate](../pingap-certificate/README.md)). The admin UI disables
   the matching form fields on a rustls binary.
+- `keepalive_request_limit` caps the maximum number of requests served on a
+  single HTTP/1.1 keep-alive connection before Pingap closes it (`>= 1`). When
+  unset, keep-alive connections have no request-count limit; setting an upper
+  bound helps reclaim per-connection buffers on long-lived connections.
 - `h2_max_concurrent_streams`, `h2_max_header_list_size`,
   `h2_initial_window_size`, `h2_initial_connection_window_size` and
   `h2_idle_timeout` tune the downstream HTTP/2 SETTINGS of a listener. Unset

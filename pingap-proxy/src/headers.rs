@@ -86,7 +86,7 @@ mod tests {
     async fn test_set_append_proxy_headers() {
         let session = new_session().await;
         let mut ctx = Ctx::default();
-        ctx.conn.remote_addr = Some("192.168.1.3".to_string());
+        ctx.conn.remote_addr = Some("192.168.1.3".into());
         ctx.conn.server_port = Some(8080);
         let mut header = RequestHeader::build("GET", b"/", None).unwrap();
         let location = Arc::new(

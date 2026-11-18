@@ -703,7 +703,7 @@ mod tests {
     /// configured in a unit test, so the peer's address is the client ip.
     fn from_peer(peer: &str) -> Ctx {
         let mut ctx = Ctx::default();
-        ctx.conn.remote_addr = Some(peer.to_string());
+        ctx.conn.remote_addr = Some(peer.into());
         ctx
     }
 

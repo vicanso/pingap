@@ -1479,7 +1479,7 @@ max_ttl = "1m"
         let mut ctx = Ctx::default();
         // The mock io has no peer address; the proxy records it here when
         // the request comes in.
-        ctx.conn.remote_addr = Some("127.0.0.1".to_string());
+        ctx.conn.remote_addr = Some("127.0.0.1".into());
         let result = cache
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
@@ -1518,7 +1518,7 @@ purge_ip_list = ["127.0.0.1"]
             let mut session = Session::new_h1(Box::new(mock_io));
             session.read_request().await.unwrap();
             let mut ctx = Ctx::default();
-            ctx.conn.remote_addr = Some("127.0.0.1".to_string());
+            ctx.conn.remote_addr = Some("127.0.0.1".into());
             ctx.push_cache_key_variant(
                 coding
                     .map(|coding| coding.to_string())
@@ -1689,7 +1689,7 @@ purge_ip_list = ["127.0.0.1"]
             let mut session = Session::new_h1(Box::new(mock_io));
             session.read_request().await.unwrap();
             let mut ctx = Ctx::default();
-            ctx.conn.remote_addr = Some(remote_addr.to_string());
+            ctx.conn.remote_addr = Some(remote_addr.into());
             let result = cache
                 .handle_request(PluginStep::Request, &mut session, &mut ctx)
                 .await

@@ -27,19 +27,35 @@ use arc_swap::ArcSwap;
 use pingap_core::Ctx;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 /// The seconds of one bucket.
 pub const TRAFFIC_INTERVAL: u64 = 10;
 /// Ninety buckets of ten seconds: fifteen minutes.
 const BUCKETS: u64 = 90;
+/// Number of thread-sharded rings to avoid cache-line contention across workers.
+const SHARDS: usize = 16;
 /// The upper bounds of the latency histogram of a bucket, in
 /// milliseconds. The last bucket of it takes everything above.
 const LATENCY_BOUNDS: [u64; 11] =
     [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000];
 
+static NEXT_SHARD: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static SHARD_INDEX: usize =
+        NEXT_SHARD.fetch_add(1, Ordering::Relaxed) & (SHARDS - 1);
+}
+
+#[inline]
+fn current_shard() -> usize {
+    SHARD_INDEX.with(|idx| *idx)
+}
+
 /// The requests of ten seconds, as the client saw them.
+/// Aligned to 128 bytes so shards never share an x86_64 or Apple Silicon cache line.
+#[repr(align(128))]
 #[derive(Default)]
 struct Bucket {
     /// The ten seconds counted here: the time divided by the interval.
@@ -74,6 +90,7 @@ impl Bucket {
 }
 
 /// The requests of ten seconds that went to one upstream.
+#[repr(align(128))]
 #[derive(Default)]
 struct UpstreamBucket {
     epoch: AtomicU64,
@@ -165,14 +182,24 @@ impl<T: Default + Epoch> Ring<T> {
 }
 
 struct UpstreamRing {
-    ring: Ring<UpstreamBucket>,
+    shards: Box<[Ring<UpstreamBucket>]>,
     /// The epoch of the last request: an upstream with none in the window
     /// (one taken out of the configuration) is let go.
     last: AtomicU64,
 }
 
+impl UpstreamRing {
+    fn new(epoch: u64) -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| Ring::new()).collect(),
+            // Of now: not let go by a snapshot before it counts.
+            last: AtomicU64::new(epoch),
+        }
+    }
+}
+
 struct Traffic {
-    ring: Ring<Bucket>,
+    shards: Box<[Ring<Bucket>]>,
     /// By name. Written when a name is seen first, which is rare, and read
     /// by every request without a lock.
     upstreams: ArcSwap<HashMap<Arc<str>, Arc<UpstreamRing>>>,
@@ -180,10 +207,113 @@ struct Traffic {
 
 static TRAFFIC: LazyLock<Traffic> = LazyLock::new(Traffic::new);
 
+#[derive(Default)]
+struct AggregatedBucket {
+    requests: u64,
+    status: [u64; 4],
+    latency_count: u64,
+    latency_sum: u64,
+    latency_max: u64,
+    histogram: [u64; LATENCY_BOUNDS.len() + 1],
+}
+
+#[derive(Default)]
+struct AggregatedUpstreamBucket {
+    requests: u64,
+    errors: u64,
+    latency_count: u64,
+    latency_sum: u64,
+    latency_max: u64,
+}
+
+fn record_bucket(bucket: &Bucket, request: &Request) {
+    bucket.requests.fetch_add(1, Ordering::Relaxed);
+    if let Some(class) = request
+        .status
+        .and_then(|status| (200..600).contains(&status).then_some(status))
+        .map(|status| usize::from(status / 100 - 2))
+    {
+        bucket.status[class].fetch_add(1, Ordering::Relaxed);
+    }
+    if let Some(latency) = request.latency {
+        bucket.latency_count.fetch_add(1, Ordering::Relaxed);
+        bucket.latency_sum.fetch_add(latency, Ordering::Relaxed);
+        bucket.latency_max.fetch_max(latency, Ordering::Relaxed);
+        let slot = LATENCY_BOUNDS
+            .iter()
+            .position(|bound| latency <= *bound)
+            .unwrap_or(LATENCY_BOUNDS.len());
+        bucket.latency_histogram[slot].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn record_upstream_bucket(
+    bucket: &UpstreamBucket,
+    error: bool,
+    latency: Option<u64>,
+) {
+    bucket.requests.fetch_add(1, Ordering::Relaxed);
+    if error {
+        bucket.errors.fetch_add(1, Ordering::Relaxed);
+    }
+    if let Some(latency) = latency {
+        bucket.latency_count.fetch_add(1, Ordering::Relaxed);
+        bucket.latency_sum.fetch_add(latency, Ordering::Relaxed);
+        bucket.latency_max.fetch_max(latency, Ordering::Relaxed);
+    }
+}
+
+fn aggregate_epoch(
+    shards: &[Ring<Bucket>],
+    epoch: u64,
+) -> Option<AggregatedBucket> {
+    let mut agg = AggregatedBucket::default();
+    let mut seen = false;
+    let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+    for ring in shards {
+        let Some(bucket) = ring.get(epoch) else {
+            continue;
+        };
+        seen = true;
+        agg.requests += load(&bucket.requests);
+        for (dst, src) in agg.status.iter_mut().zip(&bucket.status) {
+            *dst += load(src);
+        }
+        agg.latency_count += load(&bucket.latency_count);
+        agg.latency_sum += load(&bucket.latency_sum);
+        agg.latency_max = agg.latency_max.max(load(&bucket.latency_max));
+        for (dst, src) in
+            agg.histogram.iter_mut().zip(&bucket.latency_histogram)
+        {
+            *dst += load(src);
+        }
+    }
+    seen.then_some(agg)
+}
+
+fn aggregate_upstream_epoch(
+    shards: &[Ring<UpstreamBucket>],
+    epoch: u64,
+) -> AggregatedUpstreamBucket {
+    let mut agg = AggregatedUpstreamBucket::default();
+    let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+    for ring in shards {
+        let Some(bucket) = ring.get(epoch) else {
+            continue;
+        };
+        agg.requests += load(&bucket.requests);
+        agg.errors += load(&bucket.errors);
+        agg.latency_count += load(&bucket.latency_count);
+        agg.latency_sum += load(&bucket.latency_sum);
+        agg.latency_max = agg.latency_max.max(load(&bucket.latency_max));
+    }
+    agg
+}
+
 impl Traffic {
     fn new() -> Self {
         Self {
-            ring: Ring::new(),
+            shards: (0..SHARDS).map(|_| Ring::new()).collect(),
             upstreams: ArcSwap::from_pointee(HashMap::new()),
         }
     }
@@ -203,13 +333,9 @@ impl Traffic {
         }
         self.upstreams.rcu(|upstreams| {
             let mut upstreams = HashMap::clone(upstreams);
-            upstreams.entry(name.clone()).or_insert_with(|| {
-                Arc::new(UpstreamRing {
-                    ring: Ring::new(),
-                    // Of now: not let go by a snapshot before it counts.
-                    last: AtomicU64::new(epoch),
-                })
-            });
+            upstreams
+                .entry(name.clone())
+                .or_insert_with(|| Arc::new(UpstreamRing::new(epoch)));
             upstreams
         });
         if let Some(ring) = self.upstreams.load().get(name) {
@@ -219,34 +345,19 @@ impl Traffic {
 
     fn record(&self, now: u64, request: &Request) {
         let epoch = now / TRAFFIC_INTERVAL;
-        let bucket = self.ring.current(epoch);
-        bucket.requests.fetch_add(1, Ordering::Relaxed);
-        if let Some(class) = request
-            .status
-            .and_then(|status| (200..600).contains(&status).then_some(status))
-            .map(|status| usize::from(status / 100 - 2))
-        {
-            bucket.status[class].fetch_add(1, Ordering::Relaxed);
-        }
-        if let Some(latency) = request.latency {
-            bucket.latency_count.fetch_add(1, Ordering::Relaxed);
-            bucket.latency_sum.fetch_add(latency, Ordering::Relaxed);
-            bucket.latency_max.fetch_max(latency, Ordering::Relaxed);
-            let slot = LATENCY_BOUNDS
-                .iter()
-                .position(|bound| latency <= *bound)
-                .unwrap_or(LATENCY_BOUNDS.len());
-            bucket.latency_histogram[slot].fetch_add(1, Ordering::Relaxed);
-        }
+        let shard = current_shard();
+        record_bucket(self.shards[shard].current(epoch), request);
 
         if let Some(name) = &request.fallback_from {
             self.with_upstream(name, epoch, |ring| {
                 if ring.last.load(Ordering::Relaxed) != epoch {
                     ring.last.store(epoch, Ordering::Relaxed);
                 }
-                let bucket = ring.ring.current(epoch);
-                bucket.requests.fetch_add(1, Ordering::Relaxed);
-                bucket.errors.fetch_add(1, Ordering::Relaxed);
+                record_upstream_bucket(
+                    ring.shards[shard].current(epoch),
+                    true,
+                    None,
+                );
             });
         }
         let Some((name, upstream)) = &request.upstream else {
@@ -256,16 +367,11 @@ impl Traffic {
             if ring.last.load(Ordering::Relaxed) != epoch {
                 ring.last.store(epoch, Ordering::Relaxed);
             }
-            let bucket = ring.ring.current(epoch);
-            bucket.requests.fetch_add(1, Ordering::Relaxed);
-            if upstream.error {
-                bucket.errors.fetch_add(1, Ordering::Relaxed);
-            }
-            if let Some(latency) = upstream.latency {
-                bucket.latency_count.fetch_add(1, Ordering::Relaxed);
-                bucket.latency_sum.fetch_add(latency, Ordering::Relaxed);
-                bucket.latency_max.fetch_max(latency, Ordering::Relaxed);
-            }
+            record_upstream_bucket(
+                ring.shards[shard].current(epoch),
+                upstream.error,
+                upstream.latency,
+            );
         });
     }
 
@@ -278,36 +384,27 @@ impl Traffic {
             interval: TRAFFIC_INTERVAL,
             ..Default::default()
         };
-        let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         for epoch in first..=last {
             snapshot.time.push(epoch * TRAFFIC_INTERVAL);
-            let Some(bucket) = self.ring.get(epoch) else {
+            let Some(agg) = aggregate_epoch(&self.shards, epoch) else {
                 snapshot.push_empty();
                 continue;
             };
-            let requests = load(&bucket.requests);
-            snapshot.requests.push(requests);
-            for (class, counts) in [
-                &mut snapshot.status_2xx,
-                &mut snapshot.status_3xx,
-                &mut snapshot.status_4xx,
-                &mut snapshot.status_5xx,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                counts.push(load(&bucket.status[class]));
-            }
-            let max = load(&bucket.latency_max);
-            let timed = load(&bucket.latency_count);
-            snapshot.latency_count.push(timed);
+            snapshot.requests.push(agg.requests);
+            snapshot.status_2xx.push(agg.status[0]);
+            snapshot.status_3xx.push(agg.status[1]);
+            snapshot.status_4xx.push(agg.status[2]);
+            snapshot.status_5xx.push(agg.status[3]);
+            snapshot.latency_count.push(agg.latency_count);
             snapshot
                 .latency_avg
-                .push(average(load(&bucket.latency_sum), timed));
-            snapshot.latency_max.push(max);
-            let histogram: Vec<u64> =
-                bucket.latency_histogram.iter().map(load).collect();
-            snapshot.latency_p95.push(percentile(&histogram, 95, max));
+                .push(average(agg.latency_sum, agg.latency_count));
+            snapshot.latency_max.push(agg.latency_max);
+            snapshot.latency_p95.push(percentile(
+                &agg.histogram,
+                95,
+                agg.latency_max,
+            ));
         }
 
         // Let go of the upstreams that had no request in the window.
@@ -324,22 +421,14 @@ impl Traffic {
         for (name, ring) in self.upstreams.load().iter() {
             let mut traffic = UpstreamTraffic::default();
             for epoch in first..=last {
-                let Some(bucket) = ring.ring.get(epoch) else {
-                    traffic.requests.push(0);
-                    traffic.errors.push(0);
-                    traffic.latency_count.push(0);
-                    traffic.latency_avg.push(0);
-                    traffic.latency_max.push(0);
-                    continue;
-                };
-                traffic.requests.push(load(&bucket.requests));
-                traffic.errors.push(load(&bucket.errors));
-                let timed = load(&bucket.latency_count);
-                traffic.latency_count.push(timed);
+                let agg = aggregate_upstream_epoch(&ring.shards, epoch);
+                traffic.requests.push(agg.requests);
+                traffic.errors.push(agg.errors);
+                traffic.latency_count.push(agg.latency_count);
                 traffic
                     .latency_avg
-                    .push(average(load(&bucket.latency_sum), timed));
-                traffic.latency_max.push(load(&bucket.latency_max));
+                    .push(average(agg.latency_sum, agg.latency_count));
+                traffic.latency_max.push(agg.latency_max);
             }
             snapshot.upstreams.insert(name.to_string(), traffic);
         }
@@ -684,5 +773,61 @@ mod tests {
         let mut histogram = vec![0; LATENCY_BOUNDS.len() + 1];
         histogram[LATENCY_BOUNDS.len()] = 1;
         assert_eq!(42_000, percentile(&histogram, 95, 42_000));
+    }
+
+    #[test]
+    fn test_traffic_concurrent_shards() {
+        let traffic = Arc::new(Traffic::new());
+        let now = 3_000_000;
+        let threads = 8usize;
+        let per_thread = 50usize;
+        let mut handles = Vec::with_capacity(threads);
+        for tid in 0..threads {
+            let traffic = traffic.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..per_thread {
+                    let is_err = (tid + i).is_multiple_of(10);
+                    let latency = if is_err { 25 } else { 5 };
+                    traffic.record(
+                        now,
+                        &Request {
+                            status: Some(if is_err { 502 } else { 200 }),
+                            latency: Some(latency),
+                            upstream: Some((
+                                "api".into(),
+                                UpstreamRequest {
+                                    error: is_err,
+                                    latency: Some(latency),
+                                },
+                            )),
+                            fallback_from: None,
+                        },
+                    );
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let snapshot = traffic.snapshot(now);
+        let total = (threads * per_thread) as u64;
+        assert_eq!(total, *snapshot.requests.last().unwrap());
+        let errs = (0..threads)
+            .flat_map(|tid| {
+                (0..per_thread).map(move |i| (tid + i).is_multiple_of(10))
+            })
+            .filter(|err| *err)
+            .count() as u64;
+        assert_eq!(total - errs, *snapshot.status_2xx.last().unwrap());
+        assert_eq!(errs, *snapshot.status_5xx.last().unwrap());
+        assert_eq!(25, *snapshot.latency_max.last().unwrap());
+        let expected_sum = errs * 25 + (total - errs) * 5;
+        assert_eq!(expected_sum / total, *snapshot.latency_avg.last().unwrap());
+        assert_eq!(25, *snapshot.latency_p95.last().unwrap());
+
+        let api = &snapshot.upstreams["api"];
+        assert_eq!(total, *api.requests.last().unwrap());
+        assert_eq!(errs, *api.errors.last().unwrap());
+        assert_eq!(25, *api.latency_max.last().unwrap());
     }
 }

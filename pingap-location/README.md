@@ -48,7 +48,7 @@ Exact and wildcard patterns are stored lowercased and compared to the request ho
 
 ### `LocationHostIndex` / `ServerLocationRoute`
 
-Built when server locations are (re)loaded. For each request host the index returns a **weight-ordered** candidate list (exact + matching suffixes + all regex-host locations + any-host locations). Full path/condition matching still runs only on those candidates, so the first hit is the same as a linear scan of the full weight-sorted list. The lookup costs one small `Vec` per request: the host is lowercased only when it contains upper-case letters, and the buckets are merged by sorting the handful of indices.
+Built when server locations are (re)loaded. For each request host the index returns a **weight-ordered** `CandidateIndices<'_>` (`Deref<Target = [usize]>`) candidate slice covering exact matches, matching suffixes, all regex-host locations, and any-host locations. Full path/condition matching still runs only on those candidates, so the first hit is the same as a linear scan of the full weight-sorted list. Common single-bucket lookups (such as any-host/regex-only servers, or a single exact or suffix hit) return a pre-merged static slice with zero allocation and zero sorting, while multi-bucket merges merge inline via `SmallVec<[usize; 16]>` without heap allocation in typical configurations; the host is lowercased onto a stack buffer only when it contains upper-case ASCII letters.
 
 ### `PathSelector`
 

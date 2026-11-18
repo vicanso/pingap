@@ -326,7 +326,11 @@ fn verified_address(session: &Session, ctx: &Ctx) -> String {
             .clone()
             .unwrap_or_else(|| pingap_core::get_client_ip(session));
     }
-    ctx.conn.remote_addr.clone().unwrap_or_default()
+    ctx.conn
+        .remote_addr
+        .as_deref()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// How many lines of one kind a plugin logs in a second of the clock: the
@@ -712,7 +716,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let mut ctx = Ctx::default();
-        ctx.conn.remote_addr = Some("1.1.1.1".to_string());
+        ctx.conn.remote_addr = Some("1.1.1.1".into());
         assert_eq!("1.1.1.1", super::verified_address(&session, &ctx));
     }
 
@@ -793,7 +797,7 @@ mod tests {
                 let mut session = Session::new_h1(Box::new(mock_io));
                 session.read_request().await.unwrap();
                 let mut ctx = Ctx::default();
-                ctx.conn.remote_addr = Some("1.1.1.1".to_string());
+                ctx.conn.remote_addr = Some("1.1.1.1".into());
                 let result = plugin
                     .handle_request(PluginStep::Request, &mut session, &mut ctx)
                     .await
