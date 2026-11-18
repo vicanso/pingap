@@ -167,13 +167,11 @@ export function ConfigEntityList<T>({
             </div>
           )}
           {filteredNames.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-card/50 px-6 py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center text-sm text-muted-foreground">
               {i18n("listFilterEmpty")}
             </div>
           ) : (
-            // On the sheet itself, no card around it: the rule under the
-            // header and the row rules are the table's only lines.
-            <div className="-mx-4 md:-mx-2">
+            <div className="overflow-hidden rounded-lg border border-border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -190,7 +188,7 @@ export function ConfigEntityList<T>({
                   {filteredNames.map((name) => (
                     <TableRow
                       key={name}
-                      className="group cursor-pointer transition-colors hover:bg-accent/50"
+                      className="group cursor-pointer transition-colors hover:bg-accent/60"
                       onClick={() => navigate(entityUrl(name))}
                     >
                       <TableCell className="py-3 font-medium">
@@ -209,7 +207,7 @@ export function ConfigEntityList<T>({
                           className={cn(
                             // Machine track: every cell but the name holds a
                             // value pingap reported or a value from the config.
-                            "machine max-w-[320px] truncate py-3 text-[13px] text-muted-foreground",
+                            "machine max-w-[320px] truncate py-3 text-[13px] text-secondary-foreground",
                             column.className,
                           )}
                         >
@@ -217,7 +215,7 @@ export function ConfigEntityList<T>({
                         </TableCell>
                       ))}
                       <TableCell className="w-8 py-3 pr-3 text-right">
-                        <ChevronRight className="inline size-4 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+                        <ChevronRight className="inline size-4 text-muted-foreground/75 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
                       </TableCell>
                     </TableRow>
                   ))}

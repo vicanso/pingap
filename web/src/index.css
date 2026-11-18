@@ -30,6 +30,10 @@
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
 
+  --color-canvas: hsl(var(--canvas));
+  --color-surface-subtle: hsl(var(--surface-subtle));
+  --color-input-surface: hsl(var(--input-surface));
+
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));
 
@@ -52,6 +56,7 @@
   --color-destructive-foreground: hsl(var(--destructive-foreground));
 
   --color-border: hsl(var(--border));
+  --color-border-subtle: hsl(var(--border-subtle));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
 
@@ -134,82 +139,90 @@
    * near-black, and health keeps its own green, amber and red.
    */
   :root {
-    --background: 204 25% 97%;
-    --foreground: 220 6% 8%;
+    --background: 212 26% 94%;
+    --canvas: 210 25% 98%;
     --card: 0 0% 100%;
-    --card-foreground: 220 6% 8%;
+    --surface-subtle: 210 24% 96.5%;
+    --input-surface: 0 0% 100%;
+    --foreground: 220 26% 10%;
+    --card-foreground: 220 26% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 6% 8%;
-    --primary: 200 4% 12%;
+    --popover-foreground: 220 26% 10%;
+    --primary: 193 82% 31%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 14% 95%;
-    --secondary-foreground: 220 6% 8%;
-    --muted: 210 14% 96%;
-    --muted-foreground: 200 1% 37%;
-    --accent: 200 5% 93%;
-    --accent-foreground: 220 6% 8%;
-    --destructive: 358 69% 45%;
+    --secondary: 212 22% 93%;
+    --secondary-foreground: 220 22% 18%;
+    --muted: 212 22% 94.5%;
+    --muted-foreground: 215 15% 40%;
+    --accent: 210 22% 92.5%;
+    --accent-foreground: 220 26% 10%;
+    --destructive: 356 72% 46%;
     --destructive-foreground: 0 0% 100%;
-    --border: 210 8% 92%;
-    --input: 225 3% 81%;
-    --ring: 192 65% 30%;
-    --ok: 152 61% 30%;
-    --warn: 26 83% 31%;
-    --down: 358 69% 45%;
-    --chart-1: 192 65% 30%;
-    --chart-2: 212 60% 46%;
-    --chart-3: 38 87% 35%;
-    --chart-4: 26 83% 31%;
-    --chart-5: 358 69% 45%;
+    --border: 214 20% 85%;
+    --border-subtle: 214 20% 90%;
+    --input: 214 18% 76%;
+    --ring: 193 82% 31%;
+    --ok: 152 65% 32%;
+    --warn: 34 88% 36%;
+    --down: 356 72% 46%;
+    --chart-1: 193 82% 34%;
+    --chart-2: 214 70% 48%;
+    --chart-3: 38 87% 36%;
+    --chart-4: 26 83% 34%;
+    --chart-5: 356 72% 46%;
     /* 8px cards and controls; the sheet itself takes 16px. */
     --radius: 0.5rem;
-    --sidebar-background: 204 25% 97%;
-    --sidebar-foreground: 200 2% 31%;
-    --sidebar-primary: 200 4% 12%;
+    --sidebar-background: 212 26% 94%;
+    --sidebar-foreground: 216 18% 30%;
+    --sidebar-primary: 193 82% 31%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 200 5% 92%;
-    --sidebar-accent-foreground: 220 6% 8%;
-    --sidebar-border: 210 8% 90%;
-    --sidebar-ring: 192 65% 30%;
+    --sidebar-accent: 212 24% 89%;
+    --sidebar-accent-foreground: 220 26% 10%;
+    --sidebar-border: 214 20% 85%;
+    --sidebar-ring: 193 82% 31%;
   }
 
   .dark {
-    /* True neutrals: the frame a step darker than the sheet, no navy. */
-    --background: 0 0% 4%;
-    --foreground: 0 0% 95%;
-    --card: 0 0% 7%;
-    --card-foreground: 0 0% 95%;
-    --popover: 0 0% 9%;
-    --popover-foreground: 0 0% 95%;
-    --primary: 0 0% 95%;
-    --primary-foreground: 0 0% 7%;
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 0 0% 95%;
-    --muted: 0 0% 11%;
-    --muted-foreground: 0 0% 68%;
-    --accent: 0 0% 13%;
-    --accent-foreground: 0 0% 95%;
-    --destructive: 350 73% 62%;
+    /* Three-tier cool-graphite palette: frame -> sheet canvas -> elevated card. */
+    --background: 222 26% 5.5%;
+    --canvas: 220 23% 8.5%;
+    --card: 218 22% 11.8%;
+    --surface-subtle: 218 22% 14.2%;
+    --input-surface: 221 25% 7.5%;
+    --foreground: 210 25% 96.5%;
+    --card-foreground: 210 25% 96.5%;
+    --popover: 218 24% 12.8%;
+    --popover-foreground: 210 25% 96.5%;
+    --primary: 191 84% 54%;
+    --primary-foreground: 222 35% 7%;
+    --secondary: 218 20% 16.5%;
+    --secondary-foreground: 210 22% 92%;
+    --muted: 218 20% 15%;
+    --muted-foreground: 215 15% 70%;
+    --accent: 218 20% 17.5%;
+    --accent-foreground: 210 25% 96.5%;
+    --destructive: 352 78% 62%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 15%;
-    --input: 0 0% 24%;
-    --ring: 191 47% 52%;
-    --ok: 149 50% 50%;
-    --warn: 38 80% 58%;
-    --down: 350 73% 66%;
-    --chart-1: 191 47% 52%;
-    --chart-2: 212 65% 62%;
-    --chart-3: 38 80% 58%;
-    --chart-4: 38 80% 58%;
-    --chart-5: 350 73% 66%;
-    --sidebar-background: 0 0% 4%;
-    --sidebar-foreground: 0 0% 68%;
-    --sidebar-primary: 0 0% 95%;
-    --sidebar-primary-foreground: 0 0% 7%;
-    --sidebar-accent: 0 0% 13%;
-    --sidebar-accent-foreground: 0 0% 95%;
-    --sidebar-border: 0 0% 14%;
-    --sidebar-ring: 191 47% 52%;
+    --border: 217 19% 21%;
+    --border-subtle: 218 19% 17%;
+    --input: 217 20% 25%;
+    --ring: 191 84% 54%;
+    --ok: 152 62% 52%;
+    --warn: 38 90% 60%;
+    --down: 352 80% 66%;
+    --chart-1: 191 84% 54%;
+    --chart-2: 213 78% 64%;
+    --chart-3: 38 90% 60%;
+    --chart-4: 38 90% 60%;
+    --chart-5: 352 80% 66%;
+    --sidebar-background: 222 26% 5.5%;
+    --sidebar-foreground: 215 16% 72%;
+    --sidebar-primary: 191 84% 54%;
+    --sidebar-primary-foreground: 222 35% 7%;
+    --sidebar-accent: 218 22% 14.5%;
+    --sidebar-accent-foreground: 210 25% 97%;
+    --sidebar-border: 217 19% 19%;
+    --sidebar-ring: 191 84% 54%;
   }
 }
 
@@ -260,10 +273,11 @@
    * that reads, in the muted ink.
    */
   .region-label {
-    font-size: 13px;
-    font-weight: 500;
-    line-height: 20px;
-    color: hsl(var(--muted-foreground));
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    line-height: 18px;
+    color: hsl(var(--foreground) / 0.85);
   }
 
   /* What is copied into a config or a terminal: addresses, hosts, hashes. */

@@ -320,8 +320,11 @@ export function ExForm({
     }
   }
 
-  const fields: React.JSX.Element[] = [];
-  let lastSection: string | undefined;
+  const sectionGroups: {
+    title?: string;
+    fields: React.JSX.Element[];
+  }[] = [];
+  let currentSectionTitle: string | undefined;
 
   items.map((item, index) => {
     if (defaultShow > 0) {
@@ -330,19 +333,16 @@ export function ExForm({
       }
     }
 
-    if (item.section && item.section !== lastSection) {
-      lastSection = item.section;
-      fields.push(
-        <div
-          key={`section-${item.section}`}
-          className={cn(
-            "col-span-full",
-            fields.length > 0 && "mt-3 border-t border-border/50 pt-5",
-          )}
-        >
-          <h3 className="region-label">{item.section}</h3>
-        </div>,
-      );
+    let group = sectionGroups[sectionGroups.length - 1];
+    if (!group || (item.section && item.section !== currentSectionTitle)) {
+      if (item.section) {
+        currentSectionTitle = item.section;
+      }
+      group = {
+        title: item.section || currentSectionTitle,
+        fields: [],
+      };
+      sectionGroups.push(group);
     }
 
     let fieldClass = "";
@@ -689,7 +689,7 @@ export function ExForm({
       </div>
     );
 
-    fields.push(field);
+    sectionGroups[sectionGroups.length - 1]?.fields.push(field);
   });
 
   let showButton: React.JSX.Element | null = null;
@@ -735,12 +735,7 @@ export function ExForm({
           onSubmit={(e) => form.handleSubmit(onSubmit)(e)}
           className="relative space-y-0"
         >
-          <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
-            {updatedCount > 0 && (
-              <div className="machine mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
-                {updatedCount} {t("modified") || "modified"}
-              </div>
-            )}
+          <div key={resetNonce} className="space-y-4">
             {/*
             The template is inline, not `grid-cols-${cols}`: that class is built
             at runtime so tailwind never emits a rule for it, leaving the grid
@@ -749,26 +744,43 @@ export function ExForm({
             against the empty explicit grid, so section headers spanned one
             column instead of the row.
           */}
-            <div
-              key={resetNonce}
-              className="grid gap-x-8 gap-y-5"
-              style={{
-                gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
-              }}
-            >
-              {fields}
-            </div>
+            {sectionGroups.map((group, groupIdx) => (
+              <section
+                key={group.title || `section-${groupIdx}`}
+                className="overflow-hidden rounded-lg border border-border bg-card"
+              >
+                {group.title && (
+                  <div className="border-b border-border bg-surface-subtle px-5 py-3">
+                    <h3 className="region-label">{group.title}</h3>
+                  </div>
+                )}
+                <div
+                  className="grid gap-x-8 gap-y-5 p-5 sm:p-6"
+                  style={{
+                    gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
+                  }}
+                >
+                  {group.fields}
+                </div>
+              </section>
+            ))}
           </div>
 
           {(onSave || onRemove || showButton) && (
             <div
               className={cn(
-                "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 sm:gap-3",
+                "sticky bottom-2 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/90 px-4 py-2.5 backdrop-blur-md sm:gap-3",
                 // Keep the bar clear of the home indicator on notched phones.
-                "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
-                updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
+                "pb-[max(0.625rem,env(safe-area-inset-bottom))]",
+                updatedCount > 0 &&
+                  "border-primary/45 shadow-sm ring-1 ring-primary/20",
               )}
             >
+              {updatedCount > 0 && !readOnly && (
+                <div className="machine inline-flex items-center rounded-full border border-primary/30 bg-primary/12 px-2.5 py-0.5 text-[11.5px] font-medium text-primary">
+                  {updatedCount} {t("modified") || "modified"}
+                </div>
+              )}
               {readOnly && (onSave || onRemove) && (
                 <span className="text-sm text-muted-foreground">
                   {t("readOnlyTips")}

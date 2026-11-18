@@ -111,8 +111,8 @@ export const MultiSelect = React.forwardRef<
             {...props}
             onClick={() => setIsPopoverOpen((prev) => !prev)}
             className={cn(
-              "flex min-h-9 h-auto w-full cursor-pointer items-center justify-between rounded-md border border-input bg-card px-2.5 py-1 text-left text-sm font-normal shadow-none transition-[color,box-shadow] outline-none dark:bg-input/30",
-              "hover:bg-accent/30 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              "flex min-h-9 h-auto w-full cursor-pointer items-center justify-between rounded-md border border-input bg-input-surface px-2.5 py-1 text-left text-sm font-normal shadow-none transition-[color,box-shadow] outline-none",
+              "hover:bg-input-surface hover:border-foreground/30 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/35",
               className,
             )}
           >

@@ -248,6 +248,7 @@ export interface History {
 
 interface ConfigState {
   data: Config;
+  certificateInfos: Record<string, CertificateInfo>;
   originalToml: string;
   fullToml: string;
   hcl: string;
@@ -271,6 +272,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   data: {
     basic: {} as Basic,
   },
+  certificateInfos: {},
   fullToml: "",
   originalToml: "",
   hcl: "",
@@ -343,6 +345,9 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   getCertificateInfos: async () => {
     const { data } =
       await request.get<Record<string, CertificateInfo>>(`/certificates`);
+    set({
+      certificateInfos: data,
+    });
     return data;
   },
   getHistory: async (category: string, name: string) => {

@@ -141,6 +141,7 @@ export default {
     groupPolicy: "策略",
     groupSystem: "系统",
     upstreamsDown: "{{count}} 个上游有后端无法访问",
+    certsAlert: "{{count}} 个证书即将过期或已过期",
     searchEmpty: "无匹配项",
     searchPlaceholder: "搜索…",
   },

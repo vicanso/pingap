@@ -123,14 +123,19 @@ export default function Root() {
   const [fetchBasicInfo, basicInfo] = useBasicState(
     useShallow((state) => [state.fetch, state.data]),
   );
-  const [fetchConfig, initialized] = useConfigState(
-    useShallow((state) => [state.fetch, state.initialized]),
+  const [fetchConfig, initialized, getCertificateInfos] = useConfigState(
+    useShallow((state) => [
+      state.fetch,
+      state.initialized,
+      state.getCertificateInfos,
+    ]),
   );
 
   useAsync(async () => {
     try {
       await fetchBasicInfo();
       await fetchConfig();
+      await getCertificateInfos().catch(() => undefined);
     } catch (err) {
       const status = ((err as HTTPError)?.status || 0) as number;
       if (status == 401) {
@@ -174,7 +179,7 @@ export default function Root() {
         {/* The sheet: inset 8px from the window's right and bottom edges,
             a 1px edge, 16px corners, no shadow. On a phone or a tablet the
             frame goes and the sheet is the screen. */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card lg:mx-2 lg:mb-2 lg:rounded-2xl lg:border lg:border-border">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-canvas lg:mx-2 lg:mb-2 lg:rounded-2xl lg:border lg:border-border">
           <Outlet />
         </div>
       </SidebarInset>

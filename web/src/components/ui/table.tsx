@@ -21,9 +21,10 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      // No band behind the header: the one rule under it is the table's
-      // strongest line.
-      className={cn("[&_tr]:border-b [&_tr]:border-border", className)}
+      className={cn(
+        "bg-surface-subtle [&_tr]:border-b [&_tr]:border-border",
+        className,
+      )}
       {...props}
     />
   );
@@ -59,7 +60,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
       className={cn(
         // Hover is applied by the caller: some tables are navigable rows and
         // some are read-only readouts, and only the first should react.
-        "border-b border-border/70 transition-colors has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b border-border-subtle transition-colors has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
         className,
       )}
       {...props}
@@ -73,7 +74,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
       data-slot="table-head"
       className={cn(
         // Column names as labels: sentence case, grey, quieter than the data.
-        "h-10 px-4 text-left align-middle text-[12px] font-normal whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
+        "h-9.5 px-4 text-left align-middle text-[12px] font-medium whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
         className,
       )}
       {...props}

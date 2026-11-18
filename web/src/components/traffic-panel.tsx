@@ -117,7 +117,7 @@ export function TrafficPanel() {
   const seconds = RECENT * traffic.interval;
 
   const header = (
-    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-2.5 sm:px-5">
+    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
       <h2 className="region-label">{homeI18n("traffic")}</h2>
       <span className="text-[12px] text-muted-foreground">
         {homeI18n("trafficWindow")}
@@ -280,29 +280,32 @@ export function TrafficPanel() {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/60">
+            <tbody className="divide-y divide-border-subtle">
               {upstreams.map((upstream) => (
-                <tr key={upstream.name}>
+                <tr
+                  key={upstream.name}
+                  className="transition-colors hover:bg-accent/40"
+                >
                   <td className="px-4 py-2.5 sm:px-5">
                     <Link
                       to={`${UPSTREAMS}?name=${encodeURIComponent(upstream.name)}`}
-                      className="font-medium hover:text-primary hover:underline"
+                      className="font-medium text-card-foreground hover:text-primary hover:underline"
                     >
                       {upstream.name}
                     </Link>
                   </td>
-                  <td className="figure px-3 py-2.5 text-right">
+                  <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
                     {formatRate(upstream.rate)}
                   </td>
                   <td
                     className={cn(
-                      "figure px-3 py-2.5 text-right",
+                      "figure px-3 py-2.5 text-right text-secondary-foreground",
                       upstream.errors > 0 && "font-medium text-down",
                     )}
                   >
                     {formatShare(upstream.errors, upstream.requests)}
                   </td>
-                  <td className="figure px-3 py-2.5 text-right">
+                  <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
                     {upstream.timed ? formatMs(upstream.latency) : "—"}
                   </td>
                   <td className="px-4 py-2.5 sm:px-5">

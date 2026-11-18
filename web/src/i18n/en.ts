@@ -144,6 +144,7 @@ export default {
     groupPolicy: "Policy",
     groupSystem: "System",
     upstreamsDown: "{{count}} with a backend that does not answer",
+    certsAlert: "{{count}} expiring soon or expired",
     searchEmpty: "No matches",
     searchPlaceholder: "Search…",
   },

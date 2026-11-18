@@ -56,19 +56,15 @@ function HealthStrip({ health }: { health: PathHealth }) {
   );
 }
 
-function Stage({
-  stage,
-  health,
-}: {
-  stage: PathStage;
-  health?: PathHealth;
-}) {
+function Stage({ stage, health }: { stage: PathStage; health?: PathHealth }) {
   return (
     <Link
       to={stage.to}
       className="group -mx-1 flex flex-col gap-1.5 rounded-md px-3 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring lg:mx-0 lg:flex-1 lg:px-4"
     >
-      <span className="region-label group-hover:text-foreground">{stage.label}</span>
+      <span className="region-label group-hover:text-foreground">
+        {stage.label}
+      </span>
       <span className="flex items-baseline gap-1.5">
         <span className="figure text-[28px] leading-none font-normal">
           {stage.value}
@@ -120,7 +116,7 @@ export function TrafficPath({
 }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-border px-4 py-2.5 sm:px-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
         <h2 className="region-label">{title}</h2>
         <p className="figure text-[12px] text-muted-foreground">{meta}</p>
       </div>
@@ -138,8 +134,8 @@ export function TrafficPath({
                 className="hidden shrink-0 items-center lg:flex"
                 aria-hidden="true"
               >
-                <span className="h-px w-4 bg-muted-foreground/25 lg:w-8" />
-                <ChevronRight className="-ml-1.5 size-3.5 text-muted-foreground/55" />
+                <span className="h-px w-4 bg-border lg:w-8" />
+                <ChevronRight className="-ml-1.5 size-3.5 text-muted-foreground" />
               </div>
             )}
             <div className="min-w-0 lg:flex-1">
@@ -152,7 +148,7 @@ export function TrafficPath({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-px border-t border-border bg-border sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-px border-t border-border bg-border-subtle sm:grid-cols-4">
         {meters.map((meter) => (
           <div
             key={meter.label}

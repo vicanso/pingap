@@ -64,18 +64,17 @@ interface Alert {
 
 export default function Home() {
   const homeI18n = useI18n("home");
-  const [config, initialized, getCertificateInfos] = useConfigState(
-    useShallow((state) => [
-      state.data,
-      state.initialized,
-      state.getCertificateInfos,
-    ]),
-  );
+  const [config, initialized, certificateInfos, getCertificateInfos] =
+    useConfigState(
+      useShallow((state) => [
+        state.data,
+        state.initialized,
+        state.certificateInfos,
+        state.getCertificateInfos,
+      ]),
+    );
   const [basicInfo, fetchBasicInfo] = useBasicState(
     useShallow((state) => [state.data, state.fetch]),
-  );
-  const [certificateInfos, setCertificateInfos] = React.useState(
-    {} as Record<string, { not_before: number; not_after: number }>,
   );
 
   // /basic was only fetched once when the app mounted, so every counter on this
@@ -108,7 +107,7 @@ export default function Home() {
 
   useAsync(async () => {
     try {
-      setCertificateInfos(await getCertificateInfos());
+      await getCertificateInfos();
     } catch {
       // Validity dates are supporting detail: without them the certificate
       // card simply omits the range and no expiry warning is raised. Not worth
@@ -483,7 +482,12 @@ export default function Home() {
     },
   ];
 
-  const buildLine = [
+  const shortGitHash =
+    basicInfo.git_hash && basicInfo.git_hash.length > 7
+      ? basicInfo.git_hash.slice(0, 7)
+      : basicInfo.git_hash || "";
+
+  const buildTags = [
     basicInfo.features?.includes("rustls")
       ? "rustls"
       : basicInfo.features?.includes("openssl")
@@ -491,14 +495,8 @@ export default function Home() {
         : "",
     basicInfo.features?.includes("tracing") ? "tracing" : "",
     basicInfo.features?.includes("full") ? "full" : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  let git_hash = basicInfo.git_hash;
-  if (git_hash.length > 7) {
-    git_hash = git_hash.slice(0, 7);
-  }
+    shortGitHash,
+  ].filter(Boolean);
 
   const dash = (v: string | number | undefined | null) =>
     v === undefined || v === null || v === "" ? "—" : String(v);
@@ -574,17 +572,17 @@ export default function Home() {
       title={homeI18n("dashboard")}
       description={config.basic?.name || undefined}
       actions={
-        // What this binary was built with: one quiet line, not four pills.
-        buildLine && (
-          <p className="text-[13px] text-muted-foreground">
-            {buildLine}
-            {git_hash && (
-              <>
-                {" · "}
-                <span className="machine">{git_hash}</span>
-              </>
-            )}
-          </p>
+        buildTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {buildTags.map((tag) => (
+              <span
+                key={tag}
+                className="machine inline-flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-[11.5px] font-medium text-secondary-foreground"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
         )
       }
     >
@@ -598,23 +596,23 @@ export default function Home() {
 
       {/* What needs doing comes before what is only read. */}
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-4 py-2.5 sm:px-5">
+        <div className="border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
           <h2 className="region-label">{homeI18n("attention")}</h2>
         </div>
         {alerts.length === 0 ? (
-          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-muted-foreground sm:px-5">
+          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-secondary-foreground sm:px-5">
             <CheckCircle2 className="size-4 shrink-0 text-ok" strokeWidth={2} />
             {homeI18n("allClear")}
           </p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="divide-y divide-border-subtle">
             {alerts.map((alert) => (
               <li key={alert.key}>
                 <Link
                   to={alert.to}
                   className={cn(
-                    "flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/50 sm:px-5",
-                    alert.tone === "down" && "bg-down/[0.045]",
+                    "flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/60 sm:px-5",
+                    alert.tone === "down" && "bg-down/[0.06]",
                   )}
                 >
                   <span
@@ -623,16 +621,16 @@ export default function Home() {
                       alert.tone === "down" ? "bg-down" : "bg-warn",
                     )}
                   />
-                  <span className="shrink-0 text-[14px] font-medium">
+                  <span className="shrink-0 text-[14px] font-medium text-card-foreground">
                     {alert.name}
                   </span>
                   <span
-                    className="truncate text-[14px] text-muted-foreground"
+                    className="truncate text-[14px] text-secondary-foreground"
                     title={alert.title}
                   >
                     {alert.message}
                   </span>
-                  <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground/50" />
+                  <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground/75" />
                 </Link>
               </li>
             ))}
@@ -646,9 +644,9 @@ export default function Home() {
         {entityCards.map((item) => (
           <div
             key={item.title}
-            className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/35"
+            className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/45"
           >
-            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+            <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
               <Link
                 to={item.path}
                 className="region-label transition-colors hover:text-foreground"
@@ -666,7 +664,7 @@ export default function Home() {
                   <Link
                     to={`${item.path}?name=*`}
                     aria-label={`+ ${item.title}`}
-                    className="inline-flex size-6 items-center justify-center rounded border border-border bg-background text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                    className="inline-flex size-6 items-center justify-center rounded border border-border bg-card text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
                   >
                     <Plus className="size-3.5" />
                   </Link>
@@ -674,12 +672,12 @@ export default function Home() {
               </div>
             </div>
             {item.summary.length > 0 ? (
-              <ul className="flex-1 divide-y divide-border/60 px-4">
+              <ul className="flex-1 divide-y divide-border-subtle px-4">
                 {item.summary.slice(0, 4).map((entry) => (
                   <li key={entry.name}>
                     <Link
                       to={entry.link}
-                      className="-mx-4 flex items-center justify-between gap-2 px-4 py-2 text-[13px] transition-colors hover:bg-accent/50"
+                      className="-mx-4 flex items-center justify-between gap-2 px-4 py-2 text-[13px] transition-colors hover:bg-accent/60"
                     >
                       <span
                         className={cn(
@@ -696,7 +694,7 @@ export default function Home() {
                             ? "font-medium text-down"
                             : entry.valueTone === "warn"
                               ? "font-medium text-warn"
-                              : "text-muted-foreground",
+                              : "text-secondary-foreground",
                         )}
                         title={entry.valueTitle}
                       >
@@ -719,7 +717,7 @@ export default function Home() {
                   <li>
                     <Link
                       to={item.path}
-                      className="figure -mx-4 block px-4 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent/50 hover:text-primary"
+                      className="figure -mx-4 block px-4 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-primary"
                     >
                       +{item.summary.length - 4}
                     </Link>
@@ -741,10 +739,10 @@ export default function Home() {
       </div>
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-4 py-2.5 sm:px-5">
+        <div className="border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
           <h2 className="region-label">{homeI18n("runtime")}</h2>
         </div>
-        <div className="grid gap-px bg-border/60 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-px bg-border-subtle text-[13px] sm:grid-cols-2 lg:grid-cols-3">
           {runtimeVisible.map((item) => (
             <div
               key={item.name}
@@ -755,8 +753,8 @@ export default function Home() {
               </span>
               <span
                 className={cn(
-                  "figure min-w-0 truncate text-right",
-                  item.value === "—" && "text-muted-foreground",
+                  "figure min-w-0 truncate text-right font-medium text-card-foreground",
+                  item.value === "—" && "font-normal text-muted-foreground",
                 )}
               >
                 {item.value}

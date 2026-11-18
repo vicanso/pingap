@@ -26,6 +26,7 @@ import {
 import useConfigState from "@/states/config";
 import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
+import { daysUntil } from "@/helpers/util";
 import { Input } from "@/components/ui/input";
 import React from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -55,14 +56,29 @@ import {
 
 type NavGroup = "path" | "policy" | "system";
 
+type BadgeTone = "neutral" | "warn" | "down";
+
 interface NavLink {
   title: string;
   label?: string;
+  badgeTone?: BadgeTone;
+  badgeTitle?: string;
   icon?: LucideIcon;
   path: string;
   variant: "default" | "ghost";
   group: NavGroup;
   children?: NavLink[];
+}
+
+function badgeToneClasses(tone?: BadgeTone) {
+  switch (tone) {
+    case "down":
+      return "border border-down/30 bg-down/15 text-down";
+    case "warn":
+      return "border border-warn/30 bg-warn/15 text-warn";
+    default:
+      return "bg-sidebar-accent text-muted-foreground";
+  }
 }
 
 /** Highlight the first case-insensitive match of `keyword` inside `text`. */
@@ -123,12 +139,12 @@ const CollapsedIconLink = React.forwardRef<
       onKeyDown={onKeyDown}
       className={cn(
         // Fixed square only — no w-full. Parent ul uses items-center when collapsed.
-        "flex size-8 shrink-0 items-center justify-center rounded-md outline-none",
+        "relative flex size-8 shrink-0 items-center justify-center rounded-md outline-none",
         "text-sidebar-foreground transition-colors",
         "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         "focus-visible:ring-2 focus-visible:ring-sidebar-ring",
         isActive &&
-          "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+          "bg-sidebar-accent font-medium text-sidebar-accent-foreground before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-[3px] before:rounded-full before:bg-primary",
         className,
       )}
     >
@@ -207,6 +223,14 @@ function CollapsedNavFlyout({
             isActive={isActive}
           >
             {Icon && <Icon className="size-4 shrink-0" />}
+            {(item.badgeTone === "down" || item.badgeTone === "warn") && (
+              <span
+                className={cn(
+                  "absolute top-1 right-1 size-1.5 rounded-full",
+                  item.badgeTone === "down" ? "bg-down" : "bg-warn",
+                )}
+              />
+            )}
           </CollapsedIconLink>
         </TooltipTrigger>
         <TooltipContent side="right" align="center" sideOffset={8}>
@@ -230,6 +254,14 @@ function CollapsedNavFlyout({
           onKeyDown={handleKeyDown}
         >
           {Icon && <Icon className="size-4 shrink-0" />}
+          {(item.badgeTone === "down" || item.badgeTone === "warn") && (
+            <span
+              className={cn(
+                "absolute top-1 right-1 size-1.5 rounded-full",
+                item.badgeTone === "down" ? "bg-down" : "bg-warn",
+              )}
+            />
+          )}
         </CollapsedIconLink>
       </PopoverAnchor>
       <PopoverContent
@@ -266,7 +298,13 @@ function CollapsedNavFlyout({
           {Icon && <Icon className="size-4 shrink-0" />}
           <span className="truncate">{item.title}</span>
           {item.label && (
-            <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+            <span
+              className={cn(
+                "figure ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-medium",
+                badgeToneClasses(item.badgeTone),
+              )}
+              title={item.badgeTitle}
+            >
               {item.label}
             </span>
           )}
@@ -321,8 +359,12 @@ export function MainSidebar({
   // Normalise where it is used, not on the way in, so the box shows exactly
   // what was typed instead of eating case and trailing spaces mid-word.
   const activeKeyword = expanded ? keyword.trim().toLowerCase() : "";
-  const [config, initialized] = useConfigState(
-    useShallow((state) => [state.data, state.initialized]),
+  const [config, initialized, certificateInfos] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.certificateInfos,
+    ]),
   );
   const basicInfo = useBasicState((state) => state.data);
 
@@ -344,18 +386,65 @@ export function MainSidebar({
   const plugins = Object.keys(config.plugins || {}).sort();
   const certificates = Object.keys(config.certificates || {}).sort();
   const storages = Object.keys(config.storages || {}).sort();
-  // A count only on what needs doing: the upstreams with a backend that
-  // does not answer. How many of each entry there are is the list's own
-  // business, one click away.
-  const upstreamsDown = Object.values(
+
+  const unhealthyStatuses = Object.values(
     basicInfo.upstream_healthy_status || {},
-  ).filter((status) => status.healthy < status.total).length;
-  const getLabel = (category: string) => {
-    if (!initialized || category !== "upstream" || upstreamsDown === 0) {
-      return "";
+  ).filter((status) => status.healthy < status.total);
+  const upstreamsDown = unhealthyStatuses.length;
+  const upstreamAllDown = unhealthyStatuses.some(
+    (status) => status.healthy === 0,
+  );
+
+  let certAlertCount = 0;
+  let certHasCritical = false;
+  certificates.forEach((name) => {
+    const info = certificateInfos[name];
+    if (!info) {
+      return;
     }
-    return upstreamsDown.toString();
+    const days = daysUntil(info.not_after);
+    if (days <= 30) {
+      certAlertCount += 1;
+      if (days <= 7) {
+        certHasCritical = true;
+      }
+    }
+  });
+
+  const badgeMeta = (
+    category:
+      "server" | "location" | "upstream" | "plugin" | "certificate" | "storage",
+    count: number,
+  ): { label: string; badgeTone?: BadgeTone; badgeTitle?: string } => {
+    if (!initialized || count === 0) {
+      return { label: "" };
+    }
+    if (category === "upstream" && upstreamsDown > 0) {
+      return {
+        label: count.toString(),
+        badgeTone: upstreamAllDown ? "down" : "warn",
+        badgeTitle: navI18n("upstreamsDown", { count: upstreamsDown }),
+      };
+    }
+    if (category === "certificate" && certAlertCount > 0) {
+      return {
+        label: count.toString(),
+        badgeTone: certHasCritical ? "down" : "warn",
+        badgeTitle: navI18n("certsAlert", { count: certAlertCount }),
+      };
+    }
+    return {
+      label: count.toString(),
+      badgeTone: "neutral",
+    };
   };
+
+  const serverBadge = badgeMeta("server", servers.length);
+  const locationBadge = badgeMeta("location", locations.length);
+  const upstreamBadge = badgeMeta("upstream", upstreams.length);
+  const pluginBadge = badgeMeta("plugin", plugins.length);
+  const certBadge = badgeMeta("certificate", certificates.length);
+  const storageBadge = badgeMeta("storage", storages.length);
 
   // Expanded: only expand children for the active route (or when searching).
   // Collapsed: always build full lists so hover flyouts have content.
@@ -389,7 +478,7 @@ export function MainSidebar({
       title: navI18n("server"),
       icon: Server,
       variant: getVariant(SERVERS),
-      label: getLabel("server"),
+      ...serverBadge,
       path: SERVERS,
       group: "path",
       children: generateChildren(SERVERS, servers),
@@ -398,7 +487,7 @@ export function MainSidebar({
       title: navI18n("location"),
       icon: Webhook,
       variant: getVariant(LOCATIONS),
-      label: getLabel("location"),
+      ...locationBadge,
       path: LOCATIONS,
       group: "path",
       children: generateChildren(LOCATIONS, locations),
@@ -407,7 +496,7 @@ export function MainSidebar({
       title: navI18n("upstream"),
       icon: TrendingUpDown,
       variant: getVariant(UPSTREAMS),
-      label: getLabel("upstream"),
+      ...upstreamBadge,
       path: UPSTREAMS,
       group: "path",
       children: generateChildren(UPSTREAMS, upstreams),
@@ -416,7 +505,7 @@ export function MainSidebar({
       title: navI18n("plugin"),
       icon: PlugZap,
       variant: getVariant(PLUGINS),
-      label: getLabel("plugin"),
+      ...pluginBadge,
       path: PLUGINS,
       group: "policy",
       children: generateChildren(PLUGINS, plugins),
@@ -425,7 +514,7 @@ export function MainSidebar({
       title: navI18n("certificate"),
       icon: ShieldCheck,
       variant: getVariant(CERTIFICATES),
-      label: getLabel("certificate"),
+      ...certBadge,
       path: CERTIFICATES,
       group: "policy",
       children: generateChildren(CERTIFICATES, certificates),
@@ -441,7 +530,7 @@ export function MainSidebar({
       title: navI18n("storage"),
       icon: Container,
       variant: getVariant(STORAGES),
-      label: getLabel("storage"),
+      ...storageBadge,
       path: STORAGES,
       group: "system",
       children: generateChildren(STORAGES, storages),
@@ -611,7 +700,7 @@ export function MainSidebar({
               {expanded ? (
                 <p
                   className={cn(
-                    "region-label px-3 pb-1.5",
+                    "px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground/85",
                     groupIdx > 0 && "pt-4",
                   )}
                 >
@@ -650,10 +739,11 @@ export function MainSidebar({
                               </span>
                               {item.label && (
                                 <span
-                                  className="figure ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-down/10 px-1.5 text-[12px] font-medium text-down"
-                                  title={navI18n("upstreamsDown", {
-                                    count: Number(item.label),
-                                  })}
+                                  className={cn(
+                                    "figure ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11.5px] font-medium",
+                                    badgeToneClasses(item.badgeTone),
+                                  )}
+                                  title={item.badgeTitle}
                                 >
                                   {item.label}
                                 </span>
