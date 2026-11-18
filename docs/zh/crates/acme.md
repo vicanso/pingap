@@ -131,15 +131,18 @@ acme_ca = "/etc/pingap/internal-root.pem"
 - 已有且未到续期时间的证书不会被动：改了 `acme_directory` 或 `acme_key_type` 的条目，要到下一次续期才会从新的 CA、用新的密钥类型签发。
 - `acme_directory`、`acme_ca`、绑定和密钥类型随配置一起校验（`pingap -t`）：不是 `https` 的地址、只配了一半的绑定、不是 base64 的 key、不存在的密钥类型，都在这时报错，而不是几周后下单时才发现。
 
-还没有的：TLS-ALPN-01 验证、按 CA 建议的时间续期（ARI）、内置四家之外的 DNS 服务商。
+- **通用 Webhook DNS-01（`dns_provider = "webhook"`）**：向 `dns_service_url` POST JSON `{"action": "present" | "cleanup", "domain", "fqdn", "record", "zone", "value"}`，通过轻量 HTTP sidecar 即可接入全球任意 DNS 服务商。支持在 URL 查询参数中传入 `token`（默认以 `Authorization: Bearer <token>` 发送，配合 `header` 参数可改为自定义请求头，转发时自动剥离）与 `timeout`（默认 `30s`），支持 `$ENV:NAME` 环境变量展开。
+- **TLS-ALPN-01（`tls_alpn_challenge = true`）**：直接在 443 端口 HTTPS 监听器（`global_certificates = true`）上按 RFC 8737 协商 `acme-tls/1` 完成签发，无需开放 80 端口。不支持泛域名（请使用 DNS-01），且需要 `openssl` TLS 后端（`tls-rustls` 构建会在配置校验阶段拒绝）。
+
+还没有的：按 CA 建议的时间续期（ARI）。
 
 ## 证书存哪里
 
 签发的证书经配置存储写回，因此：
 
-- **etcd**：共享后端的每个实例自动拿到新证书。只需其中一个实例下单。
+- **etcd**：共享后端的每个实例自动拿到新证书。下单前会先在 `<path>-locks/acme/<name>` 下通过 etcd lease + CAS 获取分布式互斥锁（下单期间自动续租、完成后主动撤销），防止多实例并发重复下单触发 CA 限频。
 - **文件** 存储：证书落在配置目录。
-- 共用存储的实例共用证书：下单之前先读存储里的条目，如果里面已经有同样域名、余量充足的证书（另一个实例已经续期），就直接安装，不再下单。以前每个实例只看自己运行中的配置，各自申请一张，实例多了会碰到 CA 的重复签发限制。两个实例恰好同时检查时仍可能各下一单，实例之间没有协调。新增或修改的条目，各实例会在同一分钟内检查，所以验证耗时超过一分钟时（DNS-01）每个实例都会下单。
+- 共用存储的实例共用证书：拿到续签锁后下单之前会先重读存储里的条目，如果里面已经有同样域名、余量充足的证书（另一个实例刚刚续期完成），就直接安装，不再重复下单。
 - **快速启动**：证书持久化到 `~/.pingap/acme/<domains>.toml`（仅属主可读），下次启动恢复。
 
 验证路径（`/.well-known/acme-challenge/<token>`）在插件之前处理（`early_request` 阶段的插件除外），对任何人开放，80 端口上的每个 server 都会处理——这个 server 还监听了别的地址时，那些地址上也一样。是否处理取决于请求到达时运行中的配置，而不是进程启动时的配置：热更新加进来的证书在现有的 server 上完成验证，热更新去掉之后这个路径交还给 location。没有证书需要这种验证时也不会为它去读存储，所以存储不可用不会拖住别人的验证请求。

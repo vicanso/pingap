@@ -279,7 +279,8 @@ pub use ocsp::{Stapling, new_ocsp_stapling_service};
 pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_backend::{
-    install_default_crypto_provider, validate_servers_tls_for_backend,
+    install_default_crypto_provider, validate_certificates_tls_for_backend,
+    validate_servers_tls_for_backend,
 };
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;

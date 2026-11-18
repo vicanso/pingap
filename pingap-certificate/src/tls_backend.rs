@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::{Error, Result, TLS_BACKEND};
-use pingap_config::ServerConf;
+use pingap_config::{CertificateConf, ServerConf};
 use std::collections::HashMap;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Once;
@@ -90,6 +90,40 @@ pub fn validate_servers_tls_for_backend(
     }
 }
 
+/// Rejects certificate ACME settings that the active TLS backend cannot honour.
+///
+/// Under OpenSSL `tls_alpn_challenge` negotiates `acme-tls/1` alongside HTTP/2
+/// and HTTP/1.1 via OpenSSL's ALPN select callback. Pingora's rustls listener
+/// only exposes single-protocol custom ALPN, so `tls_alpn_challenge` is
+/// rejected at validation time when built with `tls-rustls`.
+pub fn validate_certificates_tls_for_backend(
+    certificates: &HashMap<String, CertificateConf>,
+) -> Result<()> {
+    if TLS_BACKEND != "rustls" {
+        return Ok(());
+    }
+
+    let mut problems = Vec::new();
+    for (name, cert) in certificates {
+        if cert.tls_alpn_challenge.unwrap_or_default() {
+            problems.push(format!(
+                "certificate `{name}` sets tls_alpn_challenge which the rustls backend does not support \
+                 (pingora's rustls listener does not support multi-protocol custom ALPN); \
+                 use http-01/dns-01 or build with the openssl feature"
+            ));
+        }
+    }
+
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Invalid {
+            category: "tls".to_string(),
+            message: problems.join("; "),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -153,6 +187,31 @@ mod tests {
             assert!(message.contains("tls_max_version"), "{message}");
             assert!(message.contains("https"), "{message}");
             assert!(message.contains("blank"), "{message}");
+        } else {
+            assert_eq!(true, result.is_ok());
+        }
+    }
+
+    #[test]
+    fn validate_certificate_tls_alpn_matches_backend() {
+        use super::validate_certificates_tls_for_backend;
+        use pingap_config::CertificateConf;
+
+        let mut certs = HashMap::new();
+        certs.insert(
+            "site".to_string(),
+            CertificateConf {
+                domains: Some("example.com".to_string()),
+                acme: Some("lets_encrypt".to_string()),
+                tls_alpn_challenge: Some(true),
+                ..Default::default()
+            },
+        );
+        let result = validate_certificates_tls_for_backend(&certs);
+        if TLS_BACKEND == "rustls" {
+            let err =
+                result.expect_err("rustls must reject tls_alpn_challenge");
+            assert!(err.to_string().contains("tls_alpn_challenge"));
         } else {
             assert_eq!(true, result.is_ok());
         }

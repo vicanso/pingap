@@ -40,7 +40,7 @@ use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
     install_default_crypto_provider, new_certificate_validity_service,
     new_ocsp_stapling_service, new_self_signed_certificate_validity_service,
-    validate_servers_tls_for_backend,
+    validate_certificates_tls_for_backend, validate_servers_tls_for_backend,
 };
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
@@ -1107,6 +1107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Reject per-server TLS version/cipher settings the active backend cannot
     // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
     validate_servers_tls_for_backend(&config.servers)?;
+    validate_certificates_tls_for_backend(&config.certificates)?;
     plugin::validate_plugin_references(&config)?;
     // Install aws-lc-rs before ACME / any other rustls user can race to install
     // a different CryptoProvider. No-op for the OpenSSL backend.

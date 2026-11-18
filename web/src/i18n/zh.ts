@@ -754,6 +754,9 @@ export default {
     yes: "是",
     isDefault: "是否默认证书",
     dnsChallenge: "Dns 01 Challenge",
+    tlsAlpnChallenge: "TLS-ALPN-01 Challenge",
+    tlsAlpnChallengeTips:
+      "通过 443 端口的 acme-tls/1 协议完成签发（无需 80 端口；需使用 OpenSSL 后端且不支持泛域名）。",
     dnsProvider: "Dns提供商",
     dnsServiceUrl: "Dns API服务地址",
     dnsServiceUrlPlaceholder:

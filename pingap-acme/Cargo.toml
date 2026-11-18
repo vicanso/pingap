@@ -55,6 +55,7 @@ pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 toml = { workspace = true }
+x509-parser = { workspace = true }
 
 [lints]
 workspace = true

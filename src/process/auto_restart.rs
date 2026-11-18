@@ -26,7 +26,9 @@ use crate::webhook::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
 use parking_lot::Mutex;
-use pingap_certificate::validate_servers_tls_for_backend;
+use pingap_certificate::{
+    validate_certificates_tls_for_backend, validate_servers_tls_for_backend,
+};
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM, CertificateConf,
     ConfigManager, FILE_REFERENCE_PREFIX, MissingReference, Observer,
@@ -585,6 +587,8 @@ async fn apply_config(
     tokio::task::spawn_blocking(move || {
         checked.validate().map_err(|e| e.to_string())?;
         validate_servers_tls_for_backend(&checked.servers)
+            .map_err(|e| e.to_string())?;
+        validate_certificates_tls_for_backend(&checked.certificates)
             .map_err(|e| e.to_string())?;
         plugin::validate_plugin_references(&checked).map_err(|e| e.to_string())
     })

@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::storage::{History, Storage};
+use crate::storage::{History, Storage, StorageLock};
 use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{
-    Certificate, Client, ConnectOptions, GetOptions, Identity, KeyValue,
-    KvClient, SortOrder, SortTarget, TlsOptions, WatchOptions,
+    Certificate, Client, Compare, CompareOp, ConnectOptions, GetOptions,
+    Identity, KeyValue, KvClient, PutOptions, SortOrder, SortTarget,
+    TlsOptions, Txn, TxnOp, WatchOptions,
 };
 use pingap_core::now_sec;
 use pingap_util::path_join;
@@ -41,6 +42,9 @@ pub struct EtcdStorage {
     path: String,
     // History path for all config entries in etcd
     history_path: String,
+    // Sibling path for advisory distributed locks (kept outside `path` so
+    // `load_all` and `observe` never see lock keys as config changes)
+    lock_path: String,
     // List of etcd server addresses
     addrs: Vec<String>,
     // Connection options (timeout, auth, etc)
@@ -273,12 +277,14 @@ impl EtcdStorage {
             // request on a dead one runs into its timeout.
             .with_keep_alive(KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT);
         let history_path = format!("{}-history", path.trim_end_matches('/'));
+        let lock_path = format!("{}-locks", path.trim_end_matches('/'));
 
         Ok(Self {
             addrs,
             options,
             path,
             history_path,
+            lock_path,
             enable_history: params.enable_history,
             client: Mutex::new(None),
             page_size: AtomicI64::new(PAGE_SIZE),
@@ -590,6 +596,80 @@ impl Storage for EtcdStorage {
             _etcd_client: Some(client),
         })
     }
+
+    async fn try_acquire_lock(
+        &self,
+        key: &str,
+        ttl: Duration,
+    ) -> Result<Option<StorageLock>> {
+        let ttl_secs = i64::try_from(ttl.as_secs().max(10)).unwrap_or(60);
+        let full_key = path_join(&self.lock_path, key);
+        let owner = format!("pid:{}", std::process::id());
+
+        let mut client = self.client().await?;
+        let lease = client
+            .lease_grant(ttl_secs, None)
+            .await
+            .map_err(etcd_error)?;
+        let lease_id = lease.id();
+
+        let txn = Txn::new()
+            .when([Compare::create_revision(
+                full_key.as_bytes(),
+                CompareOp::Equal,
+                0,
+            )])
+            .and_then([TxnOp::put(
+                full_key.as_bytes(),
+                owner.as_bytes(),
+                Some(PutOptions::new().with_lease(lease_id)),
+            )]);
+        let resp = match client.kv_client().txn(txn).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let _ = client.lease_revoke(lease_id).await;
+                return Err(etcd_error(e));
+            },
+        };
+        if !resp.succeeded() {
+            let _ = client.lease_revoke(lease_id).await;
+            return Ok(None);
+        }
+
+        let renew_every = Duration::from_secs(((ttl_secs / 3).max(5)) as u64);
+        let mut keep_alive_client = client.clone();
+        let keep_alive = tokio::spawn(async move {
+            let Ok((mut keeper, mut stream)) =
+                keep_alive_client.lease_keep_alive(lease_id).await
+            else {
+                return;
+            };
+            let mut ticker = tokio::time::interval(renew_every);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                if keeper.keep_alive().await.is_err() {
+                    break;
+                }
+                match stream.message().await {
+                    Ok(Some(_)) => {},
+                    _ => break,
+                }
+            }
+        });
+
+        let mut revoke_client = client;
+        let release = Box::pin(async move {
+            if let Err(e) = revoke_client.lease_revoke(lease_id).await {
+                warn!(
+                    error = %e,
+                    lease_id,
+                    "failed to revoke etcd lock lease"
+                );
+            }
+        });
+        Ok(Some(StorageLock::new(release, keep_alive.abort_handle())))
+    }
 }
 
 #[cfg(test)]
@@ -599,6 +679,15 @@ mod tests {
 
     #[test]
     fn test_parse_params() {
+        let storage =
+            EtcdStorage::new("etcd://127.0.0.1:2379/pingap?timeout=10s")
+                .unwrap();
+        assert_eq!("/pingap-locks", storage.lock_path);
+        assert_eq!(
+            false,
+            storage.lock_path.starts_with(&as_prefix(&storage.path))
+        );
+
         // timeout=10s&connect_timeout=5s&user=abc&password=pwd
         let params = EtcdStorageParams::try_from(
             "timeout=10s&connect_timeout=5s&user=abc&password=pwd",

@@ -25,7 +25,10 @@
 
 use crate::plugin;
 use async_trait::async_trait;
-use pingap_certificate::{TlsCertificate, validate_servers_tls_for_backend};
+use pingap_certificate::{
+    TlsCertificate, validate_certificates_tls_for_backend,
+    validate_servers_tls_for_backend,
+};
 use pingap_config::{
     ConfigManager, MissingReference, PingapConfig, PingapTomlConfig, PluginConf,
 };
@@ -569,6 +572,7 @@ fn validate_stored_as(
     refuse_build_keys(&keys_of_other_builds(&config, BUILD_FEATURES), strict)?;
     plugin::validate_plugin_references(&config)?;
     validate_servers_tls_for_backend(&config.servers)?;
+    validate_certificates_tls_for_backend(&config.certificates)?;
     pingap_cache::dry_run(|| validate_built(&config))
 }
 

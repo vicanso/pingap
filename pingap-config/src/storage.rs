@@ -14,8 +14,61 @@
 
 use crate::{Error, Observer};
 use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Guard returned by [`Storage::try_acquire_lock`].
+///
+/// Calling [`StorageLock::release`] explicitly revokes the underlying lease
+/// right away; dropping the guard without awaiting still aborts the keep-alive
+/// task so the lease expires automatically after its TTL.
+pub struct StorageLock {
+    release: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    abort: Option<tokio::task::AbortHandle>,
+}
+
+impl StorageLock {
+    /// A lock that does nothing on release (for single-node backends such as
+    /// file or memory storage).
+    pub fn noop() -> Self {
+        Self {
+            release: None,
+            abort: None,
+        }
+    }
+
+    /// Creates a lock backed by a keep-alive task and an async release action.
+    pub fn new(
+        release: Pin<Box<dyn Future<Output = ()> + Send>>,
+        abort: tokio::task::AbortHandle,
+    ) -> Self {
+        Self {
+            release: Some(release),
+            abort: Some(abort),
+        }
+    }
+
+    /// Explicitly stops keep-alive and releases the lock in storage.
+    pub async fn release(mut self) {
+        if let Some(abort) = self.abort.take() {
+            abort.abort();
+        }
+        if let Some(fut) = self.release.take() {
+            fut.await;
+        }
+    }
+}
+
+impl Drop for StorageLock {
+    fn drop(&mut self) {
+        if let Some(abort) = self.abort.take() {
+            abort.abort();
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct History {
@@ -81,5 +134,17 @@ pub trait Storage: Send + Sync {
             etcd_watch_stream: None,
             _etcd_client: None,
         })
+    }
+
+    /// Attempts to acquire a distributed advisory lock for `key` with the
+    /// given `ttl`. Returns `Ok(Some(lock))` when acquired, `Ok(None)` when
+    /// another instance currently holds it. Single-node backends return a
+    /// no-op lock immediately.
+    async fn try_acquire_lock(
+        &self,
+        _key: &str,
+        _ttl: Duration,
+    ) -> Result<Option<StorageLock>> {
+        Ok(Some(StorageLock::noop()))
     }
 }

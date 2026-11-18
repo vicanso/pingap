@@ -149,17 +149,20 @@ pub enum DnsProvider {
     Tencent,
     /// Huawei Cloud DNS.
     Huawei,
+    /// Generic HTTP webhook sidecar for any DNS provider.
+    Webhook,
     /// The TXT record is logged and added by hand.
     Manual,
 }
 
 impl DnsProvider {
     /// Every provider, in the order a validation error lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Ali,
         Self::Cf,
         Self::Tencent,
         Self::Huawei,
+        Self::Webhook,
         Self::Manual,
     ];
 
@@ -170,6 +173,7 @@ impl DnsProvider {
             Self::Cf => "cf",
             Self::Tencent => "tencent",
             Self::Huawei => "huawei",
+            Self::Webhook => "webhook",
             Self::Manual => DNS_PROVIDER_MANUAL,
         }
     }
@@ -183,6 +187,7 @@ impl DnsProvider {
             "cf" | "cloudflare" => Some(Self::Cf),
             "tencent" => Some(Self::Tencent),
             "huawei" => Some(Self::Huawei),
+            "webhook" => Some(Self::Webhook),
             _ => None,
         }
     }
@@ -216,6 +221,8 @@ pub struct CertificateConf {
     pub acme: Option<String>,
     /// Whether to use DNS challenge for ACME certificate management
     pub dns_challenge: Option<bool>,
+    /// Whether to use TLS-ALPN-01 challenge (RFC 8737, over port 443) for ACME
+    pub tls_alpn_challenge: Option<bool>,
     /// DNS provider for ACME certificate management
     pub dns_provider: Option<String>,
     /// DNS service url for ACME certificate management
@@ -308,6 +315,7 @@ impl CertificateConf {
         self.is_acme()
             && self.domains.as_deref().is_some_and(|d| !d.is_empty())
             && !self.dns_challenge.unwrap_or_default()
+            && !self.tls_alpn_challenge.unwrap_or_default()
     }
 }
 
@@ -383,6 +391,27 @@ impl Validate for CertificateConf {
             self.tls_cert.as_deref().filter(|cert| !cert.is_empty())
         {
             validate_cert(tls_cert)?;
+        }
+
+        if self.dns_challenge.unwrap_or_default()
+            && self.tls_alpn_challenge.unwrap_or_default()
+        {
+            return Err(Error::Invalid {
+                message: "dns_challenge and tls_alpn_challenge cannot both be enabled"
+                    .to_string(),
+            });
+        }
+        if self.tls_alpn_challenge.unwrap_or_default()
+            && self.domains.as_deref().is_some_and(|domains| {
+                domains
+                    .split(',')
+                    .any(|domain| domain.trim().starts_with("*."))
+            })
+        {
+            return Err(Error::Invalid {
+                message: "tls_alpn_challenge does not support wildcard domains; use dns_challenge instead"
+                    .to_string(),
+            });
         }
 
         // An unrecognised dns provider used to fall through to the manual task,
@@ -4788,6 +4817,30 @@ upstream_connect_offload_thread_per_pool = 8
     /// The validation error lists [`DnsProvider::ALL`], so it cannot name
     /// a provider the enum does not.
     #[test]
+    fn test_certificate_tls_alpn_challenge_validation() {
+        let alpn = CertificateConf {
+            domains: Some("example.com".to_string()),
+            acme: Some("lets_encrypt".to_string()),
+            tls_alpn_challenge: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(true, alpn.validate().is_ok());
+        assert_eq!(false, alpn.is_acme_http_challenge());
+
+        let both = CertificateConf {
+            dns_challenge: Some(true),
+            ..alpn.clone()
+        };
+        assert_eq!(true, both.validate().is_err());
+
+        let wildcard = CertificateConf {
+            domains: Some("*.example.com".to_string()),
+            ..alpn
+        };
+        assert_eq!(true, wildcard.validate().is_err());
+    }
+
+    #[test]
     fn test_dns_provider() {
         assert_eq!(Some(DnsProvider::Ali), DnsProvider::parse("aliyun"));
         assert_eq!(Some(DnsProvider::Ali), DnsProvider::parse(" ALI "));
@@ -4795,6 +4848,7 @@ upstream_connect_offload_thread_per_pool = 8
         assert_eq!(Some(DnsProvider::Cf), DnsProvider::parse("cf"));
         assert_eq!(Some(DnsProvider::Tencent), DnsProvider::parse("tencent"));
         assert_eq!(Some(DnsProvider::Huawei), DnsProvider::parse("Huawei"));
+        assert_eq!(Some(DnsProvider::Webhook), DnsProvider::parse("webhook"));
         assert_eq!(Some(DnsProvider::Manual), DnsProvider::parse(""));
         assert_eq!(Some(DnsProvider::Manual), DnsProvider::parse("  manual "));
         assert_eq!(None, DnsProvider::parse("route53"));
@@ -4816,7 +4870,7 @@ upstream_connect_offload_thread_per_pool = 8
         match unknown.validate() {
             Ok(()) => panic!("route53 is not a dns provider"),
             Err(err) => assert_eq!(
-                "Invalid error Invalid dns_provider(route53), expect one of: ali, cf, tencent, huawei, manual",
+                "Invalid error Invalid dns_provider(route53), expect one of: ali, cf, tencent, huawei, webhook, manual",
                 err.to_string()
             ),
         }
@@ -4907,7 +4961,7 @@ ai02RHnemmqJaNepfmCdyec=
         assert_eq!(true, result.is_ok());
 
         // spellchecker:off
-        assert_eq!("d75bde790f4ea0e7", conf.hash_key());
+        assert_eq!("250b929b468ebd45", conf.hash_key());
         // spellchecker:on
     }
     #[test]

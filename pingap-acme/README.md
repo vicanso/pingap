@@ -222,8 +222,19 @@ acme_ca = "/etc/pingap/internal-root.pem"
   one half missing, a key that is not base64 and a key type there is none of
   are errors there, not weeks later when the order is made.
 
-What is not there: the TLS-ALPN-01 challenge, renewal by the CA's suggestion
-(ARI), and DNS providers other than the four built in.
+- **Generic webhook DNS-01 (`dns_provider = "webhook"`)**: posts JSON
+  `{"action": "present" | "cleanup", "domain", "fqdn", "record", "zone", "value"}`
+  to `dns_service_url`, unlocking any DNS provider via a lightweight HTTP
+  sidecar. Optional query parameters `token` (sent as `Authorization: Bearer <token>`,
+  or `<header>: <token>` when `header` is also set) and `timeout` (default `30s`)
+  are stripped from the forwarded URL; `$ENV:NAME` is expanded in query values.
+- **TLS-ALPN-01 (`tls_alpn_challenge = true`)**: answers RFC 8737 `acme-tls/1`
+  validation directly on HTTPS listeners (`global_certificates = true`, port
+  443) without opening port 80. Does not support wildcard domains (use DNS-01)
+  and requires the `openssl` TLS backend (rejected at validation under
+  `tls-rustls`).
+
+What is not there: renewal by the CA's suggestion (ARI).
 
 ## Where certificates are stored
 
@@ -231,18 +242,15 @@ Issued certificates are written back through the configuration storage, which
 means:
 
 - With **etcd**, every instance sharing the backend picks up the new certificate
-  automatically. Only one of them needs to do the ordering.
+  automatically. Before ordering, an instance acquires an etcd lease/CAS
+  advisory lock under `<path>-locks/acme/<name>` (kept alive while ordering and
+  revoked on completion), so concurrent instances do not race to place
+  duplicate orders against the CA's rate limit.
 - With **file** storage, the certificate lands in the configuration directory.
-- Instances that share a storage share the certificate: before ordering, an
-  instance reads the stored entry, and when that already holds a certificate
-  for the same domains with its margin left - another instance renewed it - it
-  installs that one and orders nothing. Each instance used to go by its own
-  running configuration and order its own, and half a dozen of them ran into
-  the CA's limit on duplicate certificates. Two instances that reach the check
-  at the same moment can still both order; nothing coordinates them. An entry
-  that is added or changed is looked at by every instance within the same
-  minute, so with a challenge that takes longer than that (DNS-01) each of
-  them orders.
+- Instances that share a storage share the certificate: after acquiring the
+  lock (or before ordering), an instance reads the stored entry, and when that
+  already holds a certificate for the same domains with its margin left -
+  another instance renewed it - it installs that one and orders nothing.
 - With the **quick start**, the certificate is persisted to
   `~/.pingap/acme/<domains>.toml` (owner-readable only) and restored on the next
   start.

@@ -821,6 +821,9 @@ export default {
     yes: "Yes",
     isDefault: "Default Certificate",
     dnsChallenge: "Dns 01 Challenge",
+    tlsAlpnChallenge: "TLS-ALPN-01 Challenge",
+    tlsAlpnChallengeTips:
+      "Validate over port 443 via acme-tls/1 (no port 80 required; requires OpenSSL backend and non-wildcard domains).",
     dnsProvider: "Dns Provider",
     dnsServiceUrl: "Dns Api Service Url",
     dnsServiceUrlPlaceholder:

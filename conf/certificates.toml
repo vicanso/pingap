@@ -33,8 +33,14 @@
 # HTTP-01. Needed for wildcard domains. Default `false`
 # dns_challenge = true
 
+# For a certificate with `acme`: answer the TLS-ALPN-01 challenge (RFC 8737)
+# directly on HTTPS listeners (port 443, `global_certificates = true`) without
+# opening port 80. Not supported for wildcard domains or the `tls-rustls`
+# backend. Default `false`
+# tls_alpn_challenge = true
+
 # The DNS provider the DNS-01 challenge is answered through:
-# "ali", "cf", "huawei", "tencent" or "manual"
+# "ali", "cf", "huawei", "tencent", "webhook" or "manual"
 # dns_provider = "cf"
 
 # The endpoint and credentials of the DNS provider. The value of a query

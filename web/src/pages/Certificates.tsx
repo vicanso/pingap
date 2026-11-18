@@ -209,6 +209,17 @@ export default function Certificates() {
       options: newBooleanOptions(),
     },
     {
+      name: "tls_alpn_challenge",
+      section: sec.basic,
+      label: certificateI18n("tlsAlpnChallenge"),
+      placeholder: "",
+      tips: certificateI18n("tlsAlpnChallengeTips"),
+      defaultValue: certificateConfig.tls_alpn_challenge,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "dns_provider",
       section: sec.basic,
       label: certificateI18n("dnsProvider"),
@@ -221,7 +232,7 @@ export default function Certificates() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newStringOptions(
-        ["manual", "ali", "cf", "huawei", "tencent"],
+        ["manual", "ali", "cf", "huawei", "tencent", "webhook"],
         true,
         true,
       ),

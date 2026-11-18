@@ -130,6 +130,7 @@ mod dns_cf;
 mod dns_huawei;
 mod dns_manual;
 mod dns_tencent;
+mod dns_webhook;
 mod lets_encrypt;
 
 pub use lets_encrypt::{

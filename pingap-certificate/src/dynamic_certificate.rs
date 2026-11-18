@@ -41,6 +41,82 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 // - No matching certificate is found for the requested domain
 pub static DEFAULT_SERVER_NAME: &str = "*";
 
+/// ALPN protocol identifier defined by RFC 8737 for ACME TLS-ALPN-01.
+pub const ACME_TLS_ALPN_PROTOCOL: &[u8] = b"acme-tls/1";
+
+static ACME_ALPN_CERTS: std::sync::LazyLock<
+    dashmap::DashMap<String, Arc<LoadedCertificate>>,
+> = std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// Registers an ephemeral RFC 8737 self-signed challenge certificate for
+/// `domain` so HTTPS listeners using [`GlobalCertificate`] answer `acme-tls/1`
+/// handshakes for it.
+pub fn set_acme_alpn_cert(
+    domain: &str,
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<()> {
+    let loaded = LoadedCertificate::from_pem(&[cert_pem.to_vec()], key_pem)?;
+    ACME_ALPN_CERTS
+        .insert(domain.trim().to_ascii_lowercase(), Arc::new(loaded));
+    Ok(())
+}
+
+/// Removes any active ACME TLS-ALPN-01 challenge certificate for `domain`.
+pub fn remove_acme_alpn_cert(domain: &str) {
+    ACME_ALPN_CERTS.remove(&domain.trim().to_ascii_lowercase());
+}
+
+#[cfg(feature = "openssl")]
+fn get_acme_alpn_cert(domain: &str) -> Option<Arc<LoadedCertificate>> {
+    ACME_ALPN_CERTS
+        .get(&domain.trim().to_ascii_lowercase())
+        .map(|entry| Arc::clone(entry.value()))
+}
+
+#[cfg(feature = "openssl")]
+fn find_alpn_protocol<'a>(
+    alpn_in: &'a [u8],
+    target: &[u8],
+) -> Option<&'a [u8]> {
+    let mut rest = alpn_in;
+    while !rest.is_empty() {
+        let len = usize::from(rest[0]);
+        rest = &rest[1..];
+        if rest.len() < len {
+            return None;
+        }
+        let proto = &rest[..len];
+        if proto == target {
+            return Some(proto);
+        }
+        rest = &rest[len..];
+    }
+    None
+}
+
+#[cfg(feature = "openssl")]
+fn select_alpn_protocol<'a>(
+    ssl: &mut SslRef,
+    alpn_in: &'a [u8],
+    enabled_h2: bool,
+) -> std::result::Result<&'a [u8], pingora::tls::ssl::AlpnError> {
+    use pingora::tls::ssl::{AlpnError, select_next_proto};
+
+    if let Some(proto) = find_alpn_protocol(alpn_in, ACME_TLS_ALPN_PROTOCOL)
+        && ssl
+            .servername(NameType::HOST_NAME)
+            .and_then(get_acme_alpn_cert)
+            .is_some()
+    {
+        return Ok(proto);
+    }
+    if !enabled_h2 {
+        return Err(AlpnError::NOACK);
+    }
+    select_next_proto(b"\x02h2\x08http/1.1", alpn_in).ok_or(AlpnError::NOACK)
+}
+
 /// Puts `cert` into the store under `key`, unless another certificate has
 /// the key already: one certificate serves a name for each kind of key,
 /// and the one that came first keeps it. Whether `cert` has the key.
@@ -531,9 +607,10 @@ impl GlobalCertificate {
         let mut tls_settings =
             TlsSettings::with_callbacks(Box::new(self.clone()))
                 .map_err(|e| invalid("new tls settings", &e))?;
-        if params.enabled_h2 {
-            tls_settings.enable_h2();
-        }
+        let enabled_h2 = params.enabled_h2;
+        tls_settings.set_alpn_select_callback(move |ssl, alpn_in| {
+            select_alpn_protocol(ssl, alpn_in, enabled_h2)
+        });
         if let Some(cipher_list) = &params.cipher_list {
             tls_settings
                 .set_cipher_list(cipher_list)
@@ -704,6 +781,17 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         let sni = ssl
             .servername(NameType::HOST_NAME)
             .unwrap_or(DEFAULT_SERVER_NAME);
+        if ssl.selected_alpn_protocol() == Some(ACME_TLS_ALPN_PROTOCOL)
+            && let Some(challenge_cert) = get_acme_alpn_cert(sni)
+        {
+            debug!(
+                target: LOG_TARGET,
+                server_name = sni,
+                "serving ACME TLS-ALPN-01 challenge certificate"
+            );
+            challenge_cert.apply(ssl);
+            return;
+        }
         debug!(
             target: LOG_TARGET,
             ssl = format!("{ssl:?}"),
@@ -1895,5 +1983,31 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             false,
             sni_matches_host(&certs, Some("a.ca.test"), "b.ca.test")
         );
+    }
+
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn test_acme_alpn_registry_and_wire_lookup() {
+        let (cert_pem, key_pem) = get_tls_pem();
+        let domain = "alpn-unit.example.test";
+        set_acme_alpn_cert(domain, cert_pem.as_bytes(), key_pem.as_bytes())
+            .unwrap();
+        assert_eq!(
+            true,
+            get_acme_alpn_cert("ALPN-UNIT.EXAMPLE.TEST").is_some()
+        );
+
+        let wire = b"\x02h2\x0aacme-tls/1\x08http/1.1";
+        assert_eq!(
+            Some(ACME_TLS_ALPN_PROTOCOL),
+            find_alpn_protocol(wire, ACME_TLS_ALPN_PROTOCOL)
+        );
+        assert_eq!(
+            None,
+            find_alpn_protocol(b"\x02h2\x08http/1.1", ACME_TLS_ALPN_PROTOCOL)
+        );
+
+        remove_acme_alpn_cert(domain);
+        assert_eq!(true, get_acme_alpn_cert(domain).is_none());
     }
 }

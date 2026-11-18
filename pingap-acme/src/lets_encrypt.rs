@@ -18,6 +18,7 @@ use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
 use crate::dns_manual::{MANUAL_DNS_REMARK, ManualDnsTask};
 use crate::dns_tencent::TencentDnsTask;
+use crate::dns_webhook::WebhookDnsTask;
 use async_trait::async_trait;
 use hickory_resolver::Resolver;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
@@ -170,11 +171,79 @@ async fn update_certificate_lets_encrypt(
         );
     }
 
-    // get new certificate from lets encrypt
-    let (pem, key) =
-        new_lets_encrypt(config_manager.clone(), params.clone()).await?;
+    // Acquire a distributed renewal lock before creating an ACME order so
+    // multiple instances sharing etcd never race to order duplicate
+    // certificates against the CA's rate limit. Single-node file/memory
+    // storage returns a no-op lock immediately.
+    let lock_key = format!("acme/{}", params.name);
+    let Some(lock) = config_manager
+        .try_acquire_lock(&lock_key, Duration::from_secs(60))
+        .await
+        .map_err(|e| Error::Fail {
+            category: "lock".to_string(),
+            message: e.to_string(),
+        })?
+    else {
+        info!(
+            target: LOG_TARGET,
+            name = params.name,
+            "acme renewal lock held by another instance, skipping"
+        );
+        return Ok(());
+    };
 
-    store_certificate(&config_manager, &params.name, pem, key).await
+    // Re-check stored certificate after acquiring the lock: another instance
+    // may have completed renewal while we waited.
+    let already_fresh = config_manager
+        .get::<CertificateConf>(Category::Certificate, &params.name)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|latest| {
+            let Some(cert_pem) =
+                latest.tls_cert.as_deref().filter(|c| !c.is_empty())
+            else {
+                return false;
+            };
+            let Some(key_pem) =
+                latest.tls_key.as_deref().filter(|k| !k.is_empty())
+            else {
+                return false;
+            };
+            latest.is_acme()
+                && parse_leaf_chain_certificates(cert_pem, key_pem).is_ok_and(
+                    |(parsed, _)| {
+                        parsed.valid(params.buffer_days)
+                            && params.domains.iter().all(|d| {
+                                parsed
+                                    .domains
+                                    .iter()
+                                    .any(|got| got.eq_ignore_ascii_case(d))
+                            })
+                    },
+                )
+        });
+    if already_fresh {
+        info!(
+            target: LOG_TARGET,
+            name = params.name,
+            "certificate already renewed by another instance, skipping"
+        );
+        lock.release().await;
+        return Ok(());
+    }
+
+    // get new certificate from lets encrypt
+    let order_result =
+        new_lets_encrypt(config_manager.clone(), params.clone()).await;
+    let store_result = match order_result {
+        Ok((pem, key)) => {
+            store_certificate(&config_manager, &params.name, pem, key).await
+        },
+        Err(err) => Err(err),
+    };
+    lock.release().await;
+    store_result
 }
 
 /// Stores the certificate an order gave into its entry, as the entry is
@@ -345,6 +414,7 @@ struct UpdateCertificateParams {
     domains: Vec<String>,
     buffer_days: u16,
     dns_challenge: bool,
+    tls_alpn_challenge: bool,
     dns_provider: String,
     dns_service_url: String,
     server: AcmeServer,
@@ -367,6 +437,9 @@ impl UpdateCertificateParams {
             buffer_days: certificate.buffer_days.unwrap_or_default(),
             domains: ordered_domains(domains),
             dns_challenge: certificate.dns_challenge.unwrap_or_default(),
+            tls_alpn_challenge: certificate
+                .tls_alpn_challenge
+                .unwrap_or_default(),
             // A known name is stored in its canonical spelling. An empty
             // value is manual. A name `validate` rejects is kept as
             // written, so the order fails instead of waiting on a TXT
@@ -1667,8 +1740,68 @@ fn new_dns_task(
         DnsProvider::Cf => Ok(Box::new(CfDnsTask::new(service_url)?)),
         DnsProvider::Tencent => Ok(Box::new(TencentDnsTask::new(service_url)?)),
         DnsProvider::Huawei => Ok(Box::new(HuaweiDnsTask::new(service_url)?)),
+        DnsProvider::Webhook => Ok(Box::new(WebhookDnsTask::new(service_url)?)),
         DnsProvider::Manual => Ok(Box::new(ManualDnsTask::new(config_manager))),
     }
+}
+
+/// Builds an RFC 8737 self-signed certificate for TLS-ALPN-01 containing the
+/// critical `id-pe-acmeIdentifier` (`1.3.6.1.5.5.7.1.31`) extension carrying
+/// the DER-encoded 32-byte SHA-256 key-authorization digest.
+fn build_tls_alpn_01_cert(
+    domain: &str,
+    key_auth_digest: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    use pingap_certificate::rcgen::{
+        CertificateParams, CustomExtension, KeyPair, PKCS_ECDSA_P256_SHA256,
+    };
+
+    if key_auth_digest.len() != 32 {
+        return Err(Error::Fail {
+            category: "tls_alpn".to_string(),
+            message: format!(
+                "expected 32-byte key authorization digest, got {}",
+                key_auth_digest.len()
+            ),
+        });
+    }
+    let mut der_octet_string = Vec::with_capacity(2 + 32);
+    der_octet_string.push(0x04); // ASN.1 OCTET STRING tag
+    der_octet_string.push(0x20); // length 32
+    der_octet_string.extend_from_slice(key_auth_digest);
+
+    let mut params =
+        CertificateParams::new(vec![domain.to_string()]).map_err(|source| {
+            Error::Rcgen {
+                category: "tls_alpn".to_string(),
+                source,
+            }
+        })?;
+    let mut ext = CustomExtension::from_oid_content(
+        &[1, 3, 6, 1, 5, 5, 7, 1, 31],
+        der_octet_string,
+    );
+    ext.set_criticality(true);
+    params.custom_extensions.push(ext);
+
+    let key_pair =
+        KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).map_err(|source| {
+            Error::Rcgen {
+                category: "tls_alpn".to_string(),
+                source,
+            }
+        })?;
+    let cert =
+        params
+            .self_signed(&key_pair)
+            .map_err(|source| Error::Rcgen {
+                category: "tls_alpn".to_string(),
+                source,
+            })?;
+    Ok((
+        cert.pem().into_bytes(),
+        key_pair.serialize_pem().into_bytes(),
+    ))
 }
 
 /// Generates a new certificate from Let's Encrypt for the given domains.
@@ -1742,6 +1875,7 @@ async fn new_lets_encrypt(
     }
 
     let mut dns_tasks = vec![];
+    let mut alpn_domains = vec![];
     // Built on the first DNS-01 challenge and shared by the order's others.
     let mut resolver = None;
 
@@ -1880,6 +2014,32 @@ async fn new_lets_encrypt(
                     );
                 }
                 challenge
+            } else if params.tls_alpn_challenge {
+                let challenge = authz
+                    .challenge(ChallengeType::TlsAlpn01)
+                    .ok_or_else(|| Error::NotFound {
+                        message: "TlsAlpn01 challenge not found".to_string(),
+                    })?;
+                let identifier = challenge.identifier().to_string();
+                let digest = challenge.key_authorization().digest();
+                let (cert_pem, key_pem) =
+                    build_tls_alpn_01_cert(&identifier, digest.as_ref())?;
+                pingap_certificate::set_acme_alpn_cert(
+                    &identifier,
+                    &cert_pem,
+                    &key_pem,
+                )
+                .map_err(|e| Error::Fail {
+                    category: "tls_alpn".to_string(),
+                    message: e.to_string(),
+                })?;
+                alpn_domains.push(identifier.clone());
+                info!(
+                    target: LOG_TARGET,
+                    identifier,
+                    "installed acme tls-alpn-01 challenge certificate"
+                );
+                challenge
             } else {
                 let challenge = authz
                     .challenge(ChallengeType::Http01)
@@ -1950,6 +2110,12 @@ async fn new_lets_encrypt(
     })
     .await
     .and_then(|result| result);
+
+    // Always remove ephemeral TLS-ALPN-01 challenge certificates once
+    // authorization finishes or times out.
+    for domain in &alpn_domains {
+        pingap_certificate::remove_acme_alpn_cert(domain);
+    }
 
     // After a timeout as well: the records that were added are still there.
     for task in dns_tasks.iter() {
@@ -2078,6 +2244,7 @@ mod tests {
             domains: vec!["example.com".to_string()],
             buffer_days: 30,
             dns_challenge: false,
+            tls_alpn_challenge: false,
             dns_provider: "".to_string(),
             dns_service_url: "".to_string(),
             server: Default::default(),
@@ -3539,6 +3706,7 @@ mod tests {
                 domains: vec!["example.com".to_string()],
                 buffer_days: 30,
                 dns_challenge: false,
+                tls_alpn_challenge: false,
                 dns_provider: "".to_string(),
                 dns_service_url: "".to_string(),
                 server: Default::default(),
@@ -3622,6 +3790,7 @@ mod tests {
                 domains: vec!["example.com".to_string()],
                 buffer_days: 30,
                 dns_challenge: false,
+                tls_alpn_challenge: false,
                 dns_provider: "".to_string(),
                 dns_service_url: "".to_string(),
                 server: Default::default(),
@@ -3931,7 +4100,7 @@ mod tests {
                 panic!("an unknown provider must not become the manual task")
             },
             Err(err) => assert_eq!(
-                "Let's Encrypt operation failed: Invalid dns_provider(nope), expect one of: ali, cf, tencent, huawei, manual, category: dns_provider",
+                "Let's Encrypt operation failed: Invalid dns_provider(nope), expect one of: ali, cf, tencent, huawei, webhook, manual, category: dns_provider",
                 err.to_string()
             ),
         }
@@ -3942,5 +4111,77 @@ mod tests {
                 err.to_string()
             ),
         }
+    }
+
+    #[test]
+    fn test_build_tls_alpn_01_cert_contains_critical_acme_extension() {
+        let digest = [0xab_u8; 32];
+        let (cert_pem, key_pem) =
+            super::build_tls_alpn_01_cert("alpn.example.com", &digest).unwrap();
+        assert_eq!(true, !key_pem.is_empty());
+
+        let (_, pem) = x509_parser::pem::parse_x509_pem(&cert_pem).unwrap();
+        let (_, x509) =
+            x509_parser::parse_x509_certificate(&pem.contents).unwrap();
+        let acme_ext = x509
+            .extensions()
+            .iter()
+            .find(|ext| ext.oid.to_id_string() == "1.3.6.1.5.5.7.1.31")
+            .expect("missing id-pe-acmeIdentifier extension");
+        assert_eq!(true, acme_ext.critical);
+        let mut expected = vec![0x04, 0x20];
+        expected.extend_from_slice(&digest);
+        assert_eq!(expected.as_slice(), acme_ext.value);
+    }
+
+    #[tokio::test]
+    async fn test_acme_renewal_lock_skips_when_held() {
+        use async_trait::async_trait;
+        use pingap_config::{ConfigMode, Storage, StorageLock};
+
+        struct ContendedStorage(Arc<dyn Storage>);
+
+        #[async_trait]
+        impl Storage for ContendedStorage {
+            async fn fetch(
+                &self,
+                key: &str,
+            ) -> std::result::Result<String, pingap_config::Error> {
+                self.0.fetch(key).await
+            }
+            async fn save(
+                &self,
+                key: &str,
+                value: &str,
+            ) -> std::result::Result<(), pingap_config::Error> {
+                self.0.save(key, value).await
+            }
+            async fn delete(
+                &self,
+                key: &str,
+            ) -> std::result::Result<(), pingap_config::Error> {
+                self.0.delete(key).await
+            }
+            async fn try_acquire_lock(
+                &self,
+                _key: &str,
+                _ttl: Duration,
+            ) -> std::result::Result<Option<StorageLock>, pingap_config::Error>
+            {
+                Ok(None)
+            }
+        }
+
+        let inner = Arc::new(pingap_config::MemoryStorage::new(
+            "[certificates.site]\ndomains = \"example.com\"\nacme = \"lets_encrypt\"\n",
+        ));
+        let manager = Arc::new(ConfigManager::new(
+            Arc::new(ContendedStorage(inner)),
+            ConfigMode::Single,
+        ));
+        // Points at an unreachable CA directory; if the lock were bypassed,
+        // this would fail instead of skipping cleanly.
+        let result = update_certificate_lets_encrypt(manager, nowhere()).await;
+        assert_eq!(true, result.is_ok(), "{result:?}");
     }
 }

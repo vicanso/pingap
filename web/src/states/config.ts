@@ -165,6 +165,7 @@ export interface Certificate {
   acme?: string;
   is_default?: boolean;
   dns_challenge?: boolean;
+  tls_alpn_challenge?: boolean;
   dns_provider?: string;
   dns_service_url?: string;
   is_ca?: boolean;

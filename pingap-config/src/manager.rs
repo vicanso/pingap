@@ -473,6 +473,16 @@ impl ConfigManager {
     pub async fn observe(&self) -> Result<Observer> {
         self.storage.observe().await
     }
+    /// Attempts to acquire a distributed advisory lock in the underlying
+    /// storage (backed by an etcd lease + CAS on etcd deployments; no-op on
+    /// single-node file/memory storage).
+    pub async fn try_acquire_lock(
+        &self,
+        key: &str,
+        ttl: std::time::Duration,
+    ) -> Result<Option<crate::StorageLock>> {
+        self.storage.try_acquire_lock(key, ttl).await
+    }
 
     pub fn get_current_config(&self) -> Arc<PingapConfig> {
         self.current_config.load().clone()
