@@ -71,7 +71,7 @@ pub(crate) fn update_otel_cache_attrs(
         // build, traced or not.
         let text = |duration: Option<Duration>| {
             duration
-                .map(|d| humantime::Duration::from(d).to_string())
+                .map(|d| pingap_util::format_duration(d).to_string())
                 .unwrap_or_default()
         };
         let attrs = vec![

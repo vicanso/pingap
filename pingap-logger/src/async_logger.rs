@@ -167,10 +167,10 @@ impl AsyncLoggerTask {
 struct AsyncLoggerWriterParams {
     channel_buffer: Option<usize>,
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     flush_timeout: Option<Duration>,
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     keep: Option<Duration>,
 }
 

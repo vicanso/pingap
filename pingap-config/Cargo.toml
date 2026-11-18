@@ -23,7 +23,6 @@ crc32fast = { workspace = true }
 diff = { workspace = true }
 etcd-client = { workspace = true }
 glob = { workspace = true }
-humantime-serde = { workspace = true }
 pingap-core = { workspace = true }
 pingap-discovery = { workspace = true }
 pingap-util = { workspace = true }
@@ -45,7 +44,7 @@ url = { workspace = true }
 
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde", "hcl-rs", "kdl"]
+ignored = ["hcl-rs", "kdl"]
 
 
 [dev-dependencies]

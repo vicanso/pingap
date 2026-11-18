@@ -19,12 +19,12 @@ use super::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
-use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     get_query_value, remove_query_from_header,
 };
+use pingap_util::parse_duration;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;

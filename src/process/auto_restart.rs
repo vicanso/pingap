@@ -1267,7 +1267,7 @@ impl BackgroundService for ConfigObserverService {
         if !self.config_manager.support_observer() {
             return;
         }
-        let period_human: humantime::Duration = self.interval.into();
+        let period_human = pingap_util::format_duration(self.interval);
 
         info!(
             target: LOG_TARGET,

@@ -23,7 +23,6 @@ use super::target::{LogTarget, parse_log_target};
 use super::{Error, LOG_TARGET};
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use chrono::Timelike;
 use flate2::write::GzEncoder;
 use parking_lot::{Mutex, MutexGuard};
 use pingap_core::BackgroundTask;
@@ -281,9 +280,14 @@ async fn do_compress(
     params: &LogCompressParams,
 ) -> Result<bool, ServiceError> {
     const OFFSET: u32 = 60;
-    if !count.is_multiple_of(OFFSET)
-        || params.time_point_hour != chrono::Local::now().hour() as u8
-    {
+    let now_utc = time::OffsetDateTime::now_utc();
+    let local_hour = now_utc
+        .to_offset(
+            time::UtcOffset::local_offset_at(now_utc)
+                .unwrap_or(time::UtcOffset::UTC),
+        )
+        .hour();
+    if !count.is_multiple_of(OFFSET) || params.time_point_hour != local_hour {
         return Ok(false);
     }
     let params = params.clone();
@@ -433,9 +437,8 @@ pub fn logger_try_init(
         params.level.clone()
     };
 
-    let seconds = chrono::Local::now().offset().local_minus_utc();
-    let hours = (seconds / 3600) as i8;
-    let minutes = ((seconds % 3600) / 60) as i8;
+    let local_offset =
+        time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
     let is_dev = cfg!(debug_assertions);
 
     let initial_filter = new_env_filter(&level);
@@ -467,8 +470,7 @@ pub fn logger_try_init(
         },
     };
     let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        time::UtcOffset::from_hms(hours, minutes, 0)
-            .unwrap_or(time::UtcOffset::UTC),
+        local_offset,
         time::format_description::well_known::Rfc3339,
     );
 
@@ -526,7 +528,11 @@ pub fn logger_try_init(
         log_type,
         level = level.to_string(),
         json_format = params.json,
-        utc_offset = chrono::Local::now().offset().to_string(),
+        utc_offset = format!(
+            "{:+03}:{:02}",
+            local_offset.whole_hours(),
+            local_offset.minutes_past_hour().abs()
+        ),
         "init tracing subscriber success",
     );
     // Said here, where there is a log to say it in.

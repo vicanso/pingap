@@ -15,7 +15,6 @@
 use super::{AcmeDnsTask, Error, LOG_TARGET, split_record_name};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use sha1::Sha1;
@@ -122,9 +121,18 @@ async fn ali_api_request(
     params.insert("AccessKeyId", access_key_id.to_string());
     params.insert("SignatureMethod", "HMAC-SHA1".to_string());
     params.insert("SignatureVersion", "1.0".to_string());
+    let now = time::OffsetDateTime::now_utc();
     params.insert(
         "Timestamp",
-        Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            now.year(),
+            u8::from(now.month()),
+            now.day(),
+            now.hour(),
+            now.minute(),
+            now.second()
+        ),
     );
     params.insert("SignatureNonce", uuid::Uuid::new_v4().to_string());
 

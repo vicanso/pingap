@@ -21,14 +21,13 @@ use bytesize::ByteSize;
 use fancy_regex::Regex;
 use http::header::{CACHE_CONTROL, PRAGMA};
 use http::{HeaderName, Method, StatusCode};
-use humantime::parse_duration;
 use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     CacheQueryRule, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     ensure_verified_client_ip, get_cache_key, normalize_path,
 };
-use pingap_util::IpRules;
+use pingap_util::{IpRules, parse_duration};
 use pingora::cache::CacheOptionOverrides;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::eviction::simple_lru::Manager;

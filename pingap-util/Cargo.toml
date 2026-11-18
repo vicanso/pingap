@@ -24,12 +24,14 @@ itoa = { workspace = true }
 path-absolutize = { workspace = true }
 pem = { workspace = true }
 rustc_version_runtime = { workspace = true }
+serde = { workspace = true }
 snafu = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
 bytes = { workspace = true }
 pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 criterion = { workspace = true }

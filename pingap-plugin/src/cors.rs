@@ -17,12 +17,12 @@ use super::{
 };
 use async_trait::async_trait;
 use http::{HeaderValue, header};
-use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpHeader, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     ResponsePluginResult, convert_header_value,
 };
+use pingap_util::parse_duration;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;

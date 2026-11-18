@@ -22,12 +22,11 @@ ahash = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
-chrono = { workspace = true }
 http = { workspace = true }
-humantime-serde = { workspace = true }
 parking_lot = { workspace = true }
 path-absolutize = { workspace = true }
 pingap-core = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
 prometheus = { workspace = true, optional = true }
 scopeguard = { workspace = true }
@@ -35,6 +34,7 @@ serde = { workspace = true }
 serde_qs = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 walkdir = { workspace = true }
@@ -45,9 +45,6 @@ pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
 criterion = { workspace = true }
-
-[package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
 
 [[bench]]
 name = "bench"

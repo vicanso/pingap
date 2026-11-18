@@ -19,7 +19,6 @@ use super::{
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use http::{HeaderValue, StatusCode, header};
-use humantime::parse_duration;
 use path_absolutize::Absolutize;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{Ctx, HTTP_HEADER_CONTENT_TEXT, Plugin, PluginStep};
@@ -27,6 +26,7 @@ use pingap_core::{
     HttpChunkResponse, HttpHeader, HttpResponse, RequestPluginResult,
     convert_headers,
 };
+use pingap_util::parse_duration;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::fmt::Write as _;
@@ -214,16 +214,28 @@ fn modified_secs(meta: &Metadata) -> Option<u64> {
         .filter(|secs| *secs > 0)
 }
 
+const HTTP_DATE_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] = time::macros::format_description!(
+    "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] GMT"
+);
+
 /// `secs` as the date of a `Last-Modified`.
 fn http_date(secs: u64) -> Option<String> {
-    chrono::DateTime::from_timestamp(secs as i64, 0)
-        .map(|time| time.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+    let secs = i64::try_from(secs).ok()?;
+    time::OffsetDateTime::from_unix_timestamp(secs)
+        .ok()?
+        .format(HTTP_DATE_FORMAT)
+        .ok()
 }
 
 /// The seconds since the epoch of the date in an `If-Modified-Since`.
 fn parse_http_date(value: &HeaderValue) -> Option<u64> {
-    let time = chrono::DateTime::parse_from_rfc2822(value.to_str().ok()?);
-    u64::try_from(time.ok()?.timestamp()).ok()
+    let text = value.to_str().ok()?.trim();
+    let time = time::OffsetDateTime::parse(
+        text,
+        &time::format_description::well_known::Rfc2822,
+    )
+    .ok()?;
+    u64::try_from(time.unix_timestamp()).ok()
 }
 
 /// Whether `file`, under `root`, is in a place that begins with a dot:
@@ -906,11 +918,19 @@ async fn get_autoindex_html(
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|elapsed| elapsed.as_secs() as i64)
                 .unwrap_or_default();
+            let dt = time::OffsetDateTime::from_unix_timestamp(modified)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             (
                 ByteSize(meta.len()).to_string(),
-                chrono::DateTime::from_timestamp(modified, 0)
-                    .unwrap_or_default()
-                    .to_string(),
+                format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+                    dt.year(),
+                    u8::from(dt.month()),
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second()
+                ),
             )
         } else {
             (String::new(), String::new())

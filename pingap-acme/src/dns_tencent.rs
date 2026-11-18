@@ -14,7 +14,6 @@
 
 use super::{AcmeDnsTask, Error, split_record_name};
 use async_trait::async_trait;
-use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::header::{CONTENT_TYPE, HOST};
 use serde::Deserialize;
@@ -85,9 +84,14 @@ async fn tencent_cloud_api_request(
 ) -> Result<String> {
     // One clock reading for both: taken separately, a request straddling
     // midnight signed with one day and stamped with the next.
-    let now = Utc::now();
-    let timestamp = now.timestamp();
-    let date = now.format("%Y-%m-%d").to_string();
+    let now = time::OffsetDateTime::now_utc();
+    let timestamp = now.unix_timestamp();
+    let date = format!(
+        "{:04}-{:02}-{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    );
 
     // canonical request
     let http_request_method = "POST";

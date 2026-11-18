@@ -124,10 +124,10 @@ struct EtcdStorageParams {
     #[serde(default)]
     password: String,
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     timeout: Option<Duration>,
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     connect_timeout: Option<Duration>,
     #[serde(default)]
     enable_history: bool,

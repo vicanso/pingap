@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use bytes::{BufMut, BytesMut};
-use chrono::{DateTime, Datelike, Local, Offset, TimeZone, Timelike, Utc};
 use pingap_core::{
     Ctx, CtxLogField, HOST_NAME_TAG, format_duration, get_hostname,
     get_identity,
@@ -24,6 +23,7 @@ use pingora::proxy::Session;
 use std::cell::Cell;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+use time::{OffsetDateTime, UtcOffset};
 
 // Enum representing different types of log tags that can be used in the logging format
 #[derive(Debug, Clone, PartialEq)]
@@ -361,46 +361,40 @@ fn put_digits(buf: &mut BytesMut, mut value: u32, width: usize) {
 
 /// RFC 3339 with millisecond precision - `2024-01-02T03:04:05.006+08:00`,
 /// or `Z` for an offset of zero when `use_z` - appended without an
-/// intermediate `String`. Matches chrono's
-/// `to_rfc3339_opts(SecondsFormat::Millis, use_z)`.
+/// intermediate `String`.
 #[cfg(test)]
-fn put_rfc3339_millis<Tz: TimeZone>(
-    buf: &mut BytesMut,
-    time: &DateTime<Tz>,
-    use_z: bool,
-) {
+fn put_rfc3339_millis(buf: &mut BytesMut, time: &OffsetDateTime, use_z: bool) {
     let _ = put_rfc3339_millis_pos(buf, time, use_z);
 }
 
 /// Like [`put_rfc3339_millis`], returning the byte offset in `buf` where the
 /// 3 millisecond digits start so callers can patch milliseconds in place
 /// within the same second.
-fn put_rfc3339_millis_pos<Tz: TimeZone>(
+fn put_rfc3339_millis_pos(
     buf: &mut BytesMut,
-    time: &DateTime<Tz>,
+    time: &OffsetDateTime,
     use_z: bool,
 ) -> usize {
-    let local = time.naive_local();
-    let year = local.year();
+    let year = time.year();
     if (0..=9999).contains(&year) {
         put_digits(buf, year as u32, 4);
     } else {
         buf.put_slice(itoa::Buffer::new().format(year).as_bytes());
     }
     buf.put_u8(b'-');
-    put_digits(buf, local.month(), 2);
+    put_digits(buf, u32::from(u8::from(time.month())), 2);
     buf.put_u8(b'-');
-    put_digits(buf, local.day(), 2);
+    put_digits(buf, u32::from(time.day()), 2);
     buf.put_u8(b'T');
-    put_digits(buf, local.hour(), 2);
+    put_digits(buf, u32::from(time.hour()), 2);
     buf.put_u8(b':');
-    put_digits(buf, local.minute(), 2);
+    put_digits(buf, u32::from(time.minute()), 2);
     buf.put_u8(b':');
-    put_digits(buf, local.second(), 2);
+    put_digits(buf, u32::from(time.second()), 2);
     buf.put_u8(b'.');
     let ms_pos = buf.len();
-    put_digits(buf, local.nanosecond() / 1_000_000, 3);
-    let offset = time.offset().fix().local_minus_utc();
+    put_digits(buf, u32::from(time.millisecond()), 3);
+    let offset = time.offset().whole_seconds();
     if offset == 0 && use_z {
         buf.put_u8(b'Z');
         return ms_pos;
@@ -465,14 +459,17 @@ fn put_cached_rfc3339(
         buf.put_slice(&cached.bytes[..usize::from(cached.len)]);
         return true;
     }
-    let Some(utc) = DateTime::<Utc>::from_timestamp_millis(now_ms) else {
+    let Ok(utc) = OffsetDateTime::from_unix_timestamp_nanos(
+        i128::from(now_ms) * 1_000_000,
+    ) else {
         return false;
     };
     let start = buf.len();
     let ms_pos_abs = if utc_mode {
         put_rfc3339_millis_pos(buf, &utc, true)
     } else {
-        put_rfc3339_millis_pos(buf, &utc.with_timezone(&Local), false)
+        let offset = UtcOffset::local_offset_at(utc).unwrap_or(UtcOffset::UTC);
+        put_rfc3339_millis_pos(buf, &utc.to_offset(offset), false)
     };
     let formatted = &buf[start..];
     if formatted.len() <= RFC3339_CACHE_CAP {
@@ -932,8 +929,10 @@ impl Parser {
     pub fn format(&self, session: &Session, ctx: &Ctx) -> BytesMut {
         let mut buf = BytesMut::with_capacity(self.capacity);
         // Only read each clock when a tag actually needs it.
-        let now_ms =
-            self.needs_timestamp.then(|| Utc::now().timestamp_millis());
+        let now_ms = self.needs_timestamp.then(|| {
+            (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000)
+                as i64
+        });
         let latency = self.needs_latency.then(|| {
             Instant::now().saturating_duration_since(ctx.timing.created_at)
         });
@@ -1023,13 +1022,13 @@ mod tests {
         parse_access_log_directive, parse_tags, put_rfc3339_millis,
     };
     use bytes::BytesMut;
-    use chrono::{FixedOffset, SecondsFormat, TimeZone, Utc};
     use http::Method;
     use pingap_core::{
         ConnectionInfo, Ctx, RequestState, Timing, UpstreamInfo,
     };
     use pingora::{http::ResponseHeader, proxy::Session};
     use pretty_assertions::assert_eq;
+    use time::{Date, Month, OffsetDateTime, Time, UtcOffset};
     use tokio_test::io::Builder;
 
     #[test]
@@ -1385,39 +1384,29 @@ mod tests {
         assert_eq!("", render(""));
     }
 
-    /// The allocation-free timestamp matches chrono's rfc3339 output.
+    /// The allocation-free timestamp matches RFC 3339 with millisecond precision.
     #[test]
     fn test_put_rfc3339_millis() {
-        let utc = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap()
-            + chrono::Duration::milliseconds(6);
-        let east = utc.with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap());
-        let west =
-            utc.with_timezone(&FixedOffset::west_opt(5 * 3600 + 1800).unwrap());
-        for (time, use_z) in [(utc, true), (utc, false)] {
+        let utc = Date::from_calendar_date(2024, Month::January, 2)
+            .unwrap()
+            .with_time(Time::from_hms_milli(3, 4, 5, 6).unwrap())
+            .assume_utc();
+        let east = utc.to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
+        let west = utc.to_offset(UtcOffset::from_hms(-5, -30, 0).unwrap());
+        for (time, use_z, expected) in [
+            (utc, true, "2024-01-02T03:04:05.006Z"),
+            (utc, false, "2024-01-02T03:04:05.006+00:00"),
+            (east, false, "2024-01-02T11:04:05.006+08:00"),
+            (west, false, "2024-01-01T21:34:05.006-05:30"),
+        ] {
             let mut buf = BytesMut::new();
             put_rfc3339_millis(&mut buf, &time, use_z);
-            assert_eq!(
-                time.to_rfc3339_opts(SecondsFormat::Millis, use_z),
-                std::str::from_utf8(&buf).unwrap()
-            );
+            assert_eq!(expected, std::str::from_utf8(&buf).unwrap());
         }
-        for time in [east, west] {
-            let mut buf = BytesMut::new();
-            put_rfc3339_millis(&mut buf, &time, false);
-            assert_eq!(
-                time.to_rfc3339_opts(SecondsFormat::Millis, false),
-                std::str::from_utf8(&buf).unwrap()
-            );
-        }
-        let mut buf = BytesMut::new();
-        put_rfc3339_millis(&mut buf, &east, false);
-        assert_eq!(
-            "2024-01-02T11:04:05.006+08:00",
-            std::str::from_utf8(&buf).unwrap()
-        );
 
-        // Cached RFC3339 formatting matches chrono across same-millisecond,
-        // intra-second millisecond updates, second rollovers, and negative epochs.
+        // Cached RFC3339 formatting matches full formatting across
+        // same-millisecond, intra-second millisecond updates, second rollovers,
+        // and negative epochs.
         for ms in [
             1_704_164_645_006_i64,
             1_704_164_645_006,
@@ -1429,8 +1418,10 @@ mod tests {
             -1,
             0,
         ] {
-            let utc_dt =
-                chrono::DateTime::<Utc>::from_timestamp_millis(ms).unwrap();
+            let utc_dt = OffsetDateTime::from_unix_timestamp_nanos(
+                i128::from(ms) * 1_000_000,
+            )
+            .unwrap();
             let mut utc_buf = BytesMut::new();
             assert_eq!(
                 true,
@@ -1438,11 +1429,16 @@ mod tests {
                     super::put_cached_rfc3339(&mut utc_buf, ms, true, slot)
                 })
             );
+            let mut expected_utc = BytesMut::new();
+            put_rfc3339_millis(&mut expected_utc, &utc_dt, true);
             assert_eq!(
-                utc_dt.to_rfc3339_opts(SecondsFormat::Millis, true),
+                std::str::from_utf8(&expected_utc).unwrap(),
                 std::str::from_utf8(&utc_buf).unwrap()
             );
 
+            let local_offset =
+                UtcOffset::local_offset_at(utc_dt).unwrap_or(UtcOffset::UTC);
+            let local_dt = utc_dt.to_offset(local_offset);
             let mut local_buf = BytesMut::new();
             assert_eq!(
                 true,
@@ -1450,10 +1446,10 @@ mod tests {
                     super::put_cached_rfc3339(&mut local_buf, ms, false, slot)
                 })
             );
+            let mut expected_local = BytesMut::new();
+            put_rfc3339_millis(&mut expected_local, &local_dt, false);
             assert_eq!(
-                utc_dt
-                    .with_timezone(&chrono::Local)
-                    .to_rfc3339_opts(SecondsFormat::Millis, false),
+                std::str::from_utf8(&expected_local).unwrap(),
                 std::str::from_utf8(&local_buf).unwrap()
             );
         }

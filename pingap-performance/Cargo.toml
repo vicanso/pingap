@@ -23,7 +23,6 @@ tracing = [
     "dep:prometheus",
     "dep:reqwest",
     "dep:url",
-    "dep:humantime",
     "dep:parking_lot",
     "dep:http",
     "dep:snafu",
@@ -36,8 +35,6 @@ arc-swap = { workspace = true }
 async-trait = { workspace = true }
 bytesize = { workspace = true }
 cfg-if = { workspace = true }
-# Only used by `prom.rs`, which is behind the `tracing` feature.
-humantime = { workspace = true, optional = true }
 http = { workspace = true, optional = true }
 memory-stats = { workspace = true }
 num_cpus = { workspace = true }

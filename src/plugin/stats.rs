@@ -167,9 +167,9 @@ impl Plugin for Stats {
         if session.req_header().uri.path() != self.path {
             return Ok(RequestPluginResult::Skipped);
         }
-        let uptime: humantime::Duration =
-            Duration::from_secs(pingap_core::now_sec() - get_start_time())
-                .into();
+        let uptime = pingap_util::format_duration(Duration::from_secs(
+            pingap_core::now_sec() - get_start_time(),
+        ));
         let (processing, accepted) = get_processing_accepted();
         let info = get_process_system_info();
         let resp = HttpResponse::try_from_json(&ServerStats {

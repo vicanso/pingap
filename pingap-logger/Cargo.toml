@@ -13,10 +13,8 @@ description = "Logger for pingap"
 async-trait = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
-chrono = { workspace = true }
 flate2 = { workspace = true }
 http = { workspace = true }
-humantime-serde = { workspace = true }
 itoa = { workspace = true }
 parking_lot = { workspace = true }
 pingap-core = { workspace = true }
@@ -37,9 +35,6 @@ zstd = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 syslog = { workspace = true }
 
-
-[package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

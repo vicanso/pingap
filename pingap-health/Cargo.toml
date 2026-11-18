@@ -15,7 +15,6 @@ path = "src/lib.rs"
 [dependencies]
 async-trait = { workspace = true }
 bytes = { workspace = true }
-humantime = { workspace = true }
 http = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }

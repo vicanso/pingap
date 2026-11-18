@@ -41,11 +41,16 @@ assert_eq!(data, decrypted);
 ### 格式化
 
 ```rust
-use pingap_util::{format_byte_size};
+use pingap_util::{format_byte_size, format_duration, parse_duration};
+use std::time::Duration;
 
 let mut buf = String::new();
 format_byte_size(&mut buf, 1024 * 1024);
 assert_eq!(buf, "1MB");
+
+let duration = parse_duration("2h 30m").unwrap();
+assert_eq!(duration, Duration::from_secs(9000));
+assert_eq!(format_duration(duration).to_string(), "2h 30m");
 ```
 
 ### IP 规则

@@ -27,6 +27,7 @@ graph TD
     acme --> core
 
     cache --> core
+    cache --> util
 
     certificate --> config
     certificate --> core
@@ -49,6 +50,8 @@ graph TD
 
     logger --> core
     logger --> util
+
+    otel --> util
 
     performance --> cache
     performance --> core

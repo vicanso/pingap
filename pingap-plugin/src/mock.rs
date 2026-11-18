@@ -18,11 +18,11 @@ use super::{
 };
 use async_trait::async_trait;
 use http::StatusCode;
-use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, convert_headers,
 };
+use pingap_util::parse_duration;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::time::Duration;

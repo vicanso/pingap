@@ -14,7 +14,6 @@
 
 use super::provider;
 use async_trait::async_trait;
-use humantime::parse_duration;
 use opentelemetry::{
     Key, KeyValue,
     global::{self, BoxedTracer},
@@ -31,6 +30,7 @@ use opentelemetry_sdk::{
     trace::{BatchConfigBuilder, RandomIdGenerator, Sampler},
 };
 
+use pingap_util::parse_duration;
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
 use std::collections::HashMap;
 use std::time::Duration;

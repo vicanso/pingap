@@ -200,7 +200,7 @@ Where pingap goes another way than the guide, deliberately:
 |---|---|
 | `cargo fmt --all -- --check` | `make fmt` (auto-fixes) or run the check directly |
 | `make lint` (typos + clippy `--features=full -D warnings`) | `make lint` |
-| `cargo machete` | `cargo install cargo-machete@0.9.1 && cargo machete` — `Cargo.toml` whitelists `humantime-serde`, `include-flate`, `hcl-rs`, `kdl` in `[package.metadata.cargo-machete]` |
+| `cargo machete` | `cargo install cargo-machete@0.9.1 && cargo machete` — `Cargo.toml` whitelists `hcl-rs`, `kdl` in `[package.metadata.cargo-machete]` |
 | `make test` (`cargo test --workspace --features=full`) | `make test` |
 | `make lint-rustls` + `make test-rustls` (rustls TLS backend; full suite on stable, `cargo check --features tls-rustls,full` on MSRV) | `make lint-rustls && make test-rustls` |
 | `cargo msrv list` | `cargo install cargo-msrv --version 0.18.4 && cargo msrv list` |

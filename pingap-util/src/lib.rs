@@ -20,10 +20,15 @@ use std::path::Path;
 use std::sync::{LazyLock, OnceLock};
 
 mod crypto;
+mod duration;
 mod format;
 mod ip;
 
 pub use crypto::{aes_decrypt, aes_encrypt, seal, unseal};
+pub use duration::{
+    DurationError, FormattedDuration, duration_serde, format_duration,
+    format_rfc3339_seconds, parse_duration,
+};
 pub use format::*;
 pub use ip::IpRules;
 

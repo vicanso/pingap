@@ -20,7 +20,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::RETRY_AFTER;
 use http::{HeaderName, HeaderValue, StatusCode};
-use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpHeader, HttpResponse, Inflight, Plugin, PluginStep, Rate,
@@ -30,6 +29,7 @@ use pingap_core::{
     ensure_verified_client_ip, get_cookie_value, get_query_value,
     get_req_header_value,
 };
+use pingap_util::parse_duration;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;

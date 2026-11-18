@@ -21,7 +21,6 @@ use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
 use http::{HeaderName, HeaderValue, StatusCode};
-use humantime::parse_duration;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use pingap_config::{PluginCategory, PluginConf};
@@ -33,6 +32,7 @@ use pingap_core::{
     HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED, HttpResponse,
     protect_from_connection_header,
 };
+use pingap_util::parse_duration;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use serde::Deserialize;

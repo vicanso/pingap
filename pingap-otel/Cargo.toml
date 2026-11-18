@@ -18,11 +18,11 @@ ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
 http = { workspace = true }
-humantime = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-http = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry_sdk = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

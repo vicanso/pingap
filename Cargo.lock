@@ -819,9 +819,7 @@ version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
- "iana-time-zone",
  "num-traits",
- "windows-link",
 ]
 
 [[package]]
@@ -2186,22 +2184,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
-name = "humantime"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
-
-[[package]]
 name = "hybrid-array"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2313,30 +2295,6 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
-]
-
-[[package]]
-name = "iana-time-zone"
-version = "0.1.65"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
-dependencies = [
- "android_system_properties",
- "core-foundation-sys",
- "iana-time-zone-haiku",
- "js-sys",
- "log",
- "wasm-bindgen",
- "windows-core",
-]
-
-[[package]]
-name = "iana-time-zone-haiku"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -2845,9 +2803,9 @@ dependencies = [
 
 [[package]]
 name = "libz-sys"
-version = "1.1.31"
+version = "1.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff20308ecabd635a2dc1dd5834a86c462cca20efba1d5d3ddab1f8aea3455cb2"
+checksum = "fee3f59f4321dab0c78d828942e7aa09d0bd8ad6e78a501977e6bf3d02938045"
 dependencies = [
  "cc",
  "libc",
@@ -3982,8 +3940,6 @@ dependencies = [
  "glob",
  "hex",
  "http",
- "humantime",
- "humantime-serde",
  "kdl",
  "mimalloc",
  "nanoid",
@@ -4034,7 +3990,6 @@ version = "0.16.3"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
- "chrono",
  "hex",
  "hickory-resolver",
  "hmac",
@@ -4057,6 +4012,7 @@ dependencies = [
  "sha2",
  "snafu",
  "tempfile",
+ "time",
  "tokio",
  "tokio-test",
  "toml",
@@ -4073,14 +4029,13 @@ dependencies = [
  "async-trait",
  "bytes",
  "bytesize",
- "chrono",
  "criterion",
  "filetime",
  "http",
- "humantime-serde",
  "parking_lot 0.13.0",
  "path-absolutize",
  "pingap-core",
+ "pingap-util",
  "pingora",
  "pretty_assertions",
  "prometheus",
@@ -4090,6 +4045,7 @@ dependencies = [
  "snafu",
  "strum 0.28.0",
  "tempfile",
+ "time",
  "tokio",
  "tokio-test",
  "tracing",
@@ -4139,7 +4095,6 @@ dependencies = [
  "etcd-client",
  "glob",
  "hcl-rs",
- "humantime-serde",
  "kdl",
  "nanoid",
  "pingap-core",
@@ -4222,7 +4177,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "humantime",
  "pingap-util",
  "pingora",
  "pretty_assertions",
@@ -4292,11 +4246,9 @@ dependencies = [
  "async-trait",
  "bytes",
  "bytesize",
- "chrono",
  "criterion",
  "flate2",
  "http",
- "humantime-serde",
  "itoa",
  "parking_lot 0.13.0",
  "pingap-core",
@@ -4328,11 +4280,11 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "http",
- "humantime",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "pingap-util",
  "pingora",
  "tokio",
  "tracing",
@@ -4348,7 +4300,6 @@ dependencies = [
  "bytesize",
  "cfg-if",
  "http",
- "humantime",
  "memory-stats",
  "num_cpus",
  "parking_lot 0.13.0",
@@ -4385,7 +4336,6 @@ dependencies = [
  "bstr",
  "bytes",
  "bytesize",
- "chrono",
  "cookie",
  "crc32fast",
  "criterion",
@@ -4395,7 +4345,6 @@ dependencies = [
  "hmac-sha256",
  "hmac-sha512",
  "http",
- "humantime",
  "jsonwebtoken",
  "maxminddb",
  "mime_guess",
@@ -4417,6 +4366,7 @@ dependencies = [
  "smallvec",
  "snafu",
  "tempfile",
+ "time",
  "tokio",
  "tokio-test",
  "toml",
@@ -4438,7 +4388,6 @@ dependencies = [
  "cfg-if",
  "criterion",
  "http",
- "humantime",
  "itoa",
  "num_cpus",
  "parking_lot 0.13.0",
@@ -4529,6 +4478,8 @@ dependencies = [
  "pem 4.0.0",
  "pretty_assertions",
  "rustc_version_runtime",
+ "serde",
+ "serde_json",
  "snafu",
  "tempfile",
  "tokio-test",

@@ -20,13 +20,13 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::RETRY_AFTER;
 use http::{HeaderName, HeaderValue, StatusCode};
-use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::{
     Ctx, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_TEXT, HttpHeader,
     HttpResponse, Plugin, PluginStep, RequestPluginResult, constant_time_eq,
     convert_header, ensure_verified_client_ip,
 };
+use pingap_util::parse_duration;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use tracing::debug;

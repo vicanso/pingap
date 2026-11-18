@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use humantime::format_duration;
+use pingap_util::format_duration;
 use pingora::connectors::l4::Connect as L4Connect;
 use pingora::lb::health_check::{
     HealthCheck, HealthObserveCallback, TcpHealthCheck,

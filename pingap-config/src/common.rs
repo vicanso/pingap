@@ -561,7 +561,7 @@ pub struct UpstreamConf {
 
     /// How frequently to update the upstream server list
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub update_frequency: Option<Duration>,
 
     /// Load balancing algorithm: "round_robin", "least_conn" (the
@@ -614,12 +614,12 @@ pub struct UpstreamConf {
 
     /// The duration of the open state of the circuit breaker.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub circuit_break_open_duration: Option<Duration>,
 
     /// Interval for backend stats, default is 60 seconds
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub backend_stats_interval: Option<Duration>,
 
     /// Application Layer Protocol Negotiation for TLS
@@ -685,42 +685,42 @@ pub struct UpstreamConf {
 
     /// Timeout for establishing new connections
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub connection_timeout: Option<Duration>,
 
     /// Total timeout for the entire request/response cycle
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub total_connection_timeout: Option<Duration>,
 
     /// Timeout for reading response data
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub read_timeout: Option<Duration>,
 
     /// Timeout for idle connections in the pool
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub idle_timeout: Option<Duration>,
 
     /// Timeout for writing request data
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub write_timeout: Option<Duration>,
 
     /// TCP keepalive idle time
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_idle: Option<Duration>,
 
     /// TCP keepalive probe interval
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_interval: Option<Duration>,
 
     /// TCP keepalive user timeout
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_user_timeout: Option<Duration>,
 
     /// Number of TCP keepalive probes before connection is dropped
@@ -1252,25 +1252,25 @@ pub struct LocationConf {
 
     /// Maximum window for retries
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub max_retry_window: Option<Duration>,
 
     /// Timeout for establishing a connection to the upstream, for the
     /// requests of this location, in place of the upstream's own.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub connection_timeout: Option<Duration>,
 
     /// Timeout for each read from the upstream, for the requests of this
     /// location, in place of the upstream's own.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub read_timeout: Option<Duration>,
 
     /// Timeout for each write to the upstream, for the requests of this
     /// location, in place of the upstream's own.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub write_timeout: Option<Duration>,
 
     /// Optional description/notes about this location
@@ -1514,7 +1514,7 @@ pub struct ServerConf {
     /// Close a downstream HTTP/2 connection that has been idle this long.
     /// Unset leaves it open, which is pingora's default.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub h2_idle_timeout: Option<Duration>,
 
     /// Serve HTTP/1.1 pipelined requests sequentially on one keep-alive
@@ -1524,27 +1524,27 @@ pub struct ServerConf {
 
     /// TCP keepalive idle timeout
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_idle: Option<Duration>,
 
     /// TCP keepalive probe interval
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_interval: Option<Duration>,
 
     /// TCP keepalive user timeout
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub tcp_user_timeout: Option<Duration>,
 
     // downstream read timeout
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub downstream_read_timeout: Option<Duration>,
 
     // downstream write timeout
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub downstream_write_timeout: Option<Duration>,
 
     /// Number of TCP keepalive probes before connection is dropped
@@ -1795,7 +1795,7 @@ pub struct BasicConf {
     /// that it is ready for the listening sockets before abandoning the
     /// restart and keeping the current process(default: 1m)
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub restart_ready_timeout: Option<Duration>,
     /// User for daemon
     pub user: Option<String>,
@@ -1829,11 +1829,11 @@ pub struct BasicConf {
     pub upstream_connect_offload_thread_per_pool: Option<usize>,
     /// Grace period before forcefully terminating during shutdown(default: 5m)
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub grace_period: Option<Duration>,
     /// Maximum time to wait for graceful shutdown
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub graceful_shutdown_timeout: Option<Duration>,
     /// Maximum number of idle connections to keep in upstream connection pool
     pub upstream_keepalive_pool_size: Option<usize>,
@@ -1852,7 +1852,7 @@ pub struct BasicConf {
     /// post; each one extends the wait (default: 10s, 0s posts every
     /// notification on its own)
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub webhook_batch_window: Option<Duration>,
     /// A batch is posted as soon as it holds this many notifications
     /// (default: 5, 1 posts every notification on its own)
@@ -1887,7 +1887,7 @@ pub struct BasicConf {
     pub pyroscope: Option<String>,
     /// How often to check for configuration changes that require restart
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     pub auto_restart_check_interval: Option<Duration>,
 
     // log compress algorithm: gzip, zstd

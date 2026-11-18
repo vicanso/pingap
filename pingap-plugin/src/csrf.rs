@@ -17,7 +17,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
 use http::{HeaderValue, Method, StatusCode, header};
-use humantime::parse_duration;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
@@ -25,7 +24,7 @@ use pingap_core::{
     RequestPluginResult,
 };
 use pingap_core::{get_cookie_value, new_internal_error, now_sec};
-use pingap_util::base64_encode;
+use pingap_util::{base64_encode, parse_duration};
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;

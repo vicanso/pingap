@@ -15,7 +15,6 @@
 use super::{Error, LOG_TARGET, Result, get_process_system_info};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use humantime::parse_duration;
 use parking_lot::Mutex;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::BackgroundTask;
@@ -23,6 +22,7 @@ use pingap_core::Error as ServiceError;
 use pingap_core::{Ctx, get_hostname};
 use pingap_location::LocationProvider;
 use pingap_upstream::UpstreamProvider;
+use pingap_util::{format_duration, parse_duration};
 use pingora::cache::{CachePhase, NoCacheReason};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
@@ -1222,8 +1222,8 @@ pub fn new_prometheus_push_service(
         warn!(
             target: LOG_TARGET,
             name,
-            requested = humantime::Duration::from(interval).to_string(),
-            effective = humantime::Duration::from(effective).to_string(),
+            requested = format_duration(interval).to_string(),
+            effective = format_duration(effective).to_string(),
             "prometheus push interval is rounded to whole minutes"
         );
     }

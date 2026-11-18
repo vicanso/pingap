@@ -69,7 +69,7 @@ impl Mark {
         let run = if self.pid == 0 {
             "the last run of pingap (its mark could not be read)".to_string()
         } else {
-            let started = humantime::format_rfc3339_seconds(
+            let started = pingap_util::format_rfc3339_seconds(
                 UNIX_EPOCH + Duration::from_secs(self.started),
             );
             format!(

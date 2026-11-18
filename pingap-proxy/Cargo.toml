@@ -17,7 +17,6 @@ bstr = { workspace = true }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
 http = { workspace = true }
-humantime = { workspace = true, optional = true }
 itoa = { workspace = true }
 num_cpus = { workspace = true }
 parking_lot = { workspace = true }
@@ -63,7 +62,6 @@ tls-rustls = [
 ]
 tracing = [
     "pingap-otel",
-    "humantime",
     "pingap-core/tracing",
     "pingap-performance/tracing",
 ]

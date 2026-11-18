@@ -14,7 +14,6 @@
 
 use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
-use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::header::{CONTENT_TYPE, HOST, HeaderMap, HeaderName};
 use serde::Deserialize;
@@ -77,7 +76,16 @@ async fn huawei_cloud_api_request(
     payload_str: &str,
 ) -> Result<String> {
     let host = params.host.as_str();
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let now = time::OffsetDateTime::now_utc();
+    let timestamp = format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    );
     let with_body =
         method == reqwest::Method::POST || method == reqwest::Method::PUT;
     let content_type = "application/json";

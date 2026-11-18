@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, PluginStep, RequestPluginResult};
+use pingap_util::{DurationError, parse_duration};
 use pingora::proxy::Session;
 use snafu::Snafu;
 use std::cell::RefCell;
@@ -48,7 +48,7 @@ pub enum Error {
     #[snafu(display("Plugin {category}, base64 decode error {source}"))]
     ParseDuration {
         category: String,
-        source: humantime::DurationError,
+        source: DurationError,
     },
 }
 

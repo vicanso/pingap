@@ -22,7 +22,6 @@ use super::{Error, LOG_TARGET, PAGE_SIZE, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
-use chrono::{DateTime, Local};
 use parking_lot::RwLock;
 use path_absolutize::*;
 #[cfg(feature = "tracing")]
@@ -136,7 +135,7 @@ pub(crate) struct FileCacheParams {
     pub(crate) directory: String,
     /// Inactive duration when cache file will be removed regardless of their freshness.
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     inactive: Option<Duration>,
     /// Max reading count
     reading_max: Option<u32>,
@@ -900,7 +899,13 @@ impl HttpCacheStorage for FileCache {
     ) -> Result<HttpCacheClearStats> {
         let mut success = 0;
         let mut fail = 0;
-        let datetime_local: DateTime<Local> = access_before.into();
+        let dt_utc = time::OffsetDateTime::from(access_before);
+        let offset = time::UtcOffset::local_offset_at(dt_utc)
+            .unwrap_or(time::UtcOffset::UTC);
+        let dt = dt_utc.to_offset(offset);
+        let datetime_local = dt
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| dt.to_string());
 
         let description = format!(
             "clear cache file, directory: {}, access before: {datetime_local}",

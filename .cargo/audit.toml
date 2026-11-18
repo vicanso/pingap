@@ -29,4 +29,11 @@ ignore = [
     # rustls-pki-types. Cannot drop without forking pingora. Remove when
     # pingora-rustls stops depending on rustls-pemfile.
     "RUSTSEC-2025-0134",
+
+    # chrono 0.4 (unmaintained, not a vulnerability). Transitive only:
+    # pingora-core 0.9 depends on chrono (~0.4.31, alloc only); Pingap's own
+    # crates use `time`. Cannot drop without forking pingora. Remove when
+    # pingora migrates off chrono.
+    # https://github.com/vicanso/pingap/issues/285
+    "RUSTSEC-2026-0543",
 ]

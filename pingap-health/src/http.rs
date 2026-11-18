@@ -19,7 +19,7 @@ use super::{
     update_peer_options,
 };
 use async_trait::async_trait;
-use humantime::parse_duration;
+use pingap_util::parse_duration;
 use pingora::connectors::http::Connector;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::lb::Backend;

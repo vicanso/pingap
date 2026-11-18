@@ -21,13 +21,12 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
-use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
     RequestPluginResult, TtlLruLimit, ensure_verified_client_ip,
 };
-use pingap_util::base64_decode;
+use pingap_util::{base64_decode, parse_duration};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::collections::HashMap;

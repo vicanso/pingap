@@ -48,7 +48,7 @@ struct FilterParams {
     skip: Option<String>,
     min_status: Option<u16>,
     #[serde(default)]
-    #[serde(with = "humantime_serde")]
+    #[serde(with = "pingap_util::duration_serde")]
     min_latency: Option<Duration>,
     sample: Option<f64>,
 }

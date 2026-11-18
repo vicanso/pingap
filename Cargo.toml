@@ -76,8 +76,6 @@ flate2 = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
-humantime = { workspace = true }
-humantime-serde = { workspace = true }
 nanoid = { workspace = true }
 nix = { version = "0.31.3", features = ["signal"] }
 parking_lot = { workspace = true }
@@ -186,7 +184,7 @@ name = "bench"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde", "hcl-rs", "kdl"]
+ignored = ["hcl-rs", "kdl"]
 
 # Debian packaging (cargo-deb). The paths below are not a fresh choice: they are
 # the ones pingap.service has always used, so the unit works as installed.
@@ -283,10 +281,6 @@ bstr = "1.13.1"
 brotli = "3.5.0"
 dashmap = "6.2.1"
 cfg-if = "1.0.5"
-chrono = { version = "0.4.45", default-features = false, features = [
-    "std",
-    "clock",
-] }
 cookie = "0.18.2"
 crc32fast = "1.5.5"
 derive_more = { version = "2.1.1", default-features = false, features = [
@@ -309,8 +303,6 @@ hmac-sha512 = { version = "1.1.13", default-features = false, features = [
     "sha384",
 ] }
 hostname = "0.4.2"
-humantime = "2.4.0"
-humantime-serde = "1.1.1"
 instant-acme = "0.8.5"
 ipnet = "2.12.2"
 itoa = "1.0.19"
@@ -403,7 +395,7 @@ sysinfo = { version = "0.40.1", features = [
     "system",
 ], default-features = false }
 tempfile = "3.27.0"
-time = { version = "0.3.55", features = ["local-offset"] }
+time = { version = "0.3.55", features = ["local-offset", "formatting", "parsing", "macros"] }
 TinyUFO = "0.9.1"
 # 1.54.1: pingora 0.9.1 no longer builds streams with a zero-capacity
 # buffer, so the <1.54 cap (cloudflare/pingora#1059) is gone.

@@ -223,9 +223,12 @@ fn parse_time(value: &str) -> Option<i64> {
     if let Ok(seconds) = value.parse::<i64>() {
         return Some(seconds);
     }
-    chrono::DateTime::parse_from_rfc2822(value)
-        .ok()
-        .map(|time| time.timestamp())
+    time::OffsetDateTime::parse(
+        value,
+        &time::format_description::well_known::Rfc2822,
+    )
+    .ok()
+    .map(time::OffsetDateTime::unix_timestamp)
 }
 
 /// The digest a request names for its body.
