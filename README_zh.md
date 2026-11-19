@@ -8,8 +8,8 @@
 
 ## 特色
 
-- **管理后台内置在二进制里。** 每一项配置都有表单。保存前按 `pingap -t` 的标准校验，可以保留历史版本并恢复，支持只读账号和 API 令牌。首页能看到最近 15 分钟的流量曲线——请求速率、状态码、耗时、各上游——不需要 Prometheus。
-- **变更不停机。** upstream、location、插件和证书在运行中的进程里直接替换（`--autoreload`）。需要重新监听的变更通过交接监听套接字的重启来完成（`--autorestart`，Linux 上的守护进程）；新进程起不来时，旧进程继续服务。
+- **管理后台内置在二进制里。** 每一项配置都有表单。保存前按 `pingap -t` 的标准校验，可以保留历史版本并恢复，支持只读账号和 API 令牌。首页能看到最近 15 分钟的流量曲线——请求速率、状态码、耗时、各上游——不需要 Prometheus；内置**诊断工具**支持路由匹配仿真与近期 5xx / `dry_run` 拦截 / 重载异常事件看板，并支持 Nginx / Caddyfile 导入转换预览（`--from-nginx` / `--from-caddy`）。
+- **变更不停机。** upstream、location、插件和证书在运行中的进程里直接替换（`--autoreload`），还可通过 `basic.docker_labels_enabled` 按容器 `pingap.*` 标签自动合成运行态路由。需要重新监听的变更通过交接监听套接字的重启来完成（`--autorestart`，Linux 上的守护进程）；新进程起不来时，旧进程继续服务。
 - **三十多个插件**，按 location 配置，按列出的顺序执行：认证（JWT、OIDC、Key、Basic、HMAC、forward auth）、访问控制（IP、Referer、User-Agent、路径屏蔽）、流量（限流、限速、缓存、流量镜像、流量切分）、内容（压缩、内容替换、重定向、静态文件、图片优化）、运维（维护模式、健康检查端点、错误页）。[全部插件](./pingap-plugin/README.md)
 - **证书自动管理。** Let's Encrypt 或其他 ACME CA，支持 HTTP-01 和 DNS-01（阿里云、Cloudflare、腾讯云、华为云），RSA 与 ECDSA 证书并存，OCSP stapling，面向客户端和面向上游的双向 TLS。
 - **配置在生效前检查。** `-t` 会把启动时要构建的东西全部构建一遍，`--strict` 拒绝不认识的键，`--diff` 预览一次变更的影响。支持 TOML、HCL、KDL，存放在文件或 etcd 里，密钥可以取自环境变量或文件。

@@ -80,6 +80,7 @@ async def serve(reader, writer):
             requests += 1
             path = head.split(b" ")[1].decode()
             if path.startswith("/slow"):
+                log(f"conn={conn} start path={path}")
                 await asyncio.sleep(2)
             body = f"{said} conn={conn} req={requests} path={path}\n".encode()
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"

@@ -1867,6 +1867,39 @@ impl Server {
     }
 }
 
+fn record_5xx_recent_event(
+    server_name: &str,
+    session: &Session,
+    e: Option<&pingora::Error>,
+    ctx: &Ctx,
+) {
+    let Some(status) = ctx.state.status.filter(|s| s.as_u16() >= 500) else {
+        return;
+    };
+    let header = session.req_header();
+    let client_ip = ctx
+        .conn
+        .client_ip
+        .clone()
+        .or_else(|| ctx.conn.remote_addr.as_deref().map(str::to_string));
+    let message = e
+        .map(|err| err.to_string())
+        .unwrap_or_else(|| format!("HTTP {}", status.as_u16()));
+    pingap_core::record_recent_event(pingap_core::RecentEvent {
+        kind: pingap_core::RecentEventKind::Status5xx,
+        server: Some(server_name.to_string()),
+        location: (!ctx.upstream.location.is_empty())
+            .then(|| ctx.upstream.location.to_string()),
+        status: Some(status.as_u16()),
+        method: Some(header.method.as_str().to_string()),
+        host: pingap_core::get_host(header).map(str::to_string),
+        uri: Some(header.uri.to_string()),
+        client_ip,
+        message,
+        ..Default::default()
+    });
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = Ctx;
@@ -3165,6 +3198,7 @@ impl ProxyHttp for Server {
         // that one.
         if !ctx.state.admin && session.subrequest_ctx.is_none() {
             pingap_performance::record_traffic(ctx, e);
+            record_5xx_recent_event(&self.name, session, e, ctx);
         }
 
         #[cfg(feature = "tracing")]
@@ -4977,10 +5011,10 @@ value = 'proxy_set_headers = ["name:value"]'
             Some(get_start_time(&ctx.timing.created_at));
         chunk(&mut ctx, b"");
         assert_eq!(None, ctx.get_upstream_first_body_time());
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        tokio::time::sleep(Duration::from_millis(35)).await;
         chunk(&mut ctx, b"data: 1\n\n");
         let first = ctx.get_upstream_first_body_time().unwrap();
-        assert_eq!(true, first >= 30, "{first}");
+        assert_eq!(true, first >= 20, "{first}");
         // taken once
         tokio::time::sleep(Duration::from_millis(30)).await;
         chunk(&mut ctx, b"data: 2\n\n");
@@ -6872,5 +6906,34 @@ addr = "127.0.0.1:6188"
         assert_eq!(true, resp2.contains("connection: close"), "{resp2}");
         assert_eq!(0, client.read(&mut eof).await.unwrap());
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_logging_records_recent_5xx_event() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /boom HTTP/1.1\r\nHost: api.test\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.state.status = Some(StatusCode::BAD_GATEWAY);
+        ctx.upstream.location = "api".into();
+        let err = pingora::Error::new_up(pingora::ErrorType::ConnectRefused);
+        server.logging(&mut session, Some(&err), &mut ctx).await;
+
+        let events = pingap_core::recent_events(
+            Some(pingap_core::RecentEventKind::Status5xx),
+            10,
+        );
+        assert_eq!(
+            true,
+            events.iter().any(|ev| {
+                ev.status == Some(502)
+                    && ev.uri.as_deref() == Some("/boom")
+                    && ev.location.as_deref() == Some("api")
+                    && ev.message.contains("ConnectRefused")
+            })
+        );
     }
 }

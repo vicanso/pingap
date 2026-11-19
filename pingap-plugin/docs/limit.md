@@ -18,6 +18,8 @@ the [JA4 fingerprint](#by-tls-fingerprint) of the TLS connection.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `limit`. |
 | `type` | string | `rate` | `rate` or `inflight`. Anything else is a configuration error. |
+| `mode` | string | `sketch` | Counter backend: `sketch` (fixed-memory Count-Min Sketch) or `exact` (per-key tracking bounded by `max_keys` using TinyUFO for `rate` and 16-shard maps for `inflight`, preventing hash collisions under high key cardinality). Anything else is a configuration error. |
+| `max_keys` | int | `100000` | Maximum distinct keys tracked when `mode = "exact"` (`>= 1`). Ignored with a warning under `mode = "sketch"`. |
 | `tag` | string | `ip` | `ip`, `header`, `cookie`, `query`, `ja4` or `ip_ja4`. Anything else is a configuration error. `ip` is the address of the connection, or the forwarded one through a proxy listed in `basic.trusted_proxies`. `ja4` and `ip_ja4`: see [By TLS fingerprint](#by-tls-fingerprint). |
 | `key` | string | — | Name of the header / cookie / query parameter. **Required** for `tag = "header"`, `"cookie"` and `"query"`; not read with any other tag, where a value is warned about by `pingap -t`, at startup and on a reload (once for the same findings). |
 | `max` | int | — | **Required.** Allowed requests per `interval` (rate), or concurrent requests (inflight). Negative is an error. |
@@ -226,8 +228,9 @@ does not report.
   three thousand four in five, and beyond that nearly all of them. Such a key
   is limited earlier than `max`, by the least that its neighbours add in any
   of the four. A `rate` limit by client address with a long `interval` on a
-  busy site is where this shows; shorten the interval, or key on something
-  with fewer values.
+  busy site is where this shows; set `mode = "exact"` (with `max_keys` sized
+  for your active key set) to eliminate hash-collision false positives, or
+  shorten the interval.
 - Counters are per process. With multiple Pingap instances behind a load
   balancer the effective limit multiplies by the instance count.
 - `step = "proxy_upstream"` runs after the cache plugin, so cache hits do not

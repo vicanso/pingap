@@ -247,12 +247,17 @@ impl Discovery {
 mod common;
 mod dns;
 mod docker;
+mod docker_labels;
 pub use common::{is_static_discovery, new_static_discovery};
 pub use dns::{
     is_dns_discovery, is_srv_discovery, new_dns_discover_backends,
     new_srv_discover_backends,
 };
 pub use docker::{is_docker_discovery, new_docker_discover_backends};
+pub use docker_labels::{
+    ContainerEndpoint, ContainerLabelInput, DockerLabelRoute,
+    DockerLabelWatcher, extract_routes_from_containers,
+};
 
 #[cfg(test)]
 mod tests {

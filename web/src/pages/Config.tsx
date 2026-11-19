@@ -6,8 +6,23 @@ import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useShallow } from "zustand/react/shallow";
-import { Check, ClipboardCopy, LoaderCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ClipboardCopy,
+  LoaderCircle,
+  Sparkles,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import request from "@/helpers/request";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -98,6 +113,12 @@ function CodePanel({
 export default function Config() {
   const { t } = useTranslation();
   const [importing, setImporting] = React.useState(false);
+  const [converting, setConverting] = React.useState(false);
+  const [importFormat, setImportFormat] = React.useState<
+    "toml" | "nginx" | "caddyfile"
+  >("toml");
+  const [sourceText, setSourceText] = React.useState("");
+  const [convertWarnings, setConvertWarnings] = React.useState<string[]>([]);
   const [newToml, setNewToml] = React.useState("");
   // An import replaces the configuration: not for an account that may
   // only look.
@@ -144,6 +165,29 @@ export default function Config() {
   const copyToml = () => copyContent(originalToml);
   const copyFullToml = () => copyContent(fullToml);
   const copyHcl = () => copyContent(hcl);
+  const handleConvertConfig = async () => {
+    if (converting || !sourceText.trim()) {
+      return;
+    }
+    setConverting(true);
+    try {
+      const res = await request.post<{ toml: string; warnings: string[] }>(
+        "/convert-config",
+        {
+          format: importFormat,
+          content: sourceText,
+        },
+      );
+      setNewToml(res.data.toml || "");
+      setConvertWarnings(res.data.warnings || []);
+    } catch (err) {
+      toast(t("configPage.convertFail"), {
+        description: formatError(err),
+      });
+    } finally {
+      setConverting(false);
+    }
+  };
   const handleImportToml = async (value: string) => {
     if (importing) {
       return;
@@ -236,24 +280,114 @@ export default function Config() {
           </TabsContent>
           <TabsContent value="import" className={panelClass}>
             <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border">
-              <CardHeader className="shrink-0 px-5 pt-5 pb-3">
+              <CardHeader className="flex shrink-0 flex-row flex-wrap items-center justify-between gap-3 px-5 pt-5 pb-3">
                 <CardTitle className="text-base">{t("import")}</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">
+                    {t("configPage.importFormat")}
+                  </Label>
+                  <Select
+                    value={importFormat}
+                    onValueChange={(value) => {
+                      const fmt = value as "toml" | "nginx" | "caddyfile";
+                      setImportFormat(fmt);
+                      setConvertWarnings([]);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-40 cursor-pointer text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="toml">Pingap TOML</SelectItem>
+                      <SelectItem value="nginx">Nginx (nginx.conf)</SelectItem>
+                      <SelectItem value="caddyfile">Caddyfile</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 pb-5">
-                <Textarea
-                  autoFocus
-                  className="min-h-0 flex-1 resize-none font-mono text-sm"
-                  placeholder="paste TOML config…"
-                  onChange={(e) => {
-                    const value = e.target.value.trim();
-                    setNewToml(value);
-                  }}
-                />
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 pb-5">
+                {importFormat === "toml" ? (
+                  <Textarea
+                    autoFocus
+                    className="min-h-0 flex-1 resize-none font-mono text-sm"
+                    placeholder={t("configPage.tomlPlaceholder")}
+                    value={newToml}
+                    onChange={(e) => {
+                      setNewToml(e.target.value);
+                    }}
+                  />
+                ) : (
+                  <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="flex min-h-0 flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-medium text-muted-foreground">
+                          {importFormat === "nginx"
+                            ? "nginx.conf"
+                            : "Caddyfile"}
+                        </Label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="h-7 cursor-pointer gap-1.5 text-xs"
+                          disabled={converting || !sourceText.trim()}
+                          onClick={handleConvertConfig}
+                        >
+                          {converting ? (
+                            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3.5 w-3.5" />
+                          )}
+                          {converting
+                            ? t("configPage.converting")
+                            : t("configPage.convertPreview")}
+                        </Button>
+                      </div>
+                      <Textarea
+                        autoFocus
+                        className="min-h-0 flex-1 resize-none font-mono text-xs sm:text-sm"
+                        placeholder={
+                          importFormat === "nginx"
+                            ? t("configPage.nginxPlaceholder")
+                            : t("configPage.caddyPlaceholder")
+                        }
+                        value={sourceText}
+                        onChange={(e) => setSourceText(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex min-h-0 flex-col gap-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        {t("configPage.convertedTomlPreview")}
+                      </Label>
+                      <Textarea
+                        className="min-h-0 flex-1 resize-none font-mono text-xs sm:text-sm"
+                        placeholder={t("configPage.previewPlaceholder")}
+                        value={newToml}
+                        onChange={(e) => setNewToml(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+                {convertWarnings.length > 0 && (
+                  <div className="max-h-28 shrink-0 overflow-y-auto rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                    <div className="mb-1 flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      {t("configPage.convertWarnings", {
+                        count: convertWarnings.length,
+                      })}
+                    </div>
+                    <ul className="list-disc space-y-0.5 pl-4">
+                      {convertWarnings.map((warning, idx) => (
+                        <li key={idx}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
                       className="w-full shrink-0 cursor-pointer sm:w-auto"
-                      disabled={importing || !newToml}
+                      disabled={importing || !newToml.trim()}
                     >
                       {importing && (
                         <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
@@ -277,7 +411,7 @@ export default function Config() {
                       <AlertDialogAction
                         className="cursor-pointer"
                         onClick={() => {
-                          handleImportToml(newToml);
+                          handleImportToml(newToml.trim());
                         }}
                       >
                         {t("confirm")}

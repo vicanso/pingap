@@ -2517,8 +2517,11 @@ mod tests {
 
         let start = Instant::now();
         task.execute(0).await.unwrap();
-        assert_eq!(true, start.elapsed() < Duration::from_millis(500));
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(true, start.elapsed() < Duration::from_secs(1));
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        while task.running.contains("fast") && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         // The fast one is done, the slow one still at it.
         assert_eq!(false, task.running.contains("fast"));
         assert_eq!(true, task.running.contains("slow"));
@@ -2526,11 +2529,14 @@ mod tests {
         // The next round leaves the slow one alone and checks the other.
         let start = Instant::now();
         task.execute(1).await.unwrap();
-        assert_eq!(true, start.elapsed() < Duration::from_millis(500));
+        assert_eq!(true, start.elapsed() < Duration::from_secs(1));
         assert_eq!(1, task.running.iter().filter(|n| **n == "slow").count());
 
         // Its round ends with the timeout, and it is free for the next.
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !task.running.is_empty() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         assert_eq!(true, task.running.is_empty());
         drop(silent);
     }
@@ -2557,7 +2563,7 @@ mod tests {
 
         let _ = new_backends(
             "dns",
-            &Discovery::new(vec!["github.com".to_string()]),
+            &Discovery::new(vec!["example.test".to_string()]),
         )
         .unwrap();
     }

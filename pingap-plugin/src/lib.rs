@@ -416,6 +416,7 @@ impl DryRun {
             return RequestPluginResult::Continue;
         };
         let matched = matched(ctx);
+        let client_ip = verified_address(session, ctx);
         let header = session.req_header();
         tracing::warn!(
             category,
@@ -423,13 +424,29 @@ impl DryRun {
             status = response.status.as_u16(),
             reason = %String::from_utf8_lossy(&response.body),
             matched,
-            client_ip = verified_address(session, ctx),
+            client_ip = client_ip.as_str(),
             method = header.method.as_str(),
             uri = %header.uri,
             request_id = ctx.state.request_id.as_deref().unwrap_or_default(),
             skipped,
             "dry run, the request would have been refused"
         );
+        pingap_core::record_recent_event(pingap_core::RecentEvent {
+            kind: pingap_core::RecentEventKind::DryRun,
+            location: (!ctx.upstream.location.is_empty())
+                .then(|| ctx.upstream.location.to_string()),
+            status: Some(response.status.as_u16()),
+            method: Some(header.method.as_str().to_string()),
+            host: pingap_core::get_host(header).map(str::to_string),
+            uri: Some(header.uri.to_string()),
+            client_ip: Some(client_ip),
+            category: Some(category.to_string()),
+            message: format!(
+                "{} (matched: {matched})",
+                String::from_utf8_lossy(&response.body)
+            ),
+            ..Default::default()
+        });
         RequestPluginResult::Continue
     }
 }

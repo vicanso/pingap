@@ -308,10 +308,16 @@ impl Copy {
         };
         tokio::spawn(async move {
             let _permit = permit;
-            let mut request = self
-                .client
-                .request(self.method, &self.url)
-                .headers(self.headers);
+            let Self {
+                client,
+                method,
+                url,
+                headers,
+                failed,
+                inflight: _,
+                comparison,
+            } = self;
+            let mut request = client.request(method, &url).headers(headers);
             if let Some(body) = body {
                 request = request.body(body);
             }
@@ -320,17 +326,18 @@ impl Copy {
             // is kept, however long it is.
             let result = async {
                 let mut response = request.send().await?;
-                if let Some(comparison) = &self.comparison {
+                if let Some(comparison) = &comparison {
                     let _ = comparison.mirror.set(response.status());
                 }
                 while response.chunk().await?.is_some() {}
                 Ok::<(), reqwest::Error>(())
             }
             .await;
+            drop(comparison);
             if let Err(e) = result {
                 // A target that is down fails every copy: one line for
                 // the first, the second, the fourth, the eighth...
-                let failed = self.failed.fetch_add(1, Ordering::Relaxed) + 1;
+                let failed = failed.fetch_add(1, Ordering::Relaxed) + 1;
                 if failed.is_power_of_two() {
                     warn!(
                         category = CATEGORY,
@@ -791,13 +798,12 @@ mod tests {
                 .await
                 .expect("the copy is sent")
                 .unwrap();
-            for _ in 0..100 {
+            for _ in 0..500 {
                 if plugin.inflight.available_permits() == DEFAULT_MAX_INFLIGHT {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
             plugin.differed.load(Ordering::Relaxed)
         };
         assert_eq!(1, run(true, Some(200)).await);
@@ -837,13 +843,12 @@ mod tests {
             .await
             .expect("the copy is sent")
             .unwrap();
-        for _ in 0..100 {
+        for _ in 0..500 {
             if plugin.inflight.available_permits() == DEFAULT_MAX_INFLIGHT {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(0, plugin.differed.load(Ordering::Relaxed));
         let mut resp = ResponseHeader::build(204, None).unwrap();
         plugin

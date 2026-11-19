@@ -250,14 +250,19 @@ mod tests {
 
         // What is behind fades out as the next window goes by, it does
         // not stay whole until that one is over.
-        let stats = BackendStats::new(Duration::from_millis(400), vec![]);
+        let stats = BackendStats::new(Duration::from_secs(1), vec![]);
         for _ in 0..20 {
             stats.on_transport_failure(addr);
         }
-        std::thread::sleep(Duration::from_millis(600));
+        std::thread::sleep(Duration::from_millis(1300));
         let faded = stats.get_window_stats(addr).total_requests;
         assert_eq!(true, (1..20).contains(&faded), "{faded}");
-        std::thread::sleep(Duration::from_millis(900));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while stats.get_window_stats(addr).total_requests != 0
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
         assert_eq!(0, stats.get_window_stats(addr).total_requests);
     }
 
@@ -276,9 +281,9 @@ mod tests {
             stats.on_response(addr, StatusCode::from_u16(status).unwrap());
         }
         // Into the next window, where a request is what turns the page.
-        std::thread::sleep(Duration::from_millis(1500));
+        std::thread::sleep(Duration::from_millis(1200));
         stats.on_response(addr, StatusCode::OK);
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(150));
         stats.on_transport_failure(addr);
 
         let window = stats.get_window_stats(addr);

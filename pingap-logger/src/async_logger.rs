@@ -540,17 +540,34 @@ mod tests {
             .send(BytesMut::from("before shutdown"))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while sender.capacity() < sender.max_capacity()
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(sender.max_capacity(), sender.capacity());
 
         // The grace period begins: the signal fires, but the senders stay
         // alive and requests keep logging.
         shutdown_tx.send(true).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !read_logged(dir.path(), "access.log").contains("before shutdown")
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         sender
             .send(BytesMut::from("during grace period"))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !read_logged(dir.path(), "access.log")
+            .contains("during grace period")
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         // Both lines are on disk while the task still runs and the sender is
         // still alive - a kill at this point loses nothing.

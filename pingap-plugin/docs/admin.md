@@ -244,6 +244,9 @@ A request body is read up to 8 MiB; a larger one is answered `413`.
 | `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health, and `restart_unsupported`: why this process cannot be restarted from here (`container`, `foreground`, `platform`), empty where it can |
 | `GET` | `/certificates` | The domains, issuer, validity and ACME source of the loaded certificates. Not the certificates themselves, nor their keys: both used to be in the response, the key read from its file where the configuration only names one. |
 | `POST` | `/aes` | AES encrypt/decrypt helper used by the UI for secrets |
+| `POST` | `/convert-config` | Converts an Nginx config or Caddyfile snippet (`{ format, content }`) into Pingap TOML and returns `{ toml, warnings }` for preview before importing |
+| `POST` | `/debug/route-match` | Simulates route selection (`normalize_path`, `HostIndex`, condition headers/query/cookies, `rewrite`) without side effects and returns the matched location, plugin chain, and all evaluated candidates |
+| `GET` | `/debug/events` | Reads up to 200 recent in-memory diagnostic events (`kind=5xx`, `dry_run`, `reload_fail`, `limit=1..200`) |
 | `POST` | `/restart` | Trigger a graceful restart. Answered `400` with the reason where none can be made: pingap in the foreground or as the first process of a container, anywhere but on Linux, a new listen address that cannot be bound, a replacement that does not come up |
 
 `/basic` describes the process: its `user`, `group` and `config_hash` are

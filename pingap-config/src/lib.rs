@@ -27,6 +27,7 @@ mod config_convert;
 mod etcd_storage;
 mod file_storage;
 pub mod hcl;
+pub mod import;
 pub mod kdl;
 mod manager;
 mod memory_storage;

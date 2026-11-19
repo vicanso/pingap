@@ -69,8 +69,7 @@ struct BreakerStateData {
 }
 
 impl BreakerStateData {
-    fn new(open_duration: Duration) -> Self {
-        let now = Instant::now();
+    fn new_at(now: Instant, open_duration: Duration) -> Self {
         Self {
             open_until: now + open_duration,
             probes_sent: 0,
@@ -98,7 +97,10 @@ impl BackendCircuitState {
     fn new() -> Self {
         Self {
             current_state: AtomicU8::new(STATE_CLOSED),
-            data: Mutex::new(BreakerStateData::new(Duration::ZERO)),
+            data: Mutex::new(BreakerStateData::new_at(
+                Instant::now(),
+                Duration::ZERO,
+            )),
         }
     }
 }
@@ -165,9 +167,10 @@ impl BackendCircuitStates {
             .or_insert_with(|| Arc::new(BackendCircuitState::new()))
             .clone()
     }
-    fn check_open_state_non_blocking(
+    fn check_open_state_non_blocking_at(
         &self,
         state: &BackendCircuitState,
+        now: Instant,
     ) -> bool {
         // Try to get the lock
         let Ok(mut data) = state.data.try_lock() else {
@@ -176,7 +179,6 @@ impl BackendCircuitStates {
         };
 
         // The lock was successfully acquired, check the timer
-        let now = Instant::now();
         if now >= data.open_until {
             // Send the first probe
             data.start_probes(now, self.config.open_duration);
@@ -188,9 +190,10 @@ impl BackendCircuitStates {
             false // Still in the cooling period
         }
     }
-    fn check_half_open_state_non_blocking(
+    fn check_half_open_state_non_blocking_at(
         &self,
         state: &BackendCircuitState,
+        now: Instant,
     ) -> bool {
         let Ok(mut data) = state.data.try_lock() else {
             return false; // The lock is being contested, reject
@@ -208,7 +211,6 @@ impl BackendCircuitStates {
         // nothing to wait for, the backend used to stay half-open and
         // refused for good. After one more `open_duration` the missing
         // probes are given up on and a new round starts.
-        let now = Instant::now();
         if now >= data.probes_expire_at {
             data.start_probes(now, self.config.open_duration);
             return true;
@@ -240,6 +242,14 @@ impl BackendCircuitStates {
     }
 
     pub fn is_backend_acceptable(&self, addr: impl std::fmt::Display) -> bool {
+        self.is_backend_acceptable_at(addr, Instant::now())
+    }
+
+    fn is_backend_acceptable_at(
+        &self,
+        addr: impl std::fmt::Display,
+        now: Instant,
+    ) -> bool {
         // Format the address into a stack buffer so this per-request lookup
         // avoids a heap allocation; only the rare first-time insert allocates.
         let mut key = AddrKeyBuf::new();
@@ -260,12 +270,12 @@ impl BackendCircuitStates {
             STATE_OPEN => {
                 // The state is Open, we need to check the timer (rare)
                 // This is a "slow path", we need a non-blocking check
-                self.check_open_state_non_blocking(&state)
+                self.check_open_state_non_blocking_at(&state, now)
             },
             STATE_HALF_OPEN => {
                 // The state is HalfOpen, we need to check the probe count (rare)
                 // This is a "slow path", we need a non-blocking check
-                self.check_half_open_state_non_blocking(&state)
+                self.check_half_open_state_non_blocking_at(&state, now)
             },
             _ => false, // Impossible state
         }
@@ -276,6 +286,21 @@ impl BackendCircuitStates {
         address: &str,
         is_request_failure: bool,
         stats: &BackendStats,
+    ) {
+        self.update_state_after_request_at(
+            address,
+            is_request_failure,
+            stats,
+            Instant::now(),
+        );
+    }
+
+    fn update_state_after_request_at(
+        &self,
+        address: &str,
+        is_request_failure: bool,
+        stats: &BackendStats,
+        now: Instant,
     ) {
         let state = self.get_or_create_backend_circuit_state(address);
 
@@ -342,14 +367,19 @@ impl BackendCircuitStates {
                         state
                             .current_state
                             .store(STATE_OPEN, Ordering::Relaxed);
-                        *data =
-                            BreakerStateData::new(self.config.open_duration);
+                        *data = BreakerStateData::new_at(
+                            now,
+                            self.config.open_duration,
+                        );
                     }
                 },
                 STATE_HALF_OPEN => {
                     // current state is HalfOpen, set to Open if request fail
                     state.current_state.store(STATE_OPEN, Ordering::Relaxed);
-                    *data = BreakerStateData::new(self.config.open_duration);
+                    *data = BreakerStateData::new_at(
+                        now,
+                        self.config.open_duration,
+                    );
                 },
                 _ => {}, // Open state
             }
@@ -377,46 +407,47 @@ mod tests {
             half_open_consecutive_success_threshold: 2,
             open_duration: Duration::from_millis(50),
         });
-        let fail = || {
+        let mut now = Instant::now();
+        let fail = |t: Instant| {
             stats.on_transport_failure(addr);
-            states.update_state_after_request(addr, true, &stats);
+            states.update_state_after_request_at(addr, true, &stats, t);
         };
-        let succeed = || {
+        let succeed = |t: Instant| {
             stats.on_response(addr, StatusCode::OK);
-            states.update_state_after_request(addr, false, &stats);
+            states.update_state_after_request_at(addr, false, &stats, t);
         };
 
-        fail();
-        fail();
+        fail(now);
+        fail(now);
         assert_eq!(STATE_CLOSED, states.get_state_code(addr));
-        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
         // The third consecutive failure trips it: open, not half-open.
-        fail();
+        fail(now);
         assert_eq!(STATE_OPEN, states.get_state_code(addr));
-        assert_eq!(false, states.is_backend_acceptable(addr));
+        assert_eq!(false, states.is_backend_acceptable_at(addr, now));
 
         // After the open duration the first request is let through as a
         // probe, then at most `threshold` of them.
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(true, states.is_backend_acceptable(addr));
+        now += Duration::from_millis(60);
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
         assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        assert_eq!(false, states.is_backend_acceptable(addr));
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        assert_eq!(false, states.is_backend_acceptable_at(addr, now));
 
         // Enough consecutive successes close it.
-        succeed();
+        succeed(now);
         assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
-        succeed();
+        succeed(now);
         assert_eq!(STATE_CLOSED, states.get_state_code(addr));
-        assert_eq!(true, states.is_backend_acceptable(addr));
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
 
         // A failure while half-open reopens it.
-        fail();
-        fail();
-        fail();
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        fail();
+        fail(now);
+        fail(now);
+        fail(now);
+        now += Duration::from_millis(60);
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        fail(now);
         assert_eq!(STATE_OPEN, states.get_state_code(addr));
     }
 
@@ -433,27 +464,28 @@ mod tests {
             half_open_consecutive_success_threshold: 2,
             open_duration: Duration::from_millis(50),
         });
+        let mut now = Instant::now();
         stats.on_transport_failure(addr);
-        states.update_state_after_request(addr, true, &stats);
+        states.update_state_after_request_at(addr, true, &stats, now);
         assert_eq!(STATE_OPEN, states.get_state_code(addr));
 
         // Both probes go out, neither reports.
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        assert_eq!(false, states.is_backend_acceptable(addr));
+        now += Duration::from_millis(60);
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        assert_eq!(false, states.is_backend_acceptable_at(addr, now));
         assert_eq!(STATE_HALF_OPEN, states.get_state_code(addr));
 
         // One more open duration and a new round of probes starts.
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        assert_eq!(true, states.is_backend_acceptable(addr));
-        assert_eq!(false, states.is_backend_acceptable(addr));
+        now += Duration::from_millis(60);
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        assert_eq!(true, states.is_backend_acceptable_at(addr, now));
+        assert_eq!(false, states.is_backend_acceptable_at(addr, now));
 
         // This round reports, and the breaker closes.
         for _ in 0..2 {
             stats.on_response(addr, StatusCode::OK);
-            states.update_state_after_request(addr, false, &stats);
+            states.update_state_after_request_at(addr, false, &stats, now);
         }
         assert_eq!(STATE_CLOSED, states.get_state_code(addr));
     }

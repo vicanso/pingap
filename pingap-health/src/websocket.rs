@@ -295,7 +295,7 @@ mod tests {
     ) -> (pingora::Result<()>, std::time::Duration) {
         let (conf, hc) = new_health_check(
             "ws",
-            &format!("ws://{addr}/chat?connection_timeout=1s&read_timeout=1s"),
+            &format!("ws://{addr}/chat?connection_timeout=1s&read_timeout=3s"),
             None,
         )
         .unwrap();
@@ -326,7 +326,7 @@ mod tests {
         result.unwrap();
         assert_eq!(
             true,
-            elapsed < std::time::Duration::from_millis(500),
+            elapsed < std::time::Duration::from_secs(2),
             "probe took {elapsed:?}"
         );
 

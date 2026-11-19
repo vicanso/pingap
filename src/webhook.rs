@@ -136,6 +136,17 @@ pub fn get_webhook_sender() -> Option<Arc<NotificationSender>> {
 }
 
 pub async fn send_notification(data: NotificationData) {
+    if matches!(
+        data.category.as_str(),
+        "reload_config_fail" | "restart_fail"
+    ) {
+        pingap_core::record_recent_event(pingap_core::RecentEvent {
+            kind: pingap_core::RecentEventKind::ReloadFail,
+            category: Some(data.category.clone()),
+            message: data.message.clone(),
+            ..Default::default()
+        });
+    }
     // `load_full`, not `load`: a guard must not be held across the HTTP send.
     WEBHOOK.load_full().send_notification(data).await;
 }

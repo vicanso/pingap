@@ -6,6 +6,7 @@ Run these from the repository root. An installed binary replaces
 
 - [static-serve](./static-serve/README.md)
 - [api-gateway](./api-gateway/README.md)
+- [ai-gateway](./ai-gateway/README.md)
 - [web-socket](./web-socket/README.md)
 - [grpc-web](./grpc-web/README.md)
 - [transparent-proxy](./transparent-proxy/README.md)
@@ -72,4 +73,12 @@ sudo cargo run -- -c=examples/transparent-proxy/transparent-proxy.toml --admin=1
 
 ```bash
 curl -kv --resolve '*:443:127.0.0.1' 'https://cn.bing.com/'
+```
+
+## ai-gateway
+
+OpenAI-compatible / MCP SSE streaming gateway with TTFT logging (`{:upstream_first_body_time}`), unbuffered SSE locations, 429/5xx circuit-breaker failover via `fallback_upstream`, and exact per-API-key rate limiting (`mode = "exact"`). See [ai-gateway/README.md](./ai-gateway/README.md).
+
+```bash
+cargo run -- -c=examples/ai-gateway --admin=127.0.0.1:3018 --autoreload
 ```

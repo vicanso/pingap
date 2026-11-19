@@ -899,6 +899,111 @@ mod tests {
     use super::*;
     use crate::Discovery;
     use pretty_assertions::assert_eq;
+    use std::net::{Ipv4Addr, UdpSocket};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct MockDnsServer {
+        addr: String,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl MockDnsServer {
+        fn start(records: HashMap<String, Vec<Ipv4Addr>>) -> Self {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let addr = socket.local_addr().unwrap().to_string();
+            socket
+                .set_read_timeout(Some(Duration::from_millis(20)))
+                .unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_flag = stop.clone();
+            let handle = std::thread::spawn(move || {
+                let mut buf = [0u8; 512];
+                while !stop_flag.load(Ordering::Relaxed) {
+                    let Ok((len, peer)) = socket.recv_from(&mut buf) else {
+                        continue;
+                    };
+                    if let Some(resp) =
+                        build_dns_response(&buf[..len], &records)
+                    {
+                        let _ = socket.send_to(&resp, peer);
+                    }
+                }
+            });
+            Self {
+                addr,
+                stop,
+                handle: Some(handle),
+            }
+        }
+
+        fn addr(&self) -> String {
+            self.addr.clone()
+        }
+    }
+
+    impl Drop for MockDnsServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    fn parse_dns_question(req: &[u8]) -> Option<(String, u16, u16, usize)> {
+        if req.len() < 17 {
+            return None;
+        }
+        let mut offset = 12;
+        let mut labels = Vec::new();
+        loop {
+            let len = *req.get(offset)? as usize;
+            offset += 1;
+            if len == 0 {
+                break;
+            }
+            if len & 0xC0 != 0 || offset + len > req.len() {
+                return None;
+            }
+            let label = std::str::from_utf8(&req[offset..offset + len]).ok()?;
+            labels.push(label.to_ascii_lowercase());
+            offset += len;
+        }
+        if offset + 4 > req.len() {
+            return None;
+        }
+        let qtype = u16::from_be_bytes([req[offset], req[offset + 1]]);
+        let qclass = u16::from_be_bytes([req[offset + 2], req[offset + 3]]);
+        Some((labels.join("."), qtype, qclass, offset + 4))
+    }
+
+    fn build_dns_response(
+        req: &[u8],
+        records: &HashMap<String, Vec<Ipv4Addr>>,
+    ) -> Option<Vec<u8>> {
+        let (qname, qtype, qclass, q_end) = parse_dns_question(req)?;
+        let (rcode, answers) = match records.get(&qname) {
+            Some(ips) if qtype == 1 && qclass == 1 => (0u8, ips.as_slice()),
+            Some(_) => (0u8, &[][..]),
+            None => (3u8, &[][..]),
+        };
+        let mut resp = Vec::with_capacity(q_end + answers.len() * 16);
+        resp.extend_from_slice(&req[0..2]);
+        resp.push(0x84 | (req[2] & 0x01));
+        resp.push(0x80 | (rcode & 0x0F));
+        resp.extend_from_slice(&1u16.to_be_bytes());
+        resp.extend_from_slice(&(answers.len() as u16).to_be_bytes());
+        resp.extend_from_slice(&[0, 0, 0, 0]);
+        resp.extend_from_slice(&req[12..q_end]);
+        for ip in answers {
+            resp.extend_from_slice(&[0xC0, 0x0C, 0, 1, 0, 1]);
+            resp.extend_from_slice(&60u32.to_be_bytes());
+            resp.extend_from_slice(&[0, 4]);
+            resp.extend_from_slice(&ip.octets());
+        }
+        Some(resp)
+    }
 
     /// The `SRV` records that are gone by: those of the lowest priority,
     /// with their ports and weights.
@@ -1120,10 +1225,20 @@ mod tests {
     #[tokio::test]
     async fn test_async_dns_discover() {
         assert_eq!(true, is_dns_discovery("dns"));
+        let mut records = HashMap::new();
+        records.insert(
+            "api.pingap.test".to_string(),
+            vec![
+                Ipv4Addr::new(198, 51, 100, 10),
+                Ipv4Addr::new(198, 51, 100, 11),
+            ],
+        );
+        let server = MockDnsServer::start(records);
+
         let dns = Dns::new(&["api".to_string()], true, true)
             .unwrap()
-            .with_name_server("8.8.8.8".to_string())
-            .with_domain("github.com".to_string());
+            .with_name_server(server.addr())
+            .with_domain("pingap.test".to_string());
         let (ip_list, _) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(true, !ip_list.is_empty());
 
@@ -1143,8 +1258,8 @@ mod tests {
             addr: vec!["api".to_string()],
             tls: true,
             ipv4_only: true,
-            dns_server: Some("8.8.8.8".to_string()),
-            dns_domain: Some("github.com".to_string()),
+            dns_server: Some(server.addr()),
+            dns_domain: Some("pingap.test".to_string()),
             dns_search: Some("local".to_string()),
             sender: None,
         });
@@ -1317,6 +1432,16 @@ mod tests {
         // different ports. Results are paired with hosts by position, so the
         // failed lookup must keep its slot: compacting used to shift the
         // second host's IPs onto the first host's port.
+        let mut records = HashMap::new();
+        records.insert(
+            "api.pingap.test".to_string(),
+            vec![
+                Ipv4Addr::new(198, 51, 100, 10),
+                Ipv4Addr::new(198, 51, 100, 11),
+            ],
+        );
+        let server = MockDnsServer::start(records);
+
         let dns = Dns::new(
             &[
                 "no-such-host-pingap-test:8080".to_string(),
@@ -1326,8 +1451,8 @@ mod tests {
             true,
         )
         .unwrap()
-        .with_name_server("8.8.8.8".to_string())
-        .with_domain("github.com".to_string());
+        .with_name_server(server.addr())
+        .with_domain("pingap.test".to_string());
 
         let (ip_list, failed_hosts) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(2, ip_list.len());

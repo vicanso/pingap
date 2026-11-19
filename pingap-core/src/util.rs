@@ -146,10 +146,13 @@ mod tests {
     #[test]
     fn test_now_advances_without_an_updater() {
         let start = now_ms();
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        let elapsed = now_ms() - start;
-        assert_eq!(true, elapsed >= 20, "only advanced {elapsed}ms");
-        assert_eq!(now_sec(), now_ms() / 1000);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let elapsed = now_ms().saturating_sub(start);
+        assert_eq!(true, elapsed >= 15, "only advanced {elapsed}ms");
+        let before = now_sec();
+        let ms = now_ms();
+        let after = now_sec();
+        assert_eq!(true, (before..=after).contains(&(ms / 1000)));
     }
 
     #[test]

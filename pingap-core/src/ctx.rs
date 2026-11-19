@@ -696,6 +696,8 @@ pub struct RequestState {
     /// A limiter's count goes down again when its guard is dropped, at the
     /// end of the request.
     pub guards: Vec<Guard>,
+    /// Guards for exact-mode concurrent request limiters (`mode = "exact"`).
+    pub exact_guards: Vec<crate::ExactInflightGuard>,
     /// The total number of requests currently being processed by the service.
     pub processing_count: i32,
     /// The total number of requests accepted by the service.
@@ -2695,7 +2697,7 @@ mod tests {
         assert_eq!(&buf[..], b"TLSv1.3");
 
         // Test service_time calculation
-        std::thread::sleep(Duration::from_millis(11));
+        std::thread::sleep(Duration::from_millis(25));
         buf = BytesMut::new();
         ctx.append_log_value(&mut buf, "service_time");
         let service_time: u64 =

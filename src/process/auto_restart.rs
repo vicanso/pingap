@@ -264,8 +264,9 @@ async fn diff_and_update_config(
             &new_config,
             &config_manager.get_current_config(),
         );
+        let effective = crate::process::overlay_docker_routes(&new_config);
         let restart_requested =
-            apply_config(config_manager, &new_config, hot_reload_only).await?;
+            apply_config(config_manager, &effective, hot_reload_only).await?;
         Ok::<_, Box<dyn std::error::Error>>((new_config, restart_requested))
     }
     .await
@@ -553,6 +554,15 @@ fn merge_certificates(
         changes.merged.insert(name.clone(), merged);
     }
     changes
+}
+
+/// Applies a runtime-synthesized configuration (e.g. Docker label overlay)
+/// in hot-reload mode without mutating stored configuration on disk.
+pub(crate) async fn apply_runtime_config(
+    config_manager: Arc<ConfigManager>,
+    new_config: &PingapConfig,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    apply_config(config_manager, new_config, true).await
 }
 
 /// Compares configurations and handles updates through hot reload or full restart

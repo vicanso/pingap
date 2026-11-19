@@ -231,6 +231,9 @@ interface Basic {
   webhook_secret?: string;
   webhook_template?: string;
   webhook_retries?: number;
+  docker_labels_enabled?: boolean;
+  docker_labels_server?: string;
+  docker_labels_tls_server?: string;
 }
 
 interface Config {

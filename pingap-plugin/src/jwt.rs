@@ -1821,7 +1821,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         let source = JwksSource {
             url: format!("http://{addr}/jwks"),
             ttl: Duration::from_secs(3600),
-            cooldown: Duration::from_millis(300),
+            cooldown: Duration::from_secs(60),
             client: reqwest::Client::new(),
             require_exp: true,
             leeway: Duration::ZERO,
@@ -1835,7 +1835,8 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         assert_eq!(true, source.cache.load().is_none());
 
         // Once the window has passed the endpoint is asked again.
-        tokio::time::sleep(Duration::from_millis(350)).await;
+        *source.refresh_lock.lock().await =
+            Some(Instant::now() - Duration::from_secs(61));
         source.refresh().await;
         assert_eq!(2, attempts.load(Ordering::Relaxed));
     }
@@ -2810,13 +2811,17 @@ auth_path = "/login"
     /// of its own, each holding its client for the whole timeout.
     #[tokio::test]
     async fn test_jwks_cooldown_starts_when_the_attempt_is_over() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         // An endpoint that takes the connection and says nothing.
         let listener =
             tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = attempts.clone();
         tokio::spawn(async move {
             let mut held = vec![];
             while let Ok((stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::Relaxed);
                 held.push(stream);
             }
         });
@@ -2838,14 +2843,10 @@ auth_path = "/login"
         let started = Instant::now();
         source.refresh().await;
         assert_eq!(true, started.elapsed() >= wait);
-        // The next one in line does not ask again.
-        let started = Instant::now();
+        assert_eq!(1, attempts.load(Ordering::Relaxed));
+        // The next one in line does not ask again because the cooldown window
+        // starts when the failed attempt completes.
         source.refresh().await;
-        assert_eq!(
-            true,
-            started.elapsed() < wait / 2,
-            "{:?}",
-            started.elapsed()
-        );
+        assert_eq!(1, attempts.load(Ordering::Relaxed));
     }
 }

@@ -3950,6 +3950,7 @@ dependencies = [
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
+ "pingap-discovery",
  "pingap-imageoptim",
  "pingap-location",
  "pingap-logger",

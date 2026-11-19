@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import {
+  Activity,
   AppWindow,
   Container,
   FileCode2,
@@ -31,6 +32,7 @@ import {
   BASIC,
   CERTIFICATES,
   CONFIG,
+  DIAGNOSTICS,
   HOME,
   LOCATIONS,
   PLUGINS,
@@ -129,6 +131,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       to: CONFIG,
       icon: FileCode2,
       keywords: ["config", "toml", "hcl", "import"],
+    },
+    {
+      label: navI18n("diagnostics"),
+      to: DIAGNOSTICS,
+      icon: Activity,
+      keywords: [
+        "diagnostics",
+        "debug",
+        "route",
+        "simulator",
+        "events",
+        "5xx",
+        "dry_run",
+      ],
     },
   ];
 

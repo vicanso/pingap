@@ -1199,7 +1199,7 @@ mod tests {
             "normal".to_string(),
             vec!["a".to_string(), "b".to_string()],
         )
-        .with_batch(Duration::from_millis(300), 5);
+        .with_batch(Duration::from_millis(500), 5);
 
         sender
             .send_notification(event("a", NotificationLevel::Info, "T", "m1"))
@@ -1221,8 +1221,12 @@ mod tests {
         assert_eq!("T", field(&body, "title"));
         assert_eq!("1. [info] a: m1\n2. [warn] b: m3", field(&body, "message"));
         // And only once.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(true, bodies.try_recv().is_err());
+        assert_eq!(
+            true,
+            tokio::time::timeout(Duration::from_millis(300), bodies.recv())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1270,12 +1274,10 @@ mod tests {
         sender
             .send_notification(event("a", NotificationLevel::Info, "T", "m1"))
             .await;
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!("m1", field(&next_body(&mut bodies).await, "message"));
         sender
             .send_notification(event("a", NotificationLevel::Info, "T", "m2"))
             .await;
-
-        assert_eq!("m1", field(&next_body(&mut bodies).await, "message"));
         assert_eq!("m2", field(&next_body(&mut bodies).await, "message"));
     }
 
@@ -2087,7 +2089,9 @@ mod tests {
                 .map(|tried| retry_delay_secs(*tried))
                 .collect::<Vec<_>>()
         );
-        let post = async |answers: Vec<(u16, &'static str)>, retries: u32| {
+        let post = async |answers: Vec<(u16, &'static str)>,
+                          retries: u32,
+                          expected: usize| {
             let (url, mut posts) = spawn_scripted(answers).await;
             let sender = WebhookNotificationSender::new(
                 url,
@@ -2106,28 +2110,29 @@ mod tests {
                     "m",
                 ))
                 .await;
-            // The first try is made before that returns, the others
-            // behind it: they are waited for here, and then a little
-            // longer for one that should not come.
             let mut count = 0;
-            let mut quiet = 0;
-            while quiet < 6 {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                quiet += 1;
-                while posts.try_recv().is_ok() {
-                    count += 1;
-                    quiet = 0;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while count < expected {
+                match tokio::time::timeout_at(deadline, posts.recv()).await {
+                    Ok(Some(_)) => count += 1,
+                    _ => break,
                 }
+            }
+            if tokio::time::timeout(Duration::from_millis(150), posts.recv())
+                .await
+                .is_ok_and(|item| item.is_some())
+            {
+                count += 1;
             }
             count
         };
         // Not answered well twice, then taken: three posts.
-        assert_eq!(3, post(vec![(503, ""), (429, ""), (200, "")], 2).await);
+        assert_eq!(3, post(vec![(503, ""), (429, ""), (200, "")], 2, 3).await);
         // No more often than is asked for, and not at all by default.
-        assert_eq!(3, post(vec![(503, "")], 2).await);
-        assert_eq!(1, post(vec![(503, "")], 0).await);
+        assert_eq!(3, post(vec![(503, "")], 2, 3).await);
+        assert_eq!(1, post(vec![(503, "")], 0, 1).await);
         // What the receiver will not take is not sent again.
-        assert_eq!(1, post(vec![(400, ""), (200, "")], 2).await);
-        assert_eq!(1, post(vec![(404, "")], 2).await);
+        assert_eq!(1, post(vec![(400, ""), (200, "")], 2, 1).await);
+        assert_eq!(1, post(vec![(404, "")], 2, 1).await);
     }
 }

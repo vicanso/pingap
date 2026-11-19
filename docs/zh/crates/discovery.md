@@ -87,6 +87,31 @@ update_frequency = "10s"
 
 每项为 `label[:port] [weight]`。`unix:` 地址是配置错误：这种发现按标签匹配容器，不会去连接 `addrs` 里写的套接字。按 Docker 标签匹配容器，其发布地址成为后端，因此 `docker compose up --scale api=5` 会在下次刷新时被发现。通过 unix 套接字连接 Docker 守护进程：`DOCKER_HOST` 是 `unix://` 路径时用它指定的套接字，否则用默认的；`tcp://` 形式的 `DOCKER_HOST` 不会被使用。后台任务跟随容器事件即时刷新列表；每次重连守护进程后都会重新列举容器，上游因重载被替换时该任务随之停止。守护进程连不上时只在开始连不上（或第一次尝试）的那一次报告，之后的每次重试不再重复通知。
 
+#### 容器标签自动路由发现
+
+除 `discovery = "docker"`（向已声明的上游注入容器地址）外，Pingap 还可开启标签自动路由发现：监听带有 `pingap.*` 标签的容器并在运行态动态合成 `upstream`、`location`、可选 ACME `certificate` 与 `server` 路由绑定，不会改写磁盘上的静态配置文件：
+
+```toml
+[basic]
+docker_labels_enabled = true
+docker_labels_server = "http"      # 默认 HTTP 服务
+docker_labels_tls_server = "https" # pingap.tls 启用时的默认 HTTPS 服务
+```
+
+支持的容器标签：
+
+| 标签 | 示例 | 说明 |
+| --- | --- | --- |
+| `pingap.enable` | `true` / `1` | 开启该容器的自动路由合成 |
+| `pingap.name` | `api` | 服务名；同名的多副本容器自动合并到同一上游负载列表 |
+| `pingap.host` | `api.example.com` | 逗号分隔的虚拟域名 |
+| `pingap.path` | `/v1` | Location 路径匹配（默认 `/`） |
+| `pingap.port` | `8080` | 覆盖容器端口 |
+| `pingap.tls` | `acme` / `true` | 挂载到 HTTPS 服务；为 `acme` 时自动生成对应域名的 Let's Encrypt 证书配置 |
+| `pingap.plugins` | `gzip,rate_limit` | 逗号分隔的已有静态插件名 |
+| `pingap.server` | `edge` | 显式指定承载该路由的服务名 |
+| `pingap.weight` | `1024` | Location 匹配权重 |
+
 ### Transparent
 
 ```toml

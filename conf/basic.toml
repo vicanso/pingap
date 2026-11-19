@@ -189,3 +189,14 @@
 # The hour of the day, 0 to 23, at which the compression runs.
 # Default `0`
 # log_compress_time_point_hour = 0
+
+# Enable Docker container label (`pingap.*`) automatic route discovery. Default `false`
+# docker_labels_enabled = false
+
+# Default server name for routes synthesized from Docker container labels.
+# Default: first configured server
+# docker_labels_server = "http"
+
+# Target TLS server name for Docker container routes with `pingap.tls = "acme"`.
+# Default: `docker_labels_server` or first configured server
+# docker_labels_tls_server = "https"

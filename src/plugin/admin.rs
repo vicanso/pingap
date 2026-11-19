@@ -15,10 +15,13 @@
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
 use crate::config_manager::get_config_manager;
+use crate::locations::new_location_provider;
 use crate::process::{
     Mark, abnormal_exit, get_start_time, no_restart, restart_now,
 };
+use crate::server_locations::new_server_locations_provider;
 use crate::upstreams::new_upstream_provider;
+use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
@@ -42,8 +45,10 @@ use pingap_config::{
     PingapConfig, PingapTomlConfig,
 };
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, TtlLruLimit,
+    Ctx, HttpResponse, LocationInstance, Plugin, PluginStep, RecentEventKind,
+    RequestPluginResult, TtlLruLimit, get_host, normalize_path, recent_events,
 };
+use pingap_location::{Location, ServerLocationRoute};
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{Error, get_plugin_factory};
@@ -57,7 +62,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -1832,6 +1837,18 @@ async fn handle_request_admin(
         let certificates = new_certificate_provider().list();
         HttpResponse::try_from_json(&certificate_infos(&certificates))
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
+    } else if path == "/debug/route-match" && method == Method::POST {
+        plugin
+            .simulate_route_match(session)
+            .await
+            .unwrap_or_else(|err| config_error_response(&err))
+    } else if path == "/debug/events" && method == Method::GET {
+        recent_events_response(session)
+            .unwrap_or_else(|err| config_error_response(&err))
+    } else if path == "/convert-config" && method == Method::POST {
+        convert_config_response(session)
+            .await
+            .unwrap_or_else(|err| config_error_response(&err))
     } else {
         HttpResponse::not_found("Not Found")
     };
@@ -1839,6 +1856,402 @@ async fn handle_request_admin(
         audit(&identity, ip, &method, &path, resp.status);
     }
     Ok(Some(resp))
+}
+
+#[derive(Deserialize, Default)]
+struct RouteMatchRequest {
+    server: Option<String>,
+    method: Option<String>,
+    host: Option<String>,
+    path: String,
+    query: Option<String>,
+    cookie: Option<String>,
+    headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize)]
+struct MatchedRouteDetail {
+    name: String,
+    weight: u16,
+    upstream: String,
+    fallback_upstream: String,
+    plugins: Vec<String>,
+    rewritten_uri: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RouteCandidateResult {
+    name: String,
+    weight: u16,
+    matched: bool,
+    host_path_matched: bool,
+    conditions_matched: bool,
+    reason: &'static str,
+    upstream: String,
+    plugins: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct RouteMatchResponse {
+    server: String,
+    normalized_path: String,
+    matched: Option<MatchedRouteDetail>,
+    candidates: Vec<RouteCandidateResult>,
+}
+
+#[derive(Deserialize)]
+struct ConvertConfigRequest {
+    format: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ConvertConfigResponse {
+    toml: String,
+    warnings: Vec<String>,
+}
+
+fn resolve_simulation_server(
+    config: &PingapConfig,
+    requested: Option<&str>,
+) -> std::result::Result<String, pingora::BError> {
+    if let Some(name) = requested.map(str::trim).filter(|s| !s.is_empty()) {
+        if config.servers.contains_key(name) {
+            return Ok(name.to_string());
+        }
+        return Err(pingap_core::new_internal_error(
+            400,
+            format!("Server \"{name}\" not found"),
+        ));
+    }
+    let mut names: Vec<&String> = config.servers.keys().collect();
+    names.sort();
+    names.first().map(|s| (*s).clone()).ok_or_else(|| {
+        pingap_core::new_internal_error(400, "No server configured")
+    })
+}
+
+fn build_fallback_route(
+    server_name: &str,
+    config: &PingapConfig,
+) -> Option<ServerLocationRoute> {
+    let server = config.servers.get(server_name)?;
+    let mut items = server.locations.clone().unwrap_or_default();
+    items.sort_by_key(|name| {
+        let weight = config
+            .locations
+            .get(name.as_str())
+            .map(LocationConf::get_weight)
+            .unwrap_or_default();
+        std::cmp::Reverse(weight)
+    });
+    Some(ServerLocationRoute::build(items, |loc_name| {
+        let conf = config.locations.get(loc_name)?;
+        Location::new(loc_name, conf).ok().map(Arc::new)
+    }))
+}
+
+fn build_synthetic_request(
+    req: &RouteMatchRequest,
+) -> std::result::Result<(RequestHeader, String), pingora::BError> {
+    let method = req
+        .method
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
+    let raw_path = req.path.trim();
+    let path_with_slash = if raw_path.is_empty() {
+        "/".to_string()
+    } else if raw_path.starts_with('/') {
+        raw_path.to_string()
+    } else {
+        format!("/{raw_path}")
+    };
+    let normalized = normalize_path(&path_with_slash).into_owned();
+    let query = req
+        .query
+        .as_deref()
+        .map(str::trim)
+        .map(|q| q.trim_start_matches('?'))
+        .filter(|q| !q.is_empty());
+    let uri = match query {
+        Some(q) => format!("{path_with_slash}?{q}"),
+        None => path_with_slash,
+    };
+    let mut header =
+        RequestHeader::build(method.as_bytes(), uri.as_bytes(), None)
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+    if let Some(host) =
+        req.host.as_deref().map(str::trim).filter(|h| !h.is_empty())
+    {
+        let _ = header.insert_header(header::HOST, host);
+    }
+    if let Some(cookie) = req
+        .cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        let _ = header.insert_header(header::COOKIE, cookie);
+    }
+    if let Some(extra) = &req.headers {
+        for (k, v) in extra {
+            if let Ok(name) =
+                http::header::HeaderName::from_bytes(k.trim().as_bytes())
+            {
+                let _ = header.insert_header(name, v.trim());
+            }
+        }
+    }
+    Ok((header, normalized))
+}
+
+struct RouteProbe<'a> {
+    host: &'a str,
+    normalized_path: &'a str,
+    req_header: &'a RequestHeader,
+}
+
+fn evaluate_candidate(
+    name: &str,
+    location: Option<&Arc<Location>>,
+    weight: u16,
+    indexed: bool,
+    probe: &RouteProbe<'_>,
+    already_matched: bool,
+) -> (RouteCandidateResult, Option<MatchedRouteDetail>) {
+    let Some(loc) = location else {
+        return (
+            RouteCandidateResult {
+                name: name.to_string(),
+                weight,
+                matched: false,
+                host_path_matched: false,
+                conditions_matched: false,
+                reason: "location_not_loaded",
+                upstream: String::new(),
+                plugins: Vec::new(),
+            },
+            None,
+        );
+    };
+    let plugins: Vec<String> = loc
+        .plugins
+        .as_ref()
+        .map(|list| list.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+    let (host_path_matched, captures) =
+        loc.match_host_path(probe.host, probe.normalized_path);
+    let conditions_matched = if host_path_matched {
+        loc.match_conditions(probe.req_header)
+    } else {
+        false
+    };
+    let would_match = indexed && host_path_matched && conditions_matched;
+    let is_winner = would_match && !already_matched;
+    let reason = if is_winner {
+        "matched"
+    } else if would_match {
+        "shadowed_by_higher_priority"
+    } else if !indexed {
+        "host_not_indexed"
+    } else if !host_path_matched {
+        "host_or_path_mismatch"
+    } else {
+        "conditions_mismatch"
+    };
+
+    let matched_detail = if is_winner {
+        let mut cloned = probe.req_header.clone();
+        let mut vars: Option<AHashMap<String, String>> = captures;
+        let rewritten_uri = match loc.rewrite(&mut cloned, &mut vars) {
+            Ok(true) => Some(cloned.uri.to_string()),
+            _ => None,
+        };
+        Some(MatchedRouteDetail {
+            name: loc.name().to_string(),
+            weight,
+            upstream: loc.upstream().to_string(),
+            fallback_upstream: loc.fallback_upstream().to_string(),
+            plugins: plugins.clone(),
+            rewritten_uri,
+        })
+    } else {
+        None
+    };
+
+    (
+        RouteCandidateResult {
+            name: name.to_string(),
+            weight,
+            matched: is_winner,
+            host_path_matched,
+            conditions_matched,
+            reason,
+            upstream: loc.upstream().to_string(),
+            plugins,
+        },
+        matched_detail,
+    )
+}
+
+impl AdminServe {
+    async fn active_config_for_debug(
+        &self,
+    ) -> std::result::Result<PingapConfig, pingora::BError> {
+        let current = self.manager.get_current_config();
+        if !current.servers.is_empty() {
+            return Ok(current.as_ref().clone());
+        }
+        self.load_config(true).await
+    }
+
+    async fn simulate_route_match(
+        &self,
+        session: &mut Session,
+    ) -> std::result::Result<HttpResponse, pingora::BError> {
+        let buf = get_request_body(session).await?;
+        let params: RouteMatchRequest = serde_json::from_slice(buf.as_ref())
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        let config = self.active_config_for_debug().await?;
+        let server =
+            resolve_simulation_server(&config, params.server.as_deref())?;
+        let (req_header, normalized_path) = build_synthetic_request(&params)?;
+        let host = get_host(&req_header).unwrap_or_default().to_string();
+
+        let route = new_server_locations_provider()
+            .get(&server)
+            .or_else(|| build_fallback_route(&server, &config).map(Arc::new));
+        let location_provider = new_location_provider();
+        let mut matched = None;
+        let mut candidates = Vec::new();
+        if let Some(route) = route {
+            let indexed: HashSet<usize> = route
+                .host_index
+                .candidate_indices(&host)
+                .into_iter()
+                .collect();
+            for (idx, name) in route.ordered.iter().enumerate() {
+                let looked_up;
+                let location = match route.location(idx) {
+                    Some(loc) => Some(loc),
+                    None => {
+                        looked_up = location_provider.get(name);
+                        looked_up.as_ref()
+                    },
+                };
+                let weight = config
+                    .locations
+                    .get(name.as_str())
+                    .map(LocationConf::get_weight)
+                    .unwrap_or_default();
+                let probe = RouteProbe {
+                    host: &host,
+                    normalized_path: &normalized_path,
+                    req_header: &req_header,
+                };
+                let (candidate, detail) = evaluate_candidate(
+                    name,
+                    location,
+                    weight,
+                    indexed.contains(&idx),
+                    &probe,
+                    matched.is_some(),
+                );
+                if matched.is_none() {
+                    matched = detail;
+                }
+                candidates.push(candidate);
+            }
+        }
+
+        Ok(HttpResponse::try_from_json(&RouteMatchResponse {
+            server,
+            normalized_path,
+            matched,
+            candidates,
+        })
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+    }
+}
+
+fn parse_event_kind(
+    raw: &str,
+) -> std::result::Result<Option<RecentEventKind>, pingora::BError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "all" => Ok(None),
+        "5xx" => Ok(Some(RecentEventKind::Status5xx)),
+        "dry_run" => Ok(Some(RecentEventKind::DryRun)),
+        "reload_fail" => Ok(Some(RecentEventKind::ReloadFail)),
+        _ => Err(pingap_core::new_internal_error(
+            400,
+            format!("Invalid event kind: {raw}"),
+        )),
+    }
+}
+
+fn parse_events_query(
+    query: Option<&str>,
+) -> std::result::Result<(Option<RecentEventKind>, usize), pingora::BError> {
+    let mut kind = None;
+    let mut limit = 100usize;
+    for pair in query.unwrap_or_default().split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        let val = decode(v).unwrap_or_default();
+        if k == "kind" {
+            kind = parse_event_kind(val.as_ref())?;
+        } else if k == "limit" && !val.is_empty() {
+            let parsed = val.parse::<usize>().map_err(|_| {
+                pingap_core::new_internal_error(400, "Invalid limit")
+            })?;
+            limit = parsed.clamp(1, pingap_core::MAX_RECENT_EVENTS);
+        }
+    }
+    Ok((kind, limit))
+}
+
+fn recent_events_response(
+    session: &Session,
+) -> std::result::Result<HttpResponse, pingora::BError> {
+    let (kind, limit) = parse_events_query(session.req_header().uri.query())?;
+    let events = recent_events(kind, limit);
+    Ok(HttpResponse::try_from_json(&json!({ "events": events }))
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
+}
+
+async fn convert_config_response(
+    session: &mut Session,
+) -> std::result::Result<HttpResponse, pingora::BError> {
+    let buf = get_request_body(session).await?;
+    let params: ConvertConfigRequest = serde_json::from_slice(buf.as_ref())
+        .map_err(|e| pingap_core::new_internal_error(400, e))?;
+    let format = params.format.trim().to_ascii_lowercase();
+    let converted = match format.as_str() {
+        "nginx" => {
+            pingap_config::import::convert_nginx_to_toml(&params.content)
+        },
+        "caddy" | "caddyfile" => {
+            pingap_config::import::convert_caddy_to_toml(&params.content)
+        },
+        _ => {
+            return Err(pingap_core::new_internal_error(
+                400,
+                format!("Unsupported import format: {}", params.format),
+            ));
+        },
+    }
+    .map_err(|e| pingap_core::new_internal_error(400, e))?;
+
+    Ok(HttpResponse::try_from_json(&ConvertConfigResponse {
+        toml: converted.toml,
+        warnings: converted.warnings,
+    })
+    .unwrap_or(HttpResponse::unknown_error("Json serde fail")))
 }
 
 /// Whether a request to the API changes something: an entry of the
@@ -3406,5 +3819,147 @@ path = "/api"
             vec!["site_a".to_string(), "site_b".to_string()],
             stored.servers["site_a"].locations.clone().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_debug_route_match_simulator() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml = r#"
+[upstreams.api_up]
+addrs = ["127.0.0.1:9001"]
+
+[locations.api_canary]
+upstream = "api_up"
+fallback_upstream = "api_up"
+host = "api.example.com"
+path = "/v1"
+match_headers = ["x-canary:yes"]
+rewrite = "^/v1/(.*) /$1"
+plugins = ["pingap:requestId"]
+weight = 2000
+
+[locations.api_default]
+upstream = "api_up"
+host = "api.example.com"
+path = "/v1"
+weight = 1000
+
+[servers.edge]
+addr = "0.0.0.0:8080"
+locations = ["api_canary", "api_default"]
+"#;
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, toml).unwrap();
+        let (admin, manager) = new_admin_on(&file, "");
+        let cfg = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        manager.set_current_config(cfg.clone());
+        crate::locations::try_init_locations(&cfg.locations).unwrap();
+        crate::server_locations::try_init_server_locations(
+            &cfg.servers,
+            &cfg.locations,
+        )
+        .unwrap();
+
+        let (code, body) = post(
+            &admin,
+            "/api/debug/route-match",
+            &serde_json::json!({
+                "server": "edge",
+                "method": "GET",
+                "host": "api.example.com:443",
+                "path": "/v1//users",
+                "query": "page=1",
+                "headers": {"x-canary": "yes"}
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!("edge", resp["server"].as_str().unwrap());
+        assert_eq!("/v1/users", resp["normalized_path"].as_str().unwrap());
+        assert_eq!("api_canary", resp["matched"]["name"].as_str().unwrap());
+        // Matching uses the normalized path, while rewrite applies to the raw request URI.
+        assert_eq!(
+            "//users?page=1",
+            resp["matched"]["rewritten_uri"].as_str().unwrap()
+        );
+        assert_eq!(
+            "shadowed_by_higher_priority",
+            resp["candidates"][1]["reason"].as_str().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_debug_recent_events_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let (admin, _) = new_admin_on(dir.path(), "");
+        pingap_core::record_recent_event(pingap_core::RecentEvent {
+            kind: pingap_core::RecentEventKind::DryRun,
+            location: Some("loc_limit".to_string()),
+            category: Some("limit".to_string()),
+            message: "rate limit dry-run".to_string(),
+            ..Default::default()
+        });
+
+        let (code, body) = answer(
+            &admin,
+            "127.0.0.1:3018",
+            "GET /api/debug/events?kind=dry_run&limit=10 HTTP/1.1\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let events = resp["events"].as_array().unwrap();
+        assert_eq!(false, events.is_empty());
+        assert_eq!("dry_run", events[0]["kind"].as_str().unwrap());
+
+        let (bad_code, _) = answer(
+            &admin,
+            "127.0.0.1:3018",
+            "GET /api/debug/events?kind=unknown HTTP/1.1\r\n\r\n",
+        )
+        .await;
+        assert_eq!(400, bad_code);
+    }
+
+    #[tokio::test]
+    async fn test_convert_config_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let (admin, _) = new_admin_on(dir.path(), "");
+
+        let (code, body) = post(
+            &admin,
+            "/api/convert-config",
+            &serde_json::json!({
+                "format": "nginx",
+                "content": "server { listen 80; server_name app.local; location / { proxy_pass http://127.0.0.1:3000; } }"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            true,
+            resp["toml"].as_str().unwrap().contains("127.0.0.1:3000")
+        );
+
+        let (bad_code, _) = post(
+            &admin,
+            "/api/convert-config",
+            &serde_json::json!({
+                "format": "haproxy",
+                "content": "frontend http-in"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, bad_code);
     }
 }

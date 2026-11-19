@@ -140,7 +140,11 @@ static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
 #[command(author, version, about, long_version = LONG_VERSION.as_str(), long_about = None)]
 struct Args {
     /// The config file or directory path
-    #[arg(short, long, required_unless_present = "upstream")]
+    #[arg(
+        short,
+        long,
+        required_unless_present_any = ["upstream", "from_nginx", "from_caddy"]
+    )]
     conf: Option<String>,
     /// Upstream addresses ("host:port", comma separated). Starts a proxy
     /// straight from the command line, without a config file
@@ -212,6 +216,12 @@ struct Args {
     /// Convert configuration to KDL format and output
     #[arg(long)]
     to_kdl: bool,
+    /// Import an Nginx configuration file and output Pingap TOML
+    #[arg(long, value_name = "FILE", conflicts_with = "from_caddy")]
+    from_nginx: Option<String>,
+    /// Import a Caddyfile and output Pingap TOML
+    #[arg(long, value_name = "FILE", conflicts_with = "from_nginx")]
+    from_caddy: Option<String>,
     /// Print what would change if the configuration at this address
     /// replaced the one of --conf, and exit
     #[arg(long, conflicts_with = "upstream")]
@@ -842,7 +852,9 @@ fn parse_arguments() -> Args {
     for arg in std::env::args_os() {
         // `--upstream` builds the config from the command line, it conflicts
         // with `-c`, so the PINGAP_CONF fallback must not be applied either.
-        for item in ["-c", "--conf", "--upstream"] {
+        for item in
+            ["-c", "--conf", "--upstream", "--from-nginx", "--from-caddy"]
+        {
             if arg == item
                 || arg.to_string_lossy().starts_with(&format!("{item}="))
             {
@@ -915,12 +927,37 @@ fn parse_arguments() -> Args {
     args
 }
 
+fn handle_import_args(args: &Args) -> Result<bool, Box<dyn Error>> {
+    let (path, is_nginx) = if let Some(path) = args.from_nginx.as_deref() {
+        (path, true)
+    } else if let Some(path) = args.from_caddy.as_deref() {
+        (path, false)
+    } else {
+        return Ok(false);
+    };
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("read {path} failed: {e}"))?;
+    let converted = if is_nginx {
+        pingap_config::import::convert_nginx_to_toml(&content)
+    } else {
+        pingap_config::import::convert_caddy_to_toml(&content)
+    }?;
+    for warning in &converted.warnings {
+        eprintln!("warning: {warning}");
+    }
+    print!("{}", converted.toml);
+    Ok(true)
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
     // Handle template output request
     if args.template {
         println!("{TEMPLATE_CONFIG}");
+        return Ok(());
+    }
+    if handle_import_args(&args)? {
         return Ok(());
     }
 
@@ -1043,6 +1080,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
 
     config_manager.set_current_config(config.clone());
+    process::set_static_base_config(&config);
 
     // Convert config to HCL and output. As it is written: with the
     // includes replaced, the output kept the shared fragments and no entry
@@ -1594,6 +1632,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         "webhook_flush",
         webhook::WebhookFlushService,
     ));
+
+    if config.basic.docker_labels_enabled.unwrap_or_default() && !args.cp {
+        my_server.add_service(background_service(
+            "docker_labels",
+            process::new_docker_label_service(config_manager.clone()),
+        ));
+    }
 
     // What it does, which is not what it was asked for where no restart
     // can be made.

@@ -1,0 +1,29 @@
+# AI / LLM streaming gateway upstreams.
+#
+# In production, point `addrs` at your LLM endpoints (for example
+# `addrs = ["api.openai.com:443"]` with `sni = "api.openai.com"` and
+# `verify_cert = true`). Localhost addresses are used here so `--test` runs
+# offline without external DNS dependencies.
+
+[upstreams.openai_primary]
+addrs = ["127.0.0.1:8000"]
+# sni = "api.openai.com"
+# verify_cert = true
+connection_timeout = "5s"
+# Long read timeout accommodates extended SSE reasoning / generation streams.
+read_timeout = "5m"
+idle_timeout = "120s"
+# Count 429 and 5xx responses as failures to trip the circuit breaker quickly
+# so subsequent traffic fails over to `openai_fallback`.
+enable_backend_stats = true
+backend_failure_status_code = "429,500,502,503,504"
+circuit_break_max_consecutive_failures = 3
+circuit_break_open_duration = "30s"
+remark = "Primary LLM provider / vLLM cluster"
+
+[upstreams.openai_fallback]
+addrs = ["127.0.0.1:8001"]
+connection_timeout = "5s"
+read_timeout = "5m"
+idle_timeout = "120s"
+remark = "Secondary fallback model/provider upstream"

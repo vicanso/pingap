@@ -163,6 +163,31 @@ replaces the upstream. A daemon that cannot be reached is reported once, when
 it goes away or at the first attempt, and not on every attempt to reach it
 again.
 
+#### Container label auto-route discovery
+
+In addition to injecting backends into pre-declared upstreams (`discovery = "docker"`), Pingap can dynamically synthesize runtime `upstream`, `location`, optional ACME `certificate`, and server route bindings directly from running container labels without modifying static TOML files on disk:
+
+```toml
+[basic]
+docker_labels_enabled = true
+docker_labels_server = "http"      # default HTTP server for container routes
+docker_labels_tls_server = "https" # default HTTPS server when pingap.tls is set
+```
+
+Supported container labels:
+
+| Label | Example | Meaning |
+| --- | --- | --- |
+| `pingap.enable` | `true` / `1` | Opts the container into automatic route generation |
+| `pingap.name` | `api` | Shared service name; containers sharing it merge into one load-balanced upstream |
+| `pingap.host` | `api.example.com` | Comma-separated virtual hostnames |
+| `pingap.path` | `/v1` | Location path matcher (defaults to `/`) |
+| `pingap.port` | `8080` | Container port override when multiple ports exist |
+| `pingap.tls` | `acme` / `true` | Routes via `docker_labels_tls_server`; `acme` creates a runtime Let's Encrypt cert for `pingap.host` |
+| `pingap.plugins` | `gzip,rate_limit` | Comma-separated existing static plugin names |
+| `pingap.server` | `edge` | Target server override |
+| `pingap.weight` | `1024` | Location matching priority weight |
+
 ### Transparent
 
 ```toml

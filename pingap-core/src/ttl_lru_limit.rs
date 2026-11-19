@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use super::{LOG_TARGET, now_ms};
-use ahash::RandomState;
+use ahash::{AHashMap, RandomState};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -150,6 +150,234 @@ impl TtlLruLimit {
     }
 }
 
+#[derive(Debug, Default)]
+struct ExactRateWindow {
+    epoch: u64,
+    prev: u64,
+    curr: u64,
+}
+
+/// Sliding-window exact per-key rate tracker backed by a bounded `TinyUfo`
+/// cache, eliminating the hash collisions of fixed-size Count-Min Sketches
+/// on high-cardinality key sets while keeping memory strictly bounded.
+pub struct ExactRate {
+    interval_ms: u64,
+    interval: Duration,
+    ufo: TinyUfo<u64, Arc<std::sync::Mutex<ExactRateWindow>>>,
+    init_locks: [std::sync::Mutex<()>; 16],
+    hasher: RandomState,
+}
+
+impl std::fmt::Debug for ExactRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExactRate")
+            .field("interval_ms", &self.interval_ms)
+            .finish()
+    }
+}
+
+fn exact_seconds_to_reset(
+    interval: Duration,
+    prev_samples: u64,
+    curr_samples: u64,
+    fraction: f64,
+) -> u64 {
+    let left = 1.0 - fraction;
+    let windows = if curr_samples > 0 {
+        left + 1.0
+    } else if prev_samples > 0 {
+        left
+    } else {
+        return 0;
+    };
+    (interval.as_secs_f64() * windows).ceil().max(1.0) as u64
+}
+
+impl ExactRate {
+    /// Creates an exact sliding-window rate limiter holding up to `max_keys`
+    /// hashed key entries for intervals of `interval`.
+    pub fn new(max_keys: usize, interval: Duration) -> Self {
+        let cap = max_keys.max(1);
+        let interval_ms = u64::try_from(interval.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        Self {
+            interval_ms,
+            interval,
+            ufo: TinyUfo::new(cap, cap),
+            init_locks: std::array::from_fn(|_| std::sync::Mutex::new(())),
+            hasher: RandomState::new(),
+        }
+    }
+
+    fn get_or_insert(
+        &self,
+        key_hash: u64,
+        epoch: u64,
+    ) -> Arc<std::sync::Mutex<ExactRateWindow>> {
+        if let Some(window) = self.ufo.get(&key_hash) {
+            return window;
+        }
+        let shard = (key_hash as usize) & (self.init_locks.len() - 1);
+        let _guard = self.init_locks[shard]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(window) = self.ufo.get(&key_hash) {
+            return window;
+        }
+        let entry = Arc::new(std::sync::Mutex::new(ExactRateWindow {
+            epoch,
+            prev: 0,
+            curr: 0,
+        }));
+        self.ufo.put(key_hash, Arc::clone(&entry), 1);
+        entry
+    }
+
+    /// Evaluates the current sliding-window request rate for `key` against
+    /// `max`, increments the current bucket only when within `max`, and
+    /// returns `(estimated_count, reset_seconds)`.
+    pub fn observe_and_check(&self, key: &str, max: f64) -> (f64, u64) {
+        let now = now_ms();
+        let epoch = now / self.interval_ms;
+        let fraction =
+            (now % self.interval_ms) as f64 / self.interval_ms as f64;
+        let key_hash = self.hasher.hash_one(key);
+        let window = self.get_or_insert(key_hash, epoch);
+
+        let mut guard = window.lock().unwrap_or_else(|e| e.into_inner());
+        if epoch > guard.epoch {
+            if epoch == guard.epoch + 1 {
+                guard.prev = guard.curr;
+            } else {
+                guard.prev = 0;
+            }
+            guard.curr = 0;
+            guard.epoch = epoch;
+        }
+        let candidate =
+            (guard.prev as f64) * (1.0 - fraction) + (guard.curr as f64) + 1.0;
+        if candidate <= max {
+            guard.curr += 1;
+        }
+        let reset = exact_seconds_to_reset(
+            self.interval,
+            guard.prev,
+            guard.curr,
+            fraction,
+        );
+        (candidate, reset)
+    }
+}
+
+const EXACT_INFLIGHT_SHARDS: usize = 16;
+
+#[derive(Debug)]
+struct ExactInflightState {
+    shards: [std::sync::Mutex<AHashMap<u64, Arc<AtomicIsize>>>;
+        EXACT_INFLIGHT_SHARDS],
+    max_keys: usize,
+    active_keys: AtomicUsize,
+}
+
+/// Exact sharded concurrent-request tracker with an upper bound `max_keys` on
+/// tracked distinct keys.
+#[derive(Debug)]
+pub struct ExactInflight {
+    state: Arc<ExactInflightState>,
+    hasher: RandomState,
+}
+
+/// RAII guard decrementing an [`ExactInflight`] key counter when dropped.
+#[derive(Debug)]
+pub struct ExactInflightGuard {
+    state: Arc<ExactInflightState>,
+    key_hash: u64,
+    counter: Option<Arc<AtomicIsize>>,
+}
+
+impl ExactInflight {
+    /// Creates an exact inflight counter bounded to `max_keys` active keys.
+    pub fn new(max_keys: usize) -> Self {
+        Self {
+            state: Arc::new(ExactInflightState {
+                shards: std::array::from_fn(|_| {
+                    std::sync::Mutex::new(AHashMap::new())
+                }),
+                max_keys: max_keys.max(1),
+                active_keys: AtomicUsize::new(0),
+            }),
+            hasher: RandomState::new(),
+        }
+    }
+
+    /// Increments the active count for `key` and returns its RAII guard plus
+    /// the updated concurrency value.
+    pub fn incr(&self, key: &str) -> (ExactInflightGuard, isize) {
+        let key_hash = self.hasher.hash_one(key);
+        let shard_idx = (key_hash as usize) & (EXACT_INFLIGHT_SHARDS - 1);
+        let counter = {
+            let mut map = self.state.shards[shard_idx]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(existing) = map.get(&key_hash) {
+                Some(Arc::clone(existing))
+            } else if self.state.active_keys.load(Ordering::Relaxed)
+                >= self.state.max_keys
+            {
+                None
+            } else {
+                let entry = Arc::new(AtomicIsize::new(0));
+                map.insert(key_hash, Arc::clone(&entry));
+                self.state.active_keys.fetch_add(1, Ordering::Relaxed);
+                Some(entry)
+            }
+        };
+        let Some(counter) = counter else {
+            return (
+                ExactInflightGuard {
+                    state: Arc::clone(&self.state),
+                    key_hash,
+                    counter: None,
+                },
+                1,
+            );
+        };
+        let value = counter.fetch_add(1, Ordering::Relaxed) + 1;
+        (
+            ExactInflightGuard {
+                state: Arc::clone(&self.state),
+                key_hash,
+                counter: Some(counter),
+            },
+            value,
+        )
+    }
+}
+
+impl Drop for ExactInflightGuard {
+    fn drop(&mut self) {
+        let Some(counter) = self.counter.take() else {
+            return;
+        };
+        let remaining = counter.fetch_sub(1, Ordering::Relaxed) - 1;
+        if remaining > 0 {
+            return;
+        }
+        let shard_idx = (self.key_hash as usize) & (EXACT_INFLIGHT_SHARDS - 1);
+        let mut map = self.state.shards[shard_idx]
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(stored) = map.get(&self.key_hash)
+            && Arc::ptr_eq(stored, &counter)
+            && stored.load(Ordering::Relaxed) <= 0
+        {
+            map.remove(&self.key_hash);
+            self.state.active_keys.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::TtlLruLimit;
@@ -170,7 +398,10 @@ mod test {
             assert_eq!(true, limit.validate(key));
             limit.inc(key);
             assert_eq!(false, limit.validate(key));
-            std::thread::sleep(Duration::from_millis(600));
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !limit.validate(key) && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
             assert_eq!(true, limit.validate(key));
             // The expired window was reset; the next increments open a new
             // one that fills up again.
@@ -204,5 +435,47 @@ mod test {
         }
         // 801 >= 800: over the limit, which a lost increment would hide.
         assert_eq!(false, limit.validate("abc"));
+    }
+
+    #[test]
+    fn test_exact_rate_high_cardinality_no_false_positive() {
+        let rate = super::ExactRate::new(10_000, Duration::from_secs(60));
+        for i in 0..3_000 {
+            let key = format!("10.1.{}.{}", i / 256, i % 256);
+            let (v1, reset1) = rate.observe_and_check(&key, 2.0);
+            assert_eq!(1.0, v1, "{key}");
+            assert_eq!(true, reset1 > 0);
+            let (v2, _) = rate.observe_and_check(&key, 2.0);
+            assert_eq!(2.0, v2, "{key}");
+            let (v3, _) = rate.observe_and_check(&key, 2.0);
+            assert_eq!(true, v3 > 2.0, "{key}");
+        }
+        // A key whose 3rd request was refused must still not pass on a 4th,
+        // nor get over-counted indefinitely.
+        let (v4, _) = rate.observe_and_check("10.1.0.1", 2.0);
+        assert_eq!(true, v4 > 2.0 && v4 < 4.0);
+    }
+
+    #[test]
+    fn test_exact_inflight_guard_drop() {
+        let inflight = super::ExactInflight::new(100);
+        let (g1, v1) = inflight.incr("192.0.2.1");
+        let (g2, v2) = inflight.incr("192.0.2.1");
+        assert_eq!(1, v1);
+        assert_eq!(2, v2);
+        drop(g1);
+        let (g3, v3) = inflight.incr("192.0.2.1");
+        assert_eq!(2, v3);
+        drop(g2);
+        drop(g3);
+        assert_eq!(
+            0,
+            inflight
+                .state
+                .active_keys
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        let (_g4, v4) = inflight.incr("192.0.2.1");
+        assert_eq!(1, v4);
     }
 }

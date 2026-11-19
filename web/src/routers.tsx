@@ -18,6 +18,7 @@ const Upstreams = lazy(() => import("@/pages/Upstreams"));
 const Plugins = lazy(() => import("@/pages/Plugins"));
 const Certificates = lazy(() => import("@/pages/Certificates"));
 const Config = lazy(() => import("@/pages/Config"));
+const Diagnostics = lazy(() => import("@/pages/Diagnostics"));
 const Storages = lazy(() => import("@/pages/Storages"));
 const Login = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
@@ -31,6 +32,7 @@ export const PLUGINS = "/plugins";
 export const CERTIFICATES = "/certificates";
 export const STORAGES = "/storages";
 export const CONFIG = "/config";
+export const DIAGNOSTICS = "/diagnostics";
 export const LOGIN = "/login";
 
 function suspense(element: ReactNode) {
@@ -68,6 +70,7 @@ const pages = [
   { path: PLUGINS, element: suspense(<Plugins />) },
   { path: CERTIFICATES, element: suspense(<Certificates />) },
   { path: CONFIG, element: suspense(<Config />) },
+  { path: DIAGNOSTICS, element: suspense(<Diagnostics />) },
   { path: STORAGES, element: suspense(<Storages />) },
   // Path-style aliases so pasted `/locations/foo` links still open the form.
   ...entityBases.map((base) => ({

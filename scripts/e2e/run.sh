@@ -457,11 +457,10 @@ case_reload() {
   expect "and the wait for a restart is said once" 1 \
     "$(plain <"$DIR/pingap.log" | grep -c 'takes a restart to apply')"
   put servers.toml '[servers.main]\naddr = "127.0.0.1:%s"\nlocations = ["one", "two", "four"]\n' $proxy
-  sleep 2
 
   # A change that is no configuration: what runs stays as it is.
   printf '\n[locations.three]\nupstream = "nowhere"\nhost = "three.test"\npath = "/"\n' >>"$DIR/c/locations.toml"
-  sleep 4
+  wait_for 15 grep -q 'nowhere' "$DIR/pingap.log"
   expect "a location of an upstream there is none of: one.test is still served" 200 \
     "$(status -H 'Host: one.test' "http://127.0.0.1:$proxy/")"
   expect "and the process is still there" yes "$(alive "$pid" && echo yes || echo no)"
@@ -996,9 +995,9 @@ case_daemon() {
   # (the backend takes two seconds for /slow), then the process is gone.
   status "http://127.0.0.1:$proxy/slow" >"$DIR/slow.status" &
   local slow=$!
-  sleep 0.5
+  wait_for 5 grep -q 'start path=/slow' "$DIR/up.log"
   kill -TERM "$pid"
-  sleep 1
+  wait_for 10 status_is 000 "http://127.0.0.1:$proxy/"
   expect "after SIGTERM no new connection is taken" 000 "$(status "http://127.0.0.1:$proxy/")"
   wait "$slow"
   expect "the request that was under way is answered" 200 "$(cat "$DIR/slow.status")"
@@ -1276,8 +1275,8 @@ case_upgrade() {
   hammer "http://127.0.0.1:$proxy/"
   daemon_start $admin -u
   expect "what starts the second process exits with 0" 0 $?
-  # It waits for the sockets for a few seconds: the first is told now.
-  sleep 1
+  # Wait until the replacement has written its pid before signalling the old one.
+  wait_for 15 daemon_pid_is_not "$first"
   new=$(daemon_pid)
   expect "the pid file names the second process" yes \
     "$([ -n "$new" ] && [ "$new" != "$first" ] && alive "$new" && echo yes || echo no)"

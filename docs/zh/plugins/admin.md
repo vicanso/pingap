@@ -147,6 +147,9 @@ readonly_tokens = ["monitor:9c2b...7d"]
 | `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康，以及 `restart_unsupported`：这个进程为什么不能从这里重启（`container`、`foreground`、`platform`），能重启时为空 |
 | `GET` | `/certificates` | 已加载证书的域名、颁发者、有效期和 ACME 来源。不包含证书本身和私钥：以前这两项都在响应里，配置里只写了文件路径的私钥也会从文件里读出来返回。 |
 | `POST` | `/aes` | UI 用于密钥的 AES 加解密辅助 |
+| `POST` | `/convert-config` | 将 Nginx 配置或 Caddyfile（`{ format, content }`）转换为 Pingap TOML 与转换告警（`{ toml, warnings }`），供导入前预览 |
+| `POST` | `/debug/route-match` | 无副作用仿真请求路由匹配（复用真实 `normalize_path`、`HostIndex`、条件匹配与 `rewrite`），返回命中路由、插件链与各候选规则判定原因 |
+| `GET` | `/debug/events` | 读取内存中最近 200 条诊断事件（支持 `kind=5xx` / `dry_run` / `reload_fail`、`limit=1..200`） |
 | `POST` | `/restart` | 触发优雅重启。做不了重启时返回 `400` 并说明原因：pingap 在前台运行或是容器的第一个进程、不是 Linux、新增的监听地址绑不上、接替的进程起不来 |
 
 `/basic` 描述的是进程本身：其中的 `user`、`group`、`config_hash` 取自运行中的配置，而不是存储里的；UI 每隔几秒请求一次，所以它不读存储。控制面板节点不运行配置：那里的 `user`、`group` 每次请求时从存储读取，`config_hash` 是空配置的哈希。

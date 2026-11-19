@@ -327,13 +327,14 @@ mod tests {
         }
 
         // Delayed, and then on to the upstream.
+        tokio::time::pause();
         let slow = new("delay = \"30ms\"\ndelay_only = true").unwrap();
         let mock_io = Builder::new()
             .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
             .build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let result = slow
             .handle_request(
                 PluginStep::Request,

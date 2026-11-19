@@ -1,0 +1,7 @@
+[servers.ai_gateway]
+addr = "127.0.0.1:6188"
+locations = ["ai_chat"]
+# Capture time-to-first-body-byte (`{:upstream_first_body_time}`, i.e. TTFT for
+# SSE streams) alongside total upstream response time and chosen upstream.
+access_log = "{when} {method} {uri} {status} ttft={:upstream_first_body_time} upstream_time={:upstream_response_time} upstream={:upstream_name} addr={:upstream_addr}"
+remark = "AI / LLM SSE streaming gateway"

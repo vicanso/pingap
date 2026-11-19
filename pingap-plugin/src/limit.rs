@@ -22,8 +22,9 @@ use http::header::RETRY_AFTER;
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpHeader, HttpResponse, Inflight, Plugin, PluginStep, Rate,
-    RateLimitQuota, RequestPluginResult, ResponsePluginResult,
+    Ctx, ExactInflight, ExactRate, HttpHeader, HttpResponse, Inflight, Plugin,
+    PluginStep, Rate, RateLimitQuota, RequestPluginResult,
+    ResponsePluginResult,
 };
 use pingap_core::{
     ensure_verified_client_ip, get_cookie_value, get_query_value,
@@ -63,6 +64,16 @@ pub enum LimitTag {
 // max = 100             # maximum requests allowed
 // interval = "60s"      # time window for rate limiting
 // ```
+enum RateBackend {
+    Sketch(Rate),
+    Exact(Box<ExactRate>),
+}
+
+enum InflightBackend {
+    Sketch(Inflight),
+    Exact(ExactInflight),
+}
+
 /// A rate limiter or concurrent request limiter that can be configured to limit based on
 /// different request attributes (IP, headers, cookies, query params)
 pub struct Limiter {
@@ -80,12 +91,12 @@ pub struct Limiter {
     /// Tracks concurrent requests using atomic counters.
     /// When a request completes, the counter automatically decrements via RAII guard.
     /// Only used when configured as an inflight limiter (type = "inflight")
-    inflight: Option<Inflight>,
+    inflight: Option<InflightBackend>,
 
     /// Tracks request counts over a sliding time window.
     /// Automatically expires old requests based on configured interval.
     /// Only used when configured as a rate limiter (type = "rate")
-    rate: Option<Rate>,
+    rate: Option<RateBackend>,
 
     /// When to apply the limiting logic:
     /// - PluginStep::Request: During initial request processing
@@ -175,20 +186,92 @@ fn seconds_to_reset(
     (interval.as_secs_f64() * windows).ceil().max(1.0) as u64
 }
 
+const DEFAULT_EXACT_MAX_KEYS: usize = 100_000;
+
+fn parse_limit_tag(
+    value: &PluginConf,
+    category: &str,
+) -> Result<(LimitTag, String)> {
+    let tag = match get_str_conf(value, "tag").as_str() {
+        "" | "ip" => LimitTag::Ip,
+        "cookie" => LimitTag::Cookie,
+        "header" => LimitTag::RequestHeader,
+        "query" => LimitTag::Query,
+        "ja4" => LimitTag::Ja4,
+        "ip_ja4" => LimitTag::IpJa4,
+        other => {
+            return Err(Error::Invalid {
+                category: category.to_string(),
+                message: format!(
+                    "Invalid tag({other}), expect ip, header, cookie, query, ja4 or ip_ja4"
+                ),
+            });
+        },
+    };
+    let key = get_str_conf(value, "key");
+    let named = matches!(
+        tag,
+        LimitTag::RequestHeader | LimitTag::Cookie | LimitTag::Query
+    );
+    if named && key.is_empty() {
+        return Err(Error::Invalid {
+            category: category.to_string(),
+            message: "key is required for a header, cookie or query tag"
+                .to_string(),
+        });
+    }
+    Ok((tag, key))
+}
+
+fn parse_exact_mode(
+    value: &PluginConf,
+    category: &str,
+) -> Result<(bool, usize)> {
+    let exact = match get_str_conf(value, "mode").as_str() {
+        "" | "sketch" => false,
+        "exact" => true,
+        other => {
+            return Err(Error::Invalid {
+                category: category.to_string(),
+                message: format!(
+                    "Invalid mode({other}), expect sketch or exact"
+                ),
+            });
+        },
+    };
+    let max_keys = if value.contains_key("max_keys") {
+        let configured = get_int_conf(value, "max_keys");
+        if configured < 1 {
+            return Err(Error::Invalid {
+                category: category.to_string(),
+                message: "max_keys must be at least 1".to_string(),
+            });
+        }
+        configured as usize
+    } else {
+        DEFAULT_EXACT_MAX_KEYS
+    };
+    Ok((exact, max_keys))
+}
+
+fn parse_limit_status(
+    value: &PluginConf,
+    category: &str,
+) -> Result<StatusCode> {
+    if !value.contains_key("status") {
+        return Ok(StatusCode::TOO_MANY_REQUESTS);
+    }
+    u16::try_from(get_int_conf(value, "status"))
+        .ok()
+        .filter(|status| (400..600).contains(status))
+        .and_then(|status| StatusCode::from_u16(status).ok())
+        .ok_or_else(|| Error::Invalid {
+            category: category.to_string(),
+            message: "status must be between 400 and 599".to_string(),
+        })
+}
+
 /// Converts a plugin configuration into a Limiter instance
-///
-/// # Arguments
-/// * `value` - Plugin configuration containing limiter settings
-///
-/// # Returns
-/// * `Result<Self>` - New Limiter instance or error if configuration is invalid
-///
-/// # Configuration Options
-/// * `type` - "rate" or "inflight"
-/// * `tag` - "ip", "cookie", "header", or "query"
-/// * `key` - Name of header/cookie/query parameter to use
-/// * `max` - Maximum allowed requests/connections
-/// * `interval` - Time window for rate limiting (e.g. "60s")
 impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
@@ -198,7 +281,6 @@ impl TryFrom<&PluginConf> for Limiter {
             category: category.clone(),
             message,
         };
-        // Limiting only makes sense before the upstream is involved.
         let step = get_step_conf_in(
             value,
             &category,
@@ -206,33 +288,8 @@ impl TryFrom<&PluginConf> for Limiter {
             &[PluginStep::Request, PluginStep::ProxyUpstream],
         )?;
 
-        // Every setting here decides who gets limited, so a value that is
-        // not one of the documented ones is an error rather than a silent
-        // fallback: a misspelt `tag` used to limit by ip, a misspelt `type`
-        // rate-limited, and a forgotten `max` rejected almost everything.
-        let tag = match get_str_conf(value, "tag").as_str() {
-            "" | "ip" => LimitTag::Ip,
-            "cookie" => LimitTag::Cookie,
-            "header" => LimitTag::RequestHeader,
-            "query" => LimitTag::Query,
-            "ja4" => LimitTag::Ja4,
-            "ip_ja4" => LimitTag::IpJa4,
-            other => {
-                return Err(invalid(format!(
-                    "Invalid tag({other}), expect ip, header, cookie, query, ja4 or ip_ja4"
-                )));
-            },
-        };
-        let key = get_str_conf(value, "key");
-        let named = matches!(
-            tag,
-            LimitTag::RequestHeader | LimitTag::Cookie | LimitTag::Query
-        );
-        if named && key.is_empty() {
-            return Err(invalid(
-                "key is required for a header, cookie or query tag".to_string(),
-            ));
-        }
+        let (tag, key) = parse_limit_tag(value, &category)?;
+        let (exact_mode, max_keys) = parse_exact_mode(value, &category)?;
         let is_inflight = match get_str_conf(value, "type").as_str() {
             "" | "rate" => false,
             "inflight" => true,
@@ -250,52 +307,39 @@ impl TryFrom<&PluginConf> for Limiter {
             return Err(invalid("max must not be negative".to_string()));
         }
 
-        // Parse time interval for rate limiting
-        // Format examples: "10s", "1m", "2h"
-        // Default: 10 seconds if not specified
         let interval = get_str_conf(value, "interval");
         let interval = if !interval.is_empty() {
             parse_duration(&interval).map_err(|e| invalid(e.to_string()))?
         } else {
             Duration::from_secs(10)
         };
-        // The counter keeps its windows in milliseconds, and divides by
-        // their length: one shorter than that is a division by zero on
-        // the first request.
         if interval < Duration::from_millis(1) {
             return Err(invalid("interval must be at least 1ms".to_string()));
         }
 
-        // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
         let mut retry_after = None;
         let max = max as f64;
         if is_inflight {
-            // Inflight limiter uses atomic counters to track concurrent requests
-            inflight = Some(Inflight::new());
+            inflight = Some(if exact_mode {
+                InflightBackend::Exact(ExactInflight::new(max_keys))
+            } else {
+                InflightBackend::Sketch(Inflight::new())
+            });
         } else {
-            // Rate limiter uses time-bucketed counters
-            rate = Some(Rate::new(interval));
+            rate = Some(if exact_mode {
+                RateBackend::Exact(Box::new(ExactRate::new(max_keys, interval)))
+            } else {
+                RateBackend::Sketch(Rate::new(interval))
+            });
             retry_after = Some((
                 RETRY_AFTER,
                 HeaderValue::from(interval.as_secs().max(1)),
             ));
         }
 
-        // What a refused client is answered with. A status that is not an
-        // error would tell it the request went through.
-        let status = if value.contains_key("status") {
-            u16::try_from(get_int_conf(value, "status"))
-                .ok()
-                .filter(|status| (400..600).contains(status))
-                .and_then(|status| StatusCode::from_u16(status).ok())
-                .ok_or_else(|| {
-                    invalid("status must be between 400 and 599".to_string())
-                })?
-        } else {
-            StatusCode::TOO_MANY_REQUESTS
-        };
+        let status = parse_limit_status(value, &category)?;
         let message = get_str_conf(value, "message");
         let message = (!message.is_empty()).then(|| Bytes::from(message));
         let reject_missing_key =
@@ -332,9 +376,6 @@ impl TryFrom<&PluginConf> for Limiter {
 /// said it at every reload and every save of the admin.
 pub(crate) fn unread_keys(value: &PluginConf) -> Vec<String> {
     let mut found = vec![];
-    // Left over from a header tag, say, in a form that keeps what it was
-    // given: the limit goes by the tag. A tag that is none of them is an
-    // error of its own, said when the plugin is built.
     let tag = get_str_conf(value, "tag");
     if matches!(tag.as_str(), "" | "ip" | "ja4" | "ip_ja4")
         && !get_str_conf(value, "key").is_empty()
@@ -344,9 +385,10 @@ pub(crate) fn unread_keys(value: &PluginConf) -> Vec<String> {
             "key is only read with a header, cookie or query tag, not with tag {tag}"
         ));
     }
-    // `weight` blended the previous window into the estimate by a fixed
-    // share. It has no part in the sliding window that replaced that, and
-    // a config that still has it is told so instead of refused.
+    if value.contains_key("max_keys") && get_str_conf(value, "mode") != "exact"
+    {
+        found.push("max_keys is only read when mode = \"exact\"".to_string());
+    }
     if value.contains_key("weight") {
         found.push(
             "weight is no longer used: max is the number of requests in any one interval"
@@ -491,76 +533,85 @@ impl Limiter {
         }
     }
 
+    fn check_rate(&self, backend: &RateBackend, key: &str) -> (f64, u64) {
+        match backend {
+            RateBackend::Sketch(rate) => {
+                rate.observe(&key, 1);
+                let max = self.max;
+                let (value, seconds) = rate.rate_with(&key, |info| {
+                    let value = info.prev_samples.max(0) as f64
+                        * (1.0 - info.current_interval_fraction)
+                        + info.curr_samples.max(0) as f64;
+                    let counted = if value > max {
+                        info.curr_samples - 1
+                    } else {
+                        info.curr_samples
+                    };
+                    let seconds = seconds_to_reset(
+                        info.interval,
+                        info.prev_samples,
+                        counted,
+                        info.current_interval_fraction,
+                    );
+                    (value, seconds)
+                });
+                if value > self.max {
+                    rate.observe(&key, -1);
+                }
+                (value, seconds)
+            },
+            RateBackend::Exact(rate) => rate.observe_and_check(key, self.max),
+        }
+    }
+
+    fn check_inflight(
+        backend: &InflightBackend,
+        key: &str,
+    ) -> (
+        f64,
+        Option<pingap_core::Guard>,
+        Option<pingap_core::ExactInflightGuard>,
+    ) {
+        match backend {
+            InflightBackend::Sketch(inflight) => {
+                let (guard, value) = inflight.incr(key, 1);
+                (value as f64, Some(guard), None)
+            },
+            InflightBackend::Exact(inflight) => {
+                let (guard, value) = inflight.incr(key);
+                (value as f64, None, Some(guard))
+            },
+        }
+    }
+
     /// Counts the request against its key and says what became of it.
     fn check(&self, session: &Session, ctx: &mut Ctx) -> Verdict {
-        let key = self.key_of(session, ctx);
-
-        // No value for the key (a missing header or cookie): unlimited,
-        // unless told to refuse it.
-        if key.is_empty() {
-            return if self.reject_missing_key {
-                Verdict::MissingKey
-            } else {
-                Verdict::Pass
-            };
-        }
-
-        // Track request based on limiter type.
-        // Pass `&Cow` (Sized) rather than `&str` — pingora-limits requires `T: Hash + Sized`.
         let mut reset = None;
-        let value = if let Some(rate) = &self.rate {
-            // For rate limiting:
-            rate.observe(&key, 1); // Record this request
-            // The requests of the last `interval`, this one included: all
-            // of the current window, and of the previous one the share
-            // that still lies within an interval from now. It used to be
-            // half of each, as a rate per second, so a client new to the
-            // limiter - nothing in its previous window - got twice `max`
-            // before it was stopped.
-            let max = self.max;
-            let (value, seconds) = rate.rate_with(&key, |info| {
-                let value = info.prev_samples.max(0) as f64
-                    * (1.0 - info.current_interval_fraction)
-                    + info.curr_samples.max(0) as f64;
-                // By what stays counted: a request that is refused is
-                // taken off again below.
-                let counted = if value > max {
-                    info.curr_samples - 1
+        let (value, sketch_guard, exact_guard) = {
+            let key = self.key_of(session, ctx);
+            if key.is_empty() {
+                return if self.reject_missing_key {
+                    Verdict::MissingKey
                 } else {
-                    info.curr_samples
+                    Verdict::Pass
                 };
-                let seconds = seconds_to_reset(
-                    info.interval,
-                    info.prev_samples,
-                    counted,
-                    info.current_interval_fraction,
-                );
-                (value, seconds)
-            });
-            reset = Some(seconds);
-            // A request that is turned away is taken off again, so what is
-            // counted is what was let through: a client over its limit
-            // goes on getting `max` per interval and not, for as long as
-            // it keeps asking, nothing at all. It is counted first and
-            // checked after so that requests arriving together see each
-            // other.
-            if value > self.max {
-                rate.observe(&key, -1);
             }
-            value
-        } else if let Some(inflight) = &self.inflight {
-            // For inflight limiting:
-            // Increment counter
-            // Store guard in context - when guard is dropped, counter auto-decrements
-            // Added to the others, never in place of one: a second inflight
-            // limit on the location used to drop the guard of the first,
-            // which released its count at once and so never limited.
-            let (guard, value) = inflight.incr(&key, 1);
-            ctx.state.guards.push(guard);
-            value as f64
-        } else {
-            0.0
+            if let Some(rate) = &self.rate {
+                let (value, seconds) = self.check_rate(rate, key.as_ref());
+                reset = Some(seconds);
+                (value, None, None)
+            } else if let Some(inflight) = &self.inflight {
+                Self::check_inflight(inflight, key.as_ref())
+            } else {
+                (0.0, None, None)
+            }
         };
+        if let Some(guard) = sketch_guard {
+            ctx.state.guards.push(guard);
+        }
+        if let Some(guard) = exact_guard {
+            ctx.state.exact_guards.push(guard);
+        }
 
         self.note_quota(ctx, value, reset);
         if value > self.max {
@@ -613,11 +664,16 @@ impl Plugin for Limiter {
         // In a dry run the request goes on, and holding its place among
         // those in flight would count it where a refused one is gone:
         // what is logged would no longer be what would be refused.
-        if self.dry_run.is_on()
-            && self.inflight.is_some()
-            && matches!(verdict, Verdict::Exceeded(_))
-        {
-            ctx.state.guards.pop();
+        if self.dry_run.is_on() && matches!(verdict, Verdict::Exceeded(_)) {
+            match &self.inflight {
+                Some(InflightBackend::Sketch(_)) => {
+                    let _ = ctx.state.guards.pop();
+                },
+                Some(InflightBackend::Exact(_)) => {
+                    let _ = ctx.state.exact_guards.pop();
+                },
+                None => {},
+            }
         }
         let response = match verdict {
             Verdict::Pass => return Ok(RequestPluginResult::Continue),
@@ -1051,17 +1107,6 @@ interval = "1s"
 
         assert_eq!(true, result == RequestPluginResult::Continue);
 
-        let _ = limiter
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut from_peer("1.1.1.1"),
-            )
-            .await
-            .unwrap();
-
-        // wait for the next loop
-        tokio::time::sleep(Duration::from_secs(1)).await;
         let result = limiter
             .handle_request(
                 PluginStep::Request,
@@ -1082,17 +1127,26 @@ interval = "1s"
                 .and_then(|(_, value)| value.to_str().ok())
         );
 
-        // wait for rate limiter to reset
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let result = limiter
-            .handle_request(
-                PluginStep::Request,
-                &mut session,
-                &mut from_peer("1.1.1.1"),
-            )
-            .await
-            .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
+        // Wait until the sliding window fades past the limit and resets.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let result = limiter
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut from_peer("1.1.1.1"),
+                )
+                .await
+                .unwrap();
+            if result == RequestPluginResult::Continue {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "rate limiter did not reset within 5s"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// How many of `total` requests in a row a limiter lets through.
@@ -1148,13 +1202,12 @@ interval = "1s"
         assert_eq!(5, admitted(&limiter, 30, "1.1.1.2", no_headers).await);
         // What was turned away is not counted: the first client is at its
         // limit, not beyond it.
-        let count = limiter
-            .rate
-            .as_ref()
-            .unwrap()
-            .rate_with(&Cow::Borrowed("1.1.1.1"), |info| {
-                info.curr_samples + info.prev_samples
-            });
+        let RateBackend::Sketch(rate) = limiter.rate.as_ref().unwrap() else {
+            panic!("expected sketch rate backend");
+        };
+        let count = rate.rate_with(&Cow::Borrowed("1.1.1.1"), |info| {
+            info.curr_samples + info.prev_samples
+        });
         assert_eq!(5, count);
 
         // `weight` is accepted and changes nothing.
@@ -1652,5 +1705,120 @@ interval = "1s"
             matches!(reporting.check(&session, &mut ctx), Verdict::Exceeded(_))
         );
         assert_eq!(noted, ctx.state.rate_limit);
+    }
+
+    #[tokio::test]
+    async fn test_limit_exact_mode_high_cardinality() {
+        let limiter = new_rate_limiter(
+            "mode = \"exact\"\nmax_keys = 10000\nmax = 2\ninterval = \"1m\"\nheaders = true",
+        );
+        let session = new_session().await;
+        for i in 0..3_000 {
+            let ip = format!("10.2.{}.{}", i / 256, i % 256);
+            assert_eq!(
+                true,
+                limiter.incr(&session, &mut from_peer(&ip)).is_ok()
+            );
+            assert_eq!(
+                true,
+                limiter.incr(&session, &mut from_peer(&ip)).is_ok()
+            );
+            assert_eq!(
+                true,
+                limiter.incr(&session, &mut from_peer(&ip)).is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_limit_exact_mode_inflight() {
+        let limiter = Limiter::new(
+            &toml::from_str::<PluginConf>(
+                "type = \"inflight\"\nmode = \"exact\"\nmax_keys = 100\nmax = 1",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = new_session().await;
+        let mut first = from_peer("198.51.100.1");
+        let res = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut first)
+            .await
+            .unwrap();
+        assert_eq!(RequestPluginResult::Continue, res);
+        assert_eq!(1, first.state.exact_guards.len());
+
+        let mut second = from_peer("198.51.100.1");
+        let res = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut second)
+            .await
+            .unwrap();
+        assert_eq!(true, matches!(res, RequestPluginResult::Respond(_)));
+        drop(second);
+        drop(first);
+
+        let mut third = from_peer("198.51.100.1");
+        let res = limiter
+            .handle_request(PluginStep::Request, &mut session, &mut third)
+            .await
+            .unwrap();
+        assert_eq!(RequestPluginResult::Continue, res);
+        drop(third);
+
+        // In dry-run mode an over-limit inflight request must not occupy a slot.
+        let dry = Limiter::new(
+            &toml::from_str::<PluginConf>(
+                "type = \"inflight\"\nmode = \"exact\"\nmax_keys = 100\nmax = 1\ndry_run = true",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut active = from_peer("198.51.100.2");
+        assert_eq!(
+            RequestPluginResult::Continue,
+            dry.handle_request(PluginStep::Request, &mut session, &mut active)
+                .await
+                .unwrap()
+        );
+        assert_eq!(1, active.state.exact_guards.len());
+        let mut over = from_peer("198.51.100.2");
+        assert_eq!(
+            RequestPluginResult::Continue,
+            dry.handle_request(PluginStep::Request, &mut session, &mut over)
+                .await
+                .unwrap()
+        );
+        assert_eq!(0, over.state.exact_guards.len());
+    }
+
+    #[test]
+    fn test_limit_exact_mode_invalid_params_and_unread() {
+        assert_eq!(
+            true,
+            Limiter::new(
+                &toml::from_str::<PluginConf>("mode = \"bad\"\nmax = 10")
+                    .unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(
+            true,
+            Limiter::new(
+                &toml::from_str::<PluginConf>(
+                    "mode = \"exact\"\nmax_keys = 0\nmax = 10"
+                )
+                .unwrap()
+            )
+            .is_err()
+        );
+        let conf = toml::from_str::<PluginConf>(
+            "mode = \"sketch\"\nmax_keys = 100\nmax = 10",
+        )
+        .unwrap();
+        let unread = super::unread_keys(&conf);
+        assert_eq!(
+            vec!["max_keys is only read when mode = \"exact\"".to_string()],
+            unread
+        );
     }
 }

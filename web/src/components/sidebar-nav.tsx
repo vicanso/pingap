@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
+  Activity,
   AppWindow,
   Server,
   Webhook,
@@ -21,6 +22,7 @@ import {
   UPSTREAMS,
   PLUGINS,
   CERTIFICATES,
+  DIAGNOSTICS,
   STORAGES,
 } from "@/routers.tsx";
 import useConfigState from "@/states/config";
@@ -534,6 +536,13 @@ export function MainSidebar({
       path: STORAGES,
       group: "system",
       children: generateChildren(STORAGES, storages),
+    },
+    {
+      title: navI18n("diagnostics"),
+      icon: Activity,
+      variant: getVariant(DIAGNOSTICS),
+      path: DIAGNOSTICS,
+      group: "system",
     },
   ];
 

@@ -1938,6 +1938,12 @@ pub struct BasicConf {
     pub log_compress_days_ago: Option<u16>,
     /// Log compress time point hour
     pub log_compress_time_point_hour: Option<u8>,
+    /// Enable automatic runtime route discovery from Docker container labels (`pingap.*`)
+    pub docker_labels_enabled: Option<bool>,
+    /// Target HTTP server name for Docker-label discovered routes (defaults to first server)
+    pub docker_labels_server: Option<String>,
+    /// Target HTTPS server name for Docker-label routes with `pingap.tls=acme`
+    pub docker_labels_tls_server: Option<String>,
 }
 
 impl Validate for BasicConf {
@@ -2654,6 +2660,26 @@ impl PingapConfig {
                 continue;
             }
             certificate.validate()?;
+        }
+        for (field, target) in [
+            ("docker_labels_server", &self.basic.docker_labels_server),
+            (
+                "docker_labels_tls_server",
+                &self.basic.docker_labels_tls_server,
+            ),
+        ] {
+            if let Some(server_name) = target
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty() && !is_reference(name))
+                && !self.servers.contains_key(server_name)
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "basic.{field}({server_name}) is not found in servers"
+                    ),
+                });
+            }
         }
         // Round trip through the loose form with includes expanded: proves
         // the config serializes and that every include resolves.

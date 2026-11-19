@@ -490,6 +490,40 @@ export default function Basic() {
   });
 
   items.push({
+    name: "docker_labels_enabled",
+    label: basicI18n("dockerLabelsEnabled"),
+    placeholder: "",
+    tips: basicI18n("dockerLabelsEnabledTips"),
+    defaultValue: basic.docker_labels_enabled,
+    span: 6,
+    section: sec.advanced,
+    category: ExFormItemCategory.RADIOS,
+    options: newBooleanOptions(),
+  });
+
+  items.push({
+    name: "docker_labels_server",
+    label: basicI18n("dockerLabelsServer"),
+    placeholder: basicI18n("dockerLabelsServerPlaceholder"),
+    tips: basicI18n("dockerLabelsServerTips"),
+    defaultValue: basic.docker_labels_server,
+    span: 3,
+    section: sec.advanced,
+    category: ExFormItemCategory.TEXT,
+  });
+
+  items.push({
+    name: "docker_labels_tls_server",
+    label: basicI18n("dockerLabelsTlsServer"),
+    placeholder: basicI18n("dockerLabelsTlsServerPlaceholder"),
+    tips: basicI18n("dockerLabelsTlsServerTips"),
+    defaultValue: basic.docker_labels_tls_server,
+    span: 3,
+    section: sec.advanced,
+    category: ExFormItemCategory.TEXT,
+  });
+
+  items.push({
     name: "error_template",
     label: basicI18n("errorTemplate"),
     placeholder: basicI18n("errorTemplatePlaceholder"),

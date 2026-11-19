@@ -286,7 +286,7 @@ mod tests {
 
     /// Regression: a round waited for every task, so one slow task held
     /// up all the others for as long as it took.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_slow_task_does_not_hold_up_the_others() {
         use std::sync::Arc;
 

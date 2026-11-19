@@ -84,6 +84,7 @@ pingap-cache = { workspace = true }
 pingap-certificate = { workspace = true }
 pingap-config = { workspace = true }
 pingap-core = { workspace = true }
+pingap-discovery = { workspace = true }
 pingap-imageoptim = { workspace = true, optional = true }
 pingap-location = { workspace = true }
 pingap-logger = { workspace = true }

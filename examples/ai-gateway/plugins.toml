@@ -1,0 +1,14 @@
+[plugins.ai_rate_limit]
+category = "limit"
+type = "rate"
+# Exact mode tracks per-key counters using a bounded TinyUFO cache instead of
+# Count-Min Sketch, preventing false positives across many tenant API keys.
+mode = "exact"
+max_keys = 50000
+tag = "header"
+key = "x-api-key"
+max = 60
+interval = "1m"
+headers = true
+missing_key = "pass"
+remark = "Per-API-key quota (60 req/min)"

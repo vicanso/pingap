@@ -1,0 +1,12 @@
+[locations.ai_chat]
+path = "/v1/"
+upstream = "openai_primary"
+# Automatically route to secondary provider when `openai_primary` has no
+# available backend (for example when its circuit breaker opens after 429/5xx).
+fallback_upstream = "openai_fallback"
+max_retries = 1
+enable_reverse_proxy_headers = true
+# Intentionally omit response compression plugins so `text/event-stream` (SSE)
+# token chunks flush immediately without compressor buffering.
+plugins = ["ai_rate_limit"]
+remark = "OpenAI-compatible SSE / streaming completion route"
