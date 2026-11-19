@@ -456,7 +456,12 @@ where
     /// its length was known and sent, and `chunked` was added regardless.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let mut resp = ResponseHeader::build(self.status, Some(4))?;
-        // Add any custom headers.
+        // Before the custom headers, as in `HttpResponse`, so that a
+        // `Cache-Control` among them wins over the generated one.
+        let cache_control =
+            new_cache_control_header(self.max_age, self.cache_private);
+        resp.insert_header(cache_control.0, cache_control.1)?;
+
         if let Some(headers) = &self.headers {
             put_custom_headers(&mut resp, headers)?;
         }
@@ -465,11 +470,6 @@ where
             let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
             resp.insert_header(chunked.0, chunked.1)?;
         }
-
-        // Add the `Cache-Control` header.
-        let cache_control =
-            new_cache_control_header(self.max_age, self.cache_private);
-        resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
 
@@ -678,8 +678,33 @@ mod tests {
         );
         let header = resp.get_response_header().unwrap();
         assert_eq!(
-            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"contont-type": "text/html", "transfer-encoding": "chunked", "cache-control": "public, max-age=3600"} }, header_name_map: Some({"contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding"), "cache-control": CaseHeaderName(b"Cache-Control")}), reason_phrase: None }"###,
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"cache-control": "public, max-age=3600", "contont-type": "text/html", "transfer-encoding": "chunked"} }, header_name_map: Some({"cache-control": CaseHeaderName(b"Cache-Control"), "contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding")}), reason_phrase: None }"###,
             format!("{header:?}")
+        );
+    }
+
+    /// A `Cache-Control` among the custom headers is kept, as it is on a
+    /// response that is not streamed.
+    #[tokio::test]
+    async fn test_http_chunk_response_custom_cache_control() {
+        let mut reader = tokio_test::io::Builder::new().build();
+        let mut resp = HttpChunkResponse::new(&mut reader);
+        resp.headers = Some(
+            convert_headers(&[
+                "Cache-Control: public, max-age=31536000, immutable"
+                    .to_string(),
+            ])
+            .unwrap(),
+        );
+        let header = resp.get_response_header().unwrap();
+        assert_eq!(
+            vec!["public, max-age=31536000, immutable"],
+            header
+                .headers
+                .get_all(header::CACHE_CONTROL)
+                .iter()
+                .map(|value| value.to_str().unwrap())
+                .collect::<Vec<_>>()
         );
     }
 
