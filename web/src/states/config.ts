@@ -188,6 +188,28 @@ export interface Storage {
   created_at?: number;
 }
 
+export interface Stream {
+  addr: string;
+  upstream?: string;
+  sni_routes?: Record<string, string>;
+  proxy_protocol?: boolean;
+  connect_timeout?: string;
+  idle_timeout?: string;
+  sni_read_timeout?: string;
+  max_connections?: number;
+  allow_ips?: string[];
+  deny_ips?: string[];
+  threads?: number;
+  reuse_port?: boolean;
+  tcp_fastopen?: number;
+  tcp_idle?: string;
+  tcp_interval?: string;
+  tcp_user_timeout?: string;
+  tcp_probe_count?: number;
+  includes?: string[];
+  remark?: string;
+}
+
 interface Basic {
   error_template?: string;
   name?: string;
@@ -241,6 +263,7 @@ interface Config {
   upstreams?: Record<string, Upstream>;
   locations?: Record<string, Location>;
   servers?: Record<string, Server>;
+  streams?: Record<string, Stream>;
   plugins?: Record<string, Record<string, unknown>>;
   certificates?: Record<string, Certificate>;
   storages?: Record<string, Storage>;

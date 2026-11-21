@@ -496,6 +496,42 @@ How it works:
 - The cost is one ClientHello parse and two SHA-256 hashes per new TLS
   connection, plus one lookup per request. It is off by default.
 
+## Layer 4 TCP & TLS SNI Passthrough (`[streams.*]`)
+
+`StreamServer` and `StreamApp` (`stream.rs`) implement native Layer 4 proxying alongside Pingora's HTTP pipeline without touching L7 request handling:
+
+```toml
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.db_primary]
+addrs = ["10.1.0.10:5432"]
+health_check = "tcp://10.1.0.10:5432?connection_timeout=2s"
+send_proxy_protocol = "v2"
+
+[upstreams.tls_a]
+addrs = ["10.1.0.20:8443"]
+
+[streams.pg]
+addr = "0.0.0.0:5432"
+upstream = "db_primary"
+proxy_protocol = true
+idle_timeout = "5m"
+max_connections = 2000
+
+[streams.tls_mux]
+addr = "0.0.0.0:9443"
+upstream = "db_primary"        # optional fallback for non-TLS / unmatched SNI
+sni_routes = { "api.example.com" = "tls_a", "*.app.example.com" = "tls_a" }
+sni_read_timeout = "5s"
+```
+
+- **TLS SNI passthrough without termination**: When `sni_routes` is configured, Pingap peeks the TLS `ClientHello` up to `sni_read_timeout`, extracts SNI via `pingap_core::ja4::extract_sni` (supporting multi-record ClientHello reassembly), selects an upstream (exact case-insensitive match with trailing dot stripped > longest `*.domain` single-label wildcard > optional `upstream` fallback), and forwards all peeked bytes verbatim. Wildcard rules never match the bare apex domain.
+- **Plain TCP & half-close**: When no `sni_routes` are set (or when peeking non-TLS bytes with a fallback `upstream`), traffic streams directly via `tokio::io::copy`-style bidirectional relay with TCP `FIN` half-close propagation and multi-address connect failover.
+- **PROXY protocol**: Inbound `proxy_protocol = true` parses HAProxy v1/v2 only from `basic.trusted_proxies` before evaluating `allow_ips` / `deny_ips`; outbound `send_proxy_protocol = "v1"` / `"v2"` on the target upstream writes a fresh header carrying the resolved client address ahead of any peeked bytes.
+- **Hot reload boundary**: `upstream`, `sni_routes`, `proxy_protocol`, `connect_timeout`, `idle_timeout`, `sni_read_timeout`, `max_connections`, `allow_ips`, `deny_ips`, and `remark` update live on `--autoreload` without interrupting established connections; `addr`, `threads`, `reuse_port`, socket tuning, and added/removed streams require a restart (`left_for_restart`).
+- **Observability**: Emits structured `tracing` events on target `pingap::stream_access` and exports `pingap_stream_active_connections`, `pingap_stream_connections_total`, and `pingap_stream_bytes_total` Prometheus metrics.
+
 ## Per-request context
 
 `Ctx` carries everything the request accumulated and is what access log

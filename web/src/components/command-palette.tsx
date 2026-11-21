@@ -8,6 +8,7 @@ import {
   Container,
   FileCode2,
   LayoutDashboard,
+  Network,
   PlugZap,
   Plus,
   Server,
@@ -38,6 +39,7 @@ import {
   PLUGINS,
   SERVERS,
   STORAGES,
+  STREAMS,
   UPSTREAMS,
 } from "@/routers";
 
@@ -51,6 +53,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const cmdI18n = useI18n("commandPalette");
   const navI18n = useI18n("nav");
   const serverI18n = useI18n("server");
+  const streamI18n = useI18n("stream");
   const locationI18n = useI18n("location");
   const upstreamI18n = useI18n("upstream");
   const pluginI18n = useI18n("plugin");
@@ -89,6 +92,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       to: SERVERS,
       icon: Server,
       keywords: ["servers", "listen", "ports"],
+    },
+    {
+      label: navI18n("stream"),
+      to: STREAMS,
+      icon: Network,
+      keywords: ["streams", "tcp", "sni", "l4", "passthrough"],
     },
     {
       label: navI18n("location"),
@@ -168,6 +177,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         detail: server.addr,
         to: `${SERVERS}?name=${encodeURIComponent(name)}`,
         icon: Server,
+      });
+    });
+
+  Object.entries(config.streams || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([name, stream]) => {
+      entities.push({
+        id: `stream:${name}`,
+        name,
+        category: navI18n("stream"),
+        detail: stream.addr,
+        to: `${STREAMS}?name=${encodeURIComponent(name)}`,
+        icon: Network,
       });
     });
 
@@ -252,6 +274,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           label: serverI18n("add"),
           to: `${SERVERS}?name=*`,
           keywords: ["new", "add", "create", "server"],
+        },
+        {
+          label: streamI18n("add"),
+          to: `${STREAMS}?name=*`,
+          keywords: ["new", "add", "create", "stream", "tcp", "sni"],
         },
         {
           label: locationI18n("add"),

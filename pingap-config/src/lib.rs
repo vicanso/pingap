@@ -171,6 +171,7 @@ impl EventObserver {
 pub enum Category {
     Basic,
     Server,
+    Stream,
     Location,
     Upstream,
     Plugin,
@@ -185,6 +186,7 @@ impl std::fmt::Display for Category {
         match self {
             Category::Basic => write!(f, "basic"),
             Category::Server => write!(f, "server"),
+            Category::Stream => write!(f, "stream"),
             Category::Location => write!(f, "location"),
             Category::Upstream => write!(f, "upstream"),
             Category::Plugin => write!(f, "plugin"),
@@ -200,6 +202,7 @@ impl FromStr for Category {
         match s.to_lowercase().as_str() {
             "basic" => Ok(Category::Basic),
             "server" => Ok(Category::Server),
+            "stream" => Ok(Category::Stream),
             "location" => Ok(Category::Location),
             "upstream" => Ok(Category::Upstream),
             "plugin" => Ok(Category::Plugin),
@@ -470,6 +473,7 @@ mod tests {
         for (name, category) in [
             ("basic", Category::Basic),
             ("SERVER", Category::Server),
+            ("Stream", Category::Stream),
             ("Location", Category::Location),
             ("upstream", Category::Upstream),
             ("plugin", Category::Plugin),

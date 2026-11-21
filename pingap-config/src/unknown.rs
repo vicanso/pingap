@@ -23,7 +23,7 @@
 use crate::common::expand_includes;
 use crate::{
     BasicConf, CertificateConf, LocationConf, PingapTomlConfig, ServerConf,
-    StorageConf, UpstreamConf,
+    StorageConf, StreamConf, UpstreamConf,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -31,9 +31,10 @@ use toml::{Value, map::Map};
 
 /// The sections of a document, with the name each has in HCL and KDL -
 /// which is the name it is most often given in TOML by mistake.
-const SECTIONS: [(&str, &str); 7] = [
+const SECTIONS: [(&str, &str); 8] = [
     ("basic", "basic"),
     ("servers", "server"),
+    ("streams", "stream"),
     ("locations", "location"),
     ("upstreams", "upstream"),
     ("plugins", "plugin"),
@@ -179,6 +180,12 @@ impl PingapTomlConfig {
             with,
             &mut found,
         );
+        entries::<StreamConf>(
+            "stream",
+            self.streams.as_ref(),
+            with,
+            &mut found,
+        );
         entries::<LocationConf>(
             "location",
             self.locations.as_ref(),
@@ -306,6 +313,7 @@ else = 1
         };
         check("basic.toml", known_keys::<BasicConf>());
         check("servers.toml", known_keys::<ServerConf>());
+        check("streams.toml", known_keys::<StreamConf>());
         check("locations.toml", known_keys::<LocationConf>());
         check("upstreams.toml", known_keys::<UpstreamConf>());
         check("certificates.toml", known_keys::<CertificateConf>());
@@ -358,6 +366,7 @@ else = 1
         };
         check("Basic", known_keys::<BasicConf>());
         check("Servers", known_keys::<ServerConf>());
+        check("Streams", known_keys::<StreamConf>());
         check("Locations", known_keys::<LocationConf>());
         check("Upstreams", known_keys::<UpstreamConf>());
         check("Certificates", known_keys::<CertificateConf>());
@@ -378,6 +387,7 @@ else = 1
         for name in [
             "basic.toml",
             "servers.toml",
+            "streams.toml",
             "locations.toml",
             "upstreams.toml",
             "certificates.toml",
@@ -425,7 +435,7 @@ else = 1
             assert_eq!(Vec::<String>::new(), config.unknown_keys(), "{name}");
             checked += 1;
         }
-        assert_eq!(5, checked, "a sample config is missing");
+        assert_eq!(6, checked, "a sample config is missing");
     }
 
     /// The check goes by the fields each kind of entry has. With none to
@@ -436,6 +446,7 @@ else = 1
         for (kind, keys, expected) in [
             ("basic", known_keys::<BasicConf>(), "trusted_proxies"),
             ("server", known_keys::<ServerConf>(), "addr"),
+            ("stream", known_keys::<StreamConf>(), "addr"),
             ("location", known_keys::<LocationConf>(), "upstream"),
             ("upstream", known_keys::<UpstreamConf>(), "addrs"),
             ("certificate", known_keys::<CertificateConf>(), "tls_key"),
@@ -458,5 +469,35 @@ else = 1
             edit_distance("trusted_proxy", "trusted_proxie", 2)
         );
         assert_eq!(None, edit_distance("name", "threads", 2));
+    }
+
+    #[test]
+    fn test_stream_unknown_keys() {
+        let config = PingapTomlConfig::from_toml(
+            r#"
+[stream.bad]
+addr = "127.0.0.1:5432"
+
+[streams.good]
+addr = "127.0.0.1:5433"
+upstream = "u1"
+sni_read_timeout = "5s"
+idle_time_out = "1m"
+"#,
+        )
+        .unwrap();
+        let mut found = config.unknown_keys();
+        found.sort();
+        assert_eq!(
+            vec![
+                r#"stream(good): unknown key "idle_time_out", did you mean "idle_timeout"?"#,
+                "unknown section [stream], did you mean [streams]?",
+            ],
+            found
+        );
+        let keys = known_keys::<StreamConf>();
+        for expected in ["addr", "upstream", "sni_routes", "idle_timeout"] {
+            assert_eq!(true, keys.iter().any(|k| k == expected));
+        }
     }
 }

@@ -522,12 +522,29 @@ pub fn validate_servers(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Builds each configured L4 stream listener (runtime rules + listener
+/// addresses/options) without binding sockets or publishing them.
+pub fn validate_streams(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    for (name, stream_conf) in config.streams.iter() {
+        pingap_proxy::StreamServer::new(
+            name.clone(),
+            stream_conf.clone(),
+            crate::streams::new_stream_provider(),
+            crate::upstreams::new_upstream_provider(),
+        )
+        .and_then(|server| server.check())
+        .map_err(|e| format!("stream \"{name}\" is invalid: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Everything that is found by building the entries of a configuration.
 pub fn validate_built(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
     validate_upstreams(config)?;
     validate_locations(config)?;
     validate_plugins(config)?;
     validate_certificates(config)?;
+    validate_streams(config)?;
     validate_servers(config)
 }
 

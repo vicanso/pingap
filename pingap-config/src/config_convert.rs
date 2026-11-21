@@ -47,6 +47,7 @@ pub(crate) struct ParsedServer {
 pub(crate) enum ConfigBlock {
     Basic(TomlMap<String, TomlValue>),
     Server(String, ParsedServer),
+    Stream(String, TomlMap<String, TomlValue>),
     Location(String, ParsedLocation),
     Upstream(String, TomlMap<String, TomlValue>),
     Plugin(String, TomlMap<String, TomlValue>),
@@ -163,6 +164,14 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
                     &mut all_certificates,
                     certificates,
                     "certificates",
+                )?;
+            },
+            ConfigBlock::Stream(name, table) => {
+                insert_into_section(
+                    &mut root,
+                    "streams",
+                    name,
+                    TomlValue::Table(table),
                 )?;
             },
             ConfigBlock::Location(name, parsed) => {

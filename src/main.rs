@@ -30,6 +30,8 @@ use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
 use crate::server_locations::new_server_locations_provider;
 use crate::server_locations::try_init_server_locations;
+use crate::streams::new_stream_provider;
+use crate::streams::try_init_streams;
 use crate::upstreams::new_upstream_provider;
 use crate::upstreams::try_init_upstreams;
 use bytes::BytesMut;
@@ -83,6 +85,7 @@ mod plugin;
 mod process;
 mod quick_start;
 mod server_locations;
+mod streams;
 mod upstreams;
 mod validate;
 mod webhook;
@@ -326,11 +329,32 @@ fn listen_addresses(servers: &[ServerConf]) -> Vec<process::ListenAddress> {
 }
 
 /// What a process on `config` would listen on, for a restart to go by.
+fn append_stream_listen_addresses(
+    streams: &std::collections::HashMap<String, pingap_config::StreamConf>,
+    out: &mut Vec<process::ListenAddress>,
+) {
+    for stream in streams.values() {
+        for addr in stream
+            .addr
+            .split(',')
+            .map(str::trim)
+            .filter(|addr| !addr.is_empty())
+        {
+            out.push(process::ListenAddress {
+                addr: addr.to_string(),
+                reuse_port: stream.reuse_port,
+            });
+        }
+    }
+}
+
 fn planned_listen_addresses(
     config: &PingapConfig,
 ) -> Result<Vec<process::ListenAddress>, Box<dyn Error>> {
     let servers = servers_to_run(config, get_admin_addr().as_deref())?;
-    Ok(listen_addresses(&servers))
+    let mut addrs = listen_addresses(&servers);
+    append_stream_listen_addresses(&config.streams, &mut addrs);
+    Ok(addrs)
 }
 
 fn new_server_config(
@@ -1243,6 +1267,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "tracing")]
     set_metrics_location_provider(new_location_provider());
     try_init_server_locations(&config.servers, &config.locations)?;
+    try_init_streams(&config.streams)?;
     let certificates = config.certificates.clone();
 
     let opt = Opt {
@@ -1370,9 +1395,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let server_conf_list =
         servers_to_run(&config, get_admin_addr().as_deref())?;
+    let mut current_listen_addresses = listen_addresses(&server_conf_list);
+    append_stream_listen_addresses(
+        &config.streams,
+        &mut current_listen_addresses,
+    );
     // What a restart compares the stored configuration with.
     process::set_listen_addresses(
-        listen_addresses(&server_conf_list),
+        current_listen_addresses,
         planned_listen_addresses,
     );
 
@@ -1546,6 +1576,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         let services = ps.run(my_server.configuration.clone())?;
         my_server
             .add_boxed_service(services.lb)
+            .add_dependency(&bootstrap_handle);
+    }
+
+    for (name, stream_conf) in config.streams.iter() {
+        let stream_server = pingap_proxy::StreamServer::new(
+            name.clone(),
+            stream_conf.clone(),
+            new_stream_provider(),
+            new_upstream_provider(),
+        )?;
+        my_server
+            .add_boxed_service(stream_server.build_service()?)
             .add_dependency(&bootstrap_handle);
     }
 

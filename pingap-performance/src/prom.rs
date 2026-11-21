@@ -252,6 +252,14 @@ pub struct Prometheus {
     config_last_reload_successful: IntGauge,
     /// Unix time of the last reload that was applied
     config_last_reload_success_time: IntGauge,
+    /// Current number of active Layer 4 connections per stream listener
+    stream_active_connections: IntGaugeVec,
+    /// Total Layer 4 connections handled per stream, upstream, and result
+    stream_connections_total: IntCounterVec,
+    /// Total Layer 4 bytes transferred per stream and direction (`tx` / `rx`)
+    stream_bytes_total: IntCounterVec,
+    stream_connections_seen: Mutex<HashMap<(String, String, String), u64>>,
+    stream_bytes_seen: Mutex<HashMap<(String, &'static str), u64>>,
 }
 
 /// A counter of this registry that follows a count kept for the whole
@@ -852,7 +860,48 @@ impl Prometheus {
             self.config_last_reload_success_time
                 .set(reloads.last_success_at as i64);
         }
+        self.refresh_stream_metrics();
         self.r.gather()
+    }
+
+    fn refresh_stream_metrics(&self) {
+        let snapshot = super::stream_metrics_snapshot();
+        self.stream_active_connections.reset();
+        for (stream, active) in snapshot.active {
+            self.stream_active_connections
+                .with_label_values(&[stream.as_str()])
+                .set(active);
+        }
+        {
+            let mut seen = self.stream_connections_seen.lock();
+            for ((stream, upstream, result), total) in snapshot.connections {
+                let key = (stream, upstream, result);
+                let prev = seen.get(&key).copied().unwrap_or(0);
+                if total > prev {
+                    self.stream_connections_total
+                        .with_label_values(&[
+                            key.0.as_str(),
+                            key.1.as_str(),
+                            key.2.as_str(),
+                        ])
+                        .inc_by(total - prev);
+                    seen.insert(key, total);
+                }
+            }
+        }
+        {
+            let mut seen = self.stream_bytes_seen.lock();
+            for ((stream, direction), total) in snapshot.bytes {
+                let key = (stream, direction);
+                let prev = seen.get(&key).copied().unwrap_or(0);
+                if total > prev {
+                    self.stream_bytes_total
+                        .with_label_values(&[key.0.as_str(), key.1])
+                        .inc_by(total - prev);
+                    seen.insert(key, total);
+                }
+            }
+        }
     }
 
     /// Push current per-backend stats/circuit state into the gauge vectors.
@@ -1703,6 +1752,30 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap_config_last_reload_success_timestamp_seconds",
         "pingap unix time the configuration was last loaded or reloaded"
     )?;
+    let stream_active_connections = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_stream_active_connections",
+        "pingap current active layer 4 connections per stream",
+        &["stream"]
+    )?;
+    let stream_connections_total = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_stream_connections_total",
+        "pingap layer 4 connections by stream, upstream, and result",
+        &["stream", "upstream", "result"]
+    )?;
+    let stream_bytes_total = register_metric!(
+        r,
+        new_int_counter_vec,
+        server,
+        "pingap_stream_bytes_total",
+        "pingap layer 4 bytes transferred by stream and direction",
+        &["stream", "direction"]
+    )?;
     // The configuration this process runs was loaded when it started.
     config_last_reload_successful.set(1);
     config_last_reload_success_time.set(pingap_core::now_sec() as i64);
@@ -1772,6 +1845,11 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         ),
         config_last_reload_successful,
         config_last_reload_success_time,
+        stream_active_connections,
+        stream_connections_total,
+        stream_bytes_total,
+        stream_connections_seen: Mutex::new(HashMap::new()),
+        stream_bytes_seen: Mutex::new(HashMap::new()),
         http_responses_status,
         cache_responses,
         upstream_errors,
@@ -2483,5 +2561,65 @@ mod tests {
         assert_eq!(true, p.upstream_series.load().is_empty());
         request();
         assert_eq!(Some("1".to_string()), reuses(&metrics()));
+    }
+
+    #[test]
+    fn test_stream_prometheus_metrics() {
+        let p = new_prometheus("pingap").unwrap();
+        let name = format!("prom-stream-{}", std::process::id());
+        super::super::stream_connection_open(&name);
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_stream_active_connections{",
+                &[&format!("stream=\"{name}\"")]
+            ),
+            "{buf}"
+        );
+
+        super::super::stream_connection_close(&name, "tcp_up", "ok", 512, 1024);
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("0".to_string()),
+            metric_value(
+                &buf,
+                "pingap_stream_active_connections{",
+                &[&format!("stream=\"{name}\"")]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_stream_connections_total{",
+                &[
+                    "result=\"ok\"",
+                    &format!("stream=\"{name}\""),
+                    "upstream=\"tcp_up\"",
+                ]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("512".to_string()),
+            metric_value(
+                &buf,
+                "pingap_stream_bytes_total{",
+                &["direction=\"tx\"", &format!("stream=\"{name}\"")]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("1024".to_string()),
+            metric_value(
+                &buf,
+                "pingap_stream_bytes_total{",
+                &["direction=\"rx\"", &format!("stream=\"{name}\"")]
+            ),
+            "{buf}"
+        );
     }
 }

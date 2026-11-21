@@ -70,6 +70,35 @@ fn body_attrs_to_toml(body: hcl::Body) -> Result<TomlMap<String, TomlValue>> {
     }
 }
 
+fn process_stream_block(body: hcl::Body) -> Result<TomlMap<String, TomlValue>> {
+    let mut attr_structs = Vec::new();
+    let mut sni_routes = TomlMap::new();
+    for s in body.into_iter() {
+        match s {
+            hcl::Structure::Block(block)
+                if block.identifier.as_str() == "sni_routes" =>
+            {
+                sni_routes.extend(body_attrs_to_toml(block.body)?);
+            },
+            hcl::Structure::Block(_) => {},
+            attr @ hcl::Structure::Attribute(_) => {
+                attr_structs.push(attr);
+            },
+        }
+    }
+    let attr_body: hcl::Body = attr_structs.into_iter().collect();
+    let mut map = body_attrs_to_toml(attr_body)?;
+    if !sni_routes.is_empty() {
+        let mut combined = match map.remove("sni_routes") {
+            Some(TomlValue::Table(existing)) => existing,
+            _ => TomlMap::new(),
+        };
+        combined.extend(sni_routes);
+        map.insert("sni_routes".to_string(), TomlValue::Table(combined));
+    }
+    Ok(map)
+}
+
 /// Insert a named entry into a section table in root.
 /// Process a location block body, extracting nested upstream blocks.
 ///
@@ -336,6 +365,10 @@ pub fn convert_hcl_to_toml(input: &str) -> Result<String> {
             "server" | "servers" => ConfigBlock::Server(
                 require_name(label, "server")?,
                 process_server_block(block.body)?,
+            ),
+            "stream" | "streams" => ConfigBlock::Stream(
+                require_name(label, "stream")?,
+                process_stream_block(block.body)?,
             ),
             "location" | "locations" => ConfigBlock::Location(
                 require_name(label, "location")?,
@@ -660,6 +693,10 @@ pub fn convert_toml_to_hcl(input: &str) -> Result<String> {
         .get("servers")
         .and_then(|v| v.as_table())
         .unwrap_or(&empty_table);
+    let streams = root
+        .get("streams")
+        .and_then(|v| v.as_table())
+        .unwrap_or(&empty_table);
     let locations_map = root
         .get("locations")
         .and_then(|v| v.as_table())
@@ -808,6 +845,14 @@ pub fn convert_toml_to_hcl(input: &str) -> Result<String> {
     for (name, value) in storages {
         if let Some(table) = value.as_table() {
             write_named_block(&mut output, "storage", Some(name), table, 0);
+            output.push('\n');
+        }
+    }
+
+    // Streams
+    for (name, value) in streams {
+        if let Some(table) = value.as_table() {
+            write_named_block(&mut output, "stream", Some(name), table, 0);
             output.push('\n');
         }
     }
@@ -1880,5 +1925,40 @@ addrs = ["127.0.0.1:3000"]
         let config =
             convert_pingap_config(toml_back.as_bytes(), false).unwrap();
         assert_eq!("test", config.basic.name.unwrap());
+    }
+
+    #[test]
+    fn test_stream_hcl_roundtrip() {
+        let toml_input = r#"
+[upstreams.pg_up]
+addrs = ["127.0.0.1:5432"]
+
+[upstreams.tls_api]
+addrs = ["127.0.0.1:9443"]
+
+[streams.tls_gateway]
+addr = "0.0.0.0:8443"
+upstream = "pg_up"
+allow_ips = ["10.0.0.0/8"]
+proxy_protocol = true
+sni_routes = { "api.example.com" = "tls_api", "*.app.example.com" = "tls_api" }
+"#;
+        let hcl = convert_toml_to_hcl(toml_input).unwrap();
+        assert!(hcl.contains("stream \"tls_gateway\""));
+        let toml_back = convert_hcl_to_toml(&hcl).unwrap();
+        let config =
+            convert_pingap_config(toml_back.as_bytes(), false).unwrap();
+        let stream = config.streams.get("tls_gateway").unwrap();
+        assert_eq!("0.0.0.0:8443", stream.addr);
+        assert_eq!(Some("pg_up".to_string()), stream.upstream);
+        assert_eq!(Some(true), stream.proxy_protocol);
+        assert_eq!(
+            Some("tls_api".to_string()),
+            stream
+                .sni_routes
+                .as_ref()
+                .and_then(|r| r.get("*.app.example.com"))
+                .cloned()
+        );
     }
 }

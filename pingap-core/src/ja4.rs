@@ -182,6 +182,82 @@ fn first_alpn(data: &[u8]) -> Option<Option<&[u8]>> {
     Some(Some(list.vec8()?))
 }
 
+fn normalize_sni_host(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_end_matches('.');
+    if trimmed.is_empty()
+        || trimmed
+            .chars()
+            .any(|c| c.is_ascii_control() || c.is_whitespace())
+    {
+        return None;
+    }
+    if trimmed.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    Some(trimmed.to_ascii_lowercase())
+}
+
+fn parse_sni_extension(data: &[u8]) -> Option<String> {
+    let mut reader = Reader::new(data);
+    let list_bytes = reader.vec16()?;
+    if !reader.is_empty() || list_bytes.is_empty() {
+        return None;
+    }
+    let mut entries = Reader::new(list_bytes);
+    let mut found = None;
+    while !entries.is_empty() {
+        let name_type = entries.u8()?;
+        let name = entries.vec16()?;
+        if name.is_empty() {
+            return None;
+        }
+        if name_type == 0 && found.is_none() {
+            let host = std::str::from_utf8(name).ok()?;
+            found = normalize_sni_host(host);
+            found.as_ref()?;
+        }
+    }
+    found
+}
+
+/// Extracts and normalizes the TLS SNI hostname (`host_name` entry of extension
+/// `0x0000`) from a complete ClientHello handshake body as returned by
+/// [`read_client_hello`].
+///
+/// Returns `None` when the ClientHello omits SNI, carries a literal IP address
+/// instead of a DNS name, or is malformed. Trailing dots are stripped and the
+/// name is lowercased so downstream SNI routers match case-insensitively.
+pub fn extract_sni(body: &[u8]) -> Option<String> {
+    let mut reader = Reader::new(body);
+    // legacy_version (2) + random (32)
+    reader.take(34)?;
+    let session_id = reader.vec8()?;
+    if session_id.len() > 32 {
+        return None;
+    }
+    let ciphers = reader.vec16()?;
+    if !ciphers.len().is_multiple_of(2) {
+        return None;
+    }
+    // compression methods
+    reader.vec8()?;
+    if reader.is_empty() {
+        return None;
+    }
+    let mut extensions = Reader::new(reader.vec16()?);
+    if !reader.is_empty() {
+        return None;
+    }
+    while !extensions.is_empty() {
+        let ext_type = extensions.u16()?;
+        let data = extensions.vec16()?;
+        if ext_type == EXT_SERVER_NAME {
+            return parse_sni_extension(data);
+        }
+    }
+    None
+}
+
 /// The highest version a supported_versions extension offers, GREASE
 /// ignored; `Some(None)` when it offers none, `None` when malformed.
 fn highest_version(data: &[u8]) -> Option<Option<u16>> {
@@ -783,5 +859,59 @@ mod tests {
             ClientHelloStatus::Invalid,
             read_client_hello(&[0x16, 0x03, 0x01, 0x00, 0x00])
         );
+    }
+
+    #[test]
+    fn test_extract_sni_standard_and_fragmented() {
+        let body = client_hello_body(
+            0x0303,
+            &[0x1301, 0x1302],
+            Some(&[
+                (0x1a1a, vec![]),
+                (0x0000, sni("API.Example.COM.")),
+                (0x0010, alpn(&[b"h2"])),
+            ]),
+        );
+        assert_eq!(Some("api.example.com".to_string()), extract_sni(&body));
+
+        let fragmented = client_hello_records(&body, 20);
+        let ClientHelloStatus::Complete(reassembled) =
+            read_client_hello(&fragmented)
+        else {
+            panic!("expected complete ClientHello from fragmented records");
+        };
+        assert_eq!(
+            Some("api.example.com".to_string()),
+            extract_sni(&reassembled)
+        );
+    }
+
+    #[test]
+    fn test_extract_sni_absent_and_invalid() {
+        let no_ext = client_hello_body(0x0303, &[0x1301], None);
+        assert_eq!(None, extract_sni(&no_ext));
+
+        let no_sni = client_hello_body(
+            0x0303,
+            &[0x1301],
+            Some(&[(0x0010, alpn(&[b"h2"]))]),
+        );
+        assert_eq!(None, extract_sni(&no_sni));
+
+        let ip_sni = client_hello_body(
+            0x0303,
+            &[0x1301],
+            Some(&[(0x0000, sni("127.0.0.1"))]),
+        );
+        assert_eq!(None, extract_sni(&ip_sni));
+
+        let bad_ext = client_hello_body(
+            0x0303,
+            &[0x1301],
+            Some(&[(0x0000, vec![0x00, 0x05, 0x00])]),
+        );
+        assert_eq!(None, extract_sni(&bad_ext));
+        assert_eq!(None, extract_sni(&[]));
+        assert_eq!(None, extract_sni(&no_ext[..20]));
     }
 }

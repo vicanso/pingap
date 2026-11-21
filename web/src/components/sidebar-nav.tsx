@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import {
   Activity,
   AppWindow,
+  Network,
   Server,
   Webhook,
   TrendingUpDown,
@@ -18,6 +19,7 @@ import {
   HOME,
   BASIC,
   SERVERS,
+  STREAMS,
   LOCATIONS,
   UPSTREAMS,
   PLUGINS,
@@ -383,6 +385,7 @@ export function MainSidebar({
   };
 
   const servers = Object.keys(config.servers || {}).sort();
+  const streams = Object.keys(config.streams || {}).sort();
   const locations = Object.keys(config.locations || {}).sort();
   const upstreams = Object.keys(config.upstreams || {}).sort();
   const plugins = Object.keys(config.plugins || {}).sort();
@@ -415,7 +418,13 @@ export function MainSidebar({
 
   const badgeMeta = (
     category:
-      "server" | "location" | "upstream" | "plugin" | "certificate" | "storage",
+      | "server"
+      | "stream"
+      | "location"
+      | "upstream"
+      | "plugin"
+      | "certificate"
+      | "storage",
     count: number,
   ): { label: string; badgeTone?: BadgeTone; badgeTitle?: string } => {
     if (!initialized || count === 0) {
@@ -442,6 +451,7 @@ export function MainSidebar({
   };
 
   const serverBadge = badgeMeta("server", servers.length);
+  const streamBadge = badgeMeta("stream", streams.length);
   const locationBadge = badgeMeta("location", locations.length);
   const upstreamBadge = badgeMeta("upstream", upstreams.length);
   const pluginBadge = badgeMeta("plugin", plugins.length);
@@ -484,6 +494,15 @@ export function MainSidebar({
       path: SERVERS,
       group: "path",
       children: generateChildren(SERVERS, servers),
+    },
+    {
+      title: navI18n("stream"),
+      icon: Network,
+      variant: getVariant(STREAMS),
+      ...streamBadge,
+      path: STREAMS,
+      group: "path",
+      children: generateChildren(STREAMS, streams),
     },
     {
       title: navI18n("location"),

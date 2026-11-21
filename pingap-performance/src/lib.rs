@@ -15,6 +15,7 @@
 mod events;
 mod metrics;
 mod process;
+mod stream_metrics;
 mod traffic;
 
 pub use events::{ConfigReloads, config_reloads, record_config_reload};
@@ -22,6 +23,10 @@ pub use metrics::*;
 pub use process::*;
 #[cfg(feature = "tracing")]
 use snafu::Snafu;
+pub use stream_metrics::{
+    StreamMetricsSnapshot, stream_connection_close, stream_connection_open,
+    stream_metrics_snapshot,
+};
 pub use traffic::{
     TRAFFIC_INTERVAL, TrafficSnapshot, UpstreamTraffic, record_traffic,
     traffic_snapshot,

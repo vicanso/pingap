@@ -36,9 +36,9 @@ use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
     BasicConf, CATEGORY_BASIC, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
-    Category, CertificateConf, ConfigManager, LocationConf, PluginCategory,
-    PluginConf, ServerConf, StorageConf, UpstreamConf, Validate,
-    format_category,
+    CATEGORY_STREAM, Category, CertificateConf, ConfigManager, LocationConf,
+    PluginCategory, PluginConf, ServerConf, StorageConf, StreamConf,
+    UpstreamConf, Validate, format_category,
 };
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -856,6 +856,7 @@ impl AdminServe {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
+            CATEGORY_STREAM => HttpResponse::try_from_json(&conf.streams)?,
             CATEGORY_PLUGIN => HttpResponse::try_from_json(&conf.plugins)?,
             CATEGORY_CERTIFICATE => {
                 HttpResponse::try_from_json(&conf.certificates)?
@@ -972,6 +973,14 @@ impl AdminServe {
                     name,
                     &buf,
                     Category::Server,
+                )
+                .await?;
+            },
+            CATEGORY_STREAM => {
+                self.handle_update_config::<StreamConf>(
+                    name,
+                    &buf,
+                    Category::Stream,
                 )
                 .await?;
             },
@@ -1760,9 +1769,10 @@ fn apply_plugin_preset(
 /// does not validate - and the message was the error as pingora prints it,
 /// `HTTPStatus context: ... cause:  InternalError`.
 /// The top level sections of a configuration, which an import may have.
-const IMPORT_SECTIONS: [&str; 7] = [
+const IMPORT_SECTIONS: [&str; 8] = [
     "basic",
     "servers",
+    "streams",
     "upstreams",
     "locations",
     "plugins",
@@ -4489,5 +4499,172 @@ readonly_authorizations = ["cmVhZDpwYXNz"]
         );
         let (status, _) = answer(&admin, "127.0.0.1:3018", &req).await;
         assert_eq!(403, status);
+    }
+
+    #[tokio::test]
+    async fn test_admin_stream_crud_and_readonly() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(
+            &file,
+            r#"
+[upstreams.tcp_up]
+addrs = ["127.0.0.1:9001"]
+
+[locations.root]
+upstream = "tcp_up"
+path = "/"
+
+[servers.web]
+addr = "127.0.0.1:18080"
+locations = ["root"]
+"#,
+        )
+        .unwrap();
+        let (admin, manager) = new_admin_on(&file, "");
+
+        let (code, body) = post(
+            &admin,
+            "/api/configs/stream/tls_mux",
+            &serde_json::json!({
+                "addr": "127.0.0.1:19443",
+                "upstream": "tcp_up",
+                "sni_routes": {
+                    "alpha.test": "tcp_up",
+                    "*.beta.test": "tcp_up"
+                },
+                "idle_timeout": "30s",
+                "proxy_protocol": false
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(
+            true,
+            (200..300).contains(&code),
+            "status={code} body={body}"
+        );
+
+        let (get_code, get_body) = answer(
+            &admin,
+            "127.0.0.1:3018",
+            "GET /api/configs/stream HTTP/1.1\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, get_code, "{get_body}");
+        let listed: serde_json::Value =
+            serde_json::from_str(&get_body).unwrap();
+        assert_eq!("127.0.0.1:19443", listed["tls_mux"]["addr"]);
+
+        // Reject listen port collision with L7 server.
+        let (bad_port, _) = post(
+            &admin,
+            "/api/configs/stream/bad_port",
+            &serde_json::json!({
+                "addr": "127.0.0.1:18080",
+                "upstream": "tcp_up"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, bad_port);
+
+        // Reject unknown upstream reference.
+        let (bad_up, _) = post(
+            &admin,
+            "/api/configs/stream/bad_up",
+            &serde_json::json!({
+                "addr": "127.0.0.1:19444",
+                "upstream": "missing_up"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, bad_up);
+
+        // Reject invalid CIDR in allow_ips.
+        let (bad_cidr, _) = post(
+            &admin,
+            "/api/configs/stream/bad_cidr",
+            &serde_json::json!({
+                "addr": "127.0.0.1:19445",
+                "upstream": "tcp_up",
+                "allow_ips": ["not-a-cidr"]
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, bad_cidr);
+
+        // Update existing stream and delete it cleanly.
+        let (upd_code, upd_body) = post(
+            &admin,
+            "/api/configs/stream/tls_mux",
+            &serde_json::json!({
+                "addr": "127.0.0.1:19443",
+                "upstream": "tcp_up",
+                "sni_routes": { "alpha.test": "tcp_up" },
+                "remark": "updated stream"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(true, (200..300).contains(&upd_code), "{upd_body}");
+        let stored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(
+            Some("updated stream"),
+            stored.streams["tls_mux"].remark.as_deref()
+        );
+        assert_eq!(false, stored.streams.contains_key("bad_port"));
+        assert_eq!(false, stored.streams.contains_key("bad_up"));
+        assert_eq!(false, stored.streams.contains_key("bad_cidr"));
+
+        let (del_code, del_body) = answer(
+            &admin,
+            "127.0.0.1:3018",
+            "DELETE /api/configs/stream/tls_mux HTTP/1.1\r\n\r\n",
+        )
+        .await;
+        assert_eq!(true, (200..300).contains(&del_code), "{del_body}");
+        let (after_code, after_body) = answer(
+            &admin,
+            "127.0.0.1:3018",
+            "GET /api/configs/stream HTTP/1.1\r\n\r\n",
+        )
+        .await;
+        assert_eq!(200, after_code);
+        let after_json: serde_json::Value =
+            serde_json::from_str(&after_body).unwrap();
+        assert_eq!(true, after_json.get("tls_mux").is_none());
+
+        // Readonly user is forbidden from creating/updating streams.
+        let (ro_admin, _) = new_admin_on(
+            &file,
+            r#"
+authorizations = ["dXNlcjpwYXNz"]
+readonly_authorizations = ["cmVhZDpwYXNz"]
+"#,
+        );
+        let now = pingap_core::now_sec();
+        let mut hasher = Sha256::new();
+        hasher.update(format!("read:pass:{now}").as_bytes());
+        let token: String = hasher.finalize().encode_hex();
+        let auth = format!("{token}:{now}");
+        let ro_body = serde_json::json!({
+            "addr": "127.0.0.1:19446",
+            "upstream": "tcp_up"
+        })
+        .to_string();
+        let ro_req = format!(
+            "POST /api/configs/stream/ro_test HTTP/1.1\r\nAuthorization: {auth}\r\nContent-Length: {}\r\n\r\n{ro_body}",
+            ro_body.len()
+        );
+        let (ro_status, _) = answer(&ro_admin, "127.0.0.1:3018", &ro_req).await;
+        assert_eq!(403, ro_status);
     }
 }

@@ -25,12 +25,12 @@ use pingap_discovery::{
     DNS_DISCOVERY, DOCKER_DISCOVERY, SRV_DISCOVERY, STATIC_DISCOVERY,
     TRANSPARENT_DISCOVERY, is_static_discovery,
 };
-use pingap_util::{is_pem, resolve_path};
+use pingap_util::{IpRules, is_pem, resolve_path};
 use regex::Regex;
 use rustls_pki_types::pem::PemObject;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize, Serializer};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufReader, Read};
@@ -45,6 +45,7 @@ use url::Url;
 
 pub const CATEGORY_BASIC: &str = "basic";
 pub const CATEGORY_SERVER: &str = "server";
+pub const CATEGORY_STREAM: &str = "stream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_PLUGIN: &str = "plugin";
@@ -1805,6 +1806,265 @@ impl ServerConf {
 /// Largest HTTP/2 flow-control window the protocol allows (RFC 9113 §6.9.2).
 const H2_MAX_WINDOW_SIZE: u64 = (1 << 31) - 1;
 
+fn validate_stream_listen_addrs(addr: &str) -> Result<()> {
+    let entries: Vec<&str> = addr
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect();
+    if entries.is_empty() {
+        return Err(Error::Invalid {
+            message: "stream addr is required".to_string(),
+        });
+    }
+    for trimmed in entries {
+        match pingap_core::unix_socket_path(trimmed) {
+            Ok(Some(_)) => {},
+            Ok(None) => {
+                let _ = trimmed.to_socket_addrs().map_err(|e| Error::Io {
+                    source: e,
+                    file: addr.to_string(),
+                })?;
+            },
+            Err(message) => {
+                return Err(Error::Invalid {
+                    message: format!("stream addr({trimmed}) {message}"),
+                });
+            },
+        }
+    }
+    Ok(())
+}
+
+fn validate_sni_route_pattern(raw: &str) -> Result<()> {
+    let trimmed = raw.trim().trim_end_matches('.');
+    if trimmed.is_empty() || trimmed.len() > 253 {
+        return Err(Error::Invalid {
+            message: format!("sni route pattern {raw:?} is empty or too long"),
+        });
+    }
+    let host = trimmed.strip_prefix("*.").unwrap_or(trimmed);
+    if host.is_empty() || host.contains('*') {
+        return Err(Error::Invalid {
+            message: format!("sni route pattern {raw:?} has invalid wildcard"),
+        });
+    }
+    for label in host.split('.') {
+        let valid = !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !valid {
+            return Err(Error::Invalid {
+                message: format!("sni route pattern {raw:?} is invalid"),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Configuration for a Layer 4 TCP / TLS SNI passthrough stream listener.
+#[derive(Debug, Default, Deserialize, Clone, Serialize, PartialEq, Hash)]
+pub struct StreamConf {
+    /// Address to listen on: `host:port`, several separated by commas, or
+    /// `unix:/absolute/path`.
+    pub addr: String,
+
+    /// Default upstream used for plain TCP forwarding or when a TLS SNI does
+    /// not match `sni_routes` (or non-TLS traffic arrives on an SNI listener).
+    pub upstream: Option<String>,
+
+    /// Optional TLS SNI passthrough routing table mapping exact domains
+    /// (`api.example.com`) or single-level/suffix wildcards (`*.app.example.com`)
+    /// to upstream names without terminating TLS.
+    pub sni_routes: Option<BTreeMap<String, String>>,
+
+    /// Read inbound PROXY protocol (v1 or v2) header before routing. Requires
+    /// `basic.trusted_proxies` to be configured.
+    pub proxy_protocol: Option<bool>,
+
+    /// Upstream TCP connect timeout for this stream (overrides upstream setting
+    /// when set).
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub connect_timeout: Option<Duration>,
+
+    /// Inactivity timeout before closing an idle bidirectional stream.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub idle_timeout: Option<Duration>,
+
+    /// Timeout waiting for a TLS ClientHello when `sni_routes` is configured.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub sni_read_timeout: Option<Duration>,
+
+    /// Maximum concurrent active connections accepted by this stream listener.
+    pub max_connections: Option<usize>,
+
+    /// Client IP/CIDR allowlist checked after optional inbound PROXY protocol.
+    pub allow_ips: Option<Vec<String>>,
+
+    /// Client IP/CIDR denylist checked after optional inbound PROXY protocol.
+    pub deny_ips: Option<Vec<String>>,
+
+    /// Number of worker threads for this stream listener.
+    pub threads: Option<usize>,
+
+    /// Enable `SO_REUSEPORT` on the listening socket(s).
+    pub reuse_port: Option<bool>,
+
+    /// TCP Fast Open queue length.
+    pub tcp_fastopen: Option<usize>,
+
+    /// TCP keepalive idle timeout.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub tcp_idle: Option<Duration>,
+
+    /// TCP keepalive probe interval.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub tcp_interval: Option<Duration>,
+
+    /// TCP keepalive user timeout.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub tcp_user_timeout: Option<Duration>,
+
+    /// Number of TCP keepalive probes before dropping the connection.
+    pub tcp_probe_count: Option<usize>,
+
+    /// Storage fragment names included into this stream entry.
+    pub includes: Option<Vec<String>>,
+
+    /// Optional operator remark.
+    pub remark: Option<String>,
+}
+
+impl StreamConf {
+    fn uses_upstream(&self, name: &str) -> bool {
+        if self.upstream.as_deref() == Some(name) {
+            return true;
+        }
+        self.sni_routes
+            .as_ref()
+            .is_some_and(|routes| routes.values().any(|up| up == name))
+    }
+
+    fn validate_targets(
+        &self,
+        upstream_names: Option<&[String]>,
+    ) -> Result<()> {
+        let has_default = self
+            .upstream
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty());
+        let has_sni = self
+            .sni_routes
+            .as_ref()
+            .is_some_and(|routes| !routes.is_empty());
+        if !has_default && !has_sni {
+            return Err(Error::Invalid {
+                message: "one of upstream or sni_routes is required"
+                    .to_string(),
+            });
+        }
+        if let Some(routes) = &self.sni_routes {
+            for (pattern, upstream) in routes {
+                validate_sni_route_pattern(pattern)?;
+                if upstream.trim().is_empty() {
+                    return Err(Error::Invalid {
+                        message: format!(
+                            "sni_routes[{pattern:?}] upstream is empty"
+                        ),
+                    });
+                }
+            }
+        }
+        let Some(known) = upstream_names else {
+            return Ok(());
+        };
+        if let Some(up) =
+            self.upstream.as_deref().filter(|v| !v.trim().is_empty())
+            && !is_reference(up)
+            && !known.iter().any(|item| item == up)
+        {
+            return Err(Error::Invalid {
+                message: format!("upstream({up}) is not found"),
+            });
+        }
+        for up in self.sni_routes.iter().flatten().map(|(_, v)| v.as_str()) {
+            if !is_reference(up) && !known.iter().any(|item| item == up) {
+                return Err(Error::Invalid {
+                    message: format!("upstream({up}) is not found"),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_limits(&self) -> Result<()> {
+        if self.max_connections == Some(0) {
+            return Err(Error::Invalid {
+                message: "max_connections should be greater than 0".to_string(),
+            });
+        }
+        if self.threads == Some(0) {
+            return Err(Error::Invalid {
+                message: "threads should be greater than 0".to_string(),
+            });
+        }
+        for (field, value) in [
+            ("connect_timeout", self.connect_timeout),
+            ("idle_timeout", self.idle_timeout),
+            ("sni_read_timeout", self.sni_read_timeout),
+        ] {
+            if value == Some(Duration::ZERO) {
+                return Err(Error::Invalid {
+                    message: format!("{field} should be greater than 0"),
+                });
+            }
+        }
+        if let Some(ips) = &self.allow_ips {
+            IpRules::try_new(ips).map_err(|e| Error::Invalid {
+                message: format!("allow_ips invalid {e}"),
+            })?;
+        }
+        if let Some(ips) = &self.deny_ips {
+            IpRules::try_new(ips).map_err(|e| Error::Invalid {
+                message: format!("deny_ips invalid {e}"),
+            })?;
+        }
+        validate_tcp_keepalive(
+            self.tcp_idle,
+            self.tcp_interval,
+            self.tcp_probe_count,
+        )
+    }
+
+    /// Validates this stream entry, optionally checking referenced upstreams
+    /// against the full configuration's upstream name list.
+    pub fn validate_with_upstreams(
+        &self,
+        upstream_names: Option<&[String]>,
+    ) -> Result<()> {
+        validate_stream_listen_addrs(&self.addr)?;
+        self.validate_targets(upstream_names)?;
+        self.validate_limits()
+    }
+}
+
+impl Validate for StreamConf {
+    fn validate(&self) -> Result<()> {
+        self.validate_with_upstreams(None)
+    }
+}
+
+impl Hashable for StreamConf {}
+
 /// Basic configuration options for the application
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct BasicConf {
@@ -2217,6 +2477,8 @@ pub struct PingapConfig {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
+    #[serde(default)]
+    pub streams: HashMap<String, StreamConf>,
     pub plugins: HashMap<String, PluginConf>,
     pub certificates: HashMap<String, CertificateConf>,
     pub storages: HashMap<String, StorageConf>,
@@ -2264,6 +2526,9 @@ impl PingapConfig {
         let (key, value_to_serialize) = match category {
             CATEGORY_SERVER => {
                 ("servers", self.get_value_for_category(&self.servers, name)?)
+            },
+            CATEGORY_STREAM => {
+                ("streams", self.get_value_for_category(&self.streams, name)?)
             },
             CATEGORY_LOCATION => (
                 "locations",
@@ -2538,6 +2803,13 @@ fn convert_document(
             replace_include,
             references.map(|missing| (missing, &mut referenced)),
         )?,
+        streams: entries(
+            data.streams.as_ref(),
+            "stream",
+            &storages,
+            replace_include,
+            references.map(|missing| (missing, &mut referenced)),
+        )?,
         plugins: entries(
             data.plugins.as_ref(),
             "plugin",
@@ -2639,6 +2911,7 @@ impl PingapConfig {
             }
             server.validate_with_locations(&location_names)?;
         }
+        self.validate_streams(&upstream_names, &mut listen_addr_list)?;
         // Plugin configs are validated by the binary (`src/main.rs`) through
         // the plugin factory: that factory lives in a higher layer than this
         // crate, so it cannot be reached from here without a dependency cycle.
@@ -2689,6 +2962,57 @@ impl PingapConfig {
         )?;
         Ok(())
     }
+    fn validate_streams(
+        &self,
+        upstream_names: &[String],
+        listen_addr_list: &mut Vec<String>,
+    ) -> Result<()> {
+        for (name, stream) in &self.streams {
+            if stream.proxy_protocol.unwrap_or_default()
+                && self
+                    .basic
+                    .trusted_proxies
+                    .as_ref()
+                    .is_none_or(|proxies| proxies.is_empty())
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "stream({name}): proxy_protocol needs basic.trusted_proxies, the addresses the header is taken from"
+                    ),
+                });
+            }
+            if entry_has_reference(stream) {
+                continue;
+            }
+            for addr in stream
+                .addr
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                if listen_addr_list.iter().any(|item| item == addr) {
+                    return Err(Error::Invalid {
+                        message: format!(
+                            "{addr} is inused by other server or stream"
+                        ),
+                    });
+                }
+                listen_addr_list.push(addr.to_string());
+            }
+            stream
+                .validate_with_upstreams(Some(upstream_names))
+                .map_err(|e| Error::Invalid {
+                    message: match e {
+                        Error::Invalid { message } => {
+                            format!("stream({name}): {message}")
+                        },
+                        other => format!("stream({name}): {other}"),
+                    },
+                })?;
+        }
+        Ok(())
+    }
+
     /// The upstreams that plugins send requests to, with the name of the
     /// plugin: the `upstream` of each `traffic_splitting` plugin.
     fn plugin_upstreams(&self) -> impl Iterator<Item = (&str, &str)> {
@@ -2770,6 +3094,13 @@ impl PingapConfig {
                 {
                     return Err(in_use("upstream", "location", location_name));
                 }
+                if let Some((stream_name, _)) = self
+                    .streams
+                    .iter()
+                    .find(|(_, stream)| stream.uses_upstream(name))
+                {
+                    return Err(in_use("upstream", "stream", stream_name));
+                }
                 if let Some((plugin_name, _)) = self
                     .plugin_upstreams()
                     .find(|(_, upstream)| *upstream == name)
@@ -2822,8 +3153,16 @@ impl PingapConfig {
                     .iter()
                     .filter(|(_, conf)| includes(&conf.includes))
                     .map(|(by, _)| ("server", by));
-                if let Some((by, by_name)) =
-                    upstreams.chain(locations).chain(servers).next()
+                let streams = self
+                    .streams
+                    .iter()
+                    .filter(|(_, conf)| includes(&conf.includes))
+                    .map(|(by, _)| ("stream", by));
+                if let Some((by, by_name)) = upstreams
+                    .chain(locations)
+                    .chain(servers)
+                    .chain(streams)
+                    .next()
                 {
                     return Err(in_use("storage", by, by_name));
                 }
@@ -2844,6 +3183,9 @@ impl PingapConfig {
             },
             CATEGORY_SERVER => {
                 self.servers.remove(name);
+            },
+            CATEGORY_STREAM => {
+                self.streams.remove(name);
             },
             CATEGORY_PLUGIN => {
                 self.plugins.remove(name);
@@ -2877,6 +3219,13 @@ impl PingapConfig {
             descriptions.push(Description {
                 category: CATEGORY_SERVER.to_string(),
                 name: format!("server:{name}"),
+                data: masked_entry(data, referenced),
+            });
+        }
+        for (name, data) in value.streams.iter() {
+            descriptions.push(Description {
+                category: CATEGORY_STREAM.to_string(),
+                name: format!("stream:{name}"),
                 data: masked_entry(data, referenced),
             });
         }
@@ -5056,5 +5405,98 @@ read_timeout = "1s"
             "Invalid error upstream(api): includes must be storage names",
             err("[1]")
         );
+    }
+
+    #[test]
+    fn test_stream_config_validation_and_conflicts() {
+        // Valid plain TCP + TLS SNI stream coexisting with HTTP server on different ports.
+        let ok_cfg = convert_pingap_config(
+            br#"
+[basic]
+trusted_proxies = ["127.0.0.1"]
+
+[upstreams.pg]
+addrs = ["127.0.0.1:5432"]
+
+[upstreams.tls_a]
+addrs = ["127.0.0.1:9443"]
+
+[servers.web]
+addr = "0.0.0.0:8080"
+
+[streams.tls_gw]
+addr = "0.0.0.0:8443"
+upstream = "pg"
+proxy_protocol = true
+connect_timeout = "3s"
+sni_read_timeout = "5s"
+idle_timeout = "5m"
+max_connections = 500
+allow_ips = ["127.0.0.1", "10.0.0.0/8"]
+deny_ips = ["10.0.0.5"]
+[streams.tls_gw.sni_routes]
+"api.example.com" = "tls_a"
+"*.app.example.com" = "tls_a"
+"#,
+            false,
+        )
+        .unwrap();
+        ok_cfg.validate().unwrap();
+
+        // Removing referenced upstream is blocked.
+        let remove_err = ok_cfg
+            .clone()
+            .remove(super::CATEGORY_UPSTREAM, "tls_a")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            "Invalid error upstream(tls_a) is in used by stream(tls_gw)",
+            remove_err
+        );
+
+        // Removing stream works.
+        let mut after_remove = ok_cfg.clone();
+        after_remove
+            .remove(super::CATEGORY_STREAM, "tls_gw")
+            .unwrap();
+        assert_eq!(true, after_remove.streams.is_empty());
+
+        // Validation error cases.
+        for (toml_str, expected_substr) in [
+            (
+                "[streams.s]\naddr = \"127.0.0.1:7000\"",
+                "one of upstream or sni_routes is required",
+            ),
+            (
+                "[upstreams.u]\naddrs = [\"127.0.0.1:1\"]\n[streams.s]\naddr = \"127.0.0.1:7000\"\nupstream = \"missing\"",
+                "upstream(missing) is not found",
+            ),
+            (
+                "[upstreams.u]\naddrs = [\"127.0.0.1:1\"]\n[streams.s]\naddr = \"127.0.0.1:7000\"\n[streams.s.sni_routes]\n\"*.*.bad.com\" = \"u\"",
+                "invalid wildcard",
+            ),
+            (
+                "[upstreams.u]\naddrs = [\"127.0.0.1:1\"]\n[streams.s]\naddr = \"127.0.0.1:7000\"\nupstream = \"u\"\nallow_ips = [\"not-an-ip\"]",
+                "allow_ips invalid",
+            ),
+            (
+                "[upstreams.u]\naddrs = [\"127.0.0.1:1\"]\n[streams.s]\naddr = \"127.0.0.1:7000\"\nupstream = \"u\"\nproxy_protocol = true",
+                "proxy_protocol needs basic.trusted_proxies",
+            ),
+            (
+                "[upstreams.u]\naddrs = [\"127.0.0.1:1\"]\n[servers.web]\naddr = \"0.0.0.0:8080\"\n[streams.s]\naddr = \"0.0.0.0:8080\"\nupstream = \"u\"",
+                "is inused by other server or stream",
+            ),
+        ] {
+            let err = convert_pingap_config(toml_str.as_bytes(), false)
+                .unwrap()
+                .validate()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(expected_substr),
+                "expected {expected_substr:?} in {err:?}"
+            );
+        }
     }
 }

@@ -35,6 +35,7 @@ pub fn format_category(category: &Category) -> &str {
     match category {
         Category::Basic => "basic",
         Category::Server => "servers",
+        Category::Stream => "streams",
         Category::Location => "locations",
         Category::Upstream => "upstreams",
         Category::Plugin => "plugins",
@@ -64,6 +65,7 @@ where
 pub struct PingapTomlConfig {
     pub basic: Option<Value>,
     pub servers: Option<Map<String, Value>>,
+    pub streams: Option<Map<String, Value>>,
     pub upstreams: Option<Map<String, Value>>,
     pub locations: Option<Map<String, Value>>,
     pub plugins: Option<Map<String, Value>>,
@@ -149,6 +151,7 @@ impl PingapTomlConfig {
             .collect();
         let sections = [
             &self.servers,
+            &self.streams,
             &self.upstreams,
             &self.locations,
             &self.plugins,
@@ -177,6 +180,7 @@ impl PingapTomlConfig {
         }
         for (of, entries) in [
             (Category::Server, &self.servers),
+            (Category::Stream, &self.streams),
             (Category::Location, &self.locations),
             (Category::Upstream, &self.upstreams),
             (Category::Plugin, &self.plugins),
@@ -213,6 +217,7 @@ impl PingapTomlConfig {
         match category {
             Category::Basic => wrap(key, self.basic.as_ref()),
             Category::Server => wrap(key, self.servers.as_ref()),
+            Category::Stream => wrap(key, self.streams.as_ref()),
             Category::Location => wrap(key, self.locations.as_ref()),
             Category::Upstream => wrap(key, self.upstreams.as_ref()),
             Category::Plugin => wrap(key, self.plugins.as_ref()),
@@ -228,6 +233,9 @@ impl PingapTomlConfig {
             },
             Category::Server => {
                 self.servers.get_or_insert_default().insert(name, value);
+            },
+            Category::Stream => {
+                self.streams.get_or_insert_default().insert(name, value);
             },
             Category::Location => {
                 self.locations.get_or_insert_default().insert(name, value);
@@ -255,6 +263,7 @@ impl PingapTomlConfig {
             ("upstream", &self.upstreams),
             ("location", &self.locations),
             ("server", &self.servers),
+            ("stream", &self.streams),
         ]
         .into_iter()
         .find_map(|(kind, section)| {
@@ -273,6 +282,7 @@ impl PingapTomlConfig {
         let section = match category {
             Category::Basic => return self.basic.as_ref(),
             Category::Server => &self.servers,
+            Category::Stream => &self.streams,
             Category::Location => &self.locations,
             Category::Upstream => &self.upstreams,
             Category::Plugin => &self.plugins,
@@ -286,6 +296,9 @@ impl PingapTomlConfig {
             Category::Basic => self.basic = None,
             Category::Server => {
                 self.servers.get_or_insert_default().remove(name);
+            },
+            Category::Stream => {
+                self.streams.get_or_insert_default().remove(name);
             },
             Category::Location => {
                 self.locations.get_or_insert_default().remove(name);
@@ -590,9 +603,10 @@ impl ConfigManager {
     /// it, after which the concatenated document stops parsing with a
     /// `duplicate key` whose line number matches no individual file.
     fn is_canonical_key(&self, key: &str) -> bool {
-        const CATEGORIES: [Category; 7] = [
+        const CATEGORIES: [Category; 8] = [
             Category::Basic,
             Category::Server,
+            Category::Stream,
             Category::Location,
             Category::Upstream,
             Category::Plugin,
@@ -840,6 +854,7 @@ impl ConfigManager {
                 for category in [
                     Category::Basic,
                     Category::Server,
+                    Category::Stream,
                     Category::Location,
                     Category::Upstream,
                     Category::Plugin,
@@ -866,6 +881,7 @@ impl ConfigManager {
 
                 for (category, value) in [
                     (Category::Server, config.servers.clone()),
+                    (Category::Stream, config.streams.clone()),
                     (Category::Location, config.locations.clone()),
                     (Category::Upstream, config.upstreams.clone()),
                     (Category::Plugin, config.plugins.clone()),
@@ -890,6 +906,7 @@ impl ConfigManager {
                 if let Some(existing) = existing {
                     for (category, old, new) in [
                         (Category::Server, existing.servers, &config.servers),
+                        (Category::Stream, existing.streams, &config.streams),
                         (
                             Category::Location,
                             existing.locations,

@@ -291,6 +291,42 @@ proxy_set_headers = ["X-JA4: $ja4"]
 - 指纹属于连接：keep-alive 或 HTTP/2 连接上的每个请求都带有它，连接关闭时释放。
 - 开销是每个新 TLS 连接一次 ClientHello 解析和两次 SHA-256，外加每个请求一次查表。默认关闭。
 
+## 四层 TCP 与 TLS SNI 透传（`[streams.*]`）
+
+`StreamServer` 与 `StreamApp`（`stream.rs`）实现原生四层转发监听器，与现有七层 HTTP `ProxyHttp` 流水线完全隔离：
+
+```toml
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.db_primary]
+addrs = ["10.1.0.10:5432"]
+health_check = "tcp://10.1.0.10:5432?connection_timeout=2s"
+send_proxy_protocol = "v2"
+
+[upstreams.tls_a]
+addrs = ["10.1.0.20:8443"]
+
+[streams.pg]
+addr = "0.0.0.0:5432"
+upstream = "db_primary"
+proxy_protocol = true
+idle_timeout = "5m"
+max_connections = 2000
+
+[streams.tls_mux]
+addr = "0.0.0.0:9443"
+upstream = "db_primary"        # 可选：用于非 TLS 或未匹配 SNI 的回退上游
+sni_routes = { "api.example.com" = "tls_a", "*.app.example.com" = "tls_a" }
+sni_read_timeout = "5s"
+```
+
+- **TLS SNI 免解密透传**：配置 `sni_routes` 后，Pingap 不持有任何 TLS 证书，仅在 `sni_read_timeout` 内预读客户端首包 TLS `ClientHello`（支持跨多 TLS Record 重组），经 `pingap_core::ja4::extract_sni` 提取 SNI 后按「精确域名（不区分大小写、去除末尾 `.`）> 最长泛域名（`*.domain`，不匹配根域名）> 可选默认 `upstream`」匹配目标上游，并在建连后原封不动重放已预读的字节。
+- **纯 TCP 与半关闭**：未配置 `sni_routes`（或非 TLS 流量回退到默认 `upstream`）时直接建立双向转发，正确传递 TCP `FIN` 半关闭并在多地址上游间执行建连失败切换。
+- **PROXY protocol**：入站 `proxy_protocol = true` 仅从 `basic.trusted_proxies` 读取 v1/v2 头并先于 `allow_ips` / `deny_ips` 生效；若目标上游配置了 `send_proxy_protocol = "v1"` / `"v2"`，Pingap 会在重放预读字节之前写出携带真实客户端地址的代理协议头。
+- **热重载边界**：`upstream`、`sni_routes`、`proxy_protocol`、`connect_timeout`、`idle_timeout`、`sni_read_timeout`、`max_connections`、`allow_ips`、`deny_ips`、`remark` 可在 `--autoreload` 下平滑生效且不中断已有长连接；`addr`、`threads`、`reuse_port`、TCP socket 参数及新增/删除 stream 项需要重启（记录在 `left_for_restart`）。
+- **可观测性**：以 `pingap::stream_access` 输出结构化连接日志，并通过 Prometheus 导出 `pingap_stream_active_connections`、`pingap_stream_connections_total` 与 `pingap_stream_bytes_total` 指标。
+
 ## 每请求上下文
 
 `Ctx` 携带请求累积的一切，是访问日志变量与 `$` 替换的读取源。记录的时序包括上游 TCP 连接、TLS 握手、上游处理与响应、缓存查找与锁、压缩与总服务时间。见 [pingap-core](core.md) 与 [pingap-logger](logger.md) 中的访问日志标签表。

@@ -1776,17 +1776,20 @@ purge_ip_list = ["192.168.1.1"]
         }
         let _reset = Reset;
 
-        struct Recorder(std::sync::Mutex<Vec<CachePurgeEvent>>);
+        struct Recorder {
+            directory: Option<String>,
+            events: std::sync::Mutex<Vec<CachePurgeEvent>>,
+        }
         impl CachePurgeBroadcaster for Recorder {
             fn broadcast(&self, event: CachePurgeEvent) {
-                if let Ok(mut guard) = self.0.lock() {
+                if event.directory != self.directory {
+                    return;
+                }
+                if let Ok(mut guard) = self.events.lock() {
                     guard.push(event);
                 }
             }
         }
-
-        let recorder = Arc::new(Recorder(std::sync::Mutex::new(Vec::new())));
-        set_purge_broadcaster(Some(recorder.clone()));
 
         let dir = tempfile::TempDir::new().unwrap();
         let file_conf = format!(
@@ -1801,6 +1804,13 @@ purge_ip_list = ["127.0.0.1"]
             Cache::try_from(&toml::from_str::<PluginConf>(&file_conf).unwrap())
                 .unwrap();
         assert_eq!(true, cache.cluster_purge);
+        assert_eq!(true, cache.http_cache.directory.is_some());
+
+        let recorder = Arc::new(Recorder {
+            directory: cache.http_cache.directory.clone(),
+            events: std::sync::Mutex::new(Vec::new()),
+        });
+        set_purge_broadcaster(Some(recorder.clone()));
 
         // Single URL purge broadcasts GET + HEAD variants and the file directory.
         let resp = purge(&cache, "/assets/app.js").await;
@@ -1824,7 +1834,7 @@ purge_ip_list = ["127.0.0.1"]
         let resp = purge(&local_only, "/*").await;
         assert_eq!(StatusCode::OK, resp.status);
 
-        let events = recorder.0.lock().unwrap();
+        let events = recorder.events.lock().unwrap();
         assert_eq!(2, events.len());
         assert_eq!(cache.http_cache.directory, events[0].directory);
         match &events[0].action {

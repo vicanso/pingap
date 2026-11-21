@@ -257,7 +257,7 @@ which asks for it every few seconds, reads nothing from the storage. A control
 panel node runs no configuration: there `user` and `group` are read from the
 storage on each request, and `config_hash` is that of an empty configuration.
 
-`{category}` is one of `basic`, `server`, `location`, `upstream`, `plugin`,
+`{category}` is one of `basic`, `server`, `stream`, `location`, `upstream`, `plugin`,
 `certificate`, `storage`. A `POST` to any other category is answered `400`
 (`pingap`, the name the UI posts the basic config under, is accepted as
 `basic`).
@@ -291,7 +291,7 @@ Two things follow from "the configuration it would leave":
   full check applies again from the moment the configuration is valid.
 
 A `DELETE` is refused while another stored entry refers to the one being
-removed: an upstream named by a location or a `traffic_splitting` plugin, a
+removed: an upstream named by a location, stream or a `traffic_splitting` plugin, a
 location listed by a server, a plugin listed by a location, a storage named in
 an `includes`. The check reads the storage, not the configuration the process
 is running, so it holds on a control-panel node and on a node started without

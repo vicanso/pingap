@@ -39,6 +39,8 @@ fn is_always_list(field: &str) -> bool {
             | "match_cookies"
             | "trusted_proxies"
             | "labels"
+            | "allow_ips"
+            | "deny_ips"
     )
 }
 
@@ -552,6 +554,10 @@ pub fn convert_kdl_to_toml(input: &str) -> Result<String> {
                 get_node_name_arg(node)?,
                 process_server_node(node)?,
             ),
+            "stream" | "streams" => ConfigBlock::Stream(
+                get_node_name_arg(node)?,
+                node_to_toml_map(node)?,
+            ),
             "location" | "locations" => ConfigBlock::Location(
                 get_node_name_arg(node)?,
                 process_location_node(node)?,
@@ -636,6 +642,19 @@ fn kdl_indent(n: usize) -> String {
     "    ".repeat(n)
 }
 
+fn format_kdl_key(key: &str) -> String {
+    let bare = !key.is_empty()
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && !key.bytes().next().is_some_and(|b| b.is_ascii_digit());
+    if bare {
+        key.to_string()
+    } else {
+        kdl_escape_string(key)
+    }
+}
+
 /// Write one TOML key-value pair as a KDL child node at the given indent.
 fn write_kdl_property(
     out: &mut String,
@@ -644,9 +663,10 @@ fn write_kdl_property(
     indent: usize,
 ) {
     let pad = kdl_indent(indent);
+    let rendered_key = format_kdl_key(key);
     match value {
         TomlValue::Table(t) => {
-            out.push_str(&format!("{pad}{key} {{\n"));
+            out.push_str(&format!("{pad}{rendered_key} {{\n"));
             for (k, v) in t {
                 write_kdl_property(out, k, v, indent + 1);
             }
@@ -657,7 +677,7 @@ fn write_kdl_property(
                 // Array of inline tables → each Table becomes an `item { }` child block.
                 // This preserves all data without silently dropping nested structure.
                 // KDL syntax: `key { item { k1 v1; k2 v2 }  item { ... } }`
-                out.push_str(&format!("{pad}{key} {{\n"));
+                out.push_str(&format!("{pad}{rendered_key} {{\n"));
                 for elem in arr {
                     match elem {
                         TomlValue::Table(t) => {
@@ -694,7 +714,7 @@ fn write_kdl_property(
                 // the plugin, finding no list, had no addresses to deny.
                 // The `item` form keeps it a list. The fields of
                 // `is_always_list` are lists whatever they look like.
-                out.push_str(&format!("{pad}{key} {{\n"));
+                out.push_str(&format!("{pad}{rendered_key} {{\n"));
                 for elem in arr {
                     out.push_str(&format!(
                         "{}item {}\n",
@@ -707,12 +727,15 @@ fn write_kdl_property(
                 // Homogeneous scalar array → space-separated args on one line
                 let items: Vec<String> =
                     arr.iter().map(toml_value_to_kdl_arg).collect();
-                out.push_str(&format!("{pad}{key} {}\n", items.join(" ")));
+                out.push_str(&format!(
+                    "{pad}{rendered_key} {}\n",
+                    items.join(" ")
+                ));
             }
         },
         _ => {
             out.push_str(&format!(
-                "{pad}{key} {}\n",
+                "{pad}{rendered_key} {}\n",
                 toml_value_to_kdl_arg(value)
             ));
         },
@@ -768,6 +791,7 @@ pub fn convert_toml_to_kdl(input: &str) -> Result<String> {
         ("upstreams", "upstream"),
         ("locations", "location"),
         ("servers", "server"),
+        ("streams", "stream"),
         ("plugins", "plugin"),
         ("certificates", "certificate"),
         ("storages", "storage"),
@@ -1176,6 +1200,32 @@ path = "/api"
 [servers.web]
 addr = "0.0.0.0:3000"
 locations = ["api"]
+"#;
+        let kdl_str = convert_toml_to_kdl(toml_input).unwrap();
+        let toml_roundtrip = convert_kdl_to_toml(&kdl_str).unwrap();
+
+        let orig: toml::Value = toml::from_str(toml_input).unwrap();
+        let rt: toml::Value = toml::from_str(&toml_roundtrip).unwrap();
+        assert_eq!(orig, rt);
+    }
+
+    #[test]
+    fn test_stream_roundtrip_toml_kdl_toml() {
+        let toml_input = r#"
+[upstreams.pg_up]
+addrs = ["127.0.0.1:5432"]
+
+[upstreams.tls_api]
+addrs = ["127.0.0.1:9443"]
+
+[streams.tls_gateway]
+addr = "0.0.0.0:8443"
+upstream = "pg_up"
+allow_ips = ["10.0.0.0/8"]
+proxy_protocol = true
+[streams.tls_gateway.sni_routes]
+"api.example.com" = "tls_api"
+"*.app.example.com" = "tls_api"
 "#;
         let kdl_str = convert_toml_to_kdl(toml_input).unwrap();
         let toml_roundtrip = convert_kdl_to_toml(&kdl_str).unwrap();

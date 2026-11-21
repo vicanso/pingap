@@ -25,7 +25,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy compression reload webhook abnormal_exit foreground proxy_protocol daemon restart restart_guard upgrade systemd"
+CASES="samples proxy compression reload webhook abnormal_exit foreground proxy_protocol stream daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -1288,6 +1288,230 @@ case_upgrade() {
   hammer_stop
   handover_drops "no request failed during the upgrade ($HAMMERED made)" 1
   expect "a request through the second process" 200 "$(status "http://127.0.0.1:$proxy/")"
+}
+
+# ---------------------------------------------------------------------------
+# stream: native L4 TCP + TLS SNI passthrough alongside L7 HTTP, fallback,
+# half-close, live `--autoreload` SNI route switch, and `left_for_restart`.
+case_stream() {
+  if ! command -v openssl >/dev/null; then
+    skip "openssl is required for case_stream"
+    return
+  fi
+  local http_proxy=$((PORT_BASE + 160)) http_up=$((PORT_BASE + 161))
+  local tcp_stream=$((PORT_BASE + 162)) tls_stream=$((PORT_BASE + 163))
+  local moved_stream=$((PORT_BASE + 164)) tcp_up=$((PORT_BASE + 165))
+  local tls_a_up=$((PORT_BASE + 166)) tls_b_up=$((PORT_BASE + 167))
+
+  backend $http_up http
+
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$DIR/a.key" -out "$DIR/a.crt" -days 2 \
+    -subj "/CN=alpha.sni.test" \
+    -addext "subjectAltName=DNS:alpha.sni.test" 2>/dev/null
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$DIR/b.key" -out "$DIR/b.crt" -days 2 \
+    -subj "/CN=beta.sni.test" \
+    -addext "subjectAltName=DNS:beta.sni.test,DNS:*.beta.sni.test,DNS:alpha.sni.test" 2>/dev/null
+  cat "$DIR/a.crt" "$DIR/b.crt" >"$DIR/ca.pem"
+
+  cat >"$DIR/stream_server.py" <<'PY'
+import socket, ssl, sys, threading
+
+mode, port_s, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+cert = sys.argv[4] if len(sys.argv) > 4 else None
+key = sys.argv[5] if len(sys.argv) > 5 else None
+ctx = None
+if mode == "tls":
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+
+def serve_plain(conn):
+    try:
+        chunks = []
+        while True:
+            data = conn.recv(4096)
+            if not data:
+                break
+            chunks.append(data)
+        conn.sendall(b"PLAIN:" + b"".join(chunks))
+        try:
+            conn.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+    finally:
+        conn.close()
+
+def serve_tls(conn):
+    tls_conn = None
+    try:
+        tls_conn = ctx.wrap_socket(conn, server_side=True)
+        data = tls_conn.recv(4096)
+        tls_conn.sendall(tag.encode() + b":" + data + b"\n")
+    except Exception:
+        pass
+    finally:
+        try:
+            (tls_conn or conn).close()
+        except Exception:
+            pass
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", int(port_s)))
+srv.listen(64)
+while True:
+    conn, _ = srv.accept()
+    fn = serve_tls if mode == "tls" else serve_plain
+    threading.Thread(target=fn, args=(conn,), daemon=True).start()
+PY
+
+  cat >"$DIR/stream_client.py" <<'PY'
+import socket, ssl, sys
+
+mode = sys.argv[1]
+port = int(sys.argv[2])
+if mode == "tcp":
+    msg = sys.argv[3].encode()
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+        s.sendall(msg)
+        s.shutdown(socket.SHUT_WR)
+        out = bytearray()
+        while True:
+            buf = s.recv(4096)
+            if not buf:
+                break
+            out.extend(buf)
+    print(out.decode(), end="")
+elif mode == "tls":
+    sni, ca, msg = sys.argv[3], sys.argv[4], sys.argv[5].encode()
+    ctx = ssl.create_default_context(cafile=ca)
+    ctx.check_hostname = False
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+        with ctx.wrap_socket(raw, server_hostname=sni) as tls:
+            cert = tls.getpeercert()
+            cn = ""
+            for rdn in cert.get("subject", ()):
+                for k, v in rdn:
+                    if k == "commonName":
+                        cn = v
+            tls.sendall(msg)
+            out = bytearray()
+            while True:
+                buf = tls.recv(4096)
+                if not buf:
+                    break
+                out.extend(buf)
+                if out.endswith(b"\n"):
+                    break
+    print(f"cn={cn} {out.decode().strip()}", end="")
+PY
+
+  run_bg "$DIR/tcp_up.out" python3 "$DIR/stream_server.py" plain $tcp_up PLAIN
+  run_bg "$DIR/tls_a.out" python3 "$DIR/stream_server.py" tls $tls_a_up ALPHA_TLS "$DIR/a.crt" "$DIR/a.key"
+  run_bg "$DIR/tls_b.out" python3 "$DIR/stream_server.py" tls $tls_b_up BETA_TLS "$DIR/b.crt" "$DIR/b.key"
+  wait_port $tcp_up || fail "tcp backend listens on $tcp_up"
+  wait_port $tls_a_up || fail "tls A backend listens on $tls_a_up"
+  wait_port $tls_b_up || fail "tls B backend listens on $tls_b_up"
+
+  basic_conf "$DIR/c"
+  cat >"$DIR/c/upstreams.toml" <<EOT
+[upstreams.http_up]
+addrs = ["127.0.0.1:$http_up"]
+
+[upstreams.tcp_up]
+addrs = ["127.0.0.1:$tcp_up"]
+
+[upstreams.tls_a]
+addrs = ["127.0.0.1:$tls_a_up"]
+
+[upstreams.tls_b]
+addrs = ["127.0.0.1:$tls_b_up"]
+EOT
+  cat >"$DIR/c/locations.toml" <<'EOT'
+[locations.http_root]
+upstream = "http_up"
+path = "/"
+EOT
+  cat >"$DIR/c/servers.toml" <<EOT
+[servers.http]
+addr = "127.0.0.1:$http_proxy"
+locations = ["http_root"]
+EOT
+  cat >"$DIR/c/streams.toml" <<EOT
+[streams.tcp_plain]
+addr = "127.0.0.1:$tcp_stream"
+upstream = "tcp_up"
+idle_timeout = "10s"
+
+[streams.tls_mux]
+addr = "127.0.0.1:$tls_stream"
+upstream = "tcp_up"
+sni_routes = { "alpha.sni.test" = "tls_a", "*.beta.sni.test" = "tls_b" }
+sni_read_timeout = "3s"
+idle_timeout = "10s"
+EOT
+
+  pingap "$DIR/pingap.log" -c "$DIR/c" --autoreload
+  local pid=$LAST_PID
+  wait_port $http_proxy || fail "L7 http listens on $http_proxy"
+  wait_port $tcp_stream || fail "L4 tcp_plain listens on $tcp_stream"
+  wait_port $tls_stream || fail "L4 tls_mux listens on $tls_stream"
+
+  expect "L7 HTTP proxy runs alongside L4 streams" 200 \
+    "$(status "http://127.0.0.1:$http_proxy/")"
+  expect "L4 plain TCP passthrough with half-close" "PLAIN:ping-l4" \
+    "$(python3 "$DIR/stream_client.py" tcp $tcp_stream ping-l4)"
+  expect "L4 TLS SNI exact match passthrough" "cn=alpha.sni.test ALPHA_TLS:hello-a" \
+    "$(python3 "$DIR/stream_client.py" tls $tls_stream alpha.sni.test "$DIR/ca.pem" hello-a)"
+  expect "L4 TLS SNI wildcard passthrough" "cn=beta.sni.test BETA_TLS:hello-b" \
+    "$(python3 "$DIR/stream_client.py" tls $tls_stream app.beta.sni.test "$DIR/ca.pem" hello-b)"
+  expect "L4 non-TLS fallback on SNI listener" "PLAIN:raw-fallback" \
+    "$(python3 "$DIR/stream_client.py" tcp $tls_stream raw-fallback)"
+
+  # Live hot reload of SNI routing table without process restart
+  cat >"$DIR/streams.next" <<EOT
+[streams.tcp_plain]
+addr = "127.0.0.1:$tcp_stream"
+upstream = "tcp_up"
+idle_timeout = "10s"
+
+[streams.tls_mux]
+addr = "127.0.0.1:$tls_stream"
+upstream = "tcp_up"
+sni_routes = { "alpha.sni.test" = "tls_b", "*.beta.sni.test" = "tls_b" }
+sni_read_timeout = "3s"
+idle_timeout = "10s"
+EOT
+  mv -f "$DIR/streams.next" "$DIR/c/streams.toml"
+  wait_for 15 sh -c "[ \"\$(python3 '$DIR/stream_client.py' tls $tls_stream alpha.sni.test '$DIR/ca.pem' after)\" = 'cn=beta.sni.test BETA_TLS:after' ]"
+  expect "L4 SNI route hot-reloaded" "cn=beta.sni.test BETA_TLS:after" \
+    "$(python3 "$DIR/stream_client.py" tls $tls_stream alpha.sni.test "$DIR/ca.pem" after)"
+  expect "hot reload kept same process" yes "$(alive "$pid" && echo yes || echo no)"
+
+  # Listener addr change under --autoreload logs left_for_restart and keeps old socket
+  cat >"$DIR/streams.next" <<EOT
+[streams.tcp_plain]
+addr = "127.0.0.1:$moved_stream"
+upstream = "tcp_up"
+idle_timeout = "10s"
+
+[streams.tls_mux]
+addr = "127.0.0.1:$tls_stream"
+upstream = "tcp_up"
+sni_routes = { "alpha.sni.test" = "tls_b", "*.beta.sni.test" = "tls_b" }
+sni_read_timeout = "3s"
+idle_timeout = "10s"
+EOT
+  mv -f "$DIR/streams.next" "$DIR/c/streams.toml"
+  wait_for 10 sh -c "plain() { sed \$'s/\\x1b\\[[0-9;]*m//g'; }; plain <'$DIR/pingap.log' | grep -q 'takes a restart to apply.*127.0.0.1:$moved_stream'"
+  expect_match "stream addr change reports restart required" \
+    "takes a restart to apply.*127.0.0.1:$moved_stream" \
+    "$(plain <"$DIR/pingap.log" | grep 'takes a restart to apply')"
+  expect "old L4 socket keeps serving" "PLAIN:still-up" \
+    "$(python3 "$DIR/stream_client.py" tcp $tcp_stream still-up)"
+  expect "moved L4 port is not bound before restart" 000 \
+    "$(status "http://127.0.0.1:$moved_stream/")"
 }
 
 # ---------------------------------------------------------------------------

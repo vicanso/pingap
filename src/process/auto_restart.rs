@@ -19,6 +19,7 @@ use crate::certificates::{
 use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
+use crate::streams::try_init_streams;
 use crate::upstreams::{remove_unconfigured_upstreams, try_update_upstreams};
 use crate::webhook::{
     get_webhook_sender, reload_webhook_notification_sender, send_notification,
@@ -30,9 +31,9 @@ use pingap_certificate::{
     validate_certificates_tls_for_backend, validate_servers_tls_for_backend,
 };
 use pingap_config::{
-    CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM, CertificateConf,
-    ConfigManager, FILE_REFERENCE_PREFIX, MissingReference, Observer,
-    PingapConfig, PingapTomlConfig,
+    CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_STREAM, CATEGORY_UPSTREAM,
+    CertificateConf, ConfigManager, FILE_REFERENCE_PREFIX, MissingReference,
+    Observer, PingapConfig, PingapTomlConfig, StreamConf,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -565,6 +566,83 @@ pub(crate) async fn apply_runtime_config(
     apply_config(config_manager, new_config, true).await
 }
 
+fn merge_stream_runtime_fields(
+    target: &mut StreamConf,
+    source: &StreamConf,
+) -> bool {
+    let old = target.clone();
+    target.upstream.clone_from(&source.upstream);
+    target.sni_routes.clone_from(&source.sni_routes);
+    target.proxy_protocol = source.proxy_protocol;
+    target.connect_timeout = source.connect_timeout;
+    target.idle_timeout = source.idle_timeout;
+    target.sni_read_timeout = source.sni_read_timeout;
+    target.max_connections = source.max_connections;
+    target.allow_ips.clone_from(&source.allow_ips);
+    target.deny_ips.clone_from(&source.deny_ips);
+    target.remark.clone_from(&source.remark);
+    *target != old
+}
+
+fn merge_hot_reload_streams(
+    hot_reload_streams: &mut HashMap<String, StreamConf>,
+    new_streams: &HashMap<String, StreamConf>,
+) -> bool {
+    let mut changed = false;
+    for (name, new_stream) in new_streams.iter() {
+        if let Some(clone_stream) = hot_reload_streams.get_mut(name)
+            && merge_stream_runtime_fields(clone_stream, new_stream)
+        {
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn format_reload_message(name: &str, list: &[String]) -> String {
+    if list.is_empty() {
+        return format!("{name} is removed");
+    }
+    if list.len() > 1 {
+        return format!("{name}s({}) are modified", list.join(","));
+    }
+    format!("{name}({}) is modified", list.join(","))
+}
+
+async fn reload_streams_runtime(
+    upstream_reload_failed: bool,
+    streams: &HashMap<String, StreamConf>,
+    reload_fail_messages: &mut Vec<String>,
+) -> bool {
+    if upstream_reload_failed {
+        reload_fail_messages.push(
+            "stream reload skipped because upstream reload failed".to_string(),
+        );
+        return true;
+    }
+    match try_init_streams(streams) {
+        Err(e) => {
+            let error = e.to_string();
+            reload_fail_messages.push(format!("stream reload fail: {error}"));
+            error!(target: LOG_TARGET, error, "reload stream fail");
+            true
+        },
+        Ok(updated_streams) => {
+            info!(target: LOG_TARGET, "reload stream success");
+            if !updated_streams.is_empty() {
+                send_notification(NotificationData {
+                    category: "reload_config".to_string(),
+                    level: NotificationLevel::Info,
+                    message: format_reload_message("Stream", &updated_streams),
+                    ..Default::default()
+                })
+                .await;
+            }
+            false
+        },
+    }
+}
+
 /// Compares configurations and handles updates through hot reload or full restart
 ///
 /// This function:
@@ -636,7 +714,12 @@ async fn apply_config(
     // category, and one that failed halfway used to leave the others
     // applied: locations routing to an upstream that was not there, or
     // naming a plugin that had not been built.
-    let builds = [CATEGORY_UPSTREAM, CATEGORY_LOCATION, CATEGORY_PLUGIN];
+    let builds = [
+        CATEGORY_UPSTREAM,
+        CATEGORY_LOCATION,
+        CATEGORY_PLUGIN,
+        CATEGORY_STREAM,
+    ];
     if updated_category_list
         .iter()
         .any(|category| builds.contains(&category.as_str()))
@@ -646,7 +729,8 @@ async fn apply_config(
             pingap_cache::dry_run(|| {
                 crate::validate::validate_upstreams(&checked)?;
                 crate::validate::validate_locations(&checked)?;
-                crate::validate::validate_plugins(&checked)
+                crate::validate::validate_plugins(&checked)?;
+                crate::validate::validate_streams(&checked)
             })
             .map_err(|e| e.to_string())
         })
@@ -661,6 +745,7 @@ async fn apply_config(
     let mut plugin_reload_failed = false;
     let mut location_reload_failed = false;
     let mut server_location_reload_failed = false;
+    let mut stream_reload_failed = false;
     let mut certificate_reload_failed = false;
     // The entries of ACME this reload hands to their service.
     let mut handed_to_acme: Vec<String> = vec![];
@@ -708,6 +793,10 @@ async fn apply_config(
                 should_reload_server_location = true;
             }
         }
+        let stream_runtime_changed = merge_hot_reload_streams(
+            &mut hot_reload_config.streams,
+            &new_config.streams,
+        );
 
         // set upstream, location and plugin value
         hot_reload_config.upstreams = new_config.upstreams.clone();
@@ -983,12 +1072,22 @@ async fn apply_config(
                 },
             };
         }
+        if stream_runtime_changed {
+            stream_reload_failed = reload_streams_runtime(
+                upstream_reload_failed,
+                &hot_reload_config.streams,
+                &mut reload_fail_messages,
+            )
+            .await;
+        }
     }
 
     // The upstreams this configuration no longer has were kept for the
     // locations that routed to them. Those are replaced now - unless
     // their reload failed, and then they still need the upstreams.
-    let routes_failed = location_reload_failed || server_location_reload_failed;
+    let routes_failed = location_reload_failed
+        || server_location_reload_failed
+        || stream_reload_failed;
     if !upstream_reload_failed && !routes_failed {
         remove_unconfigured_upstreams(&new_config.upstreams);
     }
@@ -1013,6 +1112,9 @@ async fn apply_config(
             .locations
             .clone_from(&current_config.locations);
     }
+    if stream_reload_failed {
+        running_config.streams.clone_from(&current_config.streams);
+    }
     running_config.prune_referenced();
     if routes_failed {
         for (name, server) in running_config.servers.iter_mut() {
@@ -1031,6 +1133,7 @@ async fn apply_config(
         && !plugin_reload_failed
         && !location_reload_failed
         && !server_location_reload_failed
+        && !stream_reload_failed
         && !certificate_reload_failed;
 
     if hot_reload_only {
@@ -1700,6 +1803,112 @@ mod tests {
         // when it waits again.
         assert_eq!(false, super::left_is_news(&[]));
         assert_eq!(true, super::left_is_news(&names(&["a"])));
+    }
+
+    #[test]
+    fn test_left_for_restart_streams() {
+        use pingap_config::{MissingReference, PingapTomlConfig};
+        let load = |body: &str| {
+            PingapTomlConfig::from_toml(body)
+                .unwrap()
+                .to_running_config(MissingReference::Refuse)
+                .unwrap()
+        };
+        let running = load(
+            r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.tcp_a]
+addrs = ["127.0.0.1:9001"]
+
+[upstreams.tcp_b]
+addrs = ["127.0.0.1:9002"]
+
+[streams.mux]
+addr = "127.0.0.1:9443"
+upstream = "tcp_a"
+sni_routes = { "a.test" = "tcp_a" }
+"#,
+        );
+        // Runtime-only changes hot-reload without leaving anything for restart.
+        let wanted_runtime = load(
+            r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.tcp_a]
+addrs = ["127.0.0.1:9001"]
+
+[upstreams.tcp_b]
+addrs = ["127.0.0.1:9002"]
+
+[streams.mux]
+addr = "127.0.0.1:9443"
+upstream = "tcp_b"
+sni_routes = { "a.test" = "tcp_b", "*.b.test" = "tcp_a" }
+proxy_protocol = true
+connect_timeout = "2s"
+idle_timeout = "30s"
+sni_read_timeout = "3s"
+max_connections = 64
+allow_ips = ["127.0.0.1/32"]
+deny_ips = ["192.0.2.0/24"]
+remark = "hot updated"
+"#,
+        );
+        let mut reloaded = running.clone();
+        reloaded.upstreams.clone_from(&wanted_runtime.upstreams);
+        assert_eq!(
+            true,
+            super::merge_hot_reload_streams(
+                &mut reloaded.streams,
+                &wanted_runtime.streams
+            )
+        );
+        assert_eq!(
+            Vec::<String>::new(),
+            super::left_for_restart(&reloaded, &wanted_runtime)
+        );
+
+        // Listener-level changes and added/removed streams remain for restart.
+        let wanted_restart = load(
+            r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.tcp_a]
+addrs = ["127.0.0.1:9001"]
+
+[upstreams.tcp_b]
+addrs = ["127.0.0.1:9002"]
+
+[streams.mux]
+addr = "127.0.0.1:9444"
+upstream = "tcp_a"
+threads = 2
+reuse_port = true
+
+[streams.extra]
+addr = "127.0.0.1:9445"
+upstream = "tcp_b"
+"#,
+        );
+        let mut reloaded2 = running.clone();
+        super::merge_hot_reload_streams(
+            &mut reloaded2.streams,
+            &wanted_restart.streams,
+        );
+        let left =
+            super::left_for_restart(&reloaded2, &wanted_restart).join("\n");
+        assert_eq!(true, left.contains("[MODIFIED] stream:mux"), "{left}");
+        assert_eq!(
+            true,
+            left.contains("+ addr = \"127.0.0.1:9444\""),
+            "{left}"
+        );
+        assert_eq!(true, left.contains("+ threads = 2"), "{left}");
+        assert_eq!(true, left.contains("[ADDED] stream:extra"), "{left}");
     }
 
     /// Regression: under `--autoreload` a change that only a restart

@@ -197,6 +197,20 @@ impl BackendAddressCache {
     }
 }
 
+/// Selected backend target and L4 transport options for a Layer 4 stream
+/// connection.
+#[derive(Debug)]
+pub struct TcpPeer {
+    pub addr: BackendAddr,
+    pub addr_str: Arc<str>,
+    pub connection_timeout: Option<Duration>,
+    pub tcp_keepalive: Option<TcpKeepalive>,
+    pub tcp_recv_buf: Option<usize>,
+    pub send_proxy_protocol: Option<ProxyProtocolVersion>,
+    #[debug(skip)]
+    pub inflight: Option<InflightGuard>,
+}
+
 /// What a request has been through before it asks for a backend, and
 /// where what the upstream gives it for this attempt is put.
 pub struct PeerAttempt<'a> {
@@ -2066,6 +2080,82 @@ impl Upstream {
     pub fn is_transparent(&self) -> bool {
         matches!(self.lb, SelectionLb::Transparent)
     }
+
+    /// Number of currently known backends for this upstream.
+    pub fn backend_count(&self) -> usize {
+        self.get_backends()
+            .map_or(0, |backends| backends.get_backend().len())
+    }
+
+    /// Selects a backend for a Layer 4 TCP connection using this upstream's
+    /// configured load-balancing strategy, health state, and circuit breakers.
+    ///
+    /// Pass `count_processing = true` only on the first dial attempt of a
+    /// connection; callers pair that with `UpstreamInstance::completed()` when
+    /// the connection finishes.
+    pub fn select_tcp_peer(
+        &self,
+        client_ip: Option<&str>,
+        failed: &[String],
+        count_processing: bool,
+    ) -> Option<TcpPeer> {
+        let mut counted = None;
+        let backend = match &self.lb {
+            SelectionLb::RoundRobin(lb) => {
+                if let Some(counts) = &self.least_conn {
+                    let (backend, count) =
+                        self.select_least_conn(lb, counts, failed)?;
+                    counted = Some(count);
+                    backend
+                } else {
+                    self.select_backend(
+                        lb,
+                        b"",
+                        |count| count + 1,
+                        failed,
+                        false,
+                    )?
+                }
+            },
+            SelectionLb::Consistent { lb, .. } => {
+                let key = client_ip.unwrap_or_default().as_bytes();
+                self.select_backend(
+                    lb,
+                    key,
+                    |count| {
+                        (count * CONSISTENT_SELECT_STEPS_PER_BACKEND)
+                            .clamp(64, 1024)
+                    },
+                    failed,
+                    true,
+                )?
+            },
+            SelectionLb::Transparent => return None,
+        };
+        if count_processing {
+            self.processing.fetch_add(1, Ordering::Relaxed);
+        }
+        Some(TcpPeer {
+            addr_str: self.address_of(&backend.addr),
+            addr: backend.addr,
+            connection_timeout: self.connection_timeout,
+            tcp_keepalive: self.tcp_keepalive.clone(),
+            tcp_recv_buf: self.tcp_recv_buf,
+            send_proxy_protocol: self.send_proxy_protocol,
+            inflight: counted.map(InflightGuard::new),
+        })
+    }
+
+    /// Records the outcome of a Layer 4 TCP dial attempt against `address` so
+    /// per-backend failure stats and half-open circuit breakers stay updated.
+    pub fn record_tcp_connect_result(&self, address: &str, ok: bool) {
+        if ok {
+            self.on_response(address, StatusCode::OK);
+        } else {
+            self.on_transport_failure(address);
+        }
+    }
+
     pub fn connected(&self) -> Option<i32> {
         self.peer_tracer.as_ref().map(|tracer| tracer.connected())
     }
@@ -4443,5 +4533,77 @@ mod tests {
         drop(listener);
         up.run_health_check().await.unwrap();
         assert_eq!(true, only_backend_ready(&up));
+    }
+
+    #[tokio::test]
+    async fn test_select_tcp_peer_round_robin_failover_least_conn_and_hash() {
+        // 1. Round robin + failover skip list + PROXY protocol version
+        let rr = Upstream::new(
+            "tcp_rr",
+            &UpstreamConf {
+                addrs: vec![
+                    "127.0.0.1:7001".to_string(),
+                    "127.0.0.1:7002".to_string(),
+                ],
+                send_proxy_protocol: Some("v2".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let p1 = rr.select_tcp_peer(None, &[], true).unwrap();
+        assert_eq!(
+            Some(super::ProxyProtocolVersion::V2),
+            p1.send_proxy_protocol
+        );
+        assert_eq!(1, rr.stats().processing);
+        let p2 = rr
+            .select_tcp_peer(None, &[p1.addr_str.to_string()], false)
+            .unwrap();
+        assert_ne!(p1.addr_str, p2.addr_str);
+        assert_eq!(0, rr.completed());
+
+        // 2. Least conn tracks in-flight guard and skips failed backend
+        let lc = Upstream::new(
+            "tcp_lc",
+            &UpstreamConf {
+                addrs: vec![
+                    "127.0.0.1:7011".to_string(),
+                    "127.0.0.1:7012".to_string(),
+                ],
+                algo: Some("least_conn".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let held = lc.select_tcp_peer(None, &[], false).unwrap();
+        assert_eq!(true, held.inflight.is_some());
+        let next = lc.select_tcp_peer(None, &[], false).unwrap();
+        assert_ne!(held.addr_str, next.addr_str);
+        drop(held);
+        drop(next);
+
+        // 3. Consistent hash distributes stably by client_ip
+        let hashed = Upstream::new(
+            "tcp_hash",
+            &UpstreamConf {
+                addrs: vec![
+                    "127.0.0.1:7021".to_string(),
+                    "127.0.0.1:7022".to_string(),
+                ],
+                algo: Some("hash:ip".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let a = hashed
+            .select_tcp_peer(Some("10.1.2.3"), &[], false)
+            .unwrap();
+        let b = hashed
+            .select_tcp_peer(Some("10.1.2.3"), &[], false)
+            .unwrap();
+        assert_eq!(a.addr_str, b.addr_str);
     }
 }

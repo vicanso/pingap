@@ -57,12 +57,12 @@ use tracing::debug;
 /// a broken request. So a connection is not judged before something has
 /// arrived on it, and one that stays silent is closed.
 #[derive(Clone, Copy)]
-struct Timeouts {
+pub(crate) struct Timeouts {
     first_byte: Duration,
     rest: Duration,
 }
 
-const TIMEOUTS: Timeouts = Timeouts {
+pub(crate) const TIMEOUTS: Timeouts = Timeouts {
     first_byte: Duration::from_secs(60),
     rest: Duration::from_secs(5),
 };
@@ -256,7 +256,7 @@ async fn read_header<R: AsyncRead + Unpin>(
 }
 
 /// The address the connection was made from, as the socket has it.
-fn peer_ip(stream: &L4Stream) -> Option<IpAddr> {
+pub(crate) fn peer_ip(stream: &L4Stream) -> Option<IpAddr> {
     stream.get_socket_digest().and_then(|digest| {
         digest
             .peer_addr()
@@ -286,7 +286,7 @@ fn digest_with_peer(stream: &L4Stream, source: SocketAddr) -> SocketDigest {
 /// proxy that `is_trusted` has put one, and gives the connection the
 /// address it names. An error is a connection to drop: a header that
 /// starts as one and is none.
-async fn accept(
+pub(crate) async fn accept(
     stream: &mut L4Stream,
     timeouts: Timeouts,
     is_trusted: impl Fn(IpAddr) -> bool,

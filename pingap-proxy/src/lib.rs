@@ -22,6 +22,7 @@ mod ja4;
 mod proxy_protocol;
 mod server;
 mod server_conf;
+mod stream;
 #[cfg(feature = "tracing")]
 mod tracing;
 static LOG_TARGET: &str = "pingap::proxy";
@@ -30,6 +31,7 @@ pub use error_template::ErrorTemplate;
 pub(crate) use headers::*;
 pub use server::*;
 pub use server_conf::*;
+pub use stream::*;
 #[allow(unused_imports)]
 #[cfg(feature = "tracing")]
 pub(crate) use tracing::*;

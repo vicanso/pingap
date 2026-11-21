@@ -13,6 +13,7 @@ import { LoadingPage } from "@/components/loading";
 const Home = lazy(() => import("@/pages/Home"));
 const Basic = lazy(() => import("@/pages/Basic"));
 const Servers = lazy(() => import("@/pages/Servers"));
+const Streams = lazy(() => import("@/pages/Streams"));
 const Locations = lazy(() => import("@/pages/Locations"));
 const Upstreams = lazy(() => import("@/pages/Upstreams"));
 const Plugins = lazy(() => import("@/pages/Plugins"));
@@ -26,6 +27,7 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 export const HOME = "/";
 export const BASIC = "/basic";
 export const SERVERS = "/servers";
+export const STREAMS = "/streams";
 export const LOCATIONS = "/locations";
 export const UPSTREAMS = "/upstreams";
 export const PLUGINS = "/plugins";
@@ -53,6 +55,7 @@ function RedirectNamedEntity({ base }: { base: string }) {
 
 const entityBases = [
   SERVERS,
+  STREAMS,
   LOCATIONS,
   UPSTREAMS,
   PLUGINS,
@@ -65,6 +68,7 @@ const pages = [
   { path: HOME, element: suspense(<Home />) },
   { path: BASIC, element: suspense(<Basic />) },
   { path: SERVERS, element: suspense(<Servers />) },
+  { path: STREAMS, element: suspense(<Streams />) },
   { path: LOCATIONS, element: suspense(<Locations />) },
   { path: UPSTREAMS, element: suspense(<Upstreams />) },
   { path: PLUGINS, element: suspense(<Plugins />) },

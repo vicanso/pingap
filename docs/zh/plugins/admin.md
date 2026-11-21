@@ -156,7 +156,7 @@ readonly_tokens = ["monitor:9c2b...7d"]
 
 `/basic` 描述的是进程本身：其中的 `user`、`group`、`config_hash` 取自运行中的配置，而不是存储里的；UI 每隔几秒请求一次，所以它不读存储。控制面板节点不运行配置：那里的 `user`、`group` 每次请求时从存储读取，`config_hash` 是空配置的哈希。
 
-`{category}` 为 `basic`、`server`、`location`、`upstream`、`plugin`、`certificate`、`storage` 之一。向其他分类 `POST` 返回 `400`（UI 保存 basic 配置时用的名字 `pingap` 等同于 `basic`）。
+`{category}` 为 `basic`、`server`、`stream`、`location`、`upstream`、`plugin`、`certificate`、`storage` 之一。向其他分类 `POST` 返回 `400`（UI 保存 basic 配置时用的名字 `pingap` 等同于 `basic`）。
 
 ### 写入时的校验
 
@@ -169,7 +169,7 @@ readonly_tokens = ["monitor:9c2b...7d"]
 - 被引用的条目要先存在：先建 upstream，再建引用它的 location。
 - 存储里的配置本来就无效时（手工改过，或由旧版本写入），只要条目本身能解析就接受修改，这样可以通过 admin 逐条修复。配置恢复有效之后，完整校验重新生效。
 
-被其他条目引用的条目不能 `DELETE`：被 location 或 `traffic_splitting` 插件引用的 upstream、被 server 列出的 location、被 location 列出的插件、被 `includes` 引用的 storage。检查读的是存储里的配置，而不是进程当前运行的配置，所以在控制面板节点和没有开 `--autoreload` 的节点上同样有效。
+被其他条目引用的条目不能 `DELETE`：被 location、stream 或 `traffic_splitting` 插件引用的 upstream、被 server 列出的 location、被 location 列出的插件、被 `includes` 引用的 storage。检查读的是存储里的配置，而不是进程当前运行的配置，所以在控制面板节点和没有开 `--autoreload` 的节点上同样有效。
 
 ```bash
 TS=$(date +%s)

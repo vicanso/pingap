@@ -1,0 +1,51 @@
+# Sample L4 TCP and TLS SNI passthrough stream listeners. Every setting is
+# commented out by default; uncomment and adjust to enable `[streams.*]`.
+
+# [streams.demo]
+# Listen address(es): host:port, comma-separated list, or unix:/absolute/path
+# addr = "0.0.0.0:9443"
+
+# Default upstream used for plain TCP passthrough or as fallback when a client's
+# TLS ClientHello SNI is absent or does not match `sni_routes`.
+# upstream = "charts"
+
+# Exact domain ("api.example.com") or single-label wildcard ("*.app.example.com")
+# TLS SNI passthrough routing without terminating TLS on Pingap.
+# sni_routes = { "api.example.com" = "charts", "*.app.example.com" = "charts" }
+
+# Read inbound HAProxy PROXY protocol v1/v2 header before ACL & SNI routing
+# (requires `basic.trusted_proxies` to be configured).
+# proxy_protocol = true
+
+# Per-stream TCP connect timeout overriding the upstream default.
+# connect_timeout = "5s"
+
+# Close an idle bidirectional stream after this duration of inactivity.
+# idle_timeout = "5m"
+
+# Maximum wait time for the initial TLS ClientHello when `sni_routes` is set.
+# sni_read_timeout = "5s"
+
+# Maximum concurrent active connections accepted by this listener.
+# max_connections = 10000
+
+# Client IP/CIDR allowlist and denylist (evaluated after optional PROXY protocol).
+# allow_ips = ["10.0.0.0/8", "192.168.0.0/16"]
+# deny_ips = ["192.0.2.0/24"]
+
+# Listener worker thread count (0 matches CPU core count; unset inherits basic.threads).
+# threads = 2
+
+# Socket tuning for TCP listen sockets.
+# reuse_port = true
+# tcp_fastopen = 4096
+# tcp_idle = "2m"
+# tcp_interval = "1m"
+# tcp_user_timeout = "30s"
+# tcp_probe_count = 9
+
+# Optional storage fragments merged into this stream configuration.
+# includes = ["common_stream"]
+
+# Optional operator note.
+# remark = "L4 TCP / TLS SNI passthrough listener"

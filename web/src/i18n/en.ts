@@ -263,6 +263,7 @@ export default {
     home: "Dashboard",
     basic: "Basic",
     server: "Server",
+    stream: "Stream (L4)",
     location: "Location",
     upstream: "Upstream",
     plugin: "Plugin",
@@ -669,6 +670,73 @@ export default {
       "Input the pull path of push gateway for prometheus",
     otlpExporter: "Otlp Exporter",
     otlpExporterPlaceholder: "Input the exporter for opentelemetry",
+    remark: "Remark",
+  },
+  stream: {
+    title: "L4 Stream",
+    description:
+      "Configure native L4 TCP & TLS SNI passthrough listeners without terminating TLS",
+    add: "New Stream",
+    summary_one: "{{count}} stream configured",
+    summary_other: "{{count}} streams configured",
+    empty: "No L4 stream configured yet",
+    sectionBasic: "Basic",
+    sectionRouting: "SNI & Upstream Routing",
+    sectionLimits: "Timeouts & ACL",
+    sectionTcp: "Listener & TCP Tuning",
+    name: "Name",
+    namePlaceholder: "Input the name of stream",
+    stream: "Stream",
+    addr: "Listen Addresses",
+    addrPlaceholder:
+      "Input listen addresses, separated by comma, or unix:/absolute/path",
+    addrTips:
+      "e.g. 0.0.0.0:9443, [::]:9443, unix:/var/run/stream.sock — must not collide with L7 server ports.",
+    upstream: "Default Upstream",
+    upstreamPlaceholder: "Select default / fallback upstream (optional)",
+    upstreamTips:
+      "Used for plain TCP passthrough, or as fallback when TLS SNI is absent or does not match SNI routes.",
+    sniRoutes: "TLS SNI Routes",
+    sniRoutesPlaceholder:
+      "SNI host (e.g. *.app.example.com) : Target upstream name",
+    sniRoutesTips:
+      "Routes TLS ClientHello by exact host (case-insensitive) or single-label wildcard (*.domain) without terminating TLS on Pingap.",
+    proxyProtocol: "Inbound PROXY Protocol",
+    proxyProtocolTips:
+      "Read inbound v1/v2 PROXY protocol header from basic.trusted_proxies before evaluating IP ACLs and forwarding.",
+    connectTimeout: "Connect Timeout",
+    connectTimeoutPlaceholder: "Override upstream TCP connect timeout (e.g. 5s)",
+    idleTimeout: "Idle Timeout",
+    idleTimeoutPlaceholder:
+      "Close idle bidirectional stream after inactivity (e.g. 5m)",
+    sniReadTimeout: "SNI Read Timeout",
+    sniReadTimeoutPlaceholder:
+      "Timeout waiting for ClientHello bytes (default 5s)",
+    sniReadTimeoutTips:
+      "Applied when SNI routes are configured; timed-out empty connections are closed, while non-TLS bytes fall back to Default Upstream.",
+    maxConnections: "Max Connections",
+    maxConnectionsPlaceholder: "Max concurrent connections (unlimited when unset)",
+    allowIps: "Allow IP / CIDR",
+    allowIpsPlaceholder: "Input allowed IP or CIDR(e.g. 10.0.0.0/8)",
+    denyIps: "Deny IP / CIDR",
+    denyIpsPlaceholder: "Input denied IP or CIDR(e.g. 192.0.2.0/24)",
+    ipAclTips:
+      "Evaluated against the client address (from PROXY protocol when enabled from trusted proxies). Deny takes precedence over allow.",
+    threads: "Threads",
+    threadsPlaceholder: "Worker thread count for this listener",
+    threadsTips: "0 follows CPU count. Empty inherits basic.threads.",
+    reusePort: "Enable SO_REUSEPORT",
+    tcpFastOpen: "Tcp Fast Open",
+    tcpFastOpenPlaceholder: "Input the backlog size of tcp fast open(e.g. 10)",
+    tcpUserTimeout: "Tcp User Timeout",
+    tcpUserTimeoutPlaceholder:
+      "Input the user timeout for tcp(e.g. 30s), only for linux",
+    tcpIdle: "Tcp Keepalive Idle",
+    tcpIdlePlaceholder: "Input tcp keepalive idle duration(e.g. 2m)",
+    tcpInterval: "Tcp Keepalive Interval",
+    tcpIntervalPlaceholder: "Input tcp keepalive interval duration(e.g. 30s)",
+    tcpProbeCount: "Tcp Keepalive Probe Count",
+    tcpProbeCountPlaceholder: "Input tcp keepalive probe count(e.g. 9)",
     remark: "Remark",
   },
   location: {
