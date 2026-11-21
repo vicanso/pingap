@@ -1333,8 +1333,12 @@ def serve_plain(conn):
             data = conn.recv(4096)
             if not data:
                 break
+            if not chunks and data.startswith(b"INTERACTIVE:"):
+                conn.sendall(b"ACK:" + data)
+                continue
             chunks.append(data)
-        conn.sendall(b"PLAIN:" + b"".join(chunks))
+        if chunks:
+            conn.sendall(b"PLAIN:" + b"".join(chunks))
         try:
             conn.shutdown(socket.SHUT_WR)
         except OSError:
@@ -1405,6 +1409,18 @@ elif mode == "tls":
                 if out.endswith(b"\n"):
                     break
     print(f"cn={cn} {out.decode().strip()}", end="")
+elif mode == "interactive":
+    with socket.create_connection(("127.0.0.1", port), timeout=3) as s:
+        s.sendall(b"INTERACTIVE:hi\n")
+        out = bytearray()
+        while True:
+            buf = s.recv(4096)
+            if not buf:
+                break
+            out.extend(buf)
+            if out.endswith(b"\n"):
+                break
+    print(out.decode().strip(), end="")
 PY
 
   run_bg "$DIR/tcp_up.out" python3 "$DIR/stream_server.py" plain $tcp_up PLAIN
@@ -1462,6 +1478,8 @@ EOT
     "$(status "http://127.0.0.1:$http_proxy/")"
   expect "L4 plain TCP passthrough with half-close" "PLAIN:ping-l4" \
     "$(python3 "$DIR/stream_client.py" tcp $tcp_stream ping-l4)"
+  expect "L4 small interactive frame flushes without EOF" "ACK:INTERACTIVE:hi" \
+    "$(python3 "$DIR/stream_client.py" interactive $tcp_stream)"
   expect "L4 TLS SNI exact match passthrough" "cn=alpha.sni.test ALPHA_TLS:hello-a" \
     "$(python3 "$DIR/stream_client.py" tls $tls_stream alpha.sni.test "$DIR/ca.pem" hello-a)"
   expect "L4 TLS SNI wildcard passthrough" "cn=beta.sni.test BETA_TLS:hello-b" \

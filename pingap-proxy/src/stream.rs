@@ -39,12 +39,10 @@ use pingap_performance::{stream_connection_close, stream_connection_open};
 use pingap_upstream::{TcpPeer, Upstream, UpstreamProvider};
 use pingap_util::IpRules;
 use pingora::apps::ServerApp;
-#[cfg(unix)]
-use pingora::listeners::ListenerConfig;
-use pingora::listeners::TcpSocketOptions;
+use pingora::listeners::{ListenerConfig, TcpSocketOptions};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::l4::socket::SocketAddr as BackendAddr;
-use pingora::protocols::l4::stream::Stream as L4Stream;
+use pingora::protocols::l4::stream::{L4BufferSettings, Stream as L4Stream};
 use pingora::protocols::{GetSocketDigest, Stream};
 use pingora::server::ShutdownWatch;
 use pingora::services::ServiceWithDependents;
@@ -591,6 +589,7 @@ where
         }
         last_active_ms.store(now_ms(), Ordering::Relaxed);
         writer.write_all(&buf[..n]).await?;
+        writer.flush().await?;
         byte_counter.fetch_add(n as u64, Ordering::Relaxed);
     }
 }
@@ -959,7 +958,9 @@ fn add_stream_unix_endpoint(
     service: &mut Service<StreamApp>,
     path: &str,
 ) -> Result<()> {
-    service.add_listener(ListenerConfig::uds(path));
+    service.add_listener(
+        ListenerConfig::uds(path).l4_buffer(L4BufferSettings::unbuffered()),
+    );
     Ok(())
 }
 
@@ -982,11 +983,12 @@ fn add_stream_endpoint(
     match unix_socket_path(addr) {
         Ok(Some(path)) => add_stream_unix_endpoint(service, path),
         Ok(None) => {
+            let mut listener = ListenerConfig::tcp(addr)
+                .l4_buffer(L4BufferSettings::unbuffered());
             if let Some(opt) = opts {
-                service.add_tcp_with_settings(addr, opt.clone());
-            } else {
-                service.add_tcp(addr);
+                listener = listener.tcp_socket_options(opt.clone());
             }
+            service.add_listener(listener);
             Ok(())
         },
         Err(message) => Err(Error::Common {
@@ -1812,5 +1814,49 @@ mod tests {
 
         t1.abort();
         t2.abort();
+    }
+
+    #[tokio::test]
+    async fn test_copy_one_way_flushes_buffered_writer_for_small_interactive_frames()
+     {
+        let (mut c_in, mut s_in) = tokio::io::duplex(1024);
+        let (s_out, mut c_out) = tokio::io::duplex(1024);
+        let mut buffered_out = tokio::io::BufWriter::with_capacity(4096, s_out);
+        let last_active = Arc::new(AtomicU64::new(now_ms()));
+        let counter = Arc::new(AtomicU64::new(0));
+        let last_active_task = last_active.clone();
+        let counter_task = counter.clone();
+
+        let task = tokio::spawn(async move {
+            copy_one_way(
+                &mut s_in,
+                &mut buffered_out,
+                Some(2_000),
+                &last_active_task,
+                &counter_task,
+            )
+            .await
+        });
+
+        // Small frame (< 1460 / 4096 buffer capacity) without closing writer must flush immediately.
+        c_in.write_all(b"SMALL_HANDSHAKE!").await.unwrap();
+        let mut got1 = [0u8; 16];
+        timeout(Duration::from_secs(1), c_out.read_exact(&mut got1))
+            .await
+            .expect("first small interactive frame timed out in buffer")
+            .unwrap();
+        assert_eq!(b"SMALL_HANDSHAKE!", &got1);
+
+        c_in.write_all(b"FOLLOWUP").await.unwrap();
+        let mut got2 = [0u8; 8];
+        timeout(Duration::from_secs(1), c_out.read_exact(&mut got2))
+            .await
+            .expect("second small interactive frame timed out in buffer")
+            .unwrap();
+        assert_eq!(b"FOLLOWUP", &got2);
+
+        drop(c_in);
+        task.await.unwrap().unwrap();
+        assert_eq!(24, counter.load(Ordering::Relaxed));
     }
 }
