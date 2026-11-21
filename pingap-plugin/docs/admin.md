@@ -239,6 +239,8 @@ A request body is read up to 8 MiB; a larger one is answered `413`.
 | `GET` | `/configs/{category}` | Read configuration for a category |
 | `POST` | `/configs/{category}/{name}` | Create or update one entry |
 | `POST` | `/configs/import` | Import a whole configuration |
+| `POST` | `/configs/quick-site` | Atomically create a full site (upstream, location, optional TLS cert/plugins, server binding) |
+| `POST` | `/configs/apply-plugin-preset` | Atomically create/reuse preset plugins, optionally save a reusable `plugin_preset` template in `storages`, and prepend/append plugins to target locations |
 | `DELETE` | `/configs/{category}/{name}` | Delete one entry |
 | `GET` | `/config-history/{category}/{name}` | Previous versions, when the storage backend supports history |
 | `GET` | `/basic` | Process info, enabled features (includes the TLS backend name `openssl` / `rustls`), supported plugins, upstream health, and `restart_unsupported`: why this process cannot be restarted from here (`container`, `foreground`, `platform`), empty where it can |

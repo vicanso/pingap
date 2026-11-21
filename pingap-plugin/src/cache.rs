@@ -21,7 +21,10 @@ use bytesize::ByteSize;
 use fancy_regex::Regex;
 use http::header::{CACHE_CONTROL, PRAGMA};
 use http::{HeaderName, Method, StatusCode};
-use pingap_cache::{HttpCache, new_cache_backend};
+use pingap_cache::{
+    CachePurgeEntry, CachePurgeEvent, HttpCache, broadcast_purge,
+    new_cache_backend,
+};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     CacheQueryRule, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
@@ -117,6 +120,9 @@ pub struct Cache {
     /// Whether a client may ask for what is cached to be checked with
     /// the origin first.
     respect_client_no_cache: bool,
+    /// Broadcast successful `PURGE` operations to peer instances when an
+    /// event bus (such as etcd) is configured. Defaults to `true`.
+    cluster_purge: bool,
     // Unique identifier for this cache configuration
     hash_value: String,
 }
@@ -518,6 +524,11 @@ impl TryFrom<&PluginConf> for Cache {
                 value,
                 "respect_client_no_cache",
             ),
+            cluster_purge: if value.contains_key("cluster_purge") {
+                get_bool_conf(value, "cluster_purge")
+            } else {
+                true
+            },
         };
         Ok(params)
     }
@@ -733,6 +744,12 @@ impl Plugin for Cache {
                         ..Default::default()
                     }));
                 };
+                if self.cluster_purge {
+                    broadcast_purge(CachePurgeEvent::namespace(
+                        self.http_cache.directory.clone(),
+                        namespace.clone(),
+                    ));
+                }
                 return Ok(RequestPluginResult::Respond(HttpResponse::text(
                     format!("purged: {}, fail: {}", stats.success, stats.fail),
                 )));
@@ -747,6 +764,7 @@ impl Plugin for Cache {
             // coding: with its own key alone it removed the entry no
             // browser asks for, and the compressed ones went on being
             // served.
+            let mut purged_entries = Vec::new();
             for keys in ctx.cache_key_alternatives() {
                 if let Some(cache_info) = ctx.cache.as_mut() {
                     cache_info.keys = Some(keys);
@@ -757,11 +775,25 @@ impl Plugin for Cache {
                         method.as_ref(),
                         session.req_header(),
                     );
+                    let combined = key.combined();
+                    let namespace = key.user_tag();
                     self.http_cache
                         .cache
-                        .remove(&key.combined(), key.user_tag().as_bytes())
+                        .remove(&combined, namespace.as_bytes())
                         .await?;
+                    if self.cluster_purge {
+                        purged_entries.push(CachePurgeEntry {
+                            key: combined,
+                            namespace: namespace.to_string(),
+                        });
+                    }
                 }
+            }
+            if self.cluster_purge && !purged_entries.is_empty() {
+                broadcast_purge(CachePurgeEvent::entries(
+                    self.http_cache.directory.clone(),
+                    purged_entries,
+                ));
             }
             return Ok(
                 RequestPluginResult::Respond(HttpResponse::no_content()),
@@ -1724,5 +1756,90 @@ purge_ip_list = ["192.168.1.1"]
         .unwrap();
         let resp = purge(&cache, "/*").await;
         assert_eq!(StatusCode::FORBIDDEN, resp.status);
+    }
+
+    static BROADCASTER_TEST_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn test_purge_cluster_broadcast() {
+        use pingap_cache::{
+            CachePurgeAction, CachePurgeBroadcaster, set_purge_broadcaster,
+        };
+
+        let _lock = BROADCASTER_TEST_LOCK.lock().await;
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_purge_broadcaster(None);
+            }
+        }
+        let _reset = Reset;
+
+        struct Recorder(std::sync::Mutex<Vec<CachePurgeEvent>>);
+        impl CachePurgeBroadcaster for Recorder {
+            fn broadcast(&self, event: CachePurgeEvent) {
+                if let Ok(mut guard) = self.0.lock() {
+                    guard.push(event);
+                }
+            }
+        }
+
+        let recorder = Arc::new(Recorder(std::sync::Mutex::new(Vec::new())));
+        set_purge_broadcaster(Some(recorder.clone()));
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_conf = format!(
+            r###"
+directory = "{}"
+namespace = "cluster-ns"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            dir.path().to_string_lossy()
+        );
+        let cache =
+            Cache::try_from(&toml::from_str::<PluginConf>(&file_conf).unwrap())
+                .unwrap();
+        assert_eq!(true, cache.cluster_purge);
+
+        // Single URL purge broadcasts GET + HEAD variants and the file directory.
+        let resp = purge(&cache, "/assets/app.js").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+
+        // Namespace purge broadcasts Namespace action.
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::OK, resp.status);
+
+        // Explicitly disabling cluster_purge suppresses broadcasts.
+        let local_only = Cache::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                "{file_conf}\ncluster_purge = false\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(false, local_only.cluster_purge);
+        let resp = purge(&local_only, "/assets/local.js").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        let resp = purge(&local_only, "/*").await;
+        assert_eq!(StatusCode::OK, resp.status);
+
+        let events = recorder.0.lock().unwrap();
+        assert_eq!(2, events.len());
+        assert_eq!(cache.http_cache.directory, events[0].directory);
+        match &events[0].action {
+            CachePurgeAction::Entries { entries } => {
+                assert_eq!(2, entries.len());
+                assert!(entries.iter().all(|e| e.namespace == "cluster-ns"));
+                assert_ne!(entries[0].key, entries[1].key);
+            },
+            other => panic!("expected Entries, got {other:?}"),
+        }
+        assert_eq!(
+            CachePurgeAction::Namespace {
+                namespace: "cluster-ns".to_string()
+            },
+            events[1].action
+        );
     }
 }

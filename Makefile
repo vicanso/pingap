@@ -36,6 +36,9 @@ bench-all:
 	cargo bench -p pingap-logger
 	cargo bench -p pingap-location
 
+bench-suite:
+	./scripts/bench/run.sh --bin $(or $(BIN),target/release/pingap) $(ARGS)
+
 bench:
 	cargo bench
 

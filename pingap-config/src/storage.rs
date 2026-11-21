@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Error, Observer};
+use crate::{Error, EventObserver, Observer};
 use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
@@ -146,5 +146,28 @@ pub trait Storage: Send + Sync {
         _ttl: Duration,
     ) -> Result<Option<StorageLock>> {
         Ok(Some(StorageLock::noop()))
+    }
+
+    /// Whether this backend supports cluster event publish/subscribe.
+    fn support_events(&self) -> bool {
+        false
+    }
+
+    /// Publishes an ephemeral event payload on `channel` with a lease TTL.
+    async fn publish_event(
+        &self,
+        _channel: &str,
+        _payload: &str,
+        _ttl: Duration,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Opens a live subscription stream for events on `channel`.
+    async fn subscribe_events(
+        &self,
+        _channel: &str,
+    ) -> Result<Option<EventObserver>> {
+        Ok(None)
     }
 }

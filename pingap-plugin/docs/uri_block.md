@@ -16,6 +16,7 @@ would otherwise reach the upstream, or need a location with a
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `uri_block`. |
+| `presets` | string[] | — | Built-in security rule packs (`sensitive_files`, `scanners`, `path_traversal`, `sqli_xss`, `common`, `all`). Merged with custom `paths` and `queries` into a single pass. See [Built-in presets](#built-in-presets). |
 | `paths` | string[] | — | Regular expressions. A request whose path matches one of them is blocked. |
 | `queries` | string[] | — | Regular expressions. A request whose query matches one of them is blocked. |
 | `methods` | string[] | — | The methods that are let through, in any case (`GET`, `post`). Empty allows every method. |
@@ -23,9 +24,24 @@ would otherwise reach the upstream, or need a location with a
 | `message` | string | `Request is blocked` | Body of the refusal. |
 | `dry_run` | bool | `false` | Let a request that would be refused go on, and log the refusal as a warning instead: a new rule can be watched on real traffic before it turns anyone away. See [Dry run](limit.md#dry-run). |
 
-At least one of `paths`, `queries` and `methods` is required. A pattern that
-does not compile, a method that is not one, or a `status` outside the range is
-a configuration error and reported by `pingap -t`.
+At least one of `presets`, `paths`, `queries` and `methods` is required. A pattern that
+does not compile, an unknown preset name, a method that is not one, or a `status`
+outside the range is a configuration error and reported by `pingap -t`.
+
+## Built-in presets
+
+Instead of copying long regex lists into every location, you can enable one or
+more built-in security rule packs and combine them with `dry_run = true` before
+switching to enforcement:
+
+| Preset | Scope | What it blocks |
+| --- | --- | --- |
+| `sensitive_files` | `paths` | `.env` / `.env.*`, `.git` / `.svn` / `.hg`, `.htaccess` / `.htpasswd`, `.npmrc` / `.netrc` / `.DS_Store`, `.aws` / `.ssh`, SSH private keys (`id_rsa`, `id_ed25519`), `wp-config.php`, `web.config`, backup/dump extensions (`.bak`, `.orig`, `.save`, `.swp`, `.swo`, `.sql`, `.dump`). Does not block `/.well-known/*` (ACME HTTP-01 / OIDC). |
+| `scanners` | `paths` | WordPress scanner probes (`wp-login.php`, `wp-admin`, `xmlrpc.php`, `wlwmanifest.xml`), phpMyAdmin / Adminer / `phpinfo.php`, `cgi-bin`, `vendor/phpunit`, router probes (`boaform/admin`, `HNAP1`). |
+| `path_traversal` | `paths` + `queries` | `../` / `..\\` / `..;/`, percent-encoded `%2e%2e` and double-encoded `%252e%252e`, NUL bytes (`%00`), and `/etc/passwd`, `/etc/shadow`, `/proc/self/environ`, `windows/win.ini`. |
+| `sqli_xss` | `queries` | High-signal SQLi/XSS query payloads: `UNION [ALL] SELECT`, `' or 1=1`, `sleep()` / `benchmark()` / `pg_sleep()` / `waitfor delay`, `information_schema` / `load_file(` / `into outfile`, `<script`, `javascript:`, `onerror=` / `onload=` / `onclick=`. |
+| `common` | Bundle | Shorthand for `sensitive_files` + `scanners` + `path_traversal` (low false-positive baseline). |
+| `all` | Bundle | Shorthand for `common` + `sqli_xss`. |
 
 ## What is matched
 
@@ -51,16 +67,13 @@ a configuration error and reported by `pingap -t`.
 ```toml
 [plugins.blockScanners]
 category = "uri_block"
-paths = [
-    '\.env$',
-    '^/\.git/',
-    '(?i)^/wp-(login|admin)',
-    '\.(bak|sql|swp)$',
-]
-queries = ['\.\./', '(?i)union\s+select']
+presets = ["common"]
+paths = ['^/internal/']
+queries = ['\bexec\s*\(']
 methods = ["GET", "HEAD", "POST"]
 status = 404
 message = "Not Found"
+dry_run = true
 
 [locations.app]
 upstream = "app"

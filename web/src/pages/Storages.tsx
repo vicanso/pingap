@@ -101,7 +101,7 @@ export default function Storages() {
       defaultValue: storageConfig.category,
       category: ExFormItemCategory.SELECT,
       span: 3,
-      options: newStringOptions(["config", "secret"], true),
+      options: newStringOptions(["config", "secret", "plugin_preset"], true),
     },
     {
       name: "secret",

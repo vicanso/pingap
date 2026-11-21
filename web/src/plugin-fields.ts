@@ -480,6 +480,16 @@ export const PLUGIN_FIELDS: Partial<
       options: newBooleanOptions(),
     },
     {
+      name: "cluster_purge",
+      label: t("cacheClusterPurge"),
+      placeholder: "",
+      tips: t("cacheClusterPurgeTips"),
+      defaultValue: conf.cluster_purge as boolean,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "status_ttl",
       label: t("cacheStatusTtl"),
       placeholder: t("cacheStatusTtlPlaceholder"),
@@ -1531,6 +1541,26 @@ export const PLUGIN_FIELDS: Partial<
     },
   ],
   [PluginCategory.URI_BLOCK]: (conf, t) => [
+    {
+      name: "presets",
+      label: t("uriBlockPresets"),
+      placeholder: t("uriBlockPresetsPlaceholder"),
+      tips: t("uriBlockPresetsTips"),
+      defaultValue: (conf.presets || []) as string[],
+      span: 6,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(
+        [
+          "common",
+          "all",
+          "sensitive_files",
+          "scanners",
+          "path_traversal",
+          "sqli_xss",
+        ],
+        false,
+      ),
+    },
     {
       name: "paths",
       label: t("uriBlockPaths"),

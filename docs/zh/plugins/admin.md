@@ -142,6 +142,8 @@ readonly_tokens = ["monitor:9c2b...7d"]
 | `GET` | `/configs/{category}` | 读取某类别配置 |
 | `POST` | `/configs/{category}/{name}` | 创建或更新一条 |
 | `POST` | `/configs/import` | 导入整份配置 |
+| `POST` | `/configs/quick-site` | 原子化创建一个完整站点（Upstream、Location、可选证书/推荐插件及 Server 绑定） |
+| `POST` | `/configs/apply-plugin-preset` | 原子化创建或复用预设插件、可选保存为 `storages` 中的 `plugin_preset` 模板，并挂载到多个目标 Location |
 | `DELETE` | `/configs/{category}/{name}` | 删除一条 |
 | `GET` | `/config-history/{category}/{name}` | 历史版本（存储后端支持时） |
 | `GET` | `/basic` | 进程信息、启用特性（含 TLS 后端名 `openssl` / `rustls`）、支持的插件、上游健康，以及 `restart_unsupported`：这个进程为什么不能从这里重启（`container`、`foreground`、`platform`），能重启时为空 |

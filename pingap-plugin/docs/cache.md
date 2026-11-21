@@ -32,6 +32,7 @@ IP-restricted `PURGE` method.
 | `ignore_query` | string[] | — | Query parameters that are left out of the cache key (`utm_source`, `fbclid`). The others are put in order by name. Not together with `query_allow`. |
 | `query_allow` | string[] | — | The only query parameters that are a part of the cache key, in order by name. |
 | `respect_client_no_cache` | bool | `false` | `true` lets a client have what is cached revalidated with the origin, with `Cache-Control: no-cache` or `max-age=0`. |
+| `cluster_purge` | bool | `true` | When running against an `etcd://` configuration store, broadcast successful `PURGE` operations to peer instances so they remove the same entries or namespace locally. |
 
 ### Backend selection
 
@@ -88,8 +89,13 @@ that can be purged without an index (storage file names are hashes of the full
 key — a url prefix does not map to anything on disk). The purge empties the
 in-memory hot layer along with the files — the whole layer, since it cannot be
 searched by namespace: objects that were in memory only are gone too, and the
-other namespaces read theirs back from disk. It only cleans the local instance:
-in a multi-instance deployment, issue the request on every node.
+other namespaces read theirs back from disk. When pingap runs against an
+`etcd://` configuration store and `cluster_purge` is enabled (the default),
+successful `PURGE` requests (both single URL and `PURGE /*`) are broadcast as
+short-lived events under `<etcd_path>-events/cache_purge` so peer instances
+evict the same entries or namespace automatically; otherwise a purge cleans only
+the instance that received it (`cluster_purge = false` keeps that behaviour on
+etcd too).
 
 ## Lifetimes of your own
 

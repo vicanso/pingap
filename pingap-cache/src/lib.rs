@@ -26,6 +26,7 @@ use tracing::{info, warn};
 
 mod file;
 mod http_cache;
+mod purge;
 mod tiny;
 
 pub static PAGE_SIZE: usize = 4096;
@@ -144,6 +145,28 @@ pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
         .lock()
         .map(|backends| backends.values().map(|(_, cache)| *cache).collect())
         .unwrap_or_default()
+}
+
+pub(crate) fn get_memory_backend() -> Option<&'static HttpCache> {
+    MEMORY_BACKEND
+        .lock()
+        .ok()
+        .and_then(|guard| guard.map(|(_, backend)| backend))
+}
+
+pub(crate) fn find_file_backend(directory: &str) -> Option<&'static HttpCache> {
+    let dir = directory.split_once('?').map_or(directory, |(d, _)| d);
+    BACKENDS.lock().ok().and_then(|backends| {
+        backends.get(dir).map(|(_, backend)| *backend).or_else(|| {
+            backends
+                .values()
+                .find(|(_, backend)| {
+                    backend.directory.as_deref() == Some(dir)
+                        || backend.directory.as_deref() == Some(directory)
+                })
+                .map(|(_, backend)| *backend)
+        })
+    })
 }
 
 static AVAILABLE_MEMORY: AtomicU64 = AtomicU64::new(0);
@@ -393,6 +416,10 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
 pub use http_cache::{
     CacheObject, HttpCache, is_hit_read_to_the_end, new_storage_clear_service,
 };
+pub use purge::{
+    CachePurgeAction, CachePurgeBroadcaster, CachePurgeEntry, CachePurgeEvent,
+    apply_purge_event, broadcast_purge, set_purge_broadcaster,
+};
 pub use tiny::memory_cache_evictions;
 
 #[cfg(feature = "tracing")]
@@ -402,6 +429,10 @@ pub use prom::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 
 use crate::file::FileCache;
 use crate::tiny::CacheMode;
+
+#[cfg(test)]
+pub(crate) static MEMORY_BACKEND_TEST_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
 
 #[cfg(test)]
 mod tests {
@@ -663,6 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_backend_resize_and_retire() {
+        let _guard = MEMORY_BACKEND_TEST_LOCK.lock().await;
         let first = new_cache_backend("memory://?max_size=64kib").unwrap();
         let same = new_cache_backend("memory://?max_size=64kib").unwrap();
         assert_eq!(true, std::ptr::eq(first, same));

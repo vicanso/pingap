@@ -275,6 +275,28 @@ export interface QuickSiteResult {
   plugins: string[];
 }
 
+export interface PresetPluginDef {
+  name: string;
+  config: Record<string, unknown>;
+}
+
+export interface ApplyPluginPresetPayload {
+  save_preset_name?: string;
+  save_preset_description?: string;
+  plugins?: PresetPluginDef[];
+  plugin_names?: string[];
+  locations?: string[];
+  position?: "prepend" | "append";
+  overwrite_plugins?: boolean;
+}
+
+export interface ApplyPluginPresetResult {
+  created_plugins: string[];
+  reused_plugins: string[];
+  updated_locations: string[];
+  saved_preset?: string;
+}
+
 interface ConfigState {
   data: Config;
   certificateInfos: Record<string, CertificateInfo>;
@@ -292,8 +314,11 @@ interface ConfigState {
   ) => Promise<void>;
   importToml: (data: string) => Promise<void>;
   createQuickSite: (payload: QuickSitePayload) => Promise<QuickSiteResult>;
+  applyPluginPreset: (
+    payload: ApplyPluginPresetPayload,
+  ) => Promise<ApplyPluginPresetResult>;
   remove: (category: string, name: string) => Promise<void>;
-  getIncludeOptions: () => string[];
+  getIncludeOptions: (category?: string) => string[];
   getCertificateInfos: () => Promise<Record<string, CertificateInfo>>;
   getHistory: (category: string, name: string) => Promise<History[]>;
 }
@@ -366,6 +391,17 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     });
     return data;
   },
+  applyPluginPreset: async (payload: ApplyPluginPresetPayload) => {
+    const { data } = await request.post<ApplyPluginPresetResult>(
+      `/configs/apply-plugin-preset`,
+      payload,
+    );
+    await get().fetch();
+    set({
+      version: random(),
+    });
+    return data;
+  },
   remove: async (category: string, name: string) => {
     await request.delete(`/configs/${category}/${name}`);
     await get().fetch();
@@ -377,7 +413,9 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     const storages = get().data.storages || {};
     const keys = Object.keys(storages);
     if (!category) {
-      return keys;
+      return keys.filter(
+        (key) => storages[key]?.category !== "plugin_preset",
+      );
     }
     const includes: string[] = [];
     keys.forEach((key) => {

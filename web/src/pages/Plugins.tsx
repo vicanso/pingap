@@ -25,6 +25,7 @@ import {
 } from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { sortIntoSections } from "@/components/ex-form-sections";
+import { PluginPresetDialog } from "@/components/plugin-preset-dialog";
 import { PLUGINS } from "@/routers";
 
 function getPluginConfig(
@@ -111,6 +112,7 @@ export default function Plugins() {
         names={plugins}
         values={pluginValues}
         columns={columns}
+        extraActions={<PluginPresetDialog />}
       />
     );
   }

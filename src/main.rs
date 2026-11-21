@@ -1639,6 +1639,12 @@ fn run() -> Result<(), Box<dyn Error>> {
             process::new_docker_label_service(config_manager.clone()),
         ));
     }
+    if config_manager.support_events() && !args.cp {
+        my_server.add_service(background_service(
+            "cache_purge",
+            process::new_cache_purge_service(config_manager.clone()),
+        ));
+    }
 
     // What it does, which is not what it was asked for where no restart
     // can be made.

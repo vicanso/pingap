@@ -143,6 +143,76 @@ export default {
       "Saved upstream {{upstream}}, location {{location}}, and server {{server}}.",
     createFailTitle: "Quick Site Failed",
   },
+  pluginPreset: {
+    trigger: "Presets & Access Lists",
+    title: "Plugin Presets & Access Lists",
+    description:
+      "Compose reusable security/gateway plugin bundles or saved templates and attach them cleanly to multiple locations.",
+    tabBuiltin: "Built-in Presets",
+    tabSaved: "Saved Templates",
+    builtinSelectLabel: "Preset Recipe",
+    recipeAccessList: "Access List",
+    recipeAccessListDesc:
+      "IP allowlist, Basic Auth accounts, security response headers, and optional scanner blocking.",
+    recipeHardening: "Web Hardening",
+    recipeHardeningDesc:
+      "Common URI block rules (with dry-run option), exact IP rate limit, and security headers.",
+    recipeApiGuard: "API Gateway Guard",
+    recipeApiGuardDesc:
+      "Exact rate limit, CORS policy, and security headers for public or SPA APIs.",
+    recipeStaticPerf: "Static & Compression",
+    recipeStaticPerfDesc:
+      "Gzip/Brotli/Zstd compression with security response headers.",
+    prefixLabel: "Plugin Name Prefix",
+    prefixPlaceholder: "e.g. internal-acl",
+    allowIpsLabel: "Allowed IP / CIDR List (comma or newline separated)",
+    allowIpsPlaceholder: "127.0.0.1, 10.0.0.0/8, 192.168.1.0/24",
+    basicAuthLabel: "Basic Auth Accounts (optional, one per line: user:password or base64)",
+    basicAuthPlaceholder: "alice:s3cret\nbob:p4ssw0rd",
+    basicAuthHint:
+      "Plain user:password lines are base64-encoded in browser memory before saving.",
+    enableUriBlockLabel: "Enable scanner & traversal protection (uri_block presets)",
+    uriBlockDryRunLabel: "Observe only (dry_run) before blocking",
+    enableSecurityHeadersLabel: "Include security headers preset (nosniff, X-Frame-Options, Referrer-Policy, HSTS)",
+    overwritePluginsLabel: "Overwrite existing plugins with the same names",
+    rateMaxLabel: "Requests per Minute (max)",
+    corsOriginLabel: "CORS Allow Origin",
+    saveAsTemplateLabel: "Save as reusable template in Storages",
+    templateNameLabel: "Template Name",
+    templateNamePlaceholder: "e.g. corp-access-list",
+    templateDescLabel: "Description (optional)",
+    templateDescPlaceholder: "Restricted internal endpoints",
+    locationsLabel: "Mount to Locations (optional)",
+    selectAll: "Select all",
+    clearAll: "Clear",
+    noLocations: "No locations configured yet — plugins/template will still be saved.",
+    positionLabel: "Chain Position",
+    positionPrepend: "Prepend (run before existing plugins)",
+    positionAppend: "Append (run after existing plugins)",
+    previewPluginsLabel: "Plugins to create / attach",
+    applySubmit: "Apply Preset",
+    applySuccessTitle: "Preset applied",
+    applySuccessDescription:
+      "Created {{created}}, reused {{reused}}, updated {{locations}} location(s).",
+    applyFailTitle: "Apply Preset Failed",
+    savedEmpty:
+      "No saved plugin templates yet. Save a preset on the first tab or bundle existing plugins below.",
+    mountTitle: "Mount Selected Template",
+    mountSubmit: "Mount to Locations",
+    createFromExistingTitle: "Save Existing Plugins as Template",
+    createFromExistingHint:
+      "Pick ordered existing plugins to store as a reusable Access List or policy template.",
+    selectPluginsLabel: "Plugins in order",
+    saveTemplateOnlySubmit: "Save Template",
+    saveTemplateSuccess: "Template \"{{name}}\" saved.",
+    deleteTemplateSuccess: "Template \"{{name}}\" deleted.",
+    deleteTemplateFail: "Delete Template Failed",
+    templatePluginsRequired: "Select at least one plugin.",
+    prefixRequired: "Please enter a plugin name prefix or enable saving a template.",
+    templateNameRequired: "Please enter a template name.",
+    accessListEmpty:
+      "Configure at least one IP/CIDR, Basic Auth account, uri_block, or Security Headers.",
+  },
   includes: "Includes",
   includesPlaceholder: "Select the include config",
   full: "Full",
@@ -1058,6 +1128,9 @@ export default {
     cacheRespectClientNoCache: "Client No-Cache",
     cacheRespectClientNoCacheTips:
       "Yes lets a client have what is cached revalidated with the origin, by Cache-Control: no-cache or max-age=0. Anyone can then make the origin work: leave it off on a public site.",
+    cacheClusterPurge: "Cluster PURGE Sync",
+    cacheClusterPurgeTips:
+      "When running against an etcd config store, broadcast successful PURGE operations to peer instances (enabled by default).",
     cacheStatusTtl: "TTL By Status",
     cacheStatusTtlPlaceholder: "Status, e.g. 404 : TTL, e.g. 10s",
     cacheStatusTtlTips:
@@ -1399,6 +1472,10 @@ export default {
     requestHeadersRenameHeader: "Rename Header",
     requestHeadersRenamePlaceholder:
       "Input the original header name : Input the new header name",
+    uriBlockPresets: "Security Rule Presets",
+    uriBlockPresetsPlaceholder: "Select built-in rule packs",
+    uriBlockPresetsTips:
+      "Built-in packs for sensitive files (.env, .git), common scanner probes, path traversal, and high-signal SQLi/XSS queries. Pair with dry_run first.",
     uriBlockPaths: "Paths",
     uriBlockPathsPlaceholder: "A regex, e.g. \\.env$",
     uriBlockPathsTips:

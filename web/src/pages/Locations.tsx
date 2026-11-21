@@ -22,6 +22,7 @@ import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
+import { PluginPresetDialog } from "@/components/plugin-preset-dialog";
 import { LOCATIONS } from "@/routers";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
@@ -87,6 +88,7 @@ export default function Locations() {
         newValue={newLocation}
         names={locations}
         values={values}
+        extraActions={<PluginPresetDialog />}
         columns={[
           ...(hasHost
             ? [
@@ -435,13 +437,22 @@ export default function Locations() {
       }
       actions={
         currentLocation !== newLocation ? (
-          <History
-            category="location"
-            name={currentLocation}
-            onRestore={async (data) => {
-              await update("location", currentLocation, data);
-            }}
-          />
+          <div className="flex items-center gap-2">
+            {!basicInfo.read_only && (
+              <PluginPresetDialog
+                defaultLocations={[currentLocation]}
+                variant="outline"
+                size="sm"
+              />
+            )}
+            <History
+              category="location"
+              name={currentLocation}
+              onRestore={async (data) => {
+                await update("location", currentLocation, data);
+              }}
+            />
+          </div>
         ) : undefined
       }
     >

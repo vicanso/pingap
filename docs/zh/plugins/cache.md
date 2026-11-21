@@ -30,6 +30,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `ignore_query` | string[] | — | 不计入缓存键的查询参数（`utm_source`、`fbclid`）。其余参数按名称排序。不能和 `query_allow` 同时配置。 |
 | `query_allow` | string[] | — | 只有这些查询参数计入缓存键，按名称排序。 |
 | `respect_client_no_cache` | bool | `false` | 为 `true` 时，客户端可以用 `Cache-Control: no-cache` 或 `max-age=0` 让缓存的内容先向源站重新验证。 |
+| `cluster_purge` | bool | `true` | 使用 `etcd://` 配置存储时，将成功的 `PURGE` 操作广播给集群内其他实例同步清理对应条目或命名空间。 |
 
 ### 后端选择
 
@@ -78,7 +79,7 @@ curl -X PURGE http://127.0.0.1:6188/*
 # 501 Not Implemented  -> 未配置 namespace，或内存缓存后端
 ```
 
-`PURGE /*` 清空该插件缓存的全部内容：namespace 在文件后端以目录形式存在，是精确 URL 之外唯一无需索引即可清除的粒度（存储文件名是完整键的哈希，URL 前缀在磁盘上没有对应结构）。清除会连同内存热层一起清空，而且是整个热层（热层无法按 namespace 查找）：只在内存里的条目也会被清掉，其他 namespace 的条目之后从磁盘重新读入。清除只作用于本机——多实例部署需要对每个节点分别发起。
+`PURGE /*` 清空该插件缓存的全部内容：namespace 在文件后端以目录形式存在，是精确 URL 之外唯一无需索引即可清除的粒度（存储文件名是完整键的哈希，URL 前缀在磁盘上没有对应结构）。清除会连同内存热层一起清空，而且是整个热层（热层无法按 namespace 查找）：只在内存里的条目也会被清掉，其他 namespace 的条目之后从磁盘重新读入。当使用 `etcd://` 配置存储且开启 `cluster_purge`（默认开启）时，成功的 `PURGE` 请求（单个 URL 与 `PURGE /*`）会通过 `<etcd_path>-events/cache_purge` 广播给同集群的其他实例同步清理；使用文件配置或显式配置 `cluster_purge = false` 时仅清理当前节点。
 
 ## 自定缓存时间
 

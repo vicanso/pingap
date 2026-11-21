@@ -34,6 +34,144 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 const CATEGORY: &str = "uri_block";
 
+const SENSITIVE_FILE_PATHS: &[&str] = &[
+    r"(?i)(^|/)\.env(\.[^/]*)?$",
+    r"(?i)(^|/)\.(git|svn|hg)(/|$)",
+    r"(?i)(^|/)\.(htaccess|htpasswd|htgroups|npmrc|yarnrc|pypirc|netrc|dockerenv|DS_Store)$",
+    r"(?i)(^|/)\.(aws|ssh)(/|$)",
+    r"(?i)(^|/)wp-config\.php(\.bak|\.old|\.save|~)?$",
+    r"(?i)(^|/)web\.config$",
+    r"(?i)(^|/)(id_rsa|id_ed25519)(\.pub)?$",
+    r"(?i)\.(bak|orig|save|swp|swo|sql|dump)$",
+];
+
+const SCANNER_PATHS: &[&str] = &[
+    r"(?i)(^|/)wp-(login|signup|cron|config)\.php$",
+    r"(?i)(^|/)wp-(admin|includes)(/|$)",
+    r"(?i)(^|/)xmlrpc\.php$",
+    r"(?i)(^|/)wlwmanifest\.xml$",
+    r"(?i)(^|/)(phpmyadmin|pma|myadmin)(/|$)",
+    r"(?i)(^|/)(phpinfo|adminer)\.php$",
+    r"(?i)(^|/)cgi-bin(/|$)",
+    r"(?i)(^|/)vendor/phpunit(/|$)",
+    r"(?i)(^|/)boaform/admin(/|$)",
+    r"(?i)(^|/)HNAP1(/|$)",
+];
+
+const PATH_TRAVERSAL_PATHS: &[&str] = &[
+    r"(?i)(^|[/\\])\.\.([/\\;]|$)",
+    r"(?i)%2e%2e",
+    r"(?i)%252e%252e",
+    r"(?i)%00",
+    r"(?i)(^|/)(etc/passwd|etc/shadow|proc/self/environ|windows/win\.ini)$",
+];
+
+const PATH_TRAVERSAL_QUERIES: &[&str] = &[
+    r"(?i)(^|[/\\=])\.\.[/\\]",
+    r"(?i)%00|\x00",
+    r"(?i)(/etc/passwd|/etc/shadow|/proc/self/environ|c:\\windows\\)",
+];
+
+const SQLI_XSS_QUERIES: &[&str] = &[
+    r"(?i)\bunion(\s+all)?\s+select\b",
+    r#"(?i)('\s*or\s+'?\d+'?\s*=\s*'?\d+|"\s*or\s+"?\d+"?\s*=\s*"?\d+)"#,
+    r"(?i)\b(sleep|benchmark|waitfor\s+delay|pg_sleep)\s*\(",
+    r"(?i)(information_schema|load_file\s*\(|into\s+outfile)",
+    r"(?i)<\s*script\b",
+    r"(?i)\bjavascript\s*:",
+    r"(?i)\bon(error|load|mouseover|click|focus)\s*=",
+];
+
+fn extend_unique_patterns(
+    dst: &mut Vec<String>,
+    patterns: impl IntoIterator<Item = String>,
+) {
+    for pattern in patterns {
+        if !dst.contains(&pattern) {
+            dst.push(pattern);
+        }
+    }
+}
+
+struct PresetRules {
+    paths: &'static [&'static [&'static str]],
+    queries: &'static [&'static [&'static str]],
+}
+
+fn preset_rules(name: &str) -> Option<PresetRules> {
+    match name {
+        "sensitive_files" => Some(PresetRules {
+            paths: &[SENSITIVE_FILE_PATHS],
+            queries: &[],
+        }),
+        "scanners" => Some(PresetRules {
+            paths: &[SCANNER_PATHS],
+            queries: &[],
+        }),
+        "path_traversal" => Some(PresetRules {
+            paths: &[PATH_TRAVERSAL_PATHS],
+            queries: &[PATH_TRAVERSAL_QUERIES],
+        }),
+        "sqli_xss" => Some(PresetRules {
+            paths: &[],
+            queries: &[SQLI_XSS_QUERIES],
+        }),
+        "common" => Some(PresetRules {
+            paths: &[SENSITIVE_FILE_PATHS, SCANNER_PATHS, PATH_TRAVERSAL_PATHS],
+            queries: &[PATH_TRAVERSAL_QUERIES],
+        }),
+        "all" => Some(PresetRules {
+            paths: &[SENSITIVE_FILE_PATHS, SCANNER_PATHS, PATH_TRAVERSAL_PATHS],
+            queries: &[PATH_TRAVERSAL_QUERIES, SQLI_XSS_QUERIES],
+        }),
+        _ => None,
+    }
+}
+
+fn expand_presets(names: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+    let mut path_patterns = Vec::new();
+    let mut query_patterns = Vec::new();
+    for raw in names {
+        let normalized = raw.trim().to_ascii_lowercase();
+        let Some(rules) = preset_rules(&normalized) else {
+            return Err(Error::Invalid {
+                category: CATEGORY.to_string(),
+                message: format!(
+                    "presets: unknown preset {raw:?}, expect one of: sensitive_files, scanners, path_traversal, sqli_xss, common, all"
+                ),
+            });
+        };
+        for group in rules.paths {
+            extend_unique_patterns(
+                &mut path_patterns,
+                group.iter().map(|p| (*p).to_string()),
+            );
+        }
+        for group in rules.queries {
+            extend_unique_patterns(
+                &mut query_patterns,
+                group.iter().map(|p| (*p).to_string()),
+            );
+        }
+    }
+    Ok((path_patterns, query_patterns))
+}
+
+fn compile_pattern_set(
+    key: &str,
+    patterns: Vec<String>,
+) -> Result<Option<RegexSet>> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+    RegexSet::new(&patterns)
+        .map(Some)
+        .map_err(|e| Error::Invalid {
+            category: CATEGORY.to_string(),
+            message: format!("{key}: {e}"),
+        })
+}
+
 /// Turns away requests by what they ask for: a path or a query that
 /// matches one of the patterns, or a method that is not one of those
 /// allowed.
@@ -82,19 +220,18 @@ impl TryFrom<&PluginConf> for UriBlock {
             PluginStep::Request,
             &[PluginStep::Request],
         )?;
-        // All of them looked at in one pass over the text, however many
-        // there are.
-        let patterns_of = |key: &str| -> Result<Option<RegexSet>> {
-            let patterns = get_str_slice_conf(value, key);
-            if patterns.is_empty() {
-                return Ok(None);
-            }
-            RegexSet::new(&patterns)
-                .map(Some)
-                .map_err(|e| invalid(format!("{key}: {e}")))
-        };
-        let paths = patterns_of("paths")?;
-        let queries = patterns_of("queries")?;
+        let (mut path_patterns, mut query_patterns) =
+            expand_presets(&get_str_slice_conf(value, "presets"))?;
+        extend_unique_patterns(
+            &mut path_patterns,
+            get_str_slice_conf(value, "paths"),
+        );
+        extend_unique_patterns(
+            &mut query_patterns,
+            get_str_slice_conf(value, "queries"),
+        );
+        let paths = compile_pattern_set("paths", path_patterns)?;
+        let queries = compile_pattern_set("queries", query_patterns)?;
         let methods = get_str_slice_conf(value, "methods")
             .iter()
             .map(|method| {
@@ -109,7 +246,8 @@ impl TryFrom<&PluginConf> for UriBlock {
             .collect::<Result<Vec<_>>>()?;
         if paths.is_none() && queries.is_none() && methods.is_empty() {
             return Err(invalid(
-                "one of paths, queries or methods is required".to_string(),
+                "one of presets, paths, queries or methods is required"
+                    .to_string(),
             ));
         }
         // A status that is not an error would tell the client its request
@@ -407,12 +545,147 @@ message = "Not Found"
     }
 
     #[test]
+    fn test_uri_block_presets() {
+        let common = new_plugin(r#"presets = ["common"]"#).unwrap();
+        for uri in [
+            "/.env",
+            "/app/.env.production",
+            "/%2eenv",
+            "/.git/config",
+            "/repo/.svn/entries",
+            "/.htaccess",
+            "/.aws/credentials",
+            "/db/backup.sql",
+            "/wp-login.php",
+            "/WP-Admin/install.php",
+            "/xmlrpc.php",
+            "/phpmyadmin/index.php",
+            "/cgi-bin/test.cgi",
+            "/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php",
+            "/public/..%2f..%2fetc/passwd",
+            "/static/%2e%2e/secret",
+            "/a%00b",
+            "/download?file=../../etc/passwd",
+            "/download?file=..%2F..%2Fetc%2Fpasswd",
+            "/view?path=/etc/passwd",
+        ] {
+            assert!(
+                blocked(&common, "GET", uri).is_some(),
+                "{uri} should be blocked by common preset"
+            );
+        }
+
+        // Known-safe routes must NOT be blocked, especially ACME / OIDC discovery
+        // and regular search queries or archives.
+        for uri in [
+            "/",
+            "/index.html",
+            "/.well-known/acme-challenge/token123",
+            "/.well-known/openid-configuration",
+            "/downloads/app.tar.gz",
+            "/api/users?q=select+item",
+            "/blog/env-guide",
+            "/search?q=1+union+select+from+table",
+        ] {
+            assert_eq!(
+                None,
+                blocked(&common, "GET", uri),
+                "{uri} should not be blocked by common preset"
+            );
+        }
+
+        // Case-insensitive preset names + sqli_xss coverage via `all` + custom merge.
+        let all = new_plugin(
+            r#"
+presets = [" ALL ", "sensitive_files"]
+paths = ['^/private/']
+queries = ['\bdebug=1\b']
+"#,
+        )
+        .unwrap();
+        for uri in [
+            "/search?q=1+UNION+ALL+SELECT+password",
+            "/login?user='+or+'1'='1",
+            "/item?q=%3Cscript%3Ealert(1)%3C/script%3E",
+            "/item?cb=javascript:alert(1)",
+            "/item?img=%20onerror=alert(1)",
+            "/item?q=sleep(5)",
+            "/private/config",
+            "/ok?debug=1",
+        ] {
+            assert!(
+                blocked(&all, "GET", uri).is_some(),
+                "{uri} should be blocked by all + custom rules"
+            );
+        }
+        assert_eq!(None, blocked(&all, "GET", "/api/users?q=select+item"));
+
+        // Individual preset scopes: sensitive_files, scanners, path_traversal, sqli_xss.
+        let sensitive = new_plugin(r#"presets = ["sensitive_files"]"#).unwrap();
+        assert_eq!(Some(Blocked::Path), blocked(&sensitive, "GET", "/.env"));
+        assert_eq!(None, blocked(&sensitive, "GET", "/wp-login.php"));
+
+        let scanners = new_plugin(r#"presets = ["scanners"]"#).unwrap();
+        assert_eq!(
+            Some(Blocked::Path),
+            blocked(&scanners, "GET", "/wp-login.php")
+        );
+        assert_eq!(None, blocked(&scanners, "GET", "/.env"));
+
+        let traversal = new_plugin(r#"presets = ["path_traversal"]"#).unwrap();
+        assert_eq!(
+            Some(Blocked::Query),
+            blocked(&traversal, "GET", "/f?p=../../etc/passwd")
+        );
+        assert_eq!(None, blocked(&traversal, "GET", "/wp-login.php"));
+
+        let sqli = new_plugin(r#"presets = ["sqli_xss"]"#).unwrap();
+        assert_eq!(
+            Some(Blocked::Query),
+            blocked(&sqli, "GET", "/s?q=1+union+select+2")
+        );
+        assert_eq!(None, blocked(&sqli, "GET", "/.env"));
+    }
+
+    #[tokio::test]
+    async fn test_uri_block_preset_dry_run() {
+        let plugin = new_plugin(
+            r#"
+presets = ["common"]
+dry_run = true
+"#,
+        )
+        .unwrap();
+        let request = "GET /.env HTTP/1.1\r\nHost: a\r\n\r\n";
+        let mock_io = Builder::new().read(request.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
+    }
+
+    #[test]
     fn test_uri_block_params() {
         let error = |conf: &str| new_plugin(conf).err().unwrap().to_string();
         let prefix = "Plugin uri_block invalid, message: ";
         assert_eq!(
-            format!("{prefix}one of paths, queries or methods is required"),
+            format!(
+                "{prefix}one of presets, paths, queries or methods is required"
+            ),
             error("")
+        );
+        assert_eq!(
+            format!(
+                "{prefix}presets: unknown preset \"unknown\", expect one of: sensitive_files, scanners, path_traversal, sqli_xss, common, all"
+            ),
+            error(r#"presets = ["unknown"]"#)
         );
         assert_eq!(
             true,

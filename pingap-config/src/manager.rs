@@ -20,7 +20,7 @@ use crate::file_storage::{FileStorage, is_config_dir};
 use crate::memory_storage::MemoryStorage;
 use crate::reference::MissingReference;
 use crate::storage::{History, Storage};
-use crate::{Category, Error, Observer};
+use crate::{Category, Error, EventObserver, Observer};
 use arc_swap::{ArcSwap, ArcSwapOption};
 use pingap_util::resolve_path;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
@@ -482,6 +482,29 @@ impl ConfigManager {
         ttl: std::time::Duration,
     ) -> Result<Option<crate::StorageLock>> {
         self.storage.try_acquire_lock(key, ttl).await
+    }
+
+    /// Whether the underlying configuration backend supports cluster events.
+    pub fn support_events(&self) -> bool {
+        self.storage.support_events()
+    }
+
+    /// Publishes a cluster event payload on `channel`.
+    pub async fn publish_event(
+        &self,
+        channel: &str,
+        payload: &str,
+        ttl: std::time::Duration,
+    ) -> Result<()> {
+        self.storage.publish_event(channel, payload, ttl).await
+    }
+
+    /// Subscribes to cluster events on `channel`.
+    pub async fn subscribe_events(
+        &self,
+        channel: &str,
+    ) -> Result<Option<EventObserver>> {
+        self.storage.subscribe_events(channel).await
     }
 
     pub fn get_current_config(&self) -> Arc<PingapConfig> {

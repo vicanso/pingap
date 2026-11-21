@@ -124,6 +124,49 @@ impl Observer {
     }
 }
 
+/// Live stream of ephemeral cluster events emitted on a sibling prefix.
+pub struct EventObserver {
+    pub(crate) etcd_watch_stream: WatchStream,
+    pub(crate) _etcd_client: etcd_client::Client,
+}
+
+impl EventObserver {
+    /// Waits for the next batch of UTF-8 event payloads from etcd. Returns an
+    /// empty `Vec` on watch creation acknowledgements or lease-expiry deletes.
+    pub async fn next_events(&mut self) -> Result<Vec<String>> {
+        let resp = self.etcd_watch_stream.message().await.map_err(|e| {
+            Error::Etcd {
+                source: Box::new(e),
+            }
+        })?;
+        let Some(resp) = resp else {
+            return Err(Error::Invalid {
+                message: "etcd event watch stream is closed".to_string(),
+            });
+        };
+        if resp.canceled() {
+            return Err(Error::Invalid {
+                message: format!(
+                    "etcd event watch is canceled: {}",
+                    resp.cancel_reason()
+                ),
+            });
+        }
+        let payloads = resp
+            .events()
+            .iter()
+            .filter(|event| event.event_type() == etcd_client::EventType::Put)
+            .filter_map(|event| {
+                event
+                    .kv()
+                    .and_then(|kv| kv.value_str().ok())
+                    .map(str::to_string)
+            })
+            .collect();
+        Ok(payloads)
+    }
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum Category {
     Basic,

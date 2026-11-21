@@ -13,18 +13,18 @@
 // limitations under the License.
 
 use crate::storage::{History, Storage, StorageLock};
-use crate::{Error, Observer};
+use crate::{Error, EventObserver, Observer};
 use async_trait::async_trait;
 use etcd_client::{
     Certificate, Client, Compare, CompareOp, ConnectOptions, GetOptions,
     Identity, KeyValue, KvClient, PutOptions, SortOrder, SortTarget,
     TlsOptions, Txn, TxnOp, WatchOptions,
 };
-use pingap_core::now_sec;
+use pingap_core::{now_ms, now_sec};
 use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -45,6 +45,8 @@ pub struct EtcdStorage {
     // Sibling path for advisory distributed locks (kept outside `path` so
     // `load_all` and `observe` never see lock keys as config changes)
     lock_path: String,
+    // Sibling path for ephemeral cluster pub/sub events (also outside `path`)
+    event_path: String,
     // List of etcd server addresses
     addrs: Vec<String>,
     // Connection options (timeout, auth, etc)
@@ -278,6 +280,7 @@ impl EtcdStorage {
             .with_keep_alive(KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT);
         let history_path = format!("{}-history", path.trim_end_matches('/'));
         let lock_path = format!("{}-locks", path.trim_end_matches('/'));
+        let event_path = format!("{}-events", path.trim_end_matches('/'));
 
         Ok(Self {
             addrs,
@@ -285,6 +288,7 @@ impl EtcdStorage {
             path,
             history_path,
             lock_path,
+            event_path,
             enable_history: params.enable_history,
             client: Mutex::new(None),
             page_size: AtomicI64::new(PAGE_SIZE),
@@ -476,6 +480,24 @@ impl EtcdStorage {
             other => other,
         }
     }
+}
+
+static EVENT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+async fn publish_event_once(
+    mut client: Client,
+    key: &str,
+    payload: &str,
+    ttl_secs: i64,
+) -> std::result::Result<(), etcd_client::Error> {
+    let lease = client.lease_grant(ttl_secs, None).await?;
+    let lease_id = lease.id();
+    let opts = PutOptions::new().with_lease(lease_id);
+    if let Err(err) = client.kv_client().put(key, payload, Some(opts)).await {
+        let _ = client.lease_revoke(lease_id).await;
+        return Err(err);
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -670,6 +692,67 @@ impl Storage for EtcdStorage {
         });
         Ok(Some(StorageLock::new(release, keep_alive.abort_handle())))
     }
+
+    fn support_events(&self) -> bool {
+        true
+    }
+
+    async fn publish_event(
+        &self,
+        channel: &str,
+        payload: &str,
+        ttl: Duration,
+    ) -> Result<()> {
+        let channel = channel.trim_matches('/');
+        if channel.is_empty() {
+            return Err(Error::Invalid {
+                message: "etcd event channel should not be empty".to_string(),
+            });
+        }
+        let ttl_secs = i64::try_from(ttl.as_secs().max(5)).unwrap_or(60);
+        let seq = EVENT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let leaf = format!("{}-{seq}-{}", now_ms(), std::process::id());
+        let prefix = path_join(&self.event_path, channel);
+        let key = path_join(&prefix, &leaf);
+
+        let client = self.client().await?;
+        match publish_event_once(client, &key, payload, ttl_secs).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                debug!(error = %e, "etcd event publish failed, reconnecting");
+                *self.client.lock().await = None;
+                let client = self.client().await?;
+                publish_event_once(client, &key, payload, ttl_secs)
+                    .await
+                    .map_err(etcd_error)
+            },
+        }
+    }
+
+    async fn subscribe_events(
+        &self,
+        channel: &str,
+    ) -> Result<Option<EventObserver>> {
+        let channel = channel.trim_matches('/');
+        if channel.is_empty() {
+            return Err(Error::Invalid {
+                message: "etcd event channel should not be empty".to_string(),
+            });
+        }
+        let client = Client::connect(&self.addrs, Some(self.options.clone()))
+            .await
+            .map_err(etcd_error)?;
+        let prefix = as_prefix(&path_join(&self.event_path, channel));
+        let stream = client
+            .watch_client()
+            .watch(prefix, Some(WatchOptions::default().with_prefix()))
+            .await
+            .map_err(etcd_error)?;
+        Ok(Some(EventObserver {
+            etcd_watch_stream: stream,
+            _etcd_client: client,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -686,6 +769,11 @@ mod tests {
         assert_eq!(
             false,
             storage.lock_path.starts_with(&as_prefix(&storage.path))
+        );
+        assert_eq!("/pingap-events", storage.event_path);
+        assert_eq!(
+            false,
+            storage.event_path.starts_with(&as_prefix(&storage.path))
         );
 
         // timeout=10s&connect_timeout=5s&user=abc&password=pwd
@@ -942,5 +1030,78 @@ mod tests {
 
         remove_all(&storage, &storage.path).await;
         remove_all(&storage, &storage.history_path).await;
+    }
+
+    #[tokio::test]
+    async fn test_event_pub_sub_isolated_from_config_watch() {
+        let name = format!("events-{}", nanoid::nanoid!(12));
+        let publisher = local(&name, "timeout=2s");
+        let subscriber = local(&name, "timeout=2s");
+        assert_eq!(true, publisher.support_events());
+
+        let mut config_observer = subscriber.observe().await.unwrap();
+        let mut events_observer = subscriber
+            .subscribe_events("cache_purge")
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Drain initial watch creation ack messages so only real events matter.
+        let _ = tokio::time::timeout(
+            Duration::from_millis(200),
+            events_observer.next_events(),
+        )
+        .await;
+        let _ = tokio::time::timeout(
+            Duration::from_millis(200),
+            config_observer.watch(),
+        )
+        .await;
+
+        publisher
+            .publish_event(
+                "cache_purge",
+                r#"{"origin":"node-a","action":{"kind":"entries","entries":[]}}"#,
+                Duration::from_secs(30),
+            )
+            .await
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let mut received = Vec::new();
+        loop {
+            let Ok(res) = tokio::time::timeout_at(
+                deadline,
+                events_observer.next_events(),
+            )
+            .await
+            else {
+                break;
+            };
+            let batch = res.unwrap();
+            if !batch.is_empty() {
+                received.extend(batch);
+                break;
+            }
+        }
+        assert_eq!(
+            vec![
+                r#"{"origin":"node-a","action":{"kind":"entries","entries":[]}}"#
+                    .to_string()
+            ],
+            received
+        );
+
+        // Publishing onto `-events` must neither trigger config watch nor
+        // leak into `fetch("")`.
+        let config_changed = tokio::time::timeout(
+            Duration::from_millis(300),
+            config_observer.watch(),
+        )
+        .await;
+        assert_eq!(true, config_changed.is_err());
+        assert_eq!("", subscriber.fetch("").await.unwrap());
+
+        remove_all(&publisher, &publisher.event_path).await;
     }
 }

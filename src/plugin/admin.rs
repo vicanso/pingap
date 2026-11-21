@@ -1115,6 +1115,87 @@ impl AdminServe {
         HttpResponse::try_from_json_status(&resp, StatusCode::CREATED)
             .map_err(|e| pingap_core::new_internal_error(500, e))
     }
+    async fn apply_plugin_preset(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<HttpResponse> {
+        let buf = get_request_body(session).await?;
+        let refuse = |message: String| {
+            error!(
+                target: LOG_TARGET,
+                error = message,
+                "apply plugin preset fail"
+            );
+            pingap_core::new_internal_error(400, message)
+        };
+        let req: ApplyPluginPresetRequest =
+            serde_json::from_slice(&buf).map_err(|e| refuse(e.to_string()))?;
+        let mut config = self
+            .manager
+            .load_all()
+            .await
+            .map_err(|e| refuse(e.to_string()))?;
+        let resp = apply_plugin_preset(&mut config, &req).map_err(refuse)?;
+        let config = tokio::task::spawn_blocking(move || {
+            crate::validate::validate_stored(&config)
+                .map(|_| config)
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| refuse(e.to_string()))?
+        .map_err(refuse)?;
+        self.manager.save_all(&config).await.map_err(|e| {
+            error!(
+                target: LOG_TARGET,
+                error = e.to_string(),
+                "apply plugin preset save fail"
+            );
+            pingap_core::new_internal_error(400, e)
+        })?;
+        crate::validate::apply_stored_trusted_proxies(&self.manager).await;
+
+        HttpResponse::try_from_json_status(&resp, StatusCode::OK)
+            .map_err(|e| pingap_core::new_internal_error(500, e))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct PresetPluginDef {
+    name: String,
+    config: toml::map::Map<String, toml::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplyPluginPresetRequest {
+    save_preset_name: Option<String>,
+    save_preset_description: Option<String>,
+    #[serde(default)]
+    plugins: Vec<PresetPluginDef>,
+    #[serde(default)]
+    plugin_names: Vec<String>,
+    #[serde(default)]
+    locations: Vec<String>,
+    position: Option<String>,
+    #[serde(default)]
+    overwrite_plugins: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ApplyPluginPresetResponse {
+    created_plugins: Vec<String>,
+    reused_plugins: Vec<String>,
+    updated_locations: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saved_preset: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SavedPluginPreset {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    plugin_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plugins: Vec<PresetPluginDef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1440,6 +1521,238 @@ fn apply_quick_site(
     })
 }
 
+fn parse_preset_position(
+    position: Option<&str>,
+) -> std::result::Result<bool, String> {
+    let normalized = position
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("prepend")
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "prepend" => Ok(true),
+        "append" => Ok(false),
+        other => Err(format!(
+            "invalid position: {other} (expected prepend or append)"
+        )),
+    }
+}
+
+struct AppliedPresetPlugins {
+    created: Vec<String>,
+    reused: Vec<String>,
+    def_names: Vec<String>,
+}
+
+fn apply_preset_plugins(
+    plugins_section: &mut Option<toml::map::Map<String, toml::Value>>,
+    defs: &[PresetPluginDef],
+    overwrite: bool,
+) -> std::result::Result<AppliedPresetPlugins, String> {
+    let mut created = Vec::new();
+    let mut reused = Vec::new();
+    let mut def_names = Vec::new();
+    for def in defs {
+        let name = validate_quick_site_name(&def.name)?.to_string();
+        let has_category = def
+            .config
+            .get("category")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.trim().is_empty());
+        if !has_category {
+            return Err(format!("plugin '{name}' requires a category"));
+        }
+        let map = plugins_section.get_or_insert_with(toml::map::Map::new);
+        if map.contains_key(&name) && !overwrite {
+            reused.push(name.clone());
+        } else {
+            map.insert(name.clone(), toml::Value::Table(def.config.clone()));
+            created.push(name.clone());
+        }
+        if !def_names.contains(&name) {
+            def_names.push(name);
+        }
+    }
+    Ok(AppliedPresetPlugins {
+        created,
+        reused,
+        def_names,
+    })
+}
+
+fn resolve_preset_plugin_names(
+    plugins_section: Option<&toml::map::Map<String, toml::Value>>,
+    explicit_names: &[String],
+    def_names: Vec<String>,
+) -> std::result::Result<Vec<String>, String> {
+    let candidates = if explicit_names.is_empty() {
+        def_names
+    } else {
+        clean_list(explicit_names)
+    };
+    let mut ordered = Vec::with_capacity(candidates.len());
+    for name in candidates {
+        let exists = name.starts_with("pingap:")
+            || plugins_section.is_some_and(|map| map.contains_key(&name));
+        if !exists {
+            return Err(format!("plugin '{name}' does not exist"));
+        }
+        if !ordered.contains(&name) {
+            ordered.push(name);
+        }
+    }
+    Ok(ordered)
+}
+
+fn save_plugin_preset_template(
+    storages_section: &mut Option<toml::map::Map<String, toml::Value>>,
+    req: &ApplyPluginPresetRequest,
+    plugin_names: &[String],
+) -> std::result::Result<Option<String>, String> {
+    let Some(raw_name) = req
+        .save_preset_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok(None);
+    };
+    let preset_name = validate_quick_site_name(raw_name)?.to_string();
+    if plugin_names.is_empty() {
+        return Err(
+            "saving a plugin preset requires at least one plugin".to_string()
+        );
+    }
+    let description = req
+        .save_preset_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
+    let doc = SavedPluginPreset {
+        description: description.clone(),
+        plugin_names: plugin_names.to_vec(),
+        plugins: req.plugins.clone(),
+    };
+    let value =
+        serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+    let storage = StorageConf {
+        category: "plugin_preset".to_string(),
+        value,
+        secret: None,
+        remark: description,
+        created_at: Some(pingap_core::now_sec()),
+    };
+    storages_section
+        .get_or_insert_with(toml::map::Map::new)
+        .insert(preset_name.clone(), toml_value_of(&storage)?);
+    Ok(Some(preset_name))
+}
+
+fn mount_plugins_to_locations(
+    locations_section: &mut Option<toml::map::Map<String, toml::Value>>,
+    location_names: &[String],
+    attach_plugins: &[String],
+    prepend: bool,
+) -> std::result::Result<Vec<String>, String> {
+    let targets = clean_list(location_names);
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    if attach_plugins.is_empty() {
+        return Err("at least one plugin is required to mount onto locations"
+            .to_string());
+    }
+    let map = locations_section
+        .as_mut()
+        .ok_or_else(|| "no locations are configured".to_string())?;
+    let mut updated = Vec::new();
+    for loc_name in targets {
+        if updated.contains(&loc_name) {
+            continue;
+        }
+        let entry = map
+            .get_mut(&loc_name)
+            .ok_or_else(|| format!("location '{loc_name}' does not exist"))?;
+        let table = entry
+            .as_table_mut()
+            .ok_or_else(|| format!("location '{loc_name}' is not a table"))?;
+        let existing: Vec<toml::Value> = match table.get("plugins") {
+            Some(toml::Value::Array(items)) => items.clone(),
+            Some(_) => {
+                return Err(format!(
+                    "location '{loc_name}' plugins is not an array"
+                ));
+            },
+            None => Vec::new(),
+        };
+        let to_add: Vec<toml::Value> = attach_plugins
+            .iter()
+            .map(|name| toml::Value::String(name.clone()))
+            .filter(|val| !existing.contains(val))
+            .collect();
+        let merged = if prepend {
+            let mut list = to_add;
+            list.extend(existing);
+            list
+        } else {
+            let mut list = existing;
+            list.extend(to_add);
+            list
+        };
+        table.insert("plugins".to_string(), toml::Value::Array(merged));
+        updated.push(loc_name);
+    }
+    Ok(updated)
+}
+
+fn apply_plugin_preset(
+    config: &mut PingapTomlConfig,
+    req: &ApplyPluginPresetRequest,
+) -> std::result::Result<ApplyPluginPresetResponse, String> {
+    let prepend = parse_preset_position(req.position.as_deref())?;
+    let AppliedPresetPlugins {
+        created: created_plugins,
+        reused: reused_plugins,
+        def_names,
+    } = apply_preset_plugins(
+        &mut config.plugins,
+        &req.plugins,
+        req.overwrite_plugins,
+    )?;
+    let attach_plugins = resolve_preset_plugin_names(
+        config.plugins.as_ref(),
+        &req.plugin_names,
+        def_names,
+    )?;
+    let saved_preset = save_plugin_preset_template(
+        &mut config.storages,
+        req,
+        &attach_plugins,
+    )?;
+    let updated_locations = mount_plugins_to_locations(
+        &mut config.locations,
+        &req.locations,
+        &attach_plugins,
+        prepend,
+    )?;
+    if created_plugins.is_empty()
+        && saved_preset.is_none()
+        && updated_locations.is_empty()
+    {
+        return Err(
+            "specify plugins to create, a template to save, or locations to update"
+                .to_string(),
+        );
+    }
+    Ok(ApplyPluginPresetResponse {
+        created_plugins,
+        reused_plugins,
+        updated_locations,
+        saved_preset,
+    })
+}
+
 /// The answer to a config request that failed: the status the error was
 /// made with, and its message.
 ///
@@ -1641,6 +1954,8 @@ async fn handle_request_admin(
                     plugin.import_config(session).await
                 } else if category == "quick-site" {
                     plugin.create_quick_site(session).await
+                } else if category == "apply-plugin-preset" {
+                    plugin.apply_plugin_preset(session).await
                 } else if params.len() < 4 {
                     Err(pingap_core::new_internal_error(
                         400,
@@ -3961,5 +4276,218 @@ locations = ["api_canary", "api_default"]
         )
         .await;
         assert_eq!(400, bad_code);
+    }
+
+    #[tokio::test]
+    async fn test_apply_plugin_preset_access_list_and_templates() {
+        let dir = tempfile::tempdir().unwrap();
+        let toml = r#"
+[upstreams.app_up]
+addrs = ["127.0.0.1:9100"]
+
+[plugins.existing_cors]
+category = "cors"
+allow_origin = "*"
+
+[locations.admin_panel]
+upstream = "app_up"
+path = "/admin"
+plugins = ["existing_cors"]
+
+[locations.reports]
+upstream = "app_up"
+path = "/reports"
+"#;
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, toml).unwrap();
+        let (admin, manager) = new_admin_on(&file, "");
+
+        // 1. Create an Access List bundle, save as template, and prepend to locations.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/apply-plugin-preset",
+            &serde_json::json!({
+                "save_preset_name": "corp-acl",
+                "save_preset_description": "Internal admin access list",
+                "plugins": [
+                    {
+                        "name": "corp-ip-allow",
+                        "config": {
+                            "category": "ip_restriction",
+                            "type": "allow",
+                            "ip_list": ["127.0.0.1", "10.0.0.0/8"]
+                        }
+                    },
+                    {
+                        "name": "corp-basic-auth",
+                        "config": {
+                            "category": "basic_auth",
+                            "authorizations": ["YWxpY2U6czNjcmV0"]
+                        }
+                    },
+                    {
+                        "name": "corp-sec-headers",
+                        "config": {
+                            "category": "response_headers",
+                            "preset": "security",
+                            "always": true
+                        }
+                    }
+                ],
+                "locations": ["admin_panel", "reports"],
+                "position": "prepend"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!("corp-acl", resp["saved_preset"].as_str().unwrap());
+        assert_eq!(3, resp["created_plugins"].as_array().unwrap().len());
+        assert_eq!(2, resp["updated_locations"].as_array().unwrap().len());
+
+        let stored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(
+            vec![
+                "corp-ip-allow".to_string(),
+                "corp-basic-auth".to_string(),
+                "corp-sec-headers".to_string(),
+                "existing_cors".to_string(),
+            ],
+            stored.locations["admin_panel"].plugins.clone().unwrap()
+        );
+        assert_eq!(
+            vec![
+                "corp-ip-allow".to_string(),
+                "corp-basic-auth".to_string(),
+                "corp-sec-headers".to_string(),
+            ],
+            stored.locations["reports"].plugins.clone().unwrap()
+        );
+        let tpl = &stored.storages["corp-acl"];
+        assert_eq!("plugin_preset", tpl.category);
+        assert!(tpl.value.contains("corp-ip-allow"));
+
+        // 2. Re-applying with append reuses plugins without duplicating them on admin_panel,
+        // and adding a new existing plugin appends in order.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/apply-plugin-preset",
+            &serde_json::json!({
+                "plugin_names": ["corp-ip-allow", "existing_cors"],
+                "locations": ["admin_panel", "reports"],
+                "position": "append"
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let stored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(
+            vec![
+                "corp-ip-allow".to_string(),
+                "corp-basic-auth".to_string(),
+                "corp-sec-headers".to_string(),
+                "existing_cors".to_string(),
+            ],
+            stored.locations["admin_panel"].plugins.clone().unwrap()
+        );
+        assert_eq!(
+            vec![
+                "corp-ip-allow".to_string(),
+                "corp-basic-auth".to_string(),
+                "corp-sec-headers".to_string(),
+                "existing_cors".to_string(),
+            ],
+            stored.locations["reports"].plugins.clone().unwrap()
+        );
+
+        // 3. Invalid plugin config must reject atomically without mutating storage.
+        let (bad_code, bad_body) = post(
+            &admin,
+            "/api/configs/apply-plugin-preset",
+            &serde_json::json!({
+                "plugins": [
+                    {
+                        "name": "bad-uri-block",
+                        "config": {
+                            "category": "uri_block",
+                            "presets": ["does_not_exist"]
+                        }
+                    }
+                ],
+                "locations": ["reports"]
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, bad_code, "{bad_body}");
+        let stored_after = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(false, stored_after.plugins.contains_key("bad-uri-block"));
+
+        // 4. Unknown location fails atomically.
+        let (missing_loc_code, _) = post(
+            &admin,
+            "/api/configs/apply-plugin-preset",
+            &serde_json::json!({
+                "plugin_names": ["existing_cors"],
+                "locations": ["no_such_location"]
+            })
+            .to_string(),
+        )
+        .await;
+        assert_eq!(400, missing_loc_code);
+    }
+
+    #[tokio::test]
+    async fn test_apply_plugin_preset_readonly_forbidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(
+            &file,
+            "[upstreams.u]\naddrs = [\"127.0.0.1:8080\"]\n[locations.l]\nupstream = \"u\"\npath = \"/\"\n",
+        )
+        .unwrap();
+        let (admin, _) = new_admin_on(
+            &file,
+            r#"
+authorizations = ["dXNlcjpwYXNz"]
+readonly_authorizations = ["cmVhZDpwYXNz"]
+"#,
+        );
+        let now = pingap_core::now_sec();
+        let mut hasher = Sha256::new();
+        hasher.update(format!("read:pass:{now}").as_bytes());
+        let token: String = hasher.finalize().encode_hex();
+        let auth = format!("{token}:{now}");
+        let body = serde_json::json!({
+            "plugins": [{
+                "name": "ro-test",
+                "config": {"category": "response_headers", "preset": "security"}
+            }],
+            "locations": ["l"]
+        })
+        .to_string();
+        let req = format!(
+            "POST /api/configs/apply-plugin-preset HTTP/1.1\r\nAuthorization: {auth}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let (status, _) = answer(&admin, "127.0.0.1:3018", &req).await;
+        assert_eq!(403, status);
     }
 }

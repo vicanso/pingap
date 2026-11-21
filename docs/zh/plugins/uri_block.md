@@ -12,6 +12,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `uri_block`。 |
+| `presets` | string[] | — | 内置安全规则预设包（`sensitive_files`、`scanners`、`path_traversal`、`sqli_xss`、`common`、`all`），会与自定义的 `paths`/`queries` 合并为单次扫描正则。见[内置预设包](#内置预设包)。 |
 | `paths` | string[] | — | 正则表达式。路径匹配其中任意一条的请求被拦截。 |
 | `queries` | string[] | — | 正则表达式。查询串匹配其中任意一条的请求被拦截。 |
 | `methods` | string[] | — | 放行的请求方法，大小写不限（`GET`、`post`）。为空表示不限制方法。 |
@@ -19,7 +20,20 @@
 | `message` | string | `Request is blocked` | 拦截时响应的正文。 |
 | `dry_run` | bool | `false` | 本应拒绝的请求照常放行，改为记录一条警告日志：新规则可以先在真实流量上观察，再真正拦截。见[只记录不拦截](limit.md#只记录不拦截)。 |
 
-`paths`、`queries`、`methods` 至少要配一项。编译不过的正则、不合法的方法名、范围之外的 `status` 都是配置错误，`pingap -t` 会报出来。
+`presets`、`paths`、`queries`、`methods` 至少要配一项。编译不过的正则、未知的预设名、不合法的方法名、范围之外的 `status` 都是配置错误，`pingap -t` 会报出来。
+
+## 内置预设包
+
+无需在每个 location 手写一长串正则，可直接选用内置轻量安全预设包，并建议先开启 `dry_run = true` 观察一段时间后再切换为拦截：
+
+| Preset | Scope | 说明 |
+| --- | --- | --- |
+| `sensitive_files` | `paths` | `.env` / `.env.*`、`.git` / `.svn` / `.hg`、`.htaccess` / `.htpasswd`、`.npmrc` / `.netrc` / `.DS_Store`、`.aws` / `.ssh`、SSH 私钥（`id_rsa`、`id_ed25519`）、`wp-config.php`、`web.config` 以及常见备份/转储后缀（`.bak`、`.orig`、`.save`、`.swp`、`.swo`、`.sql`、`.dump`）。明确放行 `/.well-known/*`（ACME HTTP-01 / OIDC）。 |
+| `scanners` | `paths` | WordPress 探测（`wp-login.php`、`wp-admin`、`xmlrpc.php`、`wlwmanifest.xml`）、phpMyAdmin / Adminer / `phpinfo.php`、`cgi-bin`、`vendor/phpunit`、路由器常见漏洞路径（`boaform/admin`、`HNAP1`）。 |
+| `path_traversal` | `paths` + `queries` | `../` / `..\\` / `..;/`、百分号编码 `%2e%2e` 与双重编码 `%252e%252e`、空字节 `%00` 以及 `/etc/passwd`、`/etc/shadow`、`/proc/self/environ`、`windows/win.ini`。 |
+| `sqli_xss` | `queries` | 高置信度 SQLi/XSS 查询载荷：`UNION [ALL] SELECT`、`' or 1=1`、`sleep()` / `benchmark()` / `pg_sleep()` / `waitfor delay`、`information_schema` / `load_file(` / `into outfile`、`<script`、`javascript:`、`onerror=` / `onload=` / `onclick=`。 |
+| `common` | 组合包 | `sensitive_files` + `scanners` + `path_traversal` 的简写（低误报基础包）。 |
+| `all` | 组合包 | `common` + `sqli_xss` 的简写。 |
 
 ## 匹配的是什么
 
@@ -33,16 +47,13 @@
 ```toml
 [plugins.blockScanners]
 category = "uri_block"
-paths = [
-    '\.env$',
-    '^/\.git/',
-    '(?i)^/wp-(login|admin)',
-    '\.(bak|sql|swp)$',
-]
-queries = ['\.\./', '(?i)union\s+select']
+presets = ["common"]
+paths = ['^/internal/']
+queries = ['\bexec\s*\(']
 methods = ["GET", "HEAD", "POST"]
 status = 404
 message = "Not Found"
+dry_run = true
 
 [locations.app]
 upstream = "app"
