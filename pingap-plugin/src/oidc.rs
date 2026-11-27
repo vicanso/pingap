@@ -2063,7 +2063,7 @@ Pz7glwkTfq+X/7U/TTdWanLivIQqzKjyNBu3kgzx7GeUYcjtuw4RKof6
         // which anybody has.
         answer(
             Header::new(Algorithm::HS256),
-            &EncodingKey::from_secret(PUBLIC_KEY.as_bytes()),
+            &EncodingKey::from_secret(PUBLIC_KEY.as_bytes()).unwrap(),
         );
         assert_eq!(
             Err("the id_token does not verify".to_string()),

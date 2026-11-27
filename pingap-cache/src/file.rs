@@ -1045,6 +1045,15 @@ mod tests {
         format!("{hex:0<32}")
     }
 
+    fn set_atime(path: impl AsRef<Path>, atime: SystemTime) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_accessed(atime))
+            .unwrap();
+    }
+
     /// Tests the `parse_params` function with various query string configurations.
     #[test]
     fn test_parse_params() {
@@ -1164,11 +1173,7 @@ mod tests {
             .unwrap();
         File::create(&old_file_path).unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(3600);
-        filetime::set_file_atime(
-            &old_file_path,
-            filetime::FileTime::from_system_time(old_time),
-        )
-        .unwrap();
+        set_atime(&old_file_path, old_time);
 
         // Create a new file with a recent access time.
         let new_file_path = cache.get_file_path(&key("new"), "ns");
@@ -1407,13 +1412,10 @@ mod tests {
         cache.put(&key("b"), b"", obj(2)).await.unwrap();
         assert_eq!(2068, cache.current_size.load(Ordering::Relaxed));
         // `a` is the one nobody touched for an hour.
-        filetime::set_file_atime(
+        set_atime(
             cache.get_file_path(&key("a"), ""),
-            filetime::FileTime::from_system_time(
-                SystemTime::now() - Duration::from_secs(3600),
-            ),
-        )
-        .unwrap();
+            SystemTime::now() - Duration::from_secs(3600),
+        );
 
         cache.put(&key("c"), b"", obj(3)).await.unwrap();
         assert_eq!(true, cache.get(&key("a"), b"").await.unwrap().is_none());
@@ -1553,11 +1555,10 @@ mod tests {
     #[tokio::test]
     async fn test_sweeps_leave_foreign_files_alone() {
         let dir = tempdir().unwrap();
-        let three_days_ago = filetime::FileTime::from_system_time(
-            SystemTime::now() - Duration::from_secs(3 * 24 * 3600),
-        );
+        let three_days_ago =
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
         let age = |path: &Path| {
-            filetime::set_file_atime(path, three_days_ago).unwrap();
+            set_atime(path, three_days_ago);
         };
         let notes = dir.path().join("notes.txt");
         std::fs::write(&notes, vec![0; 4096]).unwrap();
@@ -1637,11 +1638,7 @@ mod tests {
         let three_days_ago =
             SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
         let age = || {
-            filetime::set_file_atime(
-                &file,
-                filetime::FileTime::from_system_time(three_days_ago),
-            )
-            .unwrap();
+            set_atime(&file, three_days_ago);
         };
         let accessed = || std::fs::metadata(&file).unwrap().accessed().unwrap();
         age();
@@ -1690,11 +1687,7 @@ mod tests {
             .unwrap();
         cache.put(&neighbour, b"", obj.clone()).await.unwrap();
         let neighbour_file = cache.get_file_path(&neighbour, "");
-        filetime::set_file_atime(
-            &neighbour_file,
-            filetime::FileTime::from_system_time(three_days_ago),
-        )
-        .unwrap();
+        set_atime(&neighbour_file, three_days_ago);
         // The slot is the first object's, marked a moment ago.
         tokio::time::sleep(Duration::from_millis(1100)).await;
         cache.get(&neighbour, b"").await.unwrap();
@@ -1741,14 +1734,10 @@ mod tests {
         // Full to the byte, the lower the index the longer ago it was read.
         for index in 0..100 {
             cache.put(&name(index), b"", obj.clone()).await.unwrap();
-            filetime::set_file_atime(
+            set_atime(
                 cache.get_file_path(&name(index), ""),
-                filetime::FileTime::from_system_time(
-                    SystemTime::now()
-                        - Duration::from_secs(3600 - index as u64),
-                ),
-            )
-            .unwrap();
+                SystemTime::now() - Duration::from_secs(3600 - index as u64),
+            );
         }
         assert_eq!(100, count());
 

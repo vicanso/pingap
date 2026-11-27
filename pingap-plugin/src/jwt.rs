@@ -1611,7 +1611,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         use jsonwebtoken::{EncodingKey, Header, encode};
         use serde_json::json;
         let secret = b"123123";
-        let key = EncodingKey::from_secret(secret);
+        let key = EncodingKey::from_secret(secret).unwrap();
         let now = pingap_core::now_sec();
         let check = |claims: serde_json::Value, leeway: u64| {
             let token =
@@ -1845,7 +1845,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
     fn test_verify_hmac_token() {
         use jsonwebtoken::{EncodingKey, Header, encode};
         let secret = b"123123";
-        let key = EncodingKey::from_secret(secret);
+        let key = EncodingKey::from_secret(secret).unwrap();
         let now = pingap_core::now_sec();
         let sign = |alg: Algorithm, claims: serde_json::Value| {
             encode(&Header::new(alg), &claims, &key).unwrap()
@@ -2261,7 +2261,7 @@ algorithm = "{algorithm}"
     async fn test_jwt_claim_rules() {
         use jsonwebtoken::{EncodingKey, Header, encode};
         use serde_json::json;
-        let key = EncodingKey::from_secret(b"123123");
+        let key = EncodingKey::from_secret(b"123123").unwrap();
         let exp = pingap_core::now_sec() + 3600;
         let sign = |mut claims: serde_json::Value| {
             claims["exp"] = json!(exp);
@@ -2446,7 +2446,7 @@ claims_to_headers = ["sub:X-User-Id", "roles:X-User-Roles", "tenant:X-Tenant", "
         let token = encode(
             &Header::new(Algorithm::HS384),
             &serde_json::json!({"exp": now + 60}),
-            &EncodingKey::from_secret(secret),
+            &EncodingKey::from_secret(secret).unwrap(),
         )
         .unwrap();
         assert_eq!(Ok(()), verify_hmac_token(&token, secret, "", now, true, 0));
@@ -2540,7 +2540,7 @@ claims_to_headers = ["https://example.com/roles:X-Roles", "sub:X-User-Id"]
                 "sub": "u-42",
                 "https://example.com/roles": ["dev", "ops"],
             }),
-            &EncodingKey::from_secret(b"123123"),
+            &EncodingKey::from_secret(b"123123").unwrap(),
         )
         .unwrap();
         assert_eq!(

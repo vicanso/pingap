@@ -40,7 +40,6 @@ tracing = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]
-filetime = { workspace = true }
 pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 tokio-test = { workspace = true }
