@@ -20,6 +20,7 @@ cargo build --features=imageoptim
 | `jpeg_quality` | int | `80` | 1–100。 |
 | `avif_quality` | int | `75` | 1–100。 |
 | `avif_speed` | int | `3` | 1–10。越高越快、文件越大。 |
+| `max_concurrent` | int | `2 * CPU 核心数` | 每个插件实例允许同时进行的图片优化并发上限（1–1024）。未设置或 `0` 表示默认值（`2 * available_parallelism()`，无法获取时回退为 `8`）；超出 `1..=1024` 的其他值是配置错误。达到并发上限时请求 fail-open 原样透传（且不写入缓存）。 |
 
 仅状态码为 `200`、类型为 `image/png` 或 `image/jpeg` 的上游响应是候选。其余原样透传，`Content-Length` 超过 20 MB 或带有 `Content-Encoding` 的图片也原样透传。
 
@@ -51,7 +52,7 @@ plugins = ["imageCache", "imageOptim"]
 
 转换后的响应会去掉 `Accept-Ranges`，强 `ETag` 改成弱校验：这两个头描述的是上游发出的图片。`ETag` 是在发往客户端时弱化的，插件读写范围内的各类图片都会处理，来自缓存的也一样；缓存里保留上游原始的校验值，用于重新验证。
 
-在 `upstream_response` 阶段，当 content type 为 `image/png` 或 `image/jpeg` 且请求带有 `Accept` 头时进行转换。目标格式是 `output_types` 中客户端接受的第一个；一个都不接受时保持图片原有的格式，按配置的质量重新编码；按原格式重新编码之后没有变小的图片原样发出——图标、已经带调色板的 png、质量比配置值更低的 jpeg 都属于这种情况。`Content-Type` 设置为目标格式，例如 `image/avif`。
+在 `upstream_response` 阶段，当 content type 为 `image/png` 或 `image/jpeg`、请求带有 `Accept` 头且当前并发数未达到 `max_concurrent` 上限时进行转换。若 `max_concurrent` 已满，插件 fail-open 放行：保持上游响应头和响应体原样透传（`Unchanged`），并禁用本次请求的缓存写入（`NoCacheReason::Deferred`），避免未转换的原图污染转换格式的缓存变体。（在 `response` 阶段，支持的图片类型上的强 `ETag` 仍会被弱化。）目标格式是 `output_types` 中客户端接受的第一个；一个都不接受时保持图片原有的格式，按配置的质量重新编码；按原格式重新编码之后没有变小的图片原样发出——图标、已经带调色板的 png、质量比配置值更低的 jpeg 都属于这种情况。`Content-Type` 设置为目标格式，例如 `image/avif`。
 
 正文收齐之后转换一次。发出去的始终是一张图片：
 
@@ -83,4 +84,5 @@ png 的颜色会被缩减成一个调色板：最多 256 种，每种颜色带�
 - 顺序重要：把缓存插件列在本插件之前，命中时可无需重编码。
 - 转换在处理该请求的工作线程上执行。`basic.work_stealing` 开启（默认）时，这个线程上的其他连接在此期间转交给别的线程；关闭时它们需要等待。
 - `avif_speed` 是主要旋钮。`1`–`2` 文件最小，仅在缓存后合理；`4`–`6` 是较稳妥的在线默认。
+- `max_concurrent` 用于限制同时缓冲并优化的图片数量（每张最多 20 MB）；突发流量超出上限时，多余请求直接 fail-open 透传原图，既不再占用缓冲内存，也不会写入缓存。
 - `Accept` 检查是对 `image/<type>` 的子串测试，因此 `output_types = "webp"` 匹配含 `image/webp` 的 `Accept`。

@@ -658,13 +658,31 @@ async fn reload_streams_runtime(
 ///    - Webhook settings (`webhook`, `webhook_type`, `webhook_notifications`,
 ///      `webhook_batch_window`, `webhook_batch_max_events`,
 ///      `webhook_min_level`, `webhook_headers`, `webhook_secret`,
-///      `webhook_template`, `webhook_retries`)
+///      `webhook_template`, `webhook_retries`), `log_level`, and
+///      `trusted_proxies`
 /// 4. Sends notifications for successful updates
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart
 ///
 /// Returns whether a restart was requested.
 async fn apply_config(
+    config_manager: Arc<ConfigManager>,
+    new_config: &PingapConfig,
+    hot_reload_only: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let should_restart = apply_config_without_restart(
+        config_manager,
+        new_config,
+        hot_reload_only,
+    )
+    .await?;
+    if should_restart {
+        restart().await;
+    }
+    Ok(should_restart)
+}
+
+async fn apply_config_without_restart(
     config_manager: Arc<ConfigManager>,
     new_config: &PingapConfig,
     hot_reload_only: bool,
@@ -749,6 +767,7 @@ async fn apply_config(
     let mut certificate_reload_failed = false;
     // The entries of ACME this reload hands to their service.
     let mut handed_to_acme: Vec<String> = vec![];
+    let has_unanswered_acme_http;
     let mut hot_reload_config = current_config.clone();
     // What the references of the new configuration stood for goes with
     // its entries. Left behind, a value that was read from a file or the
@@ -781,6 +800,14 @@ async fn apply_config(
             })
             .await;
         }
+        hot_reload_config
+            .basic
+            .log_level
+            .clone_from(&new_config.basic.log_level);
+        hot_reload_config
+            .basic
+            .trusted_proxies
+            .clone_from(&new_config.basic.trusted_proxies);
 
         // update the values which can be hot reload
         // set server locations
@@ -830,6 +857,7 @@ async fn apply_config(
         handed_to_acme.clone_from(&certificates_handed);
         let should_reload_certificate = certificates.changed;
         let certificates_changed_others = certificates.changed_others;
+        has_unanswered_acme_http = !certificates.left.is_empty();
         let left_is_news = left_is_news(&certificates.left);
         if !certificates.left.is_empty() {
             let names = certificates.left.join(",");
@@ -1193,18 +1221,16 @@ async fn apply_config(
     pingap_acme::hand_over(&handed_to_acme);
 
     // diff hot reload config and new config
-    let (_, new_config_result) = hot_reload_config.diff(new_config);
+    let new_config_result = left_for_restart(&hot_reload_config, new_config);
     debug!(
         target: LOG_TARGET,
         new_config_result = new_config_result.join("\n"),
+        has_unanswered_acme_http,
         "hot reload config diff from new config"
     );
 
-    let mut should_restart = true;
-    // no update other config update except hot reload config
-    if new_config_result.is_empty() {
-        should_restart = false;
-    }
+    let should_restart =
+        !new_config_result.is_empty() || has_unanswered_acme_http;
 
     if !original_diff_result.is_empty() {
         // What is left for a restart is not counted as applied: the
@@ -1231,9 +1257,6 @@ async fn apply_config(
         }
     }
     drop(running_guard);
-    if should_restart {
-        restart().await;
-    }
     Ok(should_restart)
 }
 
@@ -1443,7 +1466,19 @@ impl BackgroundService for ConfigObserverService {
                             }
                             if !matches!(event, WatchEvent::Idle) {
                                 // only hot reload for observe updated
-                                run_diff_and_update_config(self.config_manager.clone(), true).await;
+                                if let Some(new_config) =
+                                    run_diff_and_update_config(
+                                        self.config_manager.clone(),
+                                        true,
+                                    )
+                                    .await
+                                {
+                                    reload_log_level(
+                                        &self.log_reload_handle,
+                                        &self.current_log_level,
+                                        &new_config,
+                                    );
+                                }
                             }
                         },
                         Err(e) => {
@@ -2033,5 +2068,205 @@ locations = ["api"]
         assert_eq!(true, load_failure_is_news());
         assert_eq!(false, load_failure_is_news());
         load_succeeded();
+    }
+
+    static APPLY_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
+    struct GlobalTestReset;
+
+    impl Drop for GlobalTestReset {
+        fn drop(&mut self) {
+            super::set_acme_here(true, false);
+            super::ONLY_HOT_RELOAD
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            pingap_core::set_trusted_proxies(&None);
+        }
+    }
+
+    fn test_pingap_config(toml: &str) -> pingap_config::PingapConfig {
+        use pingap_config::{MissingReference, PingapTomlConfig};
+        PingapTomlConfig::from_toml(toml)
+            .unwrap()
+            .to_running_config(MissingReference::Refuse)
+            .unwrap()
+    }
+
+    fn self_signed_pem(domain: &str) -> (String, String) {
+        use pingap_certificate::rcgen;
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec![domain.to_string()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        (cert.pem(), key.serialize_pem())
+    }
+
+    #[tokio::test]
+    async fn test_apply_config_hot_reloads_basic_log_level_and_trusted_proxies()
+    {
+        let _lock = APPLY_CONFIG_TEST_LOCK.lock().await;
+        let _reset = GlobalTestReset;
+
+        let base = test_pingap_config(
+            r#"
+[basic]
+log_level = "info"
+trusted_proxies = ["10.0.0.0/8"]
+"#,
+        );
+        let manager = std::sync::Arc::new(
+            pingap_config::new_memory_config_manager("", None),
+        );
+        manager.set_current_config(base.clone());
+        assert_eq!(
+            true,
+            pingap_core::is_trusted_proxy("10.0.0.1".parse().unwrap())
+        );
+
+        // Changing only basic.log_level in hot-reload mode updates current_config
+        // (does not return early) and does not request a restart.
+        let mut with_debug = base.clone();
+        with_debug.basic.log_level = Some("debug".to_string());
+        let restart_requested =
+            super::apply_config(manager.clone(), &with_debug, true)
+                .await
+                .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some("debug".to_string()),
+            manager.get_current_config().basic.log_level
+        );
+
+        // Changing only basic.trusted_proxies in hot-reload mode updates
+        // current_config and pingap_core::set_trusted_proxies without restart.
+        let mut with_new_proxies = with_debug.clone();
+        with_new_proxies.basic.trusted_proxies =
+            Some(vec!["192.168.0.0/16".to_string()]);
+        let restart_requested =
+            super::apply_config(manager.clone(), &with_new_proxies, true)
+                .await
+                .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some(vec!["192.168.0.0/16".to_string()]),
+            manager.get_current_config().basic.trusted_proxies
+        );
+        assert_eq!(
+            true,
+            pingap_core::is_trusted_proxy("192.168.1.10".parse().unwrap())
+        );
+        assert_eq!(
+            false,
+            pingap_core::is_trusted_proxy("10.0.0.1".parse().unwrap())
+        );
+
+        // Changing only basic.log_level or basic.trusted_proxies in restart mode
+        // does not request a restart either.
+        let mut with_warn = with_new_proxies;
+        with_warn.basic.log_level = Some("warn".to_string());
+        let restart_requested =
+            super::apply_config(manager.clone(), &with_warn, false)
+                .await
+                .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some("warn".to_string()),
+            manager.get_current_config().basic.log_level
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_config_restart_mode_skips_false_restarts_and_keeps_acme_http()
+     {
+        let _lock = APPLY_CONFIG_TEST_LOCK.lock().await;
+        let _reset = GlobalTestReset;
+        super::set_acme_here(true, false);
+
+        let (cert_1, key_1) = self_signed_pem("example.com");
+        let (cert_2, key_2) = self_signed_pem("example.com");
+
+        let mut base = test_pingap_config(
+            r#"
+[basic]
+log_level = "info"
+"#,
+        );
+        base.certificates.insert(
+            "acme".to_string(),
+            CertificateConf {
+                domains: Some("example.com".to_string()),
+                acme: Some("lets_encrypt".to_string()),
+                tls_cert: Some(cert_1.clone()),
+                tls_key: Some(key_1),
+                ..Default::default()
+            },
+        );
+
+        let manager = std::sync::Arc::new(
+            pingap_config::new_memory_config_manager("", None),
+        );
+        manager.set_current_config(base.clone());
+
+        // 1. Uncompiled feature keys should not trigger a restart in restart mode.
+        #[cfg(not(feature = "pyro"))]
+        {
+            let mut with_pyro = manager.get_current_config().as_ref().clone();
+            with_pyro.basic.pyroscope =
+                Some("http://127.0.0.1:4040".to_string());
+            let restart_requested =
+                super::apply_config(manager.clone(), &with_pyro, false)
+                    .await
+                    .unwrap();
+            assert_eq!(false, restart_requested);
+        }
+        #[cfg(not(feature = "tracing"))]
+        {
+            let mut with_sentry = manager.get_current_config().as_ref().clone();
+            with_sentry.basic.sentry =
+                Some("https://key@sentry.io/1".to_string());
+            let restart_requested =
+                super::apply_config(manager.clone(), &with_sentry, false)
+                    .await
+                    .unwrap();
+            assert_eq!(false, restart_requested);
+        }
+
+        // 2. ACME kept certificates with PEM skew should not trigger a restart.
+        let mut with_pem_skew = manager.get_current_config().as_ref().clone();
+        if let Some(cert) = with_pem_skew.certificates.get_mut("acme") {
+            cert.tls_cert = Some(cert_2);
+            cert.tls_key = Some(key_2);
+        }
+        let restart_requested =
+            super::apply_config(manager.clone(), &with_pem_skew, false)
+                .await
+                .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some(cert_1),
+            manager.get_current_config().certificates["acme"].tls_cert
+        );
+
+        // 3. Unanswered http-01 ACME certificate still requests a restart in
+        // restart mode when no port-80 listener is active.
+        let mut with_unanswered_acme =
+            manager.get_current_config().as_ref().clone();
+        with_unanswered_acme.certificates.insert(
+            "new_http_acme".to_string(),
+            CertificateConf {
+                domains: Some("new.example.com".to_string()),
+                acme: Some("lets_encrypt".to_string()),
+                ..Default::default()
+            },
+        );
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &with_unanswered_acme,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(true, restart_requested);
     }
 }

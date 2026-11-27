@@ -15,6 +15,7 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
+use opentelemetry::propagation::TextMapCompositePropagator;
 use opentelemetry::{InstrumentationScope, trace};
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -24,10 +25,12 @@ use std::sync::LazyLock;
 #[derive(Clone)]
 pub struct InstanceTracerProvider {
     provider: Arc<dyn ObjectSafeTracerProvider + Send + Sync>,
+    propagator: Arc<TextMapCompositePropagator>,
 }
 
 impl InstanceTracerProvider {
-    /// Creates a new InstanceTracerProvider by wrapping the provided TracerProvider implementation.
+    /// Creates a new InstanceTracerProvider by wrapping the provided TracerProvider implementation
+    /// and its per-instance composite text map propagator.
     ///
     /// # Type Parameters
     /// * `P` - The concrete TracerProvider type
@@ -36,7 +39,8 @@ impl InstanceTracerProvider {
     ///
     /// # Arguments
     /// * `provider` - The TracerProvider implementation to wrap
-    fn new<P, T, S>(provider: P) -> Self
+    /// * `propagator` - The composite propagator configured for this instance
+    fn new<P, T, S>(provider: P, propagator: TextMapCompositePropagator) -> Self
     where
         S: trace::Span + Send + Sync + 'static,
         T: trace::Tracer<Span = S> + Send + Sync + 'static,
@@ -44,7 +48,14 @@ impl InstanceTracerProvider {
     {
         InstanceTracerProvider {
             provider: Arc::new(provider),
+            propagator: Arc::new(propagator),
         }
+    }
+
+    /// Returns the composite propagator configured for this tracer provider instance.
+    #[inline]
+    pub fn propagator(&self) -> &TextMapCompositePropagator {
+        &self.propagator
     }
 }
 
@@ -63,11 +74,12 @@ type TracerProviders = AHashMap<String, InstanceTracerProvider>;
 static TRACER_PROVIDER_MAP: LazyLock<ArcSwap<TracerProviders>> =
     LazyLock::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
-/// Adds or updates a named tracer provider in the global provider map.
+/// Adds or updates a named tracer provider and its propagator in the global provider map.
 ///
 /// # Arguments
 /// * `name` - The unique identifier for the provider
 /// * `provider` - The TracerProvider instance to add
+/// * `propagator` - The composite propagator configured for this instance
 ///
 /// The servers of a process start their exporters at the same moment,
 /// each from a runtime of its own. The map used to be read, copied and
@@ -78,8 +90,9 @@ static TRACER_PROVIDER_MAP: LazyLock<ArcSwap<TracerProviders>> =
 pub fn add_provider(
     name: &str,
     provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    propagator: TextMapCompositePropagator,
 ) {
-    let provider = InstanceTracerProvider::new(provider);
+    let provider = InstanceTracerProvider::new(provider, propagator);
     TRACER_PROVIDER_MAP.rcu(|current| {
         let mut providers: TracerProviders = current.as_ref().clone();
         providers.insert(name.to_string(), provider.clone());
@@ -123,7 +136,11 @@ mod tests {
                             opentelemetry_sdk::trace::SdkTracerProvider::builder()
                                 .build();
                         barrier.wait();
-                        add_provider(&name, provider);
+                        add_provider(
+                            &name,
+                            provider,
+                            TextMapCompositePropagator::new(vec![]),
+                        );
                     })
                 })
                 .collect();

@@ -752,6 +752,7 @@ impl JwksSource {
             reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(1))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
         );
@@ -774,6 +775,9 @@ impl JwksSource {
             .send()
             .await
             .map_err(|e| e.without_url().to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("jwks endpoint answers {}", resp.status()));
+        }
         let set = resp
             .json::<JwkSet>()
             .await
@@ -919,6 +923,8 @@ fn build_jwks_source(
     let cooldown = ttl.min(Duration::from_secs(10));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        // Do not follow redirects from a JWKS endpoint to arbitrary hosts.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| Error::Invalid {
             category: PluginCategory::Jwt.to_string(),
@@ -2848,5 +2854,100 @@ auth_path = "/login"
         // starts when the failed attempt completes.
         source.refresh().await;
         assert_eq!(1, attempts.load(Ordering::Relaxed));
+    }
+
+    /// Regression: `JwksSource` must not follow HTTP redirects returned by
+    /// `jwks_url`.
+    #[tokio::test]
+    async fn test_jwks_refuses_to_follow_redirect() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        async fn spawn_mock_server(
+            response: String,
+        ) -> (std::net::SocketAddr, Arc<AtomicUsize>) {
+            let listener =
+                tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let counter = hits.clone();
+            tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let counter = counter.clone();
+                    let response = response.clone();
+                    tokio::spawn(async move {
+                        let mut buf = [0u8; 4096];
+                        let mut head = Vec::new();
+                        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                            let n = stream.read(&mut buf).await.unwrap_or(0);
+                            if n == 0 {
+                                return;
+                            }
+                            head.extend_from_slice(&buf[..n]);
+                        }
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                    });
+                }
+            });
+            (addr, hits)
+        }
+
+        // spellchecker:off
+        let private_key = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJJTTQkyOiwPTX0NvxGAoNi6WosIFJJbFpt9ivsmWJM6\n-----END PRIVATE KEY-----";
+        let jwks_body = r#"{"keys":[{"kty":"OKP","crv":"Ed25519","alg":"EdDSA","use":"sig","kid":"kid-1","x":"jKwmFJwgUVvShgVbDiUw8Er4IKACUnfHr9XbsU7SmTo"}]}"#;
+        // spellchecker:on
+
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some("kid-1".to_string());
+        let token = encode(
+            &header,
+            &serde_json::json!({
+                "sub": "u-1",
+                "exp": pingap_core::now_sec() + 3600,
+            }),
+            &EncodingKey::from_ed_pem(private_key.as_bytes()).unwrap(),
+        )
+        .unwrap();
+
+        let (target_addr, target_hits) = spawn_mock_server(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            jwks_body.len(),
+            jwks_body
+        ))
+        .await;
+
+        let (redirect_addr, redirect_hits) = spawn_mock_server(format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{target_addr}/jwks\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ))
+        .await;
+
+        let redirecting_auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "header = \"Authorization\"\njwks_url = \"http://{redirect_addr}/jwks\"\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let redirecting_jwks = redirecting_auth.jwks.as_ref().unwrap();
+        assert_eq!(false, redirecting_jwks.verify(&token).await);
+        assert_eq!(1, redirect_hits.load(Ordering::Relaxed));
+        assert_eq!(0, target_hits.load(Ordering::Relaxed));
+        assert_eq!(true, redirecting_jwks.cache.load().is_none());
+
+        // Control check: the target endpoint's JWKS verifies the same token
+        // when queried directly without a redirect.
+        let direct_auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                "header = \"Authorization\"\njwks_url = \"http://{target_addr}/jwks\"\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let direct_jwks = direct_auth.jwks.as_ref().unwrap();
+        assert_eq!(true, direct_jwks.verify(&token).await);
+        assert_eq!(1, target_hits.load(Ordering::Relaxed));
     }
 }

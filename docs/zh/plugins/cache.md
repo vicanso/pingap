@@ -148,6 +148,7 @@ bypass_headers = ["X-Preview"]
 - 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
 - 遵循源站的 `Cache-Control: stale-while-revalidate=<seconds>`；未包含该 directive 的条目不会在重新验证时返回过期内容。新鲜期过后，在该时间窗内 pingap 立即返回旧内容，并由持有锁的一个请求在后台向源站刷新；超出时间窗则等待或执行普通重新验证。SWR 需要非零 `lock`，`lock = "0s"` 会禁用它。`max_ttl` 只限制新鲜期，不限制 SWR 时间窗。后台重新验证会走完整请求管线，产生访问日志、更新指标，并再次执行 request 步骤插件。
+- 遵循源站的 `Cache-Control: stale-if-error=<seconds>`：当上游出现连接/读取错误或返回 `5xx` 状态码（且尚未向客户端发送响应）时，在 `stale-if-error` 时间窗内返回已过期的缓存内容。若源站未声明 `stale-if-error`（且未通过 `must-revalidate`、`proxy-revalidate` 或 `s-maxage` 禁止使用过期副本），Pingap 会应用默认 `1s` 的 `stale-if-error` 兜底窗口（`META_DEFAULTS`）。非上游错误（如客户端断开连接或代理内部错误）不会触发过期兜底；返回过期内容时会清除 `sticky` 会话 Cookie，避免客户端继续粘连到故障后端。`max_ttl` 只限制新鲜期，不限制 `stale-if-error` 时间窗。
 - 缓存读/写计数写入请求上下文，访问日志中可用 `{:cache_lookup_time}` / `{:cache_lock_time}`。
 
 ## 使用说明

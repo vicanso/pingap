@@ -914,7 +914,7 @@ impl HttpCacheStorage for FileCache {
         let files =
             list_cache_files(PathBuf::from(&self.directory), false).await;
         for file in files.into_iter().filter(|f| f.accessed <= access_before) {
-            match fs::remove_file(&file.path).await {
+            let removed = match fs::remove_file(&file.path).await {
                 Ok(()) => {
                     self.track_removed(file.len);
                     debug!(
@@ -923,9 +923,10 @@ impl HttpCacheStorage for FileCache {
                         "remove cache file success"
                     );
                     success += 1;
+                    true
                 },
                 // Removed by a purge or an eviction in the meantime.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
                 Err(e) => {
                     fail += 1;
                     error!(
@@ -934,8 +935,18 @@ impl HttpCacheStorage for FileCache {
                         file = %file.path.display(),
                         "remove cache file fail"
                     );
+                    false
                 },
             };
+            // Evict only the swept entry from the hot layer; unlike
+            // `purge_namespace`, `clear` must leave active hot entries intact.
+            if removed
+                && let Some(name) =
+                    file.path.file_name().and_then(|n| n.to_str())
+                && is_cache_key(name)
+            {
+                self.remove_hot(name);
+            }
         }
         Ok(HttpCacheClearStats {
             success,
@@ -1189,6 +1200,62 @@ mod tests {
         // Verify that the old file was deleted and the new one remains.
         assert!(!old_file_path.exists());
         assert!(new_file_path.exists());
+    }
+
+    /// Regression: `clear` must evict swept entries from the TinyUFO hot
+    /// layer without dropping active hot entries.
+    #[tokio::test]
+    async fn test_cache_clear_evicts_hot_layer() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=100",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+
+        let old_key = key("old");
+        let fresh_key = key("fresh");
+        let old_obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"old")),
+            body: Bytes::from_static(b"old body"),
+        };
+        let fresh_obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"fresh")),
+            body: Bytes::from_static(b"fresh body"),
+        };
+
+        cache.put(&old_key, b"ns", old_obj).await.unwrap();
+        cache
+            .put(&fresh_key, b"ns", fresh_obj.clone())
+            .await
+            .unwrap();
+        assert_eq!(true, cache.get_hot(&old_key).is_some());
+        assert_eq!(true, cache.get_hot(&fresh_key).is_some());
+
+        let old_file_path = cache.get_file_path(&old_key, "ns");
+        let fresh_file_path = cache.get_file_path(&fresh_key, "ns");
+        set_atime(
+            &old_file_path,
+            SystemTime::now() - Duration::from_secs(3600),
+        );
+
+        let access_before = SystemTime::now() - Duration::from_secs(600);
+        let stats = cache.clear(access_before).await.unwrap();
+        assert_eq!(1, stats.success);
+        assert_eq!(0, stats.fail);
+
+        // Aged entry is gone from both disk and the TinyUFO hot layer.
+        assert_eq!(false, old_file_path.exists());
+        assert_eq!(true, cache.get_hot(&old_key).is_none());
+        assert_eq!(true, cache.get(&old_key, b"ns").await.unwrap().is_none());
+
+        // Fresh entry remains in both disk and the TinyUFO hot layer.
+        assert_eq!(true, fresh_file_path.exists());
+        assert_eq!(true, cache.get_hot(&fresh_key).is_some());
+        assert_eq!(
+            Some(fresh_obj),
+            cache.get(&fresh_key, b"ns").await.unwrap()
+        );
     }
 
     /// Tests the `get_file_path` with and without path levels.

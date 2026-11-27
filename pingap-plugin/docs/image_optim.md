@@ -23,6 +23,7 @@ cargo build --features=imageoptim
 | `jpeg_quality` | int | `80` | 1–100. |
 | `avif_quality` | int | `75` | 1–100. |
 | `avif_speed` | int | `3` | 1–10. Higher is faster and larger. |
+| `max_concurrent` | int | `2 * CPU cores` | Maximum number of concurrent in-flight image optimizations per plugin instance (1–1024). Unset or `0` selects the default (`2 * available_parallelism()`, falling back to `8` if unknown); any other value outside `1..=1024` is a configuration error. When saturated, requests fail open and pass through unmodified (and are not cached). |
 
 Only `200` upstream responses of type `image/png` or `image/jpeg` are
 candidates. Everything else passes through untouched, and so does an image
@@ -67,7 +68,13 @@ and also when it comes from the cache; the cache keeps the upstream's own
 validator to revalidate with.
 
 At `upstream_response` the response is converted when the content type is
-`image/png` or `image/jpeg` and the request has an `Accept` header. The target
+`image/png` or `image/jpeg`, the request has an `Accept` header, and an
+in-flight concurrency slot under `max_concurrent` is available. When
+`max_concurrent` is already saturated, the plugin fails open: it leaves the
+upstream headers and body untouched (`Unchanged`) and disables caching for that
+request (`NoCacheReason::Deferred`) so unconverted originals do not poison
+converted cache variants. (At `response`, any strong `ETag` on supported image
+types is still weakened.) The target
 is the first of `output_types` the client accepts, and the image's own format
 (re-encoded at the configured quality) when it accepts none of them. An image
 that is no smaller for being written again in its own format goes out as it
@@ -147,5 +154,8 @@ to be.
   moved to another worker for the duration; with it off they wait.
 - `avif_speed` is the main knob. `1`–`2` produce the smallest files at a cost
   that is only reasonable behind a cache; `4`–`6` is a sane live default.
+- `max_concurrent` bounds how many images (up to 20 MB buffered each) can be
+  optimized concurrently; under burst traffic beyond that limit, extra requests
+  fail open to passthrough without buffering or polluting the cache.
 - The `Accept` check is a substring test against `image/<type>`, so
   `output_types = "webp"` matches an `Accept` containing `image/webp`.

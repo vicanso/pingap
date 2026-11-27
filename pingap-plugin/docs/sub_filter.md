@@ -16,7 +16,8 @@ injecting a script tag, or patching an upstream you cannot change.
 | `path` | string | — | Regex on the request path. Unset means every path. |
 | `status_codes` | string | — | Comma-separated status codes to apply to, e.g. `"200,201"`. Unset means all; an entry that is not a number is a configuration error. |
 | `types` | string[] | — | Content types to rewrite, as prefixes: `["text/html", "application/json"]`, `["text/"]`. Unset means every response, whatever its type. |
-| `max_size` | size | — | The largest body that is rewritten, e.g. `"1mb"`. A larger one is passed on as it came. Unset means no limit. |
+| `max_size` | size | — | The largest body that is rewritten, e.g. `"1mb"`. A larger one is passed on as it came. Unset means no limit. Setting `max_size` switches the plugin into full-body buffering mode. |
+| `max_buffer_size` | size | `64 MiB` | Shared concurrent memory budget across all in-flight buffered responses of this plugin instance, e.g. `"64mb"`. Applies only in buffered mode (when a `subs_filter` regex rule or `max_size` is configured); when exceeded, the response fails open and streams unmodified. Must be greater than `0`. |
 
 ## Rule syntax
 
@@ -62,9 +63,22 @@ previous one.
 
 ## Behaviour
 
-When the plugin applies, it removes `Content-Length`, switches the response to
-`Transfer-Encoding: chunked`, buffers the whole body, applies the filters at end
-of stream and emits the result. A rule that matches nothing costs no copy.
+When the plugin applies, it removes `Content-Length` and switches the response to
+`Transfer-Encoding: chunked`. How the body is processed depends on the rules and
+`max_size`:
+
+- **Streaming mode (literal `sub_filter` rules only, `max_size` unset):** uses a
+  sliding-window streaming replacer that coalesces small incoming chunks up to
+  `8 KiB` and holds only `pattern.len() - 1` overlap bytes per rule across
+  flushes, emitting rewritten output mid-stream without buffering the entire
+  body in memory. `max_buffer_size` does not apply in this mode.
+- **Buffered mode (any `subs_filter` regex rule, or `max_size` set):** buffers
+  the response body in memory, applies all filters at end of stream, and emits
+  the result. A rule that matches nothing costs no copy. If a body without a
+  known `Content-Length` exceeds `max_size` or would push concurrent in-flight
+  buffered bytes for the plugin instance past `max_buffer_size` (`64 MiB` by
+  default), it fails open: what was buffered so far is released as it came and
+  the rest streams through unmodified.
 
 It leaves alone responses that have no body to rewrite: HEAD answers, `1xx`,
 `204`, `304`, and anything with a `Content-Encoding` other than `identity`,
@@ -83,24 +97,35 @@ becomes a weak one (`W/"v1"`): both described the body the upstream sent.
 
 ## Usage notes
 
-- **The entire response body is buffered in memory** before substitution. Scope
-  the plugin with `path` and `status_codes` and keep it away from large files or
-  streaming endpoints, or say what it is for:
+- **Only buffered mode holds the full response body in memory** (when any rule
+  is a regex `subs_filter`, or when `max_size` is set). Literal-only
+  `sub_filter` rules without `max_size` stream in `8 KiB` chunks with bounded
+  overlap memory. In buffered mode, scope the plugin with `path` and
+  `status_codes` and keep it away from large files or streaming endpoints, or
+  bound it explicitly:
   - **`types`** leaves every response of another type alone: streamed, with
     its `Content-Length`, and not held in memory. A response that names no
     type is left alone as well. Without `types` an image or a download on
-    the same location is buffered to its end and searched like a page.
+    the same location is processed like a page (and buffered to its end in
+    buffered mode).
   - **`max_size`** leaves a body alone that is larger. One that says so in
     its `Content-Length` is not touched at all. One that gives no length is
     held up to the limit and then let go as it came, what was held first:
-    no part of it is rewritten.
-  Both are off unless they are set, as the plugin has always worked. nginx's
-  `sub_filter_types` defaults to `text/html`; `types = ["text/html"]` is that.
-  Neither brings range requests back: `Range` and `If-Range` are taken off
-  every request the plugin applies to by `path`, before the type or the size
-  of the response is known. A download next to the pages, on the same
-  `path`, is passed on untouched but cannot be resumed; give the plugin a
-  `path` that leaves it out.
+    no part of it is rewritten. Because `max_size` needs to hold up to the
+    limit before deciding, setting it disables streaming mode even for
+    literal-only rules.
+  - **`max_buffer_size`** caps the total memory held simultaneously across all
+    in-flight responses on a plugin instance in buffered mode (default
+    `64 MiB`). A response that would exceed this shared budget fails open and
+    passes through unmodified so concurrent large bodies cannot exhaust memory.
+  `types` and `max_size` are off unless they are set, as the plugin has always
+  worked. nginx's `sub_filter_types` defaults to `text/html`;
+  `types = ["text/html"]` is that.
+  Neither `types` nor `max_size` brings range requests back: `Range` and
+  `If-Range` are taken off every request the plugin applies to by `path`, before
+  the type or the size of the response is known. A download next to the pages,
+  on the same `path`, is passed on untouched but cannot be resumed; give the
+  plugin a `path` that leaves it out.
 - Compressed upstream responses are skipped, not rewritten: if the upstream
   returns gzip, the filters would never match. Either ask the upstream not to
   compress, or compress in Pingap with [`compression`](compression.md) in its

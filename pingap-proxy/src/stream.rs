@@ -413,7 +413,6 @@ fn stream_addrs(stream: &L4Stream) -> (Option<SocketAddr>, Option<SocketAddr>) {
 enum DialStep {
     Connected(ConnectedUpstream),
     RetryBackend,
-    Abort(&'static str),
 }
 
 async fn connect_and_prepare_peer(
@@ -471,7 +470,8 @@ async fn connect_and_prepare_peer(
             error = %err,
             "replay peeked client bytes fail"
         );
-        return DialStep::Abort("upstream_write_failed");
+        upstream.record_tcp_connect_result(&peer.addr_str, false);
+        return DialStep::RetryBackend;
     }
     DialStep::Connected(conn)
 }
@@ -530,7 +530,6 @@ async fn dial_upstream(
                 });
             },
             DialStep::RetryBackend => failed.push(peer.addr_str.to_string()),
-            DialStep::Abort(reason) => return Err(reason),
         }
     }
     Err("connect_failed")
@@ -1858,5 +1857,112 @@ mod tests {
         drop(c_in);
         task.await.unwrap().unwrap();
         assert_eq!(24, counter.load(Ordering::Relaxed));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_peeked_bytes_replay_failure_retries_healthy_backend() {
+        let bad_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bad_addr = bad_listener.local_addr().unwrap();
+        let bad_accepts = Arc::new(AtomicUsize::new(0));
+        let bad_task = tokio::spawn({
+            let bad_accepts = bad_accepts.clone();
+            async move {
+                loop {
+                    let Ok((sock, _)) = bad_listener.accept().await else {
+                        break;
+                    };
+                    bad_accepts.fetch_add(1, Ordering::Relaxed);
+                    // Drop immediately without reading so `write_all_timed`
+                    // of `peeked_bytes` hits broken pipe / reset.
+                    drop(sock);
+                }
+            }
+        });
+
+        // Larger than loopback SO_SNDBUF + SO_RCVBUF so `write_all_timed`
+        // cannot buffer the whole payload before the bad peer closes.
+        let payload = vec![b'P'; 4 * 1024 * 1024];
+        let payload_len = payload.len();
+
+        let good_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let good_addr = good_listener.local_addr().unwrap();
+        let good_task = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = good_listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; payload_len];
+                    if sock.read_exact(&mut buf).await.is_ok() {
+                        let _ = sock.write_all(b"OK").await;
+                    }
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let upstream = make_upstream(
+            "peek_replay",
+            &[bad_addr.to_string(), good_addr.to_string()],
+            None,
+        );
+        let runtime = StreamRuntime::try_from_conf(
+            "peek_replay",
+            &StreamConf {
+                addr: "127.0.0.1:0".to_string(),
+                upstream: Some("peek_replay".to_string()),
+                connect_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // Direct check: replay failure on the bad peer yields `RetryBackend`.
+        let bad_upstream =
+            make_upstream("peek_replay_bad", &[bad_addr.to_string()], None);
+        let bad_peer = bad_upstream
+            .select_tcp_peer(None, &[], false)
+            .expect("bad_peer");
+        assert_eq!(
+            true,
+            matches!(
+                connect_and_prepare_peer(
+                    &upstream, &runtime, &bad_peer, None, None, &payload,
+                )
+                .await,
+                DialStep::RetryBackend
+            )
+        );
+        assert_eq!(true, bad_accepts.load(Ordering::Relaxed) >= 1);
+
+        // Failover check: `dial_upstream` fails over past the bad peer and
+        // delivers `peeked_bytes` to the healthy backend.
+        let (_tx, shutdown) = tokio::sync::watch::channel(false);
+        let prev_bad_accepts = bad_accepts.load(Ordering::Relaxed);
+        for _ in 0..8 {
+            let dial = dial_upstream(
+                &upstream, &runtime, None, None, &payload, &shutdown,
+            )
+            .await
+            .expect("dial_upstream should fail over to healthy backend");
+            assert_eq!(good_addr.to_string(), &*dial.peer.addr_str);
+            let mut reply = Vec::new();
+            let ConnectedUpstream::Tcp(mut conn) = dial.stream else {
+                panic!("expected tcp upstream");
+            };
+            conn.read_to_end(&mut reply).await.unwrap();
+            assert_eq!(b"OK", &reply[..]);
+            if bad_accepts.load(Ordering::Relaxed) > prev_bad_accepts {
+                break;
+            }
+        }
+        assert_eq!(
+            true,
+            bad_accepts.load(Ordering::Relaxed) > prev_bad_accepts
+        );
+
+        bad_task.abort();
+        good_task.abort();
     }
 }

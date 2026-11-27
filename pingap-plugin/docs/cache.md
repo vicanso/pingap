@@ -290,6 +290,16 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   SWR window. Background revalidation passes through the normal request
   pipeline, creates an access-log entry, updates metrics, and runs request-step
   plugins again.
+- `Cache-Control: stale-if-error=<seconds>` from origin is honoured on upstream
+  connect/read errors and `5xx` upstream responses (provided the response has
+  not already started streaming to the client). When the origin omits
+  `stale-if-error` (and does not forbid stale serving via `must-revalidate`,
+  `proxy-revalidate`, or `s-maxage`), Pingap applies a `1s` default
+  `stale-if-error` fallback window (`META_DEFAULTS`). Non-upstream errors
+  (such as downstream disconnects or internal errors) do not trigger stale
+  serving, and any `sticky` upstream cookie is cleared when serving stale so
+  clients are not pinned to a failing backend. `max_ttl` caps freshness only,
+  not the `stale-if-error` window.
 - Cache read/write counts are recorded into the request context and are available
   in access logs as `{:cache_lookup_time}` / `{:cache_lock_time}`.
 

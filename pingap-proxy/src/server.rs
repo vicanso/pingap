@@ -14,8 +14,8 @@
 
 #[cfg(feature = "tracing")]
 use super::tracing::{
-    initialize_telemetry, inject_telemetry_headers, inject_trace_context,
-    set_otel_request_attrs, set_otel_upstream_attrs,
+    finish_otel_upstream_span, initialize_telemetry, inject_telemetry_headers,
+    inject_trace_context, set_otel_request_attrs,
 };
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
@@ -1729,17 +1729,20 @@ async fn new_peer(
     ctx.upstream.connected_count = upstream.connected();
     ctx.upstream.name = upstream.name.clone();
     #[cfg(feature = "tracing")]
-    if let Some(features) = &ctx.features
-        && let Some(tracer) = &features.otel_tracer
     {
-        let mut span =
-            tracer.new_upstream_span(String::from(&*upstream.span_name));
-        span.set_attribute(KeyValue::new(
-            "upstream.connected",
-            ctx.upstream.connected_count.unwrap_or_default() as i64,
-        ));
-        let features = ctx.features.get_or_insert_default();
-        features.upstream_span = Some(span);
+        finish_otel_upstream_span(ctx, true);
+        if let Some(features) = &ctx.features
+            && let Some(tracer) = &features.otel_tracer
+        {
+            let mut span =
+                tracer.new_upstream_span(String::from(&*upstream.span_name));
+            span.set_attribute(KeyValue::new(
+                "upstream.connected",
+                ctx.upstream.connected_count.unwrap_or_default() as i64,
+            ));
+            let features = ctx.features.get_or_insert_default();
+            features.upstream_span = Some(span);
+        }
     }
     ctx.upstream.address = upstream.address_of(peer.address());
     ctx.upstream.upstream_instance = Some(upstream);
@@ -1764,6 +1767,37 @@ fn remember_failed_backend(ctx: &mut Ctx) {
             .any(|item| item == address)
     {
         ctx.upstream.failed_addresses.push(address.to_string());
+    }
+}
+
+/// Enforces `max_retry_window` and `max_retries` on `error_while_proxy`
+/// retries, sharing the `ctx.upstream.retries` budget with `fail_to_connect`
+/// while preserving `connection_only` stale-pool replacement inside the window.
+fn enforce_proxy_retry_budget(
+    ctx: &mut Ctx,
+    e: &mut pingora::Error,
+    connection_only: bool,
+) {
+    if !e.retry() {
+        return;
+    }
+    let within_window = ctx
+        .upstream
+        .max_retry_window
+        .is_none_or(|window| ctx.timing.created_at.elapsed() <= window);
+    if !within_window {
+        e.set_retry(false);
+        return;
+    }
+    if connection_only {
+        return;
+    }
+    if let Some(max_retries) = ctx.upstream.max_retries {
+        if ctx.upstream.retries < max_retries {
+            ctx.upstream.retries += 1;
+        } else {
+            e.set_retry(false);
+        }
     }
 }
 
@@ -2298,6 +2332,7 @@ impl ProxyHttp for Server {
                     | pingora::ErrorType::H2Downgrade
                     | pingora::ErrorType::InvalidH2
             );
+        enforce_proxy_retry_budget(ctx, &mut e, connection_only);
         if e.retry() && !connection_only {
             remember_failed_backend(ctx);
         }
@@ -2361,7 +2396,7 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- upstream request filter"););
         // Ahead of the location's headers, which may say otherwise.
         #[cfg(feature = "tracing")]
-        inject_trace_context(ctx, upstream_response);
+        inject_trace_context(&self.name, ctx, upstream_response);
         set_append_proxy_headers(session, ctx, upstream_response);
         close_unreusable_proxy_protocol_upstream(
             session,
@@ -2815,7 +2850,7 @@ impl ProxyHttp for Server {
             );
 
             #[cfg(feature = "tracing")]
-            set_otel_upstream_attrs(ctx);
+            finish_otel_upstream_span(ctx, false);
             // self.finalize_upstream_session(ctx);
         }
         Ok(None)
@@ -3167,12 +3202,7 @@ impl ProxyHttp for Server {
             ctx.state.status = Some(header.status);
         }
         #[cfg(feature = "tracing")]
-        // enable open telemetry and proxy upstream fail
-        if let Some(features) = ctx.features.as_mut()
-            && let Some(ref mut span) = features.upstream_span.as_mut()
-        {
-            span.end();
-        }
+        finish_otel_upstream_span(ctx, e.is_some());
 
         if let Some(c) =
             session.downstream_modules_ctx.get::<ResponseCompression>()
@@ -6935,5 +6965,348 @@ addr = "127.0.0.1:6188"
                     && ev.message.contains("ConnectRefused")
             })
         );
+    }
+
+    #[tokio::test]
+    async fn test_error_while_proxy_respects_retry_budget_and_window() {
+        use pingora::upstreams::peer::HttpPeer;
+        use pingora::{Error, ErrorType, RetryType};
+
+        let server = new_server();
+        let peer = HttpPeer::new("127.0.0.1:5000", false, String::new());
+        let new_session = async || {
+            let mock_io = Builder::new()
+                .read(b"GET /retry HTTP/1.1\r\nHost: a\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            session
+        };
+        let make_err = |etype: ErrorType, retry: RetryType| {
+            let mut e = Error::new_up(etype);
+            e.retry = retry;
+            e
+        };
+
+        // `max_retries = Some(0)` refuses backend error retries immediately.
+        let mut session = new_session().await;
+        let mut ctx = Ctx::default();
+        ctx.upstream.address = "127.0.0.1:5000".into();
+        ctx.upstream.max_retries = Some(0);
+        let e = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ReadError, RetryType::Decided(true)),
+            &mut ctx,
+            false,
+        );
+        assert_eq!(false, e.retry());
+        assert_eq!(0, ctx.upstream.retries);
+        assert_eq!(true, ctx.upstream.failed_addresses.is_empty());
+
+        // `max_retries = Some(1)` permits one retry and rejects the second.
+        let mut ctx = Ctx::default();
+        ctx.upstream.address = "127.0.0.1:5000".into();
+        ctx.upstream.max_retries = Some(1);
+        let e1 = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ReadError, RetryType::Decided(true)),
+            &mut ctx,
+            false,
+        );
+        assert_eq!(true, e1.retry());
+        assert_eq!(1, ctx.upstream.retries);
+        assert_eq!(
+            vec!["127.0.0.1:5000".to_string()],
+            ctx.upstream.failed_addresses
+        );
+
+        let e2 = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ReadError, RetryType::Decided(true)),
+            &mut ctx,
+            false,
+        );
+        assert_eq!(false, e2.retry());
+        assert_eq!(1, ctx.upstream.retries);
+
+        // Retry budget is shared with `fail_to_connect`.
+        let mut ctx = Ctx::default();
+        ctx.upstream.address = "127.0.0.1:5000".into();
+        ctx.upstream.max_retries = Some(1);
+        let e_conn = server.fail_to_connect(
+            &mut session,
+            &peer,
+            &mut ctx,
+            Error::new_up(ErrorType::ConnectRefused),
+        );
+        assert_eq!(true, e_conn.retry());
+        assert_eq!(1, ctx.upstream.retries);
+        let e_proxy = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ReadError, RetryType::Decided(true)),
+            &mut ctx,
+            false,
+        );
+        assert_eq!(false, e_proxy.retry());
+        assert_eq!(1, ctx.upstream.retries);
+
+        // `connection_only` (stale pooled connection & H2 connection errors)
+        // stays allowed within window even when `max_retries = Some(0)`.
+        for (etype, retry, reused) in [
+            (ErrorType::ReadError, RetryType::ReusedOnly, true),
+            (ErrorType::H2Error, RetryType::Decided(true), true),
+        ] {
+            let mut ctx = Ctx::default();
+            ctx.upstream.address = "127.0.0.1:5000".into();
+            ctx.upstream.max_retries = Some(0);
+            let e = server.error_while_proxy(
+                &peer,
+                &mut session,
+                make_err(etype, retry),
+                &mut ctx,
+                reused,
+            );
+            assert_eq!(true, e.retry());
+            assert_eq!(0, ctx.upstream.retries);
+        }
+
+        // Expired `max_retry_window` stops both normal and `connection_only` retries.
+        let mut ctx = Ctx::default();
+        ctx.upstream.address = "127.0.0.1:5000".into();
+        ctx.upstream.max_retries = Some(3);
+        ctx.upstream.max_retry_window = Some(Duration::from_millis(5));
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        let e_expired = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ReadError, RetryType::Decided(true)),
+            &mut ctx,
+            false,
+        );
+        assert_eq!(false, e_expired.retry());
+        assert_eq!(0, ctx.upstream.retries);
+
+        let e_stale_expired = server.error_while_proxy(
+            &peer,
+            &mut session,
+            make_err(ErrorType::ConnectionClosed, RetryType::ReusedOnly),
+            &mut ctx,
+            true,
+        );
+        assert_eq!(false, e_stale_expired.retry());
+    }
+
+    #[cfg(feature = "tracing")]
+    #[tokio::test]
+    async fn test_otel_upstream_span_retry_and_early_abort() {
+        use pingap_core::{Features, OtelTracer};
+        use pingap_otel::Context as OtelContext;
+        use pingap_otel::global::BoxedTracer;
+        use pingap_otel::trace::{
+            Span, SpanBuilder, SpanContext, SpanId, Status, TraceFlags,
+            TraceId, TraceState, Tracer,
+        };
+        use std::borrow::Cow;
+        use std::sync::Mutex;
+
+        #[derive(Clone, Default)]
+        struct SpanState {
+            ended: bool,
+            attrs: Vec<KeyValue>,
+            status: Status,
+        }
+
+        struct MockSpan {
+            context: SpanContext,
+            state: Arc<Mutex<SpanState>>,
+        }
+
+        type MockSpans = Arc<Mutex<Vec<Arc<Mutex<SpanState>>>>>;
+
+        struct MockTracer {
+            spans: MockSpans,
+        }
+
+        impl MockTracer {
+            fn create() -> (BoxedTracer, MockSpans) {
+                let spans = Arc::new(Mutex::new(Vec::new()));
+                let tracer = BoxedTracer::new(Box::new(Self {
+                    spans: spans.clone(),
+                }));
+                (tracer, spans)
+            }
+        }
+
+        impl Tracer for MockTracer {
+            type Span = MockSpan;
+
+            fn build_with_context(
+                &self,
+                _builder: SpanBuilder,
+                _parent_cx: &OtelContext,
+            ) -> Self::Span {
+                let state = Arc::new(Mutex::new(SpanState::default()));
+                self.spans.lock().unwrap().push(state.clone());
+                MockSpan {
+                    context: SpanContext::new(
+                        TraceId::from(11),
+                        SpanId::from(22),
+                        TraceFlags::SAMPLED,
+                        false,
+                        TraceState::default(),
+                    ),
+                    state,
+                }
+            }
+        }
+
+        impl Span for MockSpan {
+            fn add_event_with_timestamp<T>(
+                &mut self,
+                _name: T,
+                _timestamp: SystemTime,
+                _attributes: Vec<KeyValue>,
+            ) where
+                T: Into<Cow<'static, str>>,
+            {
+            }
+            fn span_context(&self) -> &SpanContext {
+                &self.context
+            }
+            fn is_recording(&self) -> bool {
+                true
+            }
+            fn set_attribute(&mut self, attribute: KeyValue) {
+                self.state.lock().unwrap().attrs.push(attribute);
+            }
+            fn set_status(&mut self, status: Status) {
+                self.state.lock().unwrap().status = status;
+            }
+            fn update_name<T>(&mut self, _new_name: T)
+            where
+                T: Into<Cow<'static, str>>,
+            {
+            }
+            fn add_link(
+                &mut self,
+                _span_context: SpanContext,
+                _attributes: Vec<KeyValue>,
+            ) {
+            }
+            fn end_with_timestamp(&mut self, _timestamp: SystemTime) {
+                self.state.lock().unwrap().ended = true;
+            }
+        }
+
+        let server = new_server();
+        let upstream = server.upstream_provider.get("charts").unwrap();
+        let mock_io = Builder::new()
+            .read(b"GET /trace HTTP/1.1\r\nHost: a\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let (tracer, spans) = MockTracer::create();
+        let req_span = tracer.start("http");
+        let prior_span = tracer.start("upstream-1");
+        let mut ctx = Ctx {
+            features: Some(Box::new(Features {
+                otel_tracer: Some(OtelTracer {
+                    tracer,
+                    http_request_span: req_span,
+                }),
+                upstream_span: Some(prior_span),
+                ..Features::default()
+            })),
+            ..Ctx::default()
+        };
+        ctx.upstream.address = "10.0.0.9:80".into();
+        ctx.upstream.reused = false;
+        ctx.timing.upstream_connect = Some(7);
+        ctx.timing.upstream_processing = Some(-10);
+
+        // `new_peer` on retry must finish the prior failed attempt's span
+        // with error status and prior attributes before creating the new span.
+        let peer = new_peer(&session, &mut ctx, upstream, None).await.unwrap();
+        assert_eq!("127.0.0.1:5000", peer.address().to_string());
+        assert_eq!("127.0.0.1:5000", &*ctx.upstream.address);
+        assert_eq!(
+            true,
+            ctx.features.as_ref().unwrap().upstream_span.is_some()
+        );
+        {
+            let recorded = spans.lock().unwrap();
+            // [0] req_span, [1] prior_span, [2] retry span created by `new_peer`
+            assert_eq!(3, recorded.len());
+            let state = recorded[1].lock().unwrap();
+            assert_eq!(true, state.ended);
+            assert!(matches!(state.status, Status::Error { .. }));
+            assert_eq!(
+                vec![
+                    KeyValue::new("upstream.addr", "10.0.0.9:80"),
+                    KeyValue::new("upstream.reused", false),
+                    KeyValue::new("upstream.connect_time", 7_i64),
+                    KeyValue::new("upstream.processing_time", 0_i64),
+                    KeyValue::new("upstream.response_time", 0_i64),
+                ],
+                state.attrs
+            );
+            assert_eq!(false, recorded[2].lock().unwrap().ended);
+        }
+
+        // `logging` on early abort must annotate `upstream.*` attributes, set
+        // error status, and clear/end the retry span created by `new_peer`.
+        ctx.upstream.reused = true;
+        ctx.timing.upstream_connect = Some(3);
+        ctx.timing.upstream_processing = Some(9);
+        ctx.timing.upstream_response = Some(-15);
+        let err = pingora::Error::new_up(pingora::ErrorType::ReadError);
+        server.logging(&mut session, Some(&err), &mut ctx).await;
+        assert_eq!(
+            true,
+            ctx.features.as_ref().unwrap().upstream_span.is_none()
+        );
+        {
+            let recorded = spans.lock().unwrap();
+            let state = recorded[2].lock().unwrap();
+            assert_eq!(true, state.ended);
+            assert!(matches!(state.status, Status::Error { .. }));
+            assert_eq!(
+                vec![
+                    KeyValue::new("upstream.connected", 0_i64),
+                    KeyValue::new("upstream.addr", "127.0.0.1:5000"),
+                    KeyValue::new("upstream.reused", true),
+                    KeyValue::new("upstream.connect_time", 3_i64),
+                    KeyValue::new("upstream.processing_time", 9_i64),
+                    KeyValue::new("upstream.response_time", 0_i64),
+                ],
+                state.attrs
+            );
+        }
+
+        // `logging` without error (e.g. bodyless path where `upstream_span`
+        // remained) ends with attributes and `Status::Unset`.
+        let clean_span = ctx
+            .features
+            .as_ref()
+            .unwrap()
+            .otel_tracer
+            .as_ref()
+            .unwrap()
+            .tracer
+            .start("upstream-3");
+        ctx.features.as_mut().unwrap().upstream_span = Some(clean_span);
+        server.logging(&mut session, None, &mut ctx).await;
+        {
+            let recorded = spans.lock().unwrap();
+            let state = recorded[3].lock().unwrap();
+            assert_eq!(true, state.ended);
+            assert_eq!(Status::Unset, state.status);
+            assert_eq!(5, state.attrs.len());
+        }
     }
 }

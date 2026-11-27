@@ -1356,7 +1356,10 @@ impl Upstream {
             peer_tracer,
             tracer,
             processing: AtomicI32::new(0),
-            backend_stats: if conf.enable_backend_stats.unwrap_or_default() {
+            backend_stats: if conf
+                .enable_backend_stats
+                .unwrap_or(circuit_breaker_states.is_some())
+            {
                 Some(BackendStats::new(
                     conf.backend_stats_interval
                         .unwrap_or_else(|| Duration::from_secs(60)),
@@ -4605,5 +4608,65 @@ mod tests {
             .select_tcp_peer(Some("10.1.2.3"), &[], false)
             .unwrap();
         assert_eq!(a.addr_str, b.addr_str);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_auto_enables_backend_stats() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(1);
+        let addr = addrs[0].clone();
+
+        // When enable_backend_stats is unset (None), configuring a circuit
+        // breaker enables backend_stats automatically so failures trip it.
+        let up = Upstream::new(
+            "circuit-auto-stats",
+            &UpstreamConf {
+                addrs: vec![addr.clone()],
+                circuit_break_max_consecutive_failures: Some(2),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(true, up.backend_stats.is_some());
+        assert_eq!(true, up.circuit_breaker_states.is_some());
+
+        up.on_response(&addr, http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(Some(&0), up.stats().circuit_states.get(&addr));
+        assert_eq!(
+            true,
+            up.new_http_peer(&session, &mut None, false).await.is_some()
+        );
+
+        up.on_response(&addr, http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(Some(&1), up.stats().circuit_states.get(&addr));
+        assert_eq!(
+            true,
+            up.new_http_peer(&session, &mut None, false).await.is_none()
+        );
+
+        // An explicit enable_backend_stats = false is still respected.
+        let disabled = Upstream::new(
+            "circuit-disabled-stats",
+            &UpstreamConf {
+                addrs: vec![addr.clone()],
+                enable_backend_stats: Some(false),
+                circuit_break_max_consecutive_failures: Some(2),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(false, disabled.backend_stats.is_some());
+        disabled.on_response(&addr, http::StatusCode::INTERNAL_SERVER_ERROR);
+        disabled.on_response(&addr, http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(Some(&0), disabled.stats().circuit_states.get(&addr));
+        assert_eq!(
+            true,
+            disabled
+                .new_http_peer(&session, &mut None, false)
+                .await
+                .is_some()
+        );
     }
 }

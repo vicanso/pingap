@@ -14,11 +14,10 @@
 
 use pingap_core::OtelTracer;
 use pingap_core::{Ctx, ensure_client_ip};
-use pingap_otel::HeaderExtractor;
 use pingap_otel::propagation::Injector;
 use pingap_otel::{
-    KeyValue, global,
-    trace::{Span, SpanKind, Tracer},
+    KeyValue,
+    trace::{Span, SpanKind, Status, Tracer},
 };
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -35,9 +34,7 @@ pub(crate) fn initialize_telemetry(
     let path = header.uri.path();
     // enable open telemetry
     if let Some(tracer) = pingap_otel::new_http_proxy_tracer(name) {
-        let cx = global::get_text_map_propagator(|propagator| {
-            propagator.extract(&HeaderExtractor(&header.headers))
-        });
+        let cx = pingap_otel::extract_header_context(name, &header.headers);
         let mut span = tracer
             .span_builder(path.to_string())
             .with_kind(SpanKind::Server)
@@ -132,6 +129,7 @@ impl Injector for UpstreamRequestInjector<'_> {
 /// from the client's span, beside the proxy's and not under it.
 #[inline]
 pub(crate) fn inject_trace_context(
+    name: &str,
     ctx: &Ctx,
     upstream_request: &mut RequestHeader,
 ) {
@@ -160,7 +158,8 @@ pub(crate) fn inject_trace_context(
         .get("traceparent")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
-    pingap_otel::inject_span_context(
+    pingap_otel::inject_span_context_for(
+        name,
         span_context,
         client_traceparent.as_deref(),
         &mut UpstreamRequestInjector(upstream_request),
@@ -168,7 +167,7 @@ pub(crate) fn inject_trace_context(
 }
 
 #[inline]
-pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
+pub(crate) fn finish_otel_upstream_span(ctx: &mut Ctx, is_error: bool) {
     if let Some(mut span) =
         ctx.features.as_mut().and_then(|f| f.upstream_span.take())
     {
@@ -190,6 +189,9 @@ pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
                 ctx.get_upstream_response_time().unwrap_or_default() as i64,
             ),
         ]);
+        if is_error {
+            span.set_status(Status::error(""));
+        }
         span.end();
     }
 }
@@ -237,16 +239,120 @@ pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
 #[cfg(test)]
 mod tests {
     use super::{
-        initialize_telemetry, inject_telemetry_headers, inject_trace_context,
-        set_otel_request_attrs, set_otel_upstream_attrs,
+        finish_otel_upstream_span, initialize_telemetry,
+        inject_telemetry_headers, inject_trace_context, set_otel_request_attrs,
         update_otel_cache_attrs,
     };
     use pingap_core::{Ctx, Features};
+    use pingap_otel::global::BoxedTracer;
+    use pingap_otel::trace::{
+        Span, SpanBuilder, SpanContext, SpanId, Status, TraceFlags, TraceId,
+        TraceState, Tracer,
+    };
+    use pingap_otel::{Context as OtelContext, KeyValue};
     use pingora::http::{RequestHeader, ResponseHeader};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::borrow::Cow;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, SystemTime};
     use tokio_test::io::Builder;
+
+    #[derive(Clone, Default)]
+    struct RecordedSpanState {
+        ended: bool,
+        attrs: Vec<KeyValue>,
+        status: Status,
+    }
+
+    struct RecordingSpan {
+        context: SpanContext,
+        state: Arc<Mutex<RecordedSpanState>>,
+    }
+
+    type RecordedSpans = Arc<Mutex<Vec<Arc<Mutex<RecordedSpanState>>>>>;
+
+    struct RecordingTracer {
+        spans: RecordedSpans,
+    }
+
+    impl RecordingTracer {
+        fn create() -> (BoxedTracer, RecordedSpans) {
+            let spans = Arc::new(Mutex::new(Vec::new()));
+            let tracer = BoxedTracer::new(Box::new(Self {
+                spans: spans.clone(),
+            }));
+            (tracer, spans)
+        }
+    }
+
+    impl Tracer for RecordingTracer {
+        type Span = RecordingSpan;
+
+        fn build_with_context(
+            &self,
+            _builder: SpanBuilder,
+            _parent_cx: &OtelContext,
+        ) -> Self::Span {
+            let state = Arc::new(Mutex::new(RecordedSpanState::default()));
+            self.spans.lock().unwrap().push(state.clone());
+            RecordingSpan {
+                context: SpanContext::new(
+                    TraceId::from(1),
+                    SpanId::from(2),
+                    TraceFlags::SAMPLED,
+                    false,
+                    TraceState::default(),
+                ),
+                state,
+            }
+        }
+    }
+
+    impl Span for RecordingSpan {
+        fn add_event_with_timestamp<T>(
+            &mut self,
+            _name: T,
+            _timestamp: SystemTime,
+            _attributes: Vec<KeyValue>,
+        ) where
+            T: Into<Cow<'static, str>>,
+        {
+        }
+
+        fn span_context(&self) -> &SpanContext {
+            &self.context
+        }
+
+        fn is_recording(&self) -> bool {
+            true
+        }
+
+        fn set_attribute(&mut self, attribute: KeyValue) {
+            self.state.lock().unwrap().attrs.push(attribute);
+        }
+
+        fn set_status(&mut self, status: Status) {
+            self.state.lock().unwrap().status = status;
+        }
+
+        fn update_name<T>(&mut self, _new_name: T)
+        where
+            T: Into<Cow<'static, str>>,
+        {
+        }
+
+        fn add_link(
+            &mut self,
+            _span_context: SpanContext,
+            _attributes: Vec<KeyValue>,
+        ) {
+        }
+
+        fn end_with_timestamp(&mut self, _timestamp: SystemTime) {
+            self.state.lock().unwrap().ended = true;
+        }
+    }
 
     fn request_with_traceparent() -> RequestHeader {
         let mut request = match RequestHeader::build("GET", b"/", None) {
@@ -273,14 +379,14 @@ mod tests {
     fn test_no_tracer_leaves_headers_where_they_were() {
         let ctx = Ctx::default();
         let mut request = request_with_traceparent();
-        inject_trace_context(&ctx, &mut request);
+        inject_trace_context("test", &ctx, &mut request);
         assert_eq!(Some("00-abc"), traceparent(&request));
 
         let mut traced = Ctx {
             features: Some(Box::new(Features::default())),
             ..Ctx::default()
         };
-        inject_trace_context(&traced, &mut request);
+        inject_trace_context("test", &traced, &mut request);
         assert_eq!(Some("00-abc"), traceparent(&request));
 
         let mut response = match ResponseHeader::build(200, None) {
@@ -298,7 +404,82 @@ mod tests {
             Some(Duration::from_millis(3)),
             None,
         );
-        set_otel_upstream_attrs(&mut traced);
+        finish_otel_upstream_span(&mut traced, false);
+    }
+
+    #[test]
+    fn test_finish_otel_upstream_span_sets_attrs_and_status() {
+        let (tracer, spans) = RecordingTracer::create();
+        let ok_span = tracer.start("upstream-ok");
+        let mut ctx = Ctx {
+            features: Some(Box::new(Features {
+                upstream_span: Some(ok_span),
+                ..Features::default()
+            })),
+            ..Ctx::default()
+        };
+        ctx.upstream.address = "127.0.0.1:8080".into();
+        ctx.upstream.reused = true;
+        ctx.timing.upstream_connect = Some(3);
+        ctx.timing.upstream_processing = Some(12);
+        ctx.timing.upstream_response = Some(20);
+
+        finish_otel_upstream_span(&mut ctx, false);
+        assert_eq!(
+            true,
+            ctx.features.as_ref().unwrap().upstream_span.is_none()
+        );
+        {
+            let recorded = spans.lock().unwrap();
+            let state = recorded[0].lock().unwrap();
+            assert_eq!(true, state.ended);
+            assert_eq!(Status::Unset, state.status);
+            assert_eq!(
+                vec![
+                    KeyValue::new("upstream.addr", "127.0.0.1:8080"),
+                    KeyValue::new("upstream.reused", true),
+                    KeyValue::new("upstream.connect_time", 3_i64),
+                    KeyValue::new("upstream.processing_time", 12_i64),
+                    KeyValue::new("upstream.response_time", 20_i64),
+                ],
+                state.attrs
+            );
+        }
+
+        // Unfinished phase markers (negative start markers) clamp safely to 0
+        // and error status is recorded when `is_error` is true.
+        let err_span = tracer.start("upstream-err");
+        let mut err_ctx = Ctx {
+            features: Some(Box::new(Features {
+                upstream_span: Some(err_span),
+                ..Features::default()
+            })),
+            ..Ctx::default()
+        };
+        err_ctx.upstream.address = "127.0.0.1:8081".into();
+        err_ctx.timing.upstream_connect = Some(4);
+        err_ctx.timing.upstream_processing = Some(-5);
+        finish_otel_upstream_span(&mut err_ctx, true);
+        assert_eq!(
+            true,
+            err_ctx.features.as_ref().unwrap().upstream_span.is_none()
+        );
+        {
+            let recorded = spans.lock().unwrap();
+            let state = recorded[1].lock().unwrap();
+            assert_eq!(true, state.ended);
+            assert!(matches!(state.status, Status::Error { .. }));
+            assert_eq!(
+                vec![
+                    KeyValue::new("upstream.addr", "127.0.0.1:8081"),
+                    KeyValue::new("upstream.reused", false),
+                    KeyValue::new("upstream.connect_time", 4_i64),
+                    KeyValue::new("upstream.processing_time", 0_i64),
+                    KeyValue::new("upstream.response_time", 0_i64),
+                ],
+                state.attrs
+            );
+        }
     }
 
     /// A name with no provider does not start a span, and the request

@@ -407,6 +407,97 @@ impl TracerServiceBuilder {
     }
 }
 
+fn prepare_injection_context(
+    span_context: &opentelemetry::trace::SpanContext,
+    client_traceparent: Option<&str>,
+) -> Option<opentelemetry::Context> {
+    use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags};
+    if !span_context.is_valid() {
+        return None;
+    }
+    let client_flags = client_traceparent.and_then(|traceparent| {
+        let mut parts = traceparent.trim().split('-');
+        let (_version, trace_id, _span_id, flags) =
+            (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+        if !trace_id.eq_ignore_ascii_case(&span_context.trace_id().to_string())
+        {
+            return None;
+        }
+        u8::from_str_radix(flags, 16).ok()
+    });
+    // A span that is not sampled is not exported, and no parent to hang
+    // anything from. Where the client has a trace of its own, the
+    // upstream is left with the client's `traceparent` as it came: what
+    // it records hangs from the client's span. Told the id of the span
+    // that was dropped, it recorded spans whose parent was nowhere.
+    if client_flags.is_some() && !span_context.is_sampled() {
+        return None;
+    }
+    let span_context = match client_flags {
+        Some(flags) => SpanContext::new(
+            span_context.trace_id(),
+            span_context.span_id(),
+            TraceFlags::new(flags),
+            true,
+            span_context.trace_state().clone(),
+        ),
+        None => span_context.clone(),
+    };
+    Some(opentelemetry::Context::new().with_remote_span_context(span_context))
+}
+
+fn inject_span_context_with(
+    name: Option<&str>,
+    span_context: &opentelemetry::trace::SpanContext,
+    client_traceparent: Option<&str>,
+    injector: &mut dyn opentelemetry::propagation::Injector,
+) {
+    let Some(cx) = prepare_injection_context(span_context, client_traceparent)
+    else {
+        return;
+    };
+    if let Some(name) = name
+        && let Some(provider) = provider::get_provider(name)
+    {
+        provider.propagator().inject_context(&cx, injector);
+        return;
+    }
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(&cx, injector);
+    });
+}
+
+/// Extracts the OpenTelemetry context from HTTP `headers` using the propagator
+/// registered for the named tracer provider `name`, falling back to the global
+/// propagator if no provider is registered under that name.
+pub fn extract_header_context(
+    name: &str,
+    headers: &http::HeaderMap,
+) -> opentelemetry::Context {
+    let extractor = opentelemetry_http::HeaderExtractor(headers);
+    if let Some(provider) = provider::get_provider(name) {
+        return provider.propagator().extract(&extractor);
+    }
+    global::get_text_map_propagator(|propagator| propagator.extract(&extractor))
+}
+
+/// Writes the context of a span through `injector`, in the formats the
+/// configured propagators carry for the provider `name`, falling back to the
+/// global propagator if no provider is registered under `name`.
+pub fn inject_span_context_for(
+    name: &str,
+    span_context: &opentelemetry::trace::SpanContext,
+    client_traceparent: Option<&str>,
+    injector: &mut dyn opentelemetry::propagation::Injector,
+) {
+    inject_span_context_with(
+        Some(name),
+        span_context,
+        client_traceparent,
+        injector,
+    );
+}
+
 /// Writes the context of a span through `injector`, in the formats the
 /// configured propagators carry: `traceparent` and `tracestate`, and the
 /// Jaeger and baggage headers where those were asked for.
@@ -426,43 +517,7 @@ pub fn inject_span_context(
     client_traceparent: Option<&str>,
     injector: &mut dyn opentelemetry::propagation::Injector,
 ) {
-    use opentelemetry::trace::{SpanContext, TraceContextExt, TraceFlags};
-    if !span_context.is_valid() {
-        return;
-    }
-    let client_flags = client_traceparent.and_then(|traceparent| {
-        let mut parts = traceparent.trim().split('-');
-        let (_version, trace_id, _span_id, flags) =
-            (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
-        if !trace_id.eq_ignore_ascii_case(&span_context.trace_id().to_string())
-        {
-            return None;
-        }
-        u8::from_str_radix(flags, 16).ok()
-    });
-    // A span that is not sampled is not exported, and no parent to hang
-    // anything from. Where the client has a trace of its own, the
-    // upstream is left with the client's `traceparent` as it came: what
-    // it records hangs from the client's span. Told the id of the span
-    // that was dropped, it recorded spans whose parent was nowhere.
-    if client_flags.is_some() && !span_context.is_sampled() {
-        return;
-    }
-    let span_context = match client_flags {
-        Some(flags) => SpanContext::new(
-            span_context.trace_id(),
-            span_context.span_id(),
-            TraceFlags::new(flags),
-            true,
-            span_context.trace_state().clone(),
-        ),
-        None => span_context.clone(),
-    };
-    let cx =
-        opentelemetry::Context::new().with_remote_span_context(span_context);
-    global::get_text_map_propagator(|propagator| {
-        propagator.inject_context(&cx, injector);
-    });
+    inject_span_context_with(None, span_context, client_traceparent, injector);
 }
 
 /// The resource the spans of the service `name` are reported for: its
@@ -567,6 +622,20 @@ impl TracerService {
             },
         }
     }
+    fn build_propagator(&self) -> TextMapCompositePropagator {
+        let mut propagators: Vec<Box<dyn TextMapPropagator + Send + Sync>> =
+            vec![Box::new(TraceContextPropagator::new())];
+        if self.config.support_jaeger_propagator {
+            // The Jaeger format is deprecated upstream in favor of
+            // W3C TraceContext. It stays opt-in for deployments that
+            // still send `uber-trace-id`.
+            propagators.push(Box::new(crate::jaeger::Propagator::new()));
+        }
+        if self.config.support_baggage_propagator {
+            propagators.push(Box::new(BaggagePropagator::new()));
+        }
+        TextMapCompositePropagator::new(propagators)
+    }
 }
 
 #[async_trait]
@@ -610,25 +679,14 @@ impl BackgroundService for TracerService {
 
         match result {
             Ok(tracer_provider) => {
-                let mut propagators: Vec<
-                    Box<dyn TextMapPropagator + Send + Sync>,
-                > = vec![Box::new(TraceContextPropagator::new())];
-                if self.config.support_jaeger_propagator {
-                    // The Jaeger format is deprecated upstream in favor of
-                    // W3C TraceContext. It stays opt-in for deployments that
-                    // still send `uber-trace-id`.
-                    propagators
-                        .push(Box::new(crate::jaeger::Propagator::new()));
-                }
-                if self.config.support_baggage_propagator {
-                    propagators.push(Box::new(BaggagePropagator::new()));
-                }
-                global::set_text_map_propagator(
-                    TextMapCompositePropagator::new(propagators),
-                );
+                global::set_text_map_propagator(self.build_propagator());
 
-                // set tracer provider
-                provider::add_provider(&self.name, tracer_provider.clone());
+                // set tracer provider with its own propagator instance
+                provider::add_provider(
+                    &self.name,
+                    tracer_provider.clone(),
+                    self.build_propagator(),
+                );
                 info!(
                     target: LOG_TARGET,
                     name = self.name,
@@ -990,10 +1048,136 @@ mod tests {
         assert!(new_http_proxy_tracer("no-such-exporter").is_none());
 
         let name = "proxy-tracer-lock";
+        let service = TracerService::new(name, "http://collector:4317");
         provider::add_provider(
             name,
             opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            service.build_propagator(),
         );
         assert!(new_http_proxy_tracer(name).is_some());
+    }
+
+    #[test]
+    fn test_per_provider_propagator_isolation() {
+        use opentelemetry::baggage::BaggageExt;
+        use opentelemetry::trace::{
+            Span, TraceContextExt, Tracer, TracerProvider,
+        };
+        use std::collections::HashMap;
+
+        let jaeger_srv = TracerService::new(
+            "iso-jaeger",
+            "http://collector:4317?jaeger=1&baggage=1",
+        );
+        let w3c_srv = TracerService::new("iso-w3c", "http://collector:4317");
+
+        // Register Jaeger+Baggage first, then W3C-only second (simulating the
+        // second server's `start()` overwriting the global propagator).
+        global::set_text_map_propagator(jaeger_srv.build_propagator());
+        provider::add_provider(
+            "iso-jaeger",
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            jaeger_srv.build_propagator(),
+        );
+        global::set_text_map_propagator(w3c_srv.build_propagator());
+        provider::add_provider(
+            "iso-w3c",
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            w3c_srv.build_propagator(),
+        );
+
+        // Also register in reverse order (W3C first, Jaeger+Baggage second).
+        let w3c_first =
+            TracerService::new("iso-w3c-first", "http://collector:4317");
+        let jaeger_second = TracerService::new(
+            "iso-jaeger-second",
+            "http://collector:4317?jaeger=1&baggage=1",
+        );
+        provider::add_provider(
+            "iso-w3c-first",
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            w3c_first.build_propagator(),
+        );
+        provider::add_provider(
+            "iso-jaeger-second",
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build(),
+            jaeger_second.build_propagator(),
+        );
+
+        let sdk_provider =
+            opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+        let span = sdk_provider.tracer("test").start("req");
+        let span_context = span.span_context().clone();
+
+        // Build incoming headers containing only Jaeger `uber-trace-id` and
+        // W3C `baggage` (no `traceparent`).
+        let mut jaeger_map: HashMap<String, String> = HashMap::new();
+        crate::jaeger::Propagator::new().inject_context(
+            &opentelemetry::Context::new()
+                .with_remote_span_context(span_context.clone()),
+            &mut jaeger_map,
+        );
+        let uber_trace_id = jaeger_map
+            .get("uber-trace-id")
+            .expect("uber-trace-id")
+            .clone();
+
+        let mut incoming = http::HeaderMap::new();
+        incoming.insert(
+            "uber-trace-id",
+            http::HeaderValue::from_str(&uber_trace_id).unwrap(),
+        );
+        incoming
+            .insert("baggage", http::HeaderValue::from_static("user=alice"));
+
+        for jaeger_name in ["iso-jaeger", "iso-jaeger-second"] {
+            let cx = extract_header_context(jaeger_name, &incoming);
+            assert!(
+                cx.span().span_context().is_valid(),
+                "{jaeger_name} should extract uber-trace-id"
+            );
+            assert_eq!(
+                span_context.trace_id(),
+                cx.span().span_context().trace_id()
+            );
+            assert_eq!(
+                Some("alice"),
+                cx.baggage().get("user").map(|v| v.as_str())
+            );
+
+            let mut out: HashMap<String, String> = HashMap::new();
+            inject_span_context_for(jaeger_name, &span_context, None, &mut out);
+            assert!(
+                out.contains_key("traceparent"),
+                "{jaeger_name} missing traceparent"
+            );
+            assert!(
+                out.contains_key("uber-trace-id"),
+                "{jaeger_name} missing uber-trace-id"
+            );
+        }
+
+        for w3c_name in ["iso-w3c", "iso-w3c-first"] {
+            let cx = extract_header_context(w3c_name, &incoming);
+            assert!(
+                !cx.span().span_context().is_valid(),
+                "{w3c_name} must not extract uber-trace-id"
+            );
+            assert!(
+                cx.baggage().is_empty(),
+                "{w3c_name} must not extract baggage"
+            );
+
+            let mut out: HashMap<String, String> = HashMap::new();
+            inject_span_context_for(w3c_name, &span_context, None, &mut out);
+            assert!(
+                out.contains_key("traceparent"),
+                "{w3c_name} missing traceparent"
+            );
+            assert!(
+                !out.contains_key("uber-trace-id"),
+                "{w3c_name} must not inject uber-trace-id"
+            );
+        }
     }
 }

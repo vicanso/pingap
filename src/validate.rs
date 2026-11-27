@@ -703,15 +703,50 @@ fn upstreams_port_443_without_sni(config: &PingapConfig) -> Vec<String> {
     found
 }
 
+/// Upstreams that disable backend stats (`enable_backend_stats = false`) while
+/// configuring circuit-breaking thresholds: circuit breaking relies on backend
+/// stats and will remain inactive.
+fn upstreams_circuit_breaker_without_stats(
+    config: &PingapConfig,
+) -> Vec<String> {
+    let mut names: Vec<&String> = config.upstreams.keys().collect();
+    names.sort();
+    let mut found = vec![];
+    for name in names {
+        let upstream = &config.upstreams[name];
+        if upstream.enable_backend_stats != Some(false) {
+            continue;
+        }
+        let has_circuit_breaker = upstream
+            .circuit_break_max_consecutive_failures
+            .unwrap_or_default()
+            > 0
+            || upstream
+                .circuit_break_max_failure_percent
+                .unwrap_or_default()
+                > 0;
+        if has_circuit_breaker {
+            found.push(format!(
+                "upstream.{name}: `enable_backend_stats = false` disables circuit breaking (`circuit_break_max_consecutive_failures` / `circuit_break_max_failure_percent` will have no effect)"
+            ));
+        }
+    }
+    found
+}
+
 /// And of what plugins have and do not read.
 static UNREAD_KEYS_REPORTED: AtomicU64 = AtomicU64::new(0);
 
 /// And of upstreams targeting port 443 without `sni`.
 static PORT_443_WITHOUT_SNI_REPORTED: AtomicU64 = AtomicU64::new(0);
 
+/// And of upstreams disabling `enable_backend_stats` while configuring circuit breaking.
+static CIRCUIT_BREAKER_WITHOUT_STATS_REPORTED: AtomicU64 = AtomicU64::new(0);
+
 /// Warns about the settings of `config` that have no effect - what
-/// [`ja4_without_fingerprint`], [`unread_plugin_keys`], and
-/// [`upstreams_port_443_without_sni`] find - once for
+/// [`ja4_without_fingerprint`], [`unread_plugin_keys`],
+/// [`upstreams_port_443_without_sni`], and
+/// [`upstreams_circuit_breaker_without_stats`] find - once for
 /// the same findings, at the places of [`check_build_keys`]: `running` is
 /// `config` itself at a start, the configuration in use at a reload. Said
 /// there and not where a plugin is built, which is every reload and every
@@ -727,6 +762,10 @@ pub fn check_settings_without_effect(
     warn_once(
         &PORT_443_WITHOUT_SNI_REPORTED,
         &upstreams_port_443_without_sni(config),
+    );
+    warn_once(
+        &CIRCUIT_BREAKER_WITHOUT_STATS_REPORTED,
+        &upstreams_circuit_breaker_without_stats(config),
     );
 }
 
@@ -1285,6 +1324,53 @@ addrs = ["127.0.0.1:80", "127.0.0.1:8443"]
                 "upstream.no_sni_v6: addr uses port 443 without `sni`; Pingap only enables upstream TLS when `sni` is set (set `sni` or \"$host\")".to_string(),
             ],
             warnings
+        );
+    }
+
+    #[test]
+    fn test_upstreams_circuit_breaker_without_stats() {
+        let cfg = toml_config(
+            r#"
+[upstreams.disabled_consecutive]
+addrs = ["127.0.0.1:8080"]
+enable_backend_stats = false
+circuit_break_max_consecutive_failures = 2
+
+[upstreams.disabled_percent]
+addrs = ["127.0.0.1:8081"]
+enable_backend_stats = false
+circuit_break_max_failure_percent = 50
+
+[upstreams.disabled_no_breaker]
+addrs = ["127.0.0.1:8082"]
+enable_backend_stats = false
+circuit_break_max_consecutive_failures = 0
+circuit_break_max_failure_percent = 0
+
+[upstreams.auto_stats]
+addrs = ["127.0.0.1:8083"]
+circuit_break_max_consecutive_failures = 2
+
+[upstreams.explicit_true]
+addrs = ["127.0.0.1:8084"]
+enable_backend_stats = true
+circuit_break_max_failure_percent = 50
+"#,
+        )
+        .to_pingap_config(false)
+        .unwrap();
+        let warnings = upstreams_circuit_breaker_without_stats(&cfg);
+        assert_eq!(
+            vec![
+                "upstream.disabled_consecutive: `enable_backend_stats = false` disables circuit breaking (`circuit_break_max_consecutive_failures` / `circuit_break_max_failure_percent` will have no effect)".to_string(),
+                "upstream.disabled_percent: `enable_backend_stats = false` disables circuit breaking (`circuit_break_max_consecutive_failures` / `circuit_break_max_failure_percent` will have no effect)".to_string(),
+            ],
+            warnings
+        );
+        check_settings_without_effect(&cfg, &cfg);
+        assert_ne!(
+            0,
+            CIRCUIT_BREAKER_WITHOUT_STATS_REPORTED.load(Ordering::Relaxed)
         );
     }
 }
