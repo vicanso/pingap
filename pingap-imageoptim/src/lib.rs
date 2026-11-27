@@ -49,6 +49,46 @@ const MAX_IMAGE_SIZE: usize = 20 * 1024 * 1024;
 /// The formats an image can be converted to.
 const OUTPUT_FORMATS: &[&str] = &["avif", "webp", "jpeg", "png"];
 
+const NON_CONVERTIBLE_STATIC_EXTENSIONS: &[&str] = &[
+    "js", "mjs", "cjs", "css", "map", "html", "htm", "json", "xml", "txt",
+    "csv", "wasm", "woff", "woff2", "ttf", "otf", "eot", "svg", "ico", "gif",
+    "webp", "avif", "mp4", "m4v", "webm", "mp3", "ogg", "flac", "pdf", "zip",
+    "gz", "tgz", "br", "zst",
+];
+
+fn path_extension(path: &str) -> Option<&str> {
+    let segment = match path.rsplit_once('/') {
+        Some((_, tail)) => tail,
+        None => path,
+    };
+    let (stem, ext) = segment.rsplit_once('.')?;
+    if stem.is_empty() || ext.is_empty() {
+        return None;
+    }
+    Some(ext)
+}
+
+/// Whether `path` has a known static-asset extension that `ImageOptim` never
+/// converts (`ImageOptim` converts `image/jpeg` and `image/png` only).
+fn has_non_convertible_static_extension(path: &str) -> bool {
+    let Some(ext) = path_extension(path) else {
+        return false;
+    };
+    if !(2..=5).contains(&ext.len()) {
+        return false;
+    }
+    NON_CONVERTIBLE_STATIC_EXTENSIONS
+        .iter()
+        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+}
+
+fn buffer_for_content_length(content_length: Option<usize>) -> BytesMut {
+    match content_length {
+        Some(cl) => BytesMut::with_capacity(cl.min(MAX_IMAGE_SIZE)),
+        None => BytesMut::new(),
+    }
+}
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 struct InFlightGuard {
@@ -371,7 +411,7 @@ impl ImageOptim {
             .headers
             .get(http::header::CONTENT_LENGTH)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<usize>().ok());
+            .and_then(|value| value.trim().parse::<usize>().ok());
         if content_length.is_some_and(|size| size > MAX_IMAGE_SIZE) {
             return None;
         }
@@ -405,6 +445,10 @@ impl Plugin for ImageOptim {
         // after it, this plugin had not run, and the purge removed the
         // entry of a request that accepts no image format and no other.
         if step != PluginStep::EarlyRequest {
+            return Ok(RequestPluginResult::Skipped);
+        }
+        if has_non_convertible_static_extension(session.req_header().uri.path())
+        {
             return Ok(RequestPluginResult::Skipped);
         }
 
@@ -480,7 +524,6 @@ impl Plugin for ImageOptim {
             http::header::CONTENT_TYPE,
             format!("image/{format_type}"),
         );
-        let capacity = content_length.unwrap_or(8192);
 
         ctx.add_modify_body_handler(
             &self.handler_id,
@@ -493,7 +536,7 @@ impl Plugin for ImageOptim {
                 // only support lossless
                 webp_quality: 100,
                 format_type,
-                buffer: BytesMut::with_capacity(capacity),
+                buffer: buffer_for_content_length(content_length),
                 passthrough: false,
                 in_flight: Some(guard),
             }),
@@ -1164,5 +1207,159 @@ png_quality = 90
             Some(image::ImageFormat::WebP),
             image::guess_format(&output).ok()
         );
+    }
+
+    #[test]
+    fn test_has_non_convertible_static_extension() {
+        for ext in [
+            "js", "mjs", "cjs", "css", "map", "html", "htm", "json", "xml",
+            "txt", "csv", "wasm", "woff", "woff2", "ttf", "otf", "eot", "svg",
+            "ico", "gif", "webp", "avif", "mp4", "m4v", "webm", "mp3", "ogg",
+            "flac", "pdf", "zip", "gz", "tgz", "br", "zst",
+        ] {
+            let lower = format!("/assets/file.{ext}");
+            let upper = format!("/ASSETS/FILE.{}", ext.to_ascii_uppercase());
+            assert_eq!(
+                true,
+                has_non_convertible_static_extension(&lower),
+                "{lower}"
+            );
+            assert_eq!(
+                true,
+                has_non_convertible_static_extension(&upper),
+                "{upper}"
+            );
+        }
+        assert_eq!(true, has_non_convertible_static_extension("/app.min.js"));
+
+        for path in [
+            "",
+            "/",
+            "/avatar/42",
+            "/images/hero",
+            "/photo.png",
+            "/PHOTO.PNG",
+            "/photo.jpg",
+            "/photo.jpeg",
+            "/photo.jpe",
+            "/render.php",
+            "/file.unknown",
+            "/dir.css/avatar",
+            "/dir.css/",
+            "/file.",
+            "/.css",
+            "/.",
+        ] {
+            assert_eq!(
+                false,
+                has_non_convertible_static_extension(path),
+                "{path}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_image_optimize_early_request_static_extension_skip() {
+        let optim = new_optim("avif,webp");
+
+        for req in [
+            "GET /assets/main.css HTTP/1.1\r\nAccept: image/avif, image/webp\r\n\r\n",
+            "GET /app.js HTTP/1.1\r\nAccept: image/avif\r\n\r\n",
+            "GET /icons/logo.svg HTTP/1.1\r\nAccept: image/webp\r\n\r\n",
+            "GET /media/pic.webp HTTP/1.1\r\nAccept: image/avif\r\n\r\n",
+            "GET /fonts/inter.woff2 HTTP/1.1\r\nAccept: image/avif\r\n\r\n",
+            "PURGE /assets/main.css HTTP/1.1\r\n\r\n",
+        ] {
+            let mock_io = Builder::new().read(req.as_bytes()).build();
+            let mut session = Session::new_h1_with_modules(
+                Box::new(mock_io),
+                &HttpModules::new(),
+            );
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result = optim
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Skipped, "{req}");
+            assert_eq!(true, ctx.cache.is_none(), "{req}");
+        }
+
+        for (req, expected_keys) in [
+            (
+                "GET /photo.png HTTP/1.1\r\nAccept: image/avif\r\n\r\n",
+                vec!["image/avif".to_string()],
+            ),
+            (
+                "GET /photo.jpg HTTP/1.1\r\nAccept: image/webp\r\n\r\n",
+                vec!["image/webp".to_string()],
+            ),
+            (
+                "GET /images/hero HTTP/1.1\r\nAccept: image/avif\r\n\r\n",
+                vec!["image/avif".to_string()],
+            ),
+            ("PURGE /images/hero HTTP/1.1\r\n\r\n", vec![]),
+            ("PURGE /photo.png HTTP/1.1\r\n\r\n", vec![]),
+        ] {
+            let mock_io = Builder::new().read(req.as_bytes()).build();
+            let mut session = Session::new_h1_with_modules(
+                Box::new(mock_io),
+                &HttpModules::new(),
+            );
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            let result = optim
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Continue, "{req}");
+            let cache = ctx.cache.as_ref().unwrap();
+            assert_eq!(Some(expected_keys), cache.keys, "{req}");
+            let variants = cache.key_variants.as_ref().unwrap();
+            assert_eq!(
+                *optim.key_alternatives, *variants[0].alternatives,
+                "{req}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_image_optimize_buffer_presized_from_content_length() {
+        assert_eq!(0, buffer_for_content_length(None).capacity());
+        assert_eq!(
+            2 * 1024 * 1024,
+            buffer_for_content_length(Some(2 * 1024 * 1024)).capacity()
+        );
+        assert_eq!(
+            MAX_IMAGE_SIZE,
+            buffer_for_content_length(Some(MAX_IMAGE_SIZE + 128)).capacity()
+        );
+
+        let optim = new_optim("webp");
+        for content_length in [Some(" 1048576 "), None] {
+            let mut session = new_session("image/webp").await;
+            let mut ctx = Ctx::default();
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            resp.insert_header("content-type", "image/png").unwrap();
+            if let Some(len) = content_length {
+                resp.insert_header("content-length", len).unwrap();
+            }
+            let result = optim
+                .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+                .unwrap();
+            assert_eq!(ResponsePluginResult::Modified, result);
+            assert_eq!(
+                true,
+                ctx.get_modify_body_handler(&optim.handler_id).is_some()
+            );
+        }
     }
 }

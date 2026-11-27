@@ -86,7 +86,8 @@ impl CacheObject {
     }
 }
 
-const META_SIZE_LENGTH: usize = 8;
+pub(crate) const META_SIZE_LENGTH: usize = 8;
+pub(crate) const STREAMING_SPILL_THRESHOLD: usize = 64 * 1024;
 
 /// Creates a CacheObject from bytes with the following format:
 /// - First 4 bytes: meta0 size (u32)
@@ -170,6 +171,14 @@ pub struct HttpCacheClearStats {
     pub success: i32,
     pub fail: i32,
     pub description: String,
+}
+
+/// Receives streamed cache miss body chunks directly into storage without
+/// buffering the entire payload in memory.
+#[async_trait]
+pub trait StreamingMissWriter: Send + Sync {
+    async fn write_chunk(&mut self, data: Bytes) -> Result<()>;
+    async fn finish(self: Box<Self>) -> Result<()>;
 }
 
 /// Storage interface for HTTP caching operations
@@ -292,6 +301,24 @@ pub trait HttpCacheStorage: Sync + Send {
     /// Called on a storage that another one has taken the place of, to
     /// let go of what it holds in memory.
     fn retire(&self) {}
+
+    /// Maximum body size (bytes) eligible for the hot in-memory layer, or
+    /// `None` when streaming miss writes are not used.
+    fn max_hot_body_bytes(&self) -> Option<usize> {
+        None
+    }
+
+    /// Starts a streaming miss write for objects that bypass the hot layer.
+    /// Returns `Ok(None)` when the backend prefers buffered `put`.
+    async fn begin_streaming_put(
+        &self,
+        _key: &str,
+        _namespace: &[u8],
+        _meta: BinaryMeta,
+        _content_length: Option<u64>,
+    ) -> Result<Option<Box<dyn StreamingMissWriter>>> {
+        Ok(None)
+    }
 }
 
 /// Sweeps every file backend's inactive files, once every 60 ticks. A
@@ -586,12 +613,40 @@ impl HandleHit for DiskHit {
     }
 }
 
+fn parse_content_length(meta: &CacheMeta) -> Option<u64> {
+    meta.headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok()?.parse::<u64>().ok())
+}
+
+#[inline]
+fn should_spill_payload(
+    hot_limit: Option<usize>,
+    meta_len: usize,
+    body_len: u64,
+) -> bool {
+    let Some(hot_limit) = hot_limit else {
+        return false;
+    };
+    let total_payload = (meta_len as u64).saturating_add(body_len);
+    total_payload > hot_limit as u64
+        && total_payload >= STREAMING_SPILL_THRESHOLD as u64
+}
+
 /// Handles cache misses by collecting and storing new content
 pub struct ObjectMissHandler {
     /// Metadata to store with the cached content
     meta: BinaryMeta,
-    /// Buffer for collecting the body content
+    /// Buffer for collecting the body content while below spill threshold
     body: BytesMut,
+    /// Total body bytes written across buffered and streamed chunks
+    body_bytes: usize,
+    /// Known Content-Length from response headers, if present
+    content_length: Option<u64>,
+    /// Whether `begin_streaming_put` has already been attempted on write
+    streaming_checked: bool,
+    /// Active streaming writer once spilled out of `BytesMut`
+    writer: Option<Box<dyn StreamingMissWriter>>,
     /// Cache key for storing the final object
     key: String,
     /// Primary key for storing the final object
@@ -602,6 +657,48 @@ pub struct ObjectMissHandler {
     cache: Arc<dyn HttpCacheStorage>,
 }
 
+impl ObjectMissHandler {
+    fn should_spill_on_write(&self, incoming_len: usize) -> bool {
+        let meta_len = self.meta.0.len().saturating_add(self.meta.1.len());
+        let accumulated = (self.body.len().saturating_add(incoming_len)) as u64;
+        let known_or_accumulated = self
+            .content_length
+            .map_or(accumulated, |cl| cl.max(accumulated));
+        should_spill_payload(
+            self.cache.max_hot_body_bytes(),
+            meta_len,
+            known_or_accumulated,
+        )
+    }
+
+    async fn try_spill_to_writer(
+        &mut self,
+        data: Bytes,
+    ) -> Result<Option<Bytes>> {
+        let total_len = (self.body.len().saturating_add(data.len())) as u64;
+        let content_length = self.content_length.filter(|&cl| cl >= total_len);
+        let Some(mut writer) = self
+            .cache
+            .begin_streaming_put(
+                &self.key,
+                &self.namespace,
+                self.meta.clone(),
+                content_length,
+            )
+            .await?
+        else {
+            return Ok(Some(data));
+        };
+        if !self.body.is_empty() {
+            let buffered = self.body.split().freeze();
+            writer.write_chunk(buffered).await?;
+        }
+        writer.write_chunk(data).await?;
+        self.writer = Some(writer);
+        Ok(None)
+    }
+}
+
 #[async_trait]
 impl HandleMiss for ObjectMissHandler {
     async fn write_body(
@@ -609,16 +706,32 @@ impl HandleMiss for ObjectMissHandler {
         data: bytes::Bytes,
         _eof: bool,
     ) -> pingora::Result<()> {
+        self.body_bytes = self.body_bytes.saturating_add(data.len());
+        if let Some(writer) = self.writer.as_mut() {
+            writer.write_chunk(data).await?;
+            return Ok(());
+        }
+        let data = if !self.streaming_checked
+            && self.should_spill_on_write(data.len())
+        {
+            self.streaming_checked = true;
+            match self.try_spill_to_writer(data).await? {
+                Some(remaining) => remaining,
+                None => return Ok(()),
+            }
+        } else {
+            data
+        };
         self.body.extend_from_slice(&data);
         Ok(())
     }
 
-    async fn finish(self: Box<Self>) -> pingora::Result<MissFinishType> {
+    async fn finish(mut self: Box<Self>) -> pingora::Result<MissFinishType> {
         // The same bytes `CacheObject::get_weight` counts. pingora's
         // eviction admits an entry by this size (`eviction = true` on
         // the memory cache). The body alone under-counted every entry
         // by its headers.
-        let size = self.body.len() + self.meta.0.len() + self.meta.1.len();
+        let size = self.body_bytes + self.meta.0.len() + self.meta.1.len();
         info!(
             target: LOG_TARGET,
             key = self.key,
@@ -627,17 +740,21 @@ impl HandleMiss for ObjectMissHandler {
             size,
             "put data to cache"
         );
-        let _ = self
-            .cache
-            .put(
-                &self.key,
-                &self.namespace,
-                CacheObject {
-                    meta: self.meta,
-                    body: self.body.into(),
-                },
-            )
-            .await?;
+        if let Some(writer) = self.writer.take() {
+            writer.finish().await?;
+        } else {
+            let _ = self
+                .cache
+                .put(
+                    &self.key,
+                    &self.namespace,
+                    CacheObject {
+                        meta: self.meta,
+                        body: self.body.into(),
+                    },
+                )
+                .await?;
+        }
 
         Ok(MissFinishType::Created(size))
     }
@@ -684,24 +801,56 @@ impl Storage for HttpCache {
         meta: &CacheMeta,
         _trace: &SpanHandle,
     ) -> pingora::Result<MissHandler> {
-        // Size the body buffer from Content-Length when there is one, capped
-        // at the largest object worth caching: the header is the origin's
-        // word, not a reason to reserve gigabytes up front.
-        let capacity = meta
-            .headers()
-            .get(http::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok()?.parse::<usize>().ok())
-            .unwrap_or(5 * 1024)
-            .min(MAX_OBJECT_CACHE_SIZE);
+        let content_length = parse_content_length(meta);
         let hash = key.combined();
         let (meta0, meta1) = meta.serialize()?;
+        let meta_len = meta0.len().saturating_add(meta1.len());
+        let binary_meta: BinaryMeta = (meta0.into(), meta1.into());
+        let namespace = key.user_tag().as_bytes().to_vec();
+
+        let (writer, streaming_checked) = if let Some(cl) = content_length
+            && should_spill_payload(
+                self.cache.max_hot_body_bytes(),
+                meta_len,
+                cl,
+            ) {
+            let writer = self
+                .cache
+                .begin_streaming_put(
+                    &hash,
+                    &namespace,
+                    binary_meta.clone(),
+                    Some(cl),
+                )
+                .await?;
+            (writer, true)
+        } else {
+            (None, false)
+        };
+
+        // Size the body buffer from Content-Length when there is one, capped
+        // at the largest object worth caching: the header is the origin's
+        // word, not a reason to reserve gigabytes up front. Skip preallocation
+        // when streaming directly to disk.
+        let capacity = if writer.is_some() {
+            0
+        } else {
+            content_length
+                .and_then(|cl| usize::try_from(cl).ok())
+                .unwrap_or(5 * 1024)
+                .min(MAX_OBJECT_CACHE_SIZE)
+        };
         let miss_handler = ObjectMissHandler {
-            meta: (meta0.into(), meta1.into()),
+            meta: binary_meta,
             key: hash,
             primary_key: key.primary_key_str().unwrap_or_default().to_string(),
-            namespace: key.user_tag().as_bytes().to_vec(),
+            namespace,
             cache: self.cache.clone(),
             body: BytesMut::with_capacity(capacity),
+            body_bytes: 0,
+            content_length,
+            streaming_checked,
+            writer,
         };
         Ok(Box::new(miss_handler))
     }
@@ -969,6 +1118,10 @@ mod tests {
         let obj = ObjectMissHandler {
             meta: (Bytes::from_static(b"Hello"), Bytes::from_static(b"World")),
             body: BytesMut::new(),
+            body_bytes: 0,
+            content_length: None,
+            streaming_checked: false,
+            writer: None,
             key: key.to_string(),
             primary_key: "".to_string(),
             namespace: b"".to_vec(),
@@ -1127,5 +1280,25 @@ mod tests {
         let tail2 = handle.read_body().await.unwrap().unwrap();
         assert_eq!(&content[149_995..], tail2.as_ref());
         assert_eq!(true, handle.seek(150_000, None).is_err());
+    }
+
+    #[test]
+    fn test_should_spill_payload() {
+        assert_eq!(false, should_spill_payload(None, 200, 1_000_000));
+        assert_eq!(false, should_spill_payload(Some(0), 200, 60_000));
+        assert_eq!(true, should_spill_payload(Some(0), 200, 65_536));
+        assert_eq!(
+            false,
+            should_spill_payload(Some(16 * 1024), 200, 32 * 1024)
+        );
+        assert_eq!(true, should_spill_payload(Some(16 * 1024), 200, 65_536));
+        assert_eq!(
+            false,
+            should_spill_payload(Some(1024 * 1024), 200, 512 * 1024)
+        );
+        assert_eq!(
+            true,
+            should_spill_payload(Some(1024 * 1024), 200, 2 * 1024 * 1024)
+        );
     }
 }

@@ -49,6 +49,47 @@ const UPSTREAM_RESPONSE_COMPRESS_MODE: &str = "upstream";
 
 const PLUGIN_ID: &str = "_compress_";
 
+const BLOCK_IN_PLACE_MIN_BYTES: usize = 64 * 1024;
+
+const ALREADY_COMPRESSED_EXTENSIONS: &[&str] = &[
+    "gz", "tgz", "br", "zst", "zip", "7z", "rar", "bz2", "xz", "png", "jpg",
+    "jpeg", "gif", "webp", "avif", "mp4", "m4v", "webm", "mp3", "ogg", "flac",
+    "woff2",
+];
+
+fn is_multi_thread_runtime() -> bool {
+    tokio::runtime::Handle::try_current().is_ok_and(|handle| {
+        handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+    })
+}
+
+fn path_extension(path: &str) -> Option<&str> {
+    let segment = match path.rsplit_once('/') {
+        Some((_, tail)) => tail,
+        None => path,
+    };
+    let (stem, ext) = segment.rsplit_once('.')?;
+    if stem.is_empty() || ext.is_empty() {
+        return None;
+    }
+    Some(ext)
+}
+
+/// Whether `path` ends in a file extension whose format is already compressed
+/// (`gz`, `png`, `woff2`, etc.), ignoring query strings and earlier path
+/// segments.
+fn has_already_compressed_extension(path: &str) -> bool {
+    let Some(ext) = path_extension(path) else {
+        return false;
+    };
+    if !(2..=5).contains(&ext.len()) {
+        return false;
+    }
+    ALREADY_COMPRESSED_EXTENSIONS
+        .iter()
+        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+}
+
 struct Compressor {
     compressor: Box<dyn Encode + Send + Sync>,
     /// The end of the stream, for pingora's brotli encoder, which leaves
@@ -85,11 +126,16 @@ impl ModifyResponseBody for Compressor {
         // the compress data will be buffer, so it may be empty some times
         let input_data =
             body.as_ref().map(|data| data.as_ref()).unwrap_or_default();
-        let data = self
-            .compressor
-            .as_mut()
-            .encode(input_data, end_of_stream)
-            .map_err(|e| new_internal_error(500, e))?;
+        let mut encode =
+            || self.compressor.as_mut().encode(input_data, end_of_stream);
+        let data = if input_data.len() >= BLOCK_IN_PLACE_MIN_BYTES
+            && is_multi_thread_runtime()
+        {
+            tokio::task::block_in_place(encode)
+        } else {
+            encode()
+        }
+        .map_err(|e| new_internal_error(500, e))?;
         *body = Some(match &mut self.tail {
             Some(tail) => tail.apply(data, end_of_stream),
             None => data,
@@ -350,6 +396,29 @@ fn is_shorter_than(min_length: u64, headers: &http::HeaderMap) -> bool {
             .is_some_and(|content_length| content_length < min_length)
 }
 
+fn original_uri<'a>(session: &'a Session, ctx: &'a Ctx) -> &'a http::Uri {
+    ctx.features
+        .as_ref()
+        .and_then(|features| features.original_uri.as_ref())
+        .unwrap_or(&session.req_header().uri)
+}
+
+fn select_compress_coding(
+    zstd_level: u32,
+    br_level: u32,
+    gzip_level: u32,
+) -> &'static str {
+    if zstd_level > 0 {
+        ZSTD
+    } else if br_level > 0 {
+        BR
+    } else if gzip_level > 0 {
+        GZIP
+    } else {
+        ""
+    }
+}
+
 impl Compression {
     /// Creates a new Compression plugin instance from the provided configuration
     ///
@@ -375,11 +444,7 @@ impl Compression {
         let Some(skip) = &self.skip else {
             return false;
         };
-        let uri = ctx
-            .features
-            .as_ref()
-            .and_then(|features| features.original_uri.as_ref())
-            .unwrap_or(&session.req_header().uri);
+        let uri = original_uri(session, ctx);
         let target = uri
             .path_and_query()
             .map_or(uri.path(), |value| value.as_str());
@@ -441,9 +506,119 @@ impl Compression {
             Some(BR) => (0, self.br_level, 0),
             Some(GZIP) => (0, 0, self.gzip_level),
             Some(_) => (0, 0, 0),
-            // The request step did not run for this request.
-            None => self.get_compress_level(session, ctx),
+            // The request step did not run for this request (or skipped a
+            // pre-compressed static path without recording a note).
+            None => {
+                if self.upstream_mode
+                    && self.types.is_none()
+                    && has_already_compressed_extension(
+                        original_uri(session, ctx).path(),
+                    )
+                {
+                    return (0, 0, 0);
+                }
+                self.get_compress_level(session, ctx)
+            },
         }
+    }
+
+    fn configure_upstream_request(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> RequestPluginResult {
+        if self.types.is_none()
+            && has_already_compressed_extension(session.req_header().uri.path())
+        {
+            return RequestPluginResult::Skipped;
+        }
+        let (zstd_level, br_level, gzip_level) =
+            self.get_compress_level(session, ctx);
+        let key = select_compress_coding(zstd_level, br_level, gzip_level);
+        // Settled here, once: the cache key below says it, and
+        // the response is compressed by it.
+        ctx.set_plugin_note(&self.handler_id, key);
+        // The coding is a part of the cache key, one of those a
+        // request can ask for: a `PURGE`, which asks for none,
+        // removes the entry of each.
+        let current = if key.is_empty() {
+            vec![]
+        } else {
+            vec![key.to_string()]
+        };
+        ctx.push_cache_key_variant(current, self.key_alternatives.clone());
+        // The upstream is asked for the coding this plugin settled
+        // on and no other. With the client's header passed on, an
+        // upstream that compresses by itself answered in a coding
+        // of its own choosing - brotli, to a client that takes
+        // both - and that response was stored under the key of
+        // the coding chosen here, for clients that take only that
+        // one. With no coding chosen the header is the client's
+        // business and the upstream's, see `handle_upstream_response`.
+        let header = session.req_header_mut();
+        if !key.is_empty()
+            && header
+                .headers
+                .get(ACCEPT_ENCODING)
+                .is_some_and(|value| value.as_bytes() != key.as_bytes())
+        {
+            let _ = header.insert_header(ACCEPT_ENCODING, key);
+        }
+        RequestPluginResult::Skipped
+    }
+
+    fn configure_downstream_request(
+        &self,
+        session: &mut Session,
+        ctx: &Ctx,
+    ) -> RequestPluginResult {
+        let (zstd_level, br_level, gzip_level) =
+            self.get_compress_level(session, ctx);
+
+        debug!(
+            zstd_level,
+            br_level, gzip_level, "response compression level"
+        );
+
+        if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
+            return RequestPluginResult::Skipped;
+        }
+
+        // Get compression context from session
+        let Some(c) = session
+            .downstream_modules_ctx
+            .get_mut::<ResponseCompression>()
+        else {
+            return RequestPluginResult::Skipped;
+        };
+
+        // One algorithm, by the fixed priority, and it is put first in
+        // `Accept-Encoding`: pingora compresses with the first coding of
+        // that header it knows and looks no further. A browser lists gzip
+        // first, so with all three enabled it got gzip, and with only
+        // zstd or brotli enabled it got nothing. Order has no meaning in
+        // the header, so the upstream is told the same as before.
+        let (coding, algorithm, level) = if zstd_level > 0 {
+            (ZSTD, Algorithm::Zstd, zstd_level)
+        } else if br_level > 0 {
+            (BR, Algorithm::Brotli, br_level)
+        } else {
+            (GZIP, Algorithm::Gzip, gzip_level)
+        };
+        c.adjust_algorithm_level(algorithm, level);
+        let preferred = session
+            .req_header()
+            .headers
+            .get(ACCEPT_ENCODING)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| prefer_encoding(value, coding));
+        if let Some(value) = preferred {
+            let _ = session
+                .req_header_mut()
+                .insert_header(ACCEPT_ENCODING, value);
+        }
+
+        RequestPluginResult::Continue
     }
 }
 
@@ -533,59 +708,17 @@ impl Plugin for Compression {
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step == PluginStep::EarlyRequest {
-            // Nothing of this with no level switched on: the plugin is
-            // there for something else, decompression say.
-            if self.upstream_mode && self.support_compression {
-                let (zstd_level, br_level, gzip_level) =
-                    self.get_compress_level(session, ctx);
-                let key = if zstd_level > 0 {
-                    ZSTD
-                } else if br_level > 0 {
-                    BR
-                } else if gzip_level > 0 {
-                    GZIP
-                } else {
-                    ""
-                };
-                // Settled here, once: the cache key below says it, and
-                // the response is compressed by it.
-                ctx.set_plugin_note(&self.handler_id, key);
-                // The coding is a part of the cache key, one of those a
-                // request can ask for: a `PURGE`, which asks for none,
-                // removes the entry of each.
-                let current = if key.is_empty() {
-                    vec![]
-                } else {
-                    vec![key.to_string()]
-                };
-                ctx.push_cache_key_variant(
-                    current,
-                    self.key_alternatives.clone(),
-                );
-                // The upstream is asked for the coding this plugin settled
-                // on and no other. With the client's header passed on, an
-                // upstream that compresses by itself answered in a coding
-                // of its own choosing - brotli, to a client that takes
-                // both - and that response was stored under the key of
-                // the coding chosen here, for clients that take only that
-                // one. With no coding chosen the header is the client's
-                // business and the upstream's, see `handle_upstream_response`.
-                let header = session.req_header_mut();
-                if !key.is_empty()
-                    && header
-                        .headers
-                        .get(ACCEPT_ENCODING)
-                        .is_some_and(|value| value.as_bytes() != key.as_bytes())
-                {
-                    let _ = header.insert_header(ACCEPT_ENCODING, key);
-                }
-            }
             if self.decompression.unwrap_or_default()
                 && let Some(c) = session
                     .downstream_modules_ctx
                     .get_mut::<ResponseCompression>()
             {
                 c.adjust_decompression(true);
+            }
+            // Nothing of this with no level switched on: the plugin is
+            // there for something else, decompression say.
+            if self.upstream_mode && self.support_compression {
+                return Ok(self.configure_upstream_request(session, ctx));
             }
         }
         // Early return conditions
@@ -595,53 +728,7 @@ impl Plugin for Compression {
         if !self.support_compression || self.upstream_mode {
             return Ok(RequestPluginResult::Skipped);
         }
-        let (zstd_level, br_level, gzip_level) =
-            self.get_compress_level(session, ctx);
-
-        debug!(
-            zstd_level,
-            br_level, gzip_level, "response compression level"
-        );
-
-        if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
-            return Ok(RequestPluginResult::Skipped);
-        }
-
-        // Get compression context from session
-        let Some(c) = session
-            .downstream_modules_ctx
-            .get_mut::<ResponseCompression>()
-        else {
-            return Ok(RequestPluginResult::Skipped);
-        };
-
-        // One algorithm, by the fixed priority, and it is put first in
-        // `Accept-Encoding`: pingora compresses with the first coding of
-        // that header it knows and looks no further. A browser lists gzip
-        // first, so with all three enabled it got gzip, and with only
-        // zstd or brotli enabled it got nothing. Order has no meaning in
-        // the header, so the upstream is told the same as before.
-        let (coding, algorithm, level) = if zstd_level > 0 {
-            (ZSTD, Algorithm::Zstd, zstd_level)
-        } else if br_level > 0 {
-            (BR, Algorithm::Brotli, br_level)
-        } else {
-            (GZIP, Algorithm::Gzip, gzip_level)
-        };
-        c.adjust_algorithm_level(algorithm, level);
-        let preferred = session
-            .req_header()
-            .headers
-            .get(ACCEPT_ENCODING)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| prefer_encoding(value, coding));
-        if let Some(value) = preferred {
-            let _ = session
-                .req_header_mut()
-                .insert_header(ACCEPT_ENCODING, value);
-        }
-
-        Ok(RequestPluginResult::Continue)
+        Ok(self.configure_downstream_request(session, ctx))
     }
     fn handle_upstream_response(
         &self,
@@ -2043,5 +2130,203 @@ zstd_level = 7
         assert_eq!((0, 8, 0), levels(c, "gzip;q=0, br").await);
         // A weight other than zero is still acceptable.
         assert_eq!((0, 0, 9), levels(c, "gzip;q=0.5").await);
+    }
+
+    #[test]
+    fn test_has_already_compressed_extension() {
+        for ext in [
+            "gz", "tgz", "br", "zst", "zip", "7z", "rar", "bz2", "xz", "png",
+            "jpg", "jpeg", "gif", "webp", "avif", "mp4", "m4v", "webm", "mp3",
+            "ogg", "flac", "woff2",
+        ] {
+            let lower = format!("/assets/item.{ext}");
+            let upper = format!("/ASSETS/ITEM.{}", ext.to_ascii_uppercase());
+            assert_eq!(
+                true,
+                has_already_compressed_extension(&lower),
+                "{lower}"
+            );
+            assert_eq!(
+                true,
+                has_already_compressed_extension(&upper),
+                "{upper}"
+            );
+        }
+        assert_eq!(
+            true,
+            has_already_compressed_extension("/dist/bundle.tar.gz")
+        );
+        assert_eq!(true, has_already_compressed_extension("photo.png"));
+
+        for path in [
+            "",
+            "/",
+            "/hero",
+            "/dir.png/app",
+            "/dir.png/",
+            "/photo.",
+            "/.png",
+            "/.",
+            "/..",
+            "/app.js",
+            "/style.css",
+            "/index.html",
+            "/data.json",
+            "/icon.svg",
+            "/font.woff",
+            "/font.ttf",
+            "/archive.tar",
+            "/archive.gz.txt",
+        ] {
+            assert_eq!(false, has_already_compressed_extension(path), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_upstream_mode_early_request_static_extension_skip() {
+        let default_types =
+            new_compression("mode = \"upstream\"\ngzip_level = 6");
+        // (a) GET /img/photo.png and PURGE /img/photo.png skip cache_keys variant
+        // when `types` is unset.
+        for req in [
+            "GET /img/photo.png HTTP/1.1\r\nAccept-Encoding: br, gzip\r\n\r\n",
+            "GET /IMG/PHOTO.WOFF2 HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+            "PURGE /img/photo.png HTTP/1.1\r\n\r\n",
+        ] {
+            let mut session = new_session(req).await;
+            let mut ctx = Ctx::default();
+            let result = default_types
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Skipped, "{req}");
+            assert_eq!(true, ctx.cache.is_none(), "{req}");
+            assert_eq!(
+                vec![Vec::<String>::new()],
+                ctx.cache_key_alternatives()
+            );
+        }
+
+        // Accept-Encoding on the skipped GET request stays intact, and upstream
+        // response stays unencoded even if upstream replies with text/html.
+        let mut session = new_session(
+            "GET /img/photo.png HTTP/1.1\r\nAccept-Encoding: br, gzip\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        default_types
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            Some("br, gzip"),
+            session
+                .req_header()
+                .headers
+                .get(ACCEPT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+        );
+        let mut resp = response("text/html", Some(512));
+        let resp_result = default_types
+            .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Unchanged, resp_result);
+        assert_eq!(false, resp.headers.contains_key(CONTENT_ENCODING));
+
+        // (b) Custom `types = ["*"]` still pushes variant for /img/photo.png.
+        let custom_types = new_compression(
+            "mode = \"upstream\"\ngzip_level = 6\ntypes = [\"*\"]",
+        );
+        let mut session = new_session(
+            "GET /img/photo.png HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        custom_types
+            .handle_request(PluginStep::EarlyRequest, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let cache = ctx.cache.as_ref().unwrap();
+        assert_eq!(Some(vec!["gzip".to_string()]), cache.keys);
+        let variants = cache.key_variants.as_ref().unwrap();
+        assert_eq!(*custom_types.key_alternatives, *variants[0].alternatives);
+
+        // (c) GET /app.js, GET /, and PURGE /app.js still populate cache_keys &
+        // key_alternatives.
+        for (req, expected_keys) in [
+            (
+                "GET /app.js HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+                vec!["gzip".to_string()],
+            ),
+            (
+                "GET / HTTP/1.1\r\nAccept-Encoding: gzip\r\n\r\n",
+                vec!["gzip".to_string()],
+            ),
+            ("PURGE /app.js HTTP/1.1\r\n\r\n", vec![]),
+        ] {
+            let mut session = new_session(req).await;
+            let mut ctx = Ctx::default();
+            default_types
+                .handle_request(
+                    PluginStep::EarlyRequest,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            let cache = ctx.cache.as_ref().unwrap();
+            assert_eq!(Some(expected_keys), cache.keys, "{req}");
+            let variants = cache.key_variants.as_ref().unwrap();
+            assert_eq!(
+                *default_types.key_alternatives, *variants[0].alternatives,
+                "{req}"
+            );
+            assert_eq!(
+                vec![vec![], vec!["gzip".to_string()]],
+                ctx.cache_key_alternatives(),
+                "{req}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compressor_large_chunk_current_thread() {
+        use std::io::Read;
+        let session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut compressor = Compressor::new(Algorithm::Brotli, 4).unwrap();
+        let input = vec![b'A'; BLOCK_IN_PLACE_MIN_BYTES + 1024];
+        let mut body = Some(bytes::Bytes::from(input.clone()));
+        compressor.handle(&session, &mut body, true).unwrap();
+        let compressed = body.unwrap();
+        let mut decoded = vec![];
+        brotli::Decompressor::new(compressed.as_ref(), 4096)
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(input, decoded);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_compressor_large_chunk_multi_thread() {
+        use std::io::Read;
+        let input = vec![b'B'; BLOCK_IN_PLACE_MIN_BYTES + 4096];
+        let expected = input.clone();
+        let compressed = tokio::spawn(async move {
+            let session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+            let mut compressor = Compressor::new(Algorithm::Brotli, 4).unwrap();
+            let mut body = Some(bytes::Bytes::from(input));
+            compressor.handle(&session, &mut body, true).unwrap();
+            body.unwrap()
+        })
+        .await
+        .unwrap();
+        let mut decoded = vec![];
+        brotli::Decompressor::new(compressed.as_ref(), 4096)
+            .read_to_end(&mut decoded)
+            .unwrap();
+        assert_eq!(expected, decoded);
     }
 }

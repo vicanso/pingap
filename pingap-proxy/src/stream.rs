@@ -29,7 +29,7 @@ use ahash::AHashMap;
 use async_trait::async_trait;
 use pingap_config::StreamConf;
 use pingap_core::ja4::{
-    ClientHelloStatus, MAX_CLIENT_HELLO_SIZE, extract_sni, read_client_hello,
+    ClientHelloRef, MAX_CLIENT_HELLO_SIZE, extract_sni, read_client_hello_ref,
 };
 use pingap_core::{
     AddrStr, UpstreamInstance, is_trusted_proxy, new_proxy_protocol_header,
@@ -295,27 +295,27 @@ async fn peek_client_hello<R: AsyncRead + Unpin>(
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];
     loop {
-        match read_client_hello(&buf) {
-            ClientHelloStatus::Complete(body) => {
+        match read_client_hello_ref(&buf) {
+            ClientHelloRef::Complete(body) => {
                 return StreamPeek {
                     sni: extract_sni(&body),
                     buf,
                     ..Default::default()
                 };
             },
-            ClientHelloStatus::Invalid => {
+            ClientHelloRef::Invalid => {
                 return StreamPeek {
                     buf,
                     ..Default::default()
                 };
             },
-            ClientHelloStatus::Incomplete if buf.len() >= MAX_PEEK_BYTES => {
+            ClientHelloRef::Incomplete if buf.len() >= MAX_PEEK_BYTES => {
                 return StreamPeek {
                     buf,
                     ..Default::default()
                 };
             },
-            ClientHelloStatus::Incomplete => {},
+            ClientHelloRef::Incomplete => {},
         }
         match timeout_at(deadline, reader.read(&mut chunk)).await {
             Ok(Ok(n)) if n > 0 => buf.extend_from_slice(&chunk[..n]),
@@ -593,7 +593,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut buf = [0u8; RELAY_BUF_SIZE];
+    let mut buf = vec![0u8; RELAY_BUF_SIZE].into_boxed_slice();
     let mut transferred = ByteCounterGuard {
         counter: byte_counter,
         bytes: 0,

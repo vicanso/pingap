@@ -442,13 +442,20 @@ pub fn convert_header_value(
                     .req_header()
                     .headers
                     .get_all(HTTP_HEADER_X_FORWARDED_FOR);
+                if existing.iter().all(|v| v.is_empty()) {
+                    return HeaderValue::from_str(remote_addr).ok();
+                }
                 let capacity = existing
                     .iter()
+                    .filter(|v| !v.is_empty())
                     .map(|v| v.as_bytes().len() + 2)
                     .sum::<usize>()
                     + remote_addr.len();
                 let mut value_buf = BytesMut::with_capacity(capacity);
                 for value in existing.iter() {
+                    if value.is_empty() {
+                        continue;
+                    }
                     value_buf.extend_from_slice(value.as_bytes());
                     value_buf.extend_from_slice(b", ");
                 }
@@ -459,6 +466,30 @@ pub fn convert_header_value(
         // If no predefined tag matches, it might be a different type of variable (e.g., `$http_...`).
         _ => handle_special_headers(buf, session, ctx),
     }
+}
+
+/// Looks up a `$http_<name>` request header variable, mapping `_` to `-` on
+/// the stack for header names up to 128 bytes.
+#[inline]
+fn lookup_http_header_var<'a>(
+    header: &'a RequestHeader,
+    key: &str,
+) -> Option<&'a HeaderValue> {
+    let bytes = key.as_bytes();
+    if !bytes.contains(&b'_') {
+        return header.headers.get(key);
+    }
+    if bytes.len() <= 128 {
+        let mut buf = [0u8; 128];
+        for (dst, &src) in buf.iter_mut().zip(bytes.iter()) {
+            *dst = if src == b'_' { b'-' } else { src };
+        }
+        return HeaderName::from_bytes(&buf[..bytes.len()])
+            .ok()
+            .and_then(|name| header.headers.get(&name));
+    }
+    let normalized = key.replace('_', "-");
+    header.headers.get(normalized.as_str())
 }
 
 /// A helper function to handle more complex or less common special header variables.
@@ -474,10 +505,7 @@ fn handle_special_headers(
         let key = std::str::from_utf8(name).ok()?;
         // nginx spelling: `$http_user_agent` names `User-Agent`. Header names
         // never contain underscores, so mapping them is unambiguous.
-        if key.contains('_') {
-            return session.get_header(key.replace('_', "-")).cloned();
-        }
-        return session.get_header(key).cloned();
+        return lookup_http_header_var(session.req_header(), key).cloned();
     }
     // Handle variables that reference environment variables, like `$PATH`.
     if buf.starts_with(b"$") {
@@ -2138,21 +2166,33 @@ mod tests {
             "/",
         )
         .await;
+        let ctx = Ctx {
+            conn: ConnectionInfo {
+                remote_addr: Some("10.0.0.1".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let value = convert_header_value(
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
-            &Ctx {
-                conn: ConnectionInfo {
-                    remote_addr: Some("10.0.0.1".into()),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
+            &ctx,
         );
         assert_eq!(
             "6.6.6.6, 10.0.0.9, 10.0.0.1",
             value.unwrap().to_str().unwrap()
         );
+
+        // Absent or empty `X-Forwarded-For` uses `remote_addr` directly.
+        for headers in [&[][..], &["X-Forwarded-For: "][..]] {
+            let session = new_test_session(headers, "/").await;
+            let value = convert_header_value(
+                &HeaderValue::from_static("$proxy_add_x_forwarded_for"),
+                &session,
+                &ctx,
+            );
+            assert_eq!("10.0.0.1", value.unwrap().to_str().unwrap());
+        }
     }
 
     #[test]
@@ -2181,8 +2221,20 @@ mod tests {
     /// `$http_<name>` accepts the nginx spelling with underscores.
     #[tokio::test]
     async fn test_http_variable_with_underscores() {
+        let exact_128_hyphen = format!("x-{}", "a".repeat(126));
+        let exact_128_underscore = format!("$http_x_{}", "a".repeat(126));
+        let over_128_hyphen = format!("x-{}", "b".repeat(130));
+        let over_128_underscore = format!("$http_x_{}", "b".repeat(130));
+        let h_exact = format!("{exact_128_hyphen}: stack-fit");
+        let h_over = format!("{over_128_hyphen}: heap-fallback");
+
         let session = new_test_session(
-            &["User-Agent: pingap/1", "X-Env-Name: prod"],
+            &[
+                "User-Agent: pingap/1",
+                "X-Env-Name: prod",
+                &h_exact,
+                &h_over,
+            ],
             "/",
         )
         .await;
@@ -2191,6 +2243,8 @@ mod tests {
             ("$http_user-agent", Some("pingap/1")),
             ("$http_x_env_name", Some("prod")),
             ("$http_missing_header", None),
+            (exact_128_underscore.as_str(), Some("stack-fit")),
+            (over_128_underscore.as_str(), Some("heap-fallback")),
         ] {
             let value = convert_header_value(
                 &HeaderValue::from_str(variable).unwrap(),

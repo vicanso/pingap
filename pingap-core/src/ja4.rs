@@ -23,6 +23,7 @@
 //! them, so the result does not depend on the TLS backend.
 
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::fmt;
 
 /// The largest ClientHello (handshake message body) that is fingerprinted.
@@ -65,6 +66,121 @@ pub enum ClientHelloStatus {
     Invalid,
 }
 
+/// Where reading a ClientHello from the start of a connection stands, borrowing
+/// directly from the caller's slice when it fits in a single TLS record.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClientHelloRef<'a> {
+    /// The bytes so far are a valid beginning; more are needed.
+    Incomplete,
+    /// The whole ClientHello, as the handshake message body (without the
+    /// handshake header), borrowed when it fits in one record or reassembled
+    /// across records when split.
+    Complete(Cow<'a, [u8]>),
+    /// Not a TLS ClientHello, or larger than [`MAX_CLIENT_HELLO_SIZE`].
+    Invalid,
+}
+
+enum Record<'a> {
+    Incomplete,
+    Invalid,
+    Fragment { data: &'a [u8], next_pos: usize },
+}
+
+fn next_record(buf: &[u8], pos: usize) -> Record<'_> {
+    if buf.len() - pos < RECORD_HEADER_LEN {
+        return Record::Incomplete;
+    }
+    let header = &buf[pos..pos + RECORD_HEADER_LEN];
+    if header[0] != CONTENT_TYPE_HANDSHAKE {
+        return Record::Invalid;
+    }
+    let len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+    if len == 0 || len > MAX_RECORD_LEN {
+        return Record::Invalid;
+    }
+    let start = pos + RECORD_HEADER_LEN;
+    match buf.get(start..start + len) {
+        Some(data) => Record::Fragment {
+            data,
+            next_pos: start + len,
+        },
+        None => Record::Incomplete,
+    }
+}
+
+fn expected_handshake_len(msg: &[u8]) -> Option<usize> {
+    if msg[0] != HANDSHAKE_TYPE_CLIENT_HELLO {
+        return None;
+    }
+    let body_len = usize::from(msg[1]) << 16
+        | usize::from(msg[2]) << 8
+        | usize::from(msg[3]);
+    if body_len > MAX_CLIENT_HELLO_SIZE {
+        return None;
+    }
+    Some(HANDSHAKE_HEADER_LEN + body_len)
+}
+
+/// Reads the ClientHello from the first bytes of a TLS connection, returning a
+/// borrowed slice without allocation when it fits in a single TLS record.
+///
+/// The message may be split over several handshake records (RFC 8446 §5.1
+/// allows it); only then are the fragments reassembled into an owned buffer.
+pub fn read_client_hello_ref(buf: &[u8]) -> ClientHelloRef<'_> {
+    let (first, mut pos) = match next_record(buf, 0) {
+        Record::Fragment { data, next_pos } => (data, next_pos),
+        Record::Incomplete => return ClientHelloRef::Incomplete,
+        Record::Invalid => return ClientHelloRef::Invalid,
+    };
+
+    let mut expected = if first.len() >= HANDSHAKE_HEADER_LEN {
+        let Some(total) = expected_handshake_len(first) else {
+            return ClientHelloRef::Invalid;
+        };
+        if first.len() >= total {
+            return ClientHelloRef::Complete(Cow::Borrowed(
+                &first[HANDSHAKE_HEADER_LEN..total],
+            ));
+        }
+        Some(total)
+    } else {
+        None
+    };
+
+    if buf.len() - pos < RECORD_HEADER_LEN {
+        return ClientHelloRef::Incomplete;
+    }
+
+    let mut message = Vec::with_capacity(expected.unwrap_or(first.len() * 2));
+    message.extend_from_slice(first);
+
+    loop {
+        let fragment = match next_record(buf, pos) {
+            Record::Fragment { data, next_pos } => {
+                pos = next_pos;
+                data
+            },
+            Record::Incomplete => return ClientHelloRef::Incomplete,
+            Record::Invalid => return ClientHelloRef::Invalid,
+        };
+        message.extend_from_slice(fragment);
+
+        if expected.is_none() && message.len() >= HANDSHAKE_HEADER_LEN {
+            let Some(total) = expected_handshake_len(&message) else {
+                return ClientHelloRef::Invalid;
+            };
+            expected = Some(total);
+        }
+        if let Some(total) = expected
+            && message.len() >= total
+        {
+            message.truncate(total);
+            message.drain(..HANDSHAKE_HEADER_LEN);
+            return ClientHelloRef::Complete(Cow::Owned(message));
+        }
+    }
+}
+
 /// Reads the ClientHello from the first bytes of a TLS connection.
 ///
 /// The message may be split over several handshake records (RFC 8446 §5.1
@@ -72,46 +188,13 @@ pub enum ClientHelloStatus {
 /// handshake record carrying a ClientHello is [`ClientHelloStatus::Invalid`]
 /// as soon as it can be told apart.
 pub fn read_client_hello(buf: &[u8]) -> ClientHelloStatus {
-    let mut message: Vec<u8> = Vec::new();
-    let mut expected: Option<usize> = None;
-    let mut pos = 0;
-    while buf.len() - pos >= RECORD_HEADER_LEN {
-        let header = &buf[pos..pos + RECORD_HEADER_LEN];
-        if header[0] != CONTENT_TYPE_HANDSHAKE {
-            return ClientHelloStatus::Invalid;
-        }
-        let len = usize::from(u16::from_be_bytes([header[3], header[4]]));
-        if len == 0 || len > MAX_RECORD_LEN {
-            return ClientHelloStatus::Invalid;
-        }
-        let start = pos + RECORD_HEADER_LEN;
-        let Some(fragment) = buf.get(start..start + len) else {
-            return ClientHelloStatus::Incomplete;
-        };
-        message.extend_from_slice(fragment);
-        pos = start + len;
-
-        if expected.is_none() && message.len() >= HANDSHAKE_HEADER_LEN {
-            if message[0] != HANDSHAKE_TYPE_CLIENT_HELLO {
-                return ClientHelloStatus::Invalid;
-            }
-            let body_len = usize::from(message[1]) << 16
-                | usize::from(message[2]) << 8
-                | usize::from(message[3]);
-            if body_len > MAX_CLIENT_HELLO_SIZE {
-                return ClientHelloStatus::Invalid;
-            }
-            expected = Some(HANDSHAKE_HEADER_LEN + body_len);
-        }
-        if let Some(total) = expected
-            && message.len() >= total
-        {
-            message.truncate(total);
-            message.drain(..HANDSHAKE_HEADER_LEN);
-            return ClientHelloStatus::Complete(message);
-        }
+    match read_client_hello_ref(buf) {
+        ClientHelloRef::Incomplete => ClientHelloStatus::Incomplete,
+        ClientHelloRef::Complete(body) => {
+            ClientHelloStatus::Complete(body.into_owned())
+        },
+        ClientHelloRef::Invalid => ClientHelloStatus::Invalid,
     }
-    ClientHelloStatus::Incomplete
 }
 
 /// A cursor over TLS wire data; every read is bounds checked.
@@ -859,6 +942,33 @@ mod tests {
             ClientHelloStatus::Invalid,
             read_client_hello(&[0x16, 0x03, 0x01, 0x00, 0x00])
         );
+    }
+
+    #[test]
+    fn test_read_client_hello_ref_borrowed_and_owned() {
+        let body = spec_example_body();
+        let mut single = client_hello_records(&body, 16 * 1024);
+        // Trailing bytes inside a subsequent record should be ignored cleanly.
+        single.extend_from_slice(&[0x17, 0x03, 0x03, 0x00, 0x01, 0xff]);
+        match read_client_hello_ref(&single) {
+            ClientHelloRef::Complete(Cow::Borrowed(slice)) => {
+                assert_eq!(body.as_slice(), slice);
+                let start = single.as_ptr() as usize;
+                let end = start + single.len();
+                let ptr = slice.as_ptr() as usize;
+                assert!(ptr >= start && ptr + slice.len() <= end);
+            },
+            other => panic!("expected borrowed ClientHello, got {other:?}"),
+        }
+
+        // Split even across the 4-byte handshake header -> owned reassembly.
+        let split_header = client_hello_records(&body, 2);
+        match read_client_hello_ref(&split_header) {
+            ClientHelloRef::Complete(Cow::Owned(owned)) => {
+                assert_eq!(body, owned);
+            },
+            other => panic!("expected owned ClientHello, got {other:?}"),
+        }
     }
 
     #[test]

@@ -26,10 +26,10 @@
 use super::LOG_TARGET;
 use ahash::AHashMap;
 use async_trait::async_trait;
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use pingap_core::Ja4Fingerprint;
 use pingap_core::ja4::{
-    ClientHelloStatus, MAX_CLIENT_HELLO_SIZE, read_client_hello,
+    ClientHelloRef, MAX_CLIENT_HELLO_SIZE, read_client_hello_ref,
 };
 use pingora::listeners::PreTlsProcess;
 use pingora::protocols::l4::stream::Stream as L4Stream;
@@ -63,19 +63,22 @@ struct Shard {
     sweep_at: usize,
 }
 
+#[repr(align(128))]
+struct Ja4Shard(RwLock<Shard>);
+
 /// The fingerprints of the open connections of one server.
 pub struct Ja4Store {
-    shards: [Mutex<Shard>; SHARDS],
+    shards: [Ja4Shard; SHARDS],
 }
 
 impl Default for Ja4Store {
     fn default() -> Self {
         Self {
             shards: std::array::from_fn(|_| {
-                Mutex::new(Shard {
+                Ja4Shard(RwLock::new(Shard {
                     entries: AHashMap::new(),
                     sweep_at: MIN_SWEEP_SIZE,
-                })
+                }))
             }),
         }
     }
@@ -86,12 +89,17 @@ impl Ja4Store {
         Arc::as_ptr(digest) as usize
     }
 
-    fn shard(&self, key: usize) -> MutexGuard<'_, Shard> {
+    fn shard_index(key: usize) -> usize {
         // Allocations are aligned, so the low bits carry no information.
-        let index = (key >> 4 ^ key >> 12) % SHARDS;
-        // A poisoned lock only means another thread panicked while holding
-        // it; the map itself is still consistent.
-        self.shards[index].lock()
+        (key >> 4 ^ key >> 12) % SHARDS
+    }
+
+    fn shard_read(&self, key: usize) -> RwLockReadGuard<'_, Shard> {
+        self.shards[Self::shard_index(key)].0.read()
+    }
+
+    fn shard_write(&self, key: usize) -> RwLockWriteGuard<'_, Shard> {
+        self.shards[Self::shard_index(key)].0.write()
     }
 
     /// Files `fingerprint` under the connection whose socket digest is
@@ -102,7 +110,7 @@ impl Ja4Store {
         fingerprint: Arc<Ja4Fingerprint>,
     ) {
         let key = Self::key(digest);
-        let mut shard = self.shard(key);
+        let mut shard = self.shard_write(key);
         // Entries of closed connections are dropped in batches: amortized,
         // each insert pays for one entry of a sweep.
         if shard.entries.len() >= shard.sweep_at {
@@ -126,7 +134,7 @@ impl Ja4Store {
         digest: &Arc<SocketDigest>,
     ) -> Option<Arc<Ja4Fingerprint>> {
         let key = Self::key(digest);
-        let shard = self.shard(key);
+        let shard = self.shard_read(key);
         // The caller holds the digest, so it is alive, and an entry's weak
         // reference keeps any other allocation off this address: a hit is
         // this connection.
@@ -140,7 +148,7 @@ impl Ja4Store {
     fn len(&self) -> usize {
         self.shards
             .iter()
-            .map(|shard| shard.lock().entries.len())
+            .map(|shard| shard.0.read().entries.len())
             .sum()
     }
 }
@@ -149,20 +157,23 @@ impl Ja4Store {
 /// is found not to be one, the read limit is hit, or `deadline` passes.
 ///
 /// Returns every byte read, which the caller must put back, and the
-/// ClientHello body when there was one. Each read is cancel safe: a read
-/// that the deadline cuts short consumes nothing, so the bytes returned
+/// parsed ClientHello fingerprint when there was one. Each read is cancel safe:
+/// a read that the deadline cuts short consumes nothing, so the bytes returned
 /// are exactly the bytes taken off the stream.
 async fn read_client_hello_from<R: AsyncRead + Unpin>(
     reader: &mut R,
     deadline: Instant,
-) -> (Vec<u8>, Option<Vec<u8>>) {
+) -> (Vec<u8>, Option<Ja4Fingerprint>) {
     let mut buf = Vec::with_capacity(2048);
     let mut chunk = [0u8; 4096];
     loop {
-        match read_client_hello(&buf) {
-            ClientHelloStatus::Complete(body) => return (buf, Some(body)),
-            ClientHelloStatus::Invalid => return (buf, None),
-            ClientHelloStatus::Incomplete => {},
+        match read_client_hello_ref(&buf) {
+            ClientHelloRef::Complete(body) => {
+                let fp = Ja4Fingerprint::from_client_hello(&body);
+                return (buf, fp);
+            },
+            ClientHelloRef::Invalid => return (buf, None),
+            ClientHelloRef::Incomplete => {},
         }
         if buf.len() >= MAX_READ {
             return (buf, None);
@@ -196,14 +207,12 @@ impl PreTlsProcess for Ja4Collector {
     /// observes, and a client it cannot fingerprint is served as usual.
     async fn process(&self, stream: &mut L4Stream) -> pingora::Result<()> {
         let deadline = Instant::now() + self.read_timeout;
-        let (read, client_hello) =
+        let (read, fingerprint) =
             read_client_hello_from(stream, deadline).await;
         // Once, and all of it: pingora replays put-back chunks last in,
         // first out, so several calls would reorder the bytes.
         stream.rewind(&read);
 
-        let fingerprint = client_hello
-            .and_then(|body| Ja4Fingerprint::from_client_hello(&body));
         match (fingerprint, stream.get_socket_digest()) {
             (Some(fingerprint), Some(digest)) => {
                 debug!(target: LOG_TARGET, ja4 = fingerprint.ja4(), "ja4 fingerprint");
@@ -242,6 +251,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_store_follows_the_connection() {
+        assert!(std::mem::align_of::<Ja4Shard>() >= 128);
         let store = Ja4Store::default();
         let first = Arc::new(SocketDigest::from_raw_fd(0));
         let second = Arc::new(SocketDigest::from_raw_fd(0));

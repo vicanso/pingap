@@ -28,6 +28,7 @@ use pingap_util::{format_duration, parse_duration};
 use pingora::cache::{CachePhase, NoCacheReason};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
+use prometheus::local::LocalHistogram;
 use prometheus::{
     Encoder, GaugeVec, HistogramVec, Opts, ProtobufEncoder, Registry,
     TextEncoder,
@@ -36,7 +37,7 @@ use prometheus::{
     Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{error, warn};
@@ -84,6 +85,55 @@ pub fn set_metrics_certificate_provider(
 /// Counted while the series were being dropped, it left some of them
 /// behind for good. A minute later no route has the location any more.
 const LOCATION_GONE_GRACE: Duration = Duration::from_secs(60);
+
+const HISTOGRAM_SHARDS: usize = 16;
+
+static NEXT_HISTOGRAM_SHARD: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static HISTOGRAM_SHARD_IDX: usize =
+        NEXT_HISTOGRAM_SHARD.fetch_add(1, Ordering::Relaxed)
+            & (HISTOGRAM_SHARDS - 1);
+}
+
+#[inline]
+fn current_histogram_shard() -> usize {
+    HISTOGRAM_SHARD_IDX.with(|idx| *idx)
+}
+
+#[repr(align(128))]
+struct HistogramShard(Mutex<LocalHistogram>);
+
+struct ShardedHistogram {
+    shards: Box<[HistogramShard; HISTOGRAM_SHARDS]>,
+}
+
+impl ShardedHistogram {
+    fn new(h: Histogram) -> Self {
+        Self {
+            shards: Box::new(std::array::from_fn(|_| {
+                HistogramShard(Mutex::new(h.local()))
+            })),
+        }
+    }
+
+    #[inline]
+    fn observe(&self, v: f64) {
+        self.shards[current_histogram_shard()].0.lock().observe(v);
+    }
+
+    fn flush(&self) {
+        for shard in self.shards.iter() {
+            shard.0.lock().flush();
+        }
+    }
+}
+
+impl Drop for ShardedHistogram {
+    fn drop(&mut self) {
+        self.flush();
+    }
+}
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
@@ -172,7 +222,7 @@ pub struct Prometheus {
     connection_reuses: IntCounter,
 
     /// Histogram of TLS handshake durations in seconds
-    tls_handshake_time: Histogram,
+    tls_handshake_time: ShardedHistogram,
 
     /// Total number of connections to upstream servers, labeled by upstream
     upstream_connections: IntGaugeVec,
@@ -200,10 +250,10 @@ pub struct Prometheus {
     upstream_first_body_time: HistogramVec,
 
     /// Histogram of cache lookup times in seconds
-    cache_lookup_time: Histogram,
+    cache_lookup_time: ShardedHistogram,
 
     /// Histogram of cache lock acquisition times in seconds
-    cache_lock_time: Histogram,
+    cache_lock_time: ShardedHistogram,
 
     /// Current number of cache read operations in progress
     cache_reading: IntGauge,
@@ -212,7 +262,7 @@ pub struct Prometheus {
     cache_writing: IntGauge,
 
     /// Histogram of response compression ratios
-    compression_ratio: Histogram,
+    compression_ratio: ShardedHistogram,
 
     /// Current memory usage in megabytes
     memory: IntGauge,
@@ -247,7 +297,7 @@ pub struct Prometheus {
     /// Histogram of how long upstream connections had been idle when the
     /// keep-alive pool evicted them to make room, in seconds; the count is
     /// the number of evictions
-    upstream_pool_eviction_idle_time: Histogram,
+    upstream_pool_eviction_idle_time: ShardedHistogram,
 
     /// Count of responses by their exact status code, labeled by location
     /// and status
@@ -379,10 +429,10 @@ impl StatusSeries {
 struct LocationMetrics {
     requests_total: IntCounter,
     requests_current: IntGauge,
-    received: Histogram,
+    received: ShardedHistogram,
     received_bytes: IntCounter,
-    response_time: Histogram,
-    sent: Histogram,
+    response_time: ShardedHistogram,
+    sent: ShardedHistogram,
     sent_bytes: IntCounter,
 }
 
@@ -393,12 +443,22 @@ impl LocationMetrics {
         Self {
             requests_total: p.requests_total.with_label_values(&labels),
             requests_current: p.requests_current.with_label_values(&labels),
-            received: p.received.with_label_values(&labels),
+            received: ShardedHistogram::new(
+                p.received.with_label_values(&labels),
+            ),
             received_bytes: p.received_bytes.with_label_values(&labels),
-            response_time: p.response_time.with_label_values(&labels),
-            sent: p.sent.with_label_values(&labels),
+            response_time: ShardedHistogram::new(
+                p.response_time.with_label_values(&labels),
+            ),
+            sent: ShardedHistogram::new(p.sent.with_label_values(&labels)),
             sent_bytes: p.sent_bytes.with_label_values(&labels),
         }
+    }
+
+    fn flush(&self) {
+        self.received.flush();
+        self.response_time.flush();
+        self.sent.flush();
     }
 }
 
@@ -423,14 +483,22 @@ const CODE_LABELS: [&str; 6] = ["1xx", "2xx", "3xx", "4xx", "5xx", "unknown"];
 struct LocationSeries {
     requests_total: IntCounter,
     requests_current: IntGauge,
-    received: Histogram,
+    received: ShardedHistogram,
     received_bytes: IntCounter,
-    response_time: Histogram,
-    sent: Histogram,
+    response_time: ShardedHistogram,
+    sent: ShardedHistogram,
     sent_bytes: OnceLock<IntCounter>,
     codes: [OnceLock<IntCounter>; CODE_LABELS.len()],
     status: StatusSeries,
     cache: [OnceLock<IntCounter>; CACHE_LABELS.len()],
+}
+
+impl LocationSeries {
+    fn flush(&self) {
+        self.received.flush();
+        self.response_time.flush();
+        self.sent.flush();
+    }
 }
 
 /// The series of one upstream, each found when it first has a value.
@@ -438,20 +506,40 @@ struct LocationSeries {
 struct UpstreamSeries {
     connections: OnceLock<IntGauge>,
     connections_current: OnceLock<IntGauge>,
-    tcp_connect_time: OnceLock<Histogram>,
-    tls_handshake_time: OnceLock<Histogram>,
+    tcp_connect_time: OnceLock<ShardedHistogram>,
+    tls_handshake_time: OnceLock<ShardedHistogram>,
     reuses: OnceLock<IntCounter>,
-    processing_time: OnceLock<Histogram>,
-    response_time: OnceLock<Histogram>,
-    first_body_time: OnceLock<Histogram>,
+    processing_time: OnceLock<ShardedHistogram>,
+    response_time: OnceLock<ShardedHistogram>,
+    first_body_time: OnceLock<ShardedHistogram>,
     errors: OnceLock<IntCounter>,
     retries: OnceLock<IntCounter>,
 }
 
+impl UpstreamSeries {
+    fn flush(&self) {
+        if let Some(h) = self.tcp_connect_time.get() {
+            h.flush();
+        }
+        if let Some(h) = self.tls_handshake_time.get() {
+            h.flush();
+        }
+        if let Some(h) = self.processing_time.get() {
+            h.flush();
+        }
+        if let Some(h) = self.response_time.get() {
+            h.flush();
+        }
+        if let Some(h) = self.first_body_time.get() {
+            h.flush();
+        }
+    }
+}
+
 /// Runs `f` on the entry of `name` in a map of series; the entry is made
 /// with `new` and added when there is none. Two threads that miss together
-/// both make one; one of the two is kept, and both point at the same
-/// children of the vectors.
+/// both make one; one of the two is kept, and both read back the canonical
+/// winner entry so writes never land on a losing `Arc`.
 ///
 /// The entry is used where it is, without taking a reference to it: that
 /// would be a count every worker thread writes to, per request.
@@ -474,6 +562,10 @@ fn with_series<T, R>(
             .or_insert_with(|| created.clone());
         next
     });
+    let updated = map.load();
+    if let Some(winner) = updated.get(name) {
+        return f(winner);
+    }
     f(&created)
 }
 
@@ -539,14 +631,18 @@ impl Prometheus {
                     requests_current: self
                         .http_requests_current
                         .with_label_values(&labels),
-                    received: self.http_received.with_label_values(&labels),
+                    received: ShardedHistogram::new(
+                        self.http_received.with_label_values(&labels),
+                    ),
                     received_bytes: self
                         .http_received_bytes
                         .with_label_values(&labels),
-                    response_time: self
-                        .http_response_time
-                        .with_label_values(&labels),
-                    sent: self.http_sent.with_label_values(&labels),
+                    response_time: ShardedHistogram::new(
+                        self.http_response_time.with_label_values(&labels),
+                    ),
+                    sent: ShardedHistogram::new(
+                        self.http_sent.with_label_values(&labels),
+                    ),
                     sent_bytes: OnceLock::new(),
                     codes: Default::default(),
                     status: Default::default(),
@@ -581,7 +677,7 @@ impl Prometheus {
         // when it is mixed with `&str` literals in multi-label arrays below.
         let location: &str = &ctx.upstream.location;
         let upstream = &ctx.upstream.name;
-        let elapsed = ctx.timing.created_at.elapsed().as_millis();
+        let elapsed = ctx.timing.elapsed().as_millis();
         let response_time = elapsed as f64 / SECOND;
         let payload_bytes = ctx.state.payload_size as u64;
         // payload size(kb)
@@ -750,8 +846,10 @@ impl Prometheus {
             series
                 .tcp_connect_time
                 .get_or_init(|| {
-                    self.upstream_tcp_connect_time
-                        .with_label_values(upstream_labels)
+                    ShardedHistogram::new(
+                        self.upstream_tcp_connect_time
+                            .with_label_values(upstream_labels),
+                    )
                 })
                 .observe(upstream_tcp_connect_time as f64 / SECOND);
         }
@@ -761,8 +859,10 @@ impl Prometheus {
             series
                 .tls_handshake_time
                 .get_or_init(|| {
-                    self.upstream_tls_handshake_time
-                        .with_label_values(upstream_labels)
+                    ShardedHistogram::new(
+                        self.upstream_tls_handshake_time
+                            .with_label_values(upstream_labels),
+                    )
                 })
                 .observe(upstream_tls_handshake_time as f64 / SECOND);
         }
@@ -794,8 +894,10 @@ impl Prometheus {
             series
                 .processing_time
                 .get_or_init(|| {
-                    self.upstream_processing_time
-                        .with_label_values(upstream_labels)
+                    ShardedHistogram::new(
+                        self.upstream_processing_time
+                            .with_label_values(upstream_labels),
+                    )
                 })
                 .observe(upstream_processing_time as f64 / SECOND);
         }
@@ -803,8 +905,10 @@ impl Prometheus {
             series
                 .response_time
                 .get_or_init(|| {
-                    self.upstream_response_time
-                        .with_label_values(upstream_labels)
+                    ShardedHistogram::new(
+                        self.upstream_response_time
+                            .with_label_values(upstream_labels),
+                    )
                 })
                 .observe(upstream_response_time as f64 / SECOND);
         }
@@ -812,8 +916,10 @@ impl Prometheus {
             series
                 .first_body_time
                 .get_or_init(|| {
-                    self.upstream_first_body_time
-                        .with_label_values(upstream_labels)
+                    ShardedHistogram::new(
+                        self.upstream_first_body_time
+                            .with_label_values(upstream_labels),
+                    )
                 })
                 .observe(first_body_time as f64 / SECOND);
         }
@@ -849,6 +955,22 @@ impl Prometheus {
         self.access_log_dropped.inc();
     }
 
+    /// Flushes all shard-local histogram buffers into the registered metrics.
+    fn flush_histograms(&self) {
+        self.tls_handshake_time.flush();
+        self.cache_lookup_time.flush();
+        self.cache_lock_time.flush();
+        self.compression_ratio.flush();
+        self.upstream_pool_eviction_idle_time.flush();
+        self.all.flush();
+        for series in self.location_series.load().values() {
+            series.flush();
+        }
+        for series in self.upstream_series.load().values() {
+            series.flush();
+        }
+    }
+
     /// Collects all registered metrics and updates system resource gauges.
     ///
     /// Updates the following system metrics before collection:
@@ -856,6 +978,7 @@ impl Prometheus {
     /// - Open file descriptor count
     /// - IPv4 and IPv6 TCP connection counts
     fn gather(&self) -> Vec<prometheus::proto::MetricFamily> {
+        self.flush_histograms();
         let info = get_process_system_info();
         self.memory.set(info.memory_mb as i64);
         self.fd_count.set(info.fd_count as i64);
@@ -1988,7 +2111,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         http_sent,
         http_sent_bytes,
         connection_reuses,
-        tls_handshake_time,
+        tls_handshake_time: ShardedHistogram::new(tls_handshake_time),
         upstream_connections,
         upstream_connections_current,
         upstream_tcp_connect_time,
@@ -1997,11 +2120,11 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         upstream_processing_time,
         upstream_response_time,
         upstream_first_body_time,
-        cache_lookup_time,
-        cache_lock_time,
+        cache_lookup_time: ShardedHistogram::new(cache_lookup_time),
+        cache_lock_time: ShardedHistogram::new(cache_lock_time),
         cache_reading,
         cache_writing,
-        compression_ratio,
+        compression_ratio: ShardedHistogram::new(compression_ratio),
         memory,
         fd_count,
         tcp_count,
@@ -2014,7 +2137,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         certificate_remaining_seconds,
         upstream_discovery_time,
         upstream_selector_build_time,
-        upstream_pool_eviction_idle_time,
+        upstream_pool_eviction_idle_time: ShardedHistogram::new(
+            upstream_pool_eviction_idle_time,
+        ),
     })
 }
 
@@ -2944,5 +3069,158 @@ mod tests {
             "{scraped}"
         );
         provider.store(DynamicCertificates::new());
+    }
+
+    #[test]
+    fn test_sharded_histograms_flush_exact_counts() {
+        let p = Arc::new(new_prometheus("pingap").unwrap());
+        let threads = 8usize;
+        let per_thread = 500usize;
+        let barrier = Arc::new(std::sync::Barrier::new(threads));
+
+        let mut handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            let p = p.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let session = rt.block_on(async {
+                    let mock_io = Builder::new()
+                        .read(b"GET / HTTP/1.1\r\nHost: github.com\r\n\r\n")
+                        .build();
+                    let mut session = Session::new_h1(Box::new(mock_io));
+                    session.read_request().await.unwrap();
+                    session
+                });
+                let ctx = Ctx {
+                    timing: Timing {
+                        created_at: Instant::now(),
+                        tls_handshake: Some(10),
+                        upstream_tcp_connect: Some(20),
+                        upstream_tls_handshake: Some(30),
+                        upstream_processing: Some(40),
+                        upstream_response: Some(50),
+                        upstream_first_body: Some(60),
+                        cache_lookup: Some(5),
+                        cache_lock: Some(15),
+                        ..Default::default()
+                    },
+                    state: RequestState {
+                        status: Some(StatusCode::OK),
+                        payload_size: 2048,
+                        ..Default::default()
+                    },
+                    features: Some(Box::new(Features {
+                        compression_stat: Some(CompressionStat {
+                            in_bytes: 2048,
+                            out_bytes: 1024,
+                            duration: Duration::from_millis(1),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })),
+                    upstream: pingap_core::UpstreamInfo {
+                        name: "up".into(),
+                        location: "lo".into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                barrier.wait();
+                for _ in 0..per_thread {
+                    p.on_request_start();
+                    p.on_location_matched("lo");
+                    p.after(&session, &ctx);
+                    p.observe_upstream_pool_eviction(Duration::from_millis(
+                        100,
+                    ));
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let total = threads * per_thread;
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        let assert_hist = |name: &str, labels: &[&str], expected_sum: f64| {
+            let count = metric_value(&buf, &format!("{name}_count{{"), labels)
+                .unwrap_or_else(|| {
+                    panic!("missing {name}_count {labels:?}: {buf}")
+                })
+                .parse::<usize>()
+                .unwrap();
+            assert_eq!(total, count, "{name} {labels:?}");
+            let sum = metric_value(&buf, &format!("{name}_sum{{"), labels)
+                .unwrap_or_else(|| {
+                    panic!("missing {name}_sum {labels:?}: {buf}")
+                })
+                .parse::<f64>()
+                .unwrap();
+            assert!(
+                (sum - expected_sum).abs() < 1e-6,
+                "{name} {labels:?}: got {sum}, expected {expected_sum}"
+            );
+        };
+
+        for loc in ["location=\"\"", "location=\"lo\""] {
+            assert_hist("pingap_http_received", &[loc], total as f64 * 2.0);
+            assert_eq!(
+                Some(total.to_string()),
+                metric_value(&buf, "pingap_http_sent_count{", &[loc]),
+                "{loc}: {buf}"
+            );
+            assert_eq!(
+                Some(total.to_string()),
+                metric_value(&buf, "pingap_http_response_time_count{", &[loc]),
+                "{loc}: {buf}"
+            );
+        }
+        assert_hist(
+            "pingap_upstream_tcp_connect_time",
+            &["upstream=\"up\""],
+            total as f64 * 0.02,
+        );
+        assert_hist(
+            "pingap_upstream_tls_handshake_time",
+            &["upstream=\"up\""],
+            total as f64 * 0.03,
+        );
+        assert_hist(
+            "pingap_upstream_processing_time",
+            &["upstream=\"up\""],
+            total as f64 * 0.04,
+        );
+        assert_hist(
+            "pingap_upstream_response_time",
+            &["upstream=\"up\""],
+            total as f64 * 0.05,
+        );
+        assert_hist(
+            "pingap_upstream_first_body_time",
+            &["upstream=\"up\""],
+            total as f64 * 0.06,
+        );
+        assert_hist("pingap_tls_handshake_time", &[], total as f64 * 0.01);
+        assert_hist("pingap_cache_lookup_time", &[], total as f64 * 0.005);
+        assert_hist("pingap_cache_lock_time", &[], total as f64 * 0.015);
+        assert_hist("pingap_compression_ratio", &[], total as f64 * 2.0);
+        assert_hist(
+            "pingap_upstream_pool_eviction_idle_time",
+            &[],
+            total as f64 * 0.1,
+        );
+
+        // Dropping a `ShardedHistogram` flushes remaining observations too.
+        let drop_hist =
+            new_histogram("drop", "test_drop_flush", "help", &[1.0]).unwrap();
+        let sharded = ShardedHistogram::new(drop_hist.clone());
+        sharded.observe(0.5);
+        assert_eq!(0, drop_hist.get_sample_count());
+        drop(sharded);
+        assert_eq!(1, drop_hist.get_sample_count());
     }
 }

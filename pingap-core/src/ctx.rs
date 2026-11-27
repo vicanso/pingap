@@ -430,6 +430,8 @@ pub struct TlsHandshakeInfo {
 pub struct Timing {
     /// Timestamp in milliseconds when the request was created.
     pub created_at: Instant,
+    /// Finalized request elapsed duration captured once at the start of `logging()`.
+    pub completed_elapsed: Option<Duration>,
     /// The total duration of the client connection in milliseconds.
     /// May be large for reused connections.
     pub connection_duration: u64,
@@ -463,10 +465,27 @@ pub struct Timing {
     pub cache_lock: Option<i32>,
 }
 
+impl Timing {
+    /// Creates a new [`Timing`] anchored at the current instant.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the finalized request elapsed duration recorded at the start
+    /// of `logging()`, falling back to `self.created_at.elapsed()` earlier in
+    /// the request lifecycle.
+    #[inline]
+    pub fn elapsed(&self) -> Duration {
+        self.completed_elapsed
+            .unwrap_or_else(|| self.created_at.elapsed())
+    }
+}
+
 impl Default for Timing {
     fn default() -> Self {
         Self {
             created_at: Instant::now(),
+            completed_elapsed: None,
             connection_duration: 0,
             tls_handshake: None,
             upstream_connect: None,
@@ -1947,13 +1966,10 @@ impl Ctx {
                 append_time!(self.timing.cache_lock, human)
             },
             CtxLogField::ServiceTime => {
-                append_time!(Some(self.timing.created_at.elapsed().as_millis()))
+                append_time!(Some(self.timing.elapsed().as_millis()))
             },
             CtxLogField::ServiceTimeHuman => {
-                append_time!(
-                    Some(self.timing.created_at.elapsed().as_millis()),
-                    human
-                )
+                append_time!(Some(self.timing.elapsed().as_millis()), human)
             },
         }
     }
@@ -2034,7 +2050,7 @@ impl Ctx {
         }
 
         // Add the total service time, which is always present.
-        let service_time = self.timing.created_at.elapsed().as_millis();
+        let service_time = self.timing.elapsed().as_millis();
         // Add a separator if other timings were already added.
         if !first {
             timing_str.push_str(", ");
@@ -2490,8 +2506,9 @@ mod tests {
         let ctx = Ctx::new();
         // Check that created_at is a recent timestamp.
         // It should be within the last 100ms.
-        let elapsed_ms = ctx.timing.created_at.elapsed().as_millis();
+        let elapsed_ms = ctx.timing.elapsed().as_millis();
         assert!(elapsed_ms < 100, "created_at should be a recent timestamp");
+        assert!(ctx.timing.completed_elapsed.is_none());
         // Check that other fields are correctly defaulted.
         assert!(ctx.cache.is_none());
         assert!(ctx.features.is_none());
@@ -3356,5 +3373,23 @@ mod tests {
         assert_eq!(true, matches!(heap_addr.0, AddrStrRepr::Heap(_)));
         assert_eq!(long_addr.as_str(), heap_addr.as_str());
         assert_eq!(heap_addr, AddrStr::from(long_addr.as_str()));
+    }
+
+    #[test]
+    fn test_timing_completed_elapsed() {
+        let mut timing = Timing::new();
+        assert!(timing.completed_elapsed.is_none());
+        assert!(timing.elapsed() < Duration::from_secs(1));
+
+        let fixed = Duration::from_millis(42);
+        timing.completed_elapsed = Some(fixed);
+        assert_eq!(fixed, timing.elapsed());
+
+        let mut ctx = Ctx::new();
+        ctx.timing.completed_elapsed = Some(fixed);
+        let mut buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "service_time");
+        assert_eq!(b"42", buf.as_ref());
+        assert!(ctx.generate_server_timing().contains("total;dur=42"));
     }
 }

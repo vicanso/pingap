@@ -1907,10 +1907,12 @@ async fn new_peer(
         {
             let mut span =
                 tracer.new_upstream_span(String::from(&*upstream.span_name));
-            span.set_attribute(KeyValue::new(
-                "upstream.connected",
-                ctx.upstream.connected_count.unwrap_or_default() as i64,
-            ));
+            if span.is_recording() {
+                span.set_attribute(KeyValue::new(
+                    "upstream.connected",
+                    ctx.upstream.connected_count.unwrap_or_default() as i64,
+                ));
+            }
             let features = ctx.features.get_or_insert_default();
             features.upstream_span = Some(span);
         }
@@ -3366,6 +3368,8 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> logging");
         defer!(debug!(target: LOG_TARGET, "<-- logging"););
+        let request_elapsed = ctx.timing.created_at.elapsed();
+        ctx.timing.completed_elapsed = Some(request_elapsed);
         end_request();
         self.counters.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.upstream.location_instance {
@@ -3435,11 +3439,7 @@ impl ProxyHttp for Server {
                     .map_or(uri.path(), |value| value.as_str());
                 let status =
                     ctx.state.status.map_or(0, |status| status.as_u16());
-                if !filter.allows(
-                    target,
-                    status,
-                    ctx.timing.created_at.elapsed(),
-                ) {
+                if !filter.allows(target, status, request_elapsed) {
                     return;
                 }
             }

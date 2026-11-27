@@ -527,7 +527,7 @@ impl Request {
         Self {
             status,
             latency: (status != Some(101))
-                .then(|| ctx.timing.created_at.elapsed().as_millis() as u64),
+                .then(|| ctx.timing.elapsed().as_millis() as u64),
             upstream,
             fallback_from: ctx
                 .upstream

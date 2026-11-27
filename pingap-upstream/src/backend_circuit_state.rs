@@ -241,44 +241,73 @@ impl BackendCircuitStates {
             .collect()
     }
 
-    pub fn is_backend_acceptable(&self, addr: impl std::fmt::Display) -> bool {
-        self.is_backend_acceptable_at(addr, Instant::now())
-    }
-
-    fn is_backend_acceptable_at(
+    fn lookup_backend_circuit_state(
         &self,
         addr: impl std::fmt::Display,
-        now: Instant,
-    ) -> bool {
+    ) -> Arc<BackendCircuitState> {
         // Format the address into a stack buffer so this per-request lookup
         // avoids a heap allocation; only the rare first-time insert allocates.
         let mut key = AddrKeyBuf::new();
-        let state = if write!(key, "{addr}").is_ok() {
+        if write!(key, "{addr}").is_ok() {
             self.get_or_create_backend_circuit_state(key.as_str())
         } else {
             self.get_or_create_backend_circuit_state(&addr.to_string())
-        };
+        }
+    }
 
+    fn check_state(
+        &self,
+        state: &BackendCircuitState,
+        now: impl FnOnce() -> Instant,
+    ) -> bool {
         // 1. Read the atomic state (no lock, very fast)
-        let state_now = state.current_state.load(Ordering::Relaxed);
-
-        match state_now {
+        match state.current_state.load(Ordering::Relaxed) {
             STATE_CLOSED => {
-                // 99.9% of the time: the state is Closed, immediately allow.
+                // 99.9% of the time: the state is Closed, immediately allow
+                // without calling `Instant::now()`.
                 true
             },
             STATE_OPEN => {
                 // The state is Open, we need to check the timer (rare)
                 // This is a "slow path", we need a non-blocking check
-                self.check_open_state_non_blocking_at(&state, now)
+                self.check_open_state_non_blocking_at(state, now())
             },
             STATE_HALF_OPEN => {
                 // The state is HalfOpen, we need to check the probe count (rare)
                 // This is a "slow path", we need a non-blocking check
-                self.check_half_open_state_non_blocking_at(&state, now)
+                self.check_half_open_state_non_blocking_at(state, now())
             },
             _ => false, // Impossible state
         }
+    }
+
+    pub fn is_backend_acceptable(&self, addr: impl std::fmt::Display) -> bool {
+        let state = self.lookup_backend_circuit_state(addr);
+        self.check_state(&state, Instant::now)
+    }
+
+    /// Checks whether a backend identified by its formatted `&str` address is
+    /// acceptable without formatting into a stack key buffer.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "available for pre-formatted &str callers; module is crate-private"
+        )
+    )]
+    pub fn is_backend_acceptable_str(&self, address: &str) -> bool {
+        let state = self.get_or_create_backend_circuit_state(address);
+        self.check_state(&state, Instant::now)
+    }
+
+    #[cfg(test)]
+    fn is_backend_acceptable_at(
+        &self,
+        addr: impl std::fmt::Display,
+        now: Instant,
+    ) -> bool {
+        let state = self.lookup_backend_circuit_state(addr);
+        self.check_state(&state, || now)
     }
 
     pub fn update_state_after_request(
@@ -544,5 +573,7 @@ mod tests {
         assert_eq!(states.backend_states.len(), 2);
         assert!(states.backend_states.contains_key(v4));
         assert!(states.backend_states.contains_key(v6));
+        assert!(states.is_backend_acceptable_str(v4));
+        assert!(states.is_backend_acceptable_str(v6));
     }
 }

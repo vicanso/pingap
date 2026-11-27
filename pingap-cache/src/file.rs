@@ -14,7 +14,7 @@
 
 use super::http_cache::{
     BinaryMeta, CacheObject, HitBody, HttpCacheClearStats, HttpCacheStats,
-    HttpCacheStorage,
+    HttpCacheStorage, META_SIZE_LENGTH, StreamingMissWriter,
 };
 use super::tiny::{CacheMode, MemoryCache};
 #[cfg(feature = "tracing")]
@@ -22,7 +22,7 @@ use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use super::{Error, LOG_TARGET, PAGE_SIZE, Result};
 use ahash::AHashMap;
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use bytesize::ByteSize;
 use parking_lot::{Mutex, RwLock};
 use path_absolutize::*;
@@ -128,7 +128,7 @@ pub struct FileCache {
     /// Histogram metric for tracking cache read operation times
     read_time: Box<Histogram>,
     /// Counter for current number of concurrent write operations
-    writing: AtomicU32,
+    writing: Arc<AtomicU32>,
     /// Maximum allowed concurrent write operations
     writing_max: u32,
     #[cfg(feature = "tracing")]
@@ -138,7 +138,7 @@ pub struct FileCache {
     /// The hot layer, behind a lock so that a namespace purge can replace
     /// it whole: its entries cannot be listed, and some of them have no
     /// file to find them by.
-    cache: Option<RwLock<MemoryCache>>,
+    cache: Option<Arc<RwLock<MemoryCache>>>,
     /// The weight limit the hot layer is built with.
     cache_max: usize,
     /// Largest object (in pages) admitted to the hot layer.
@@ -150,21 +150,39 @@ pub struct FileCache {
     /// Max total size of on-disk cache files in bytes; 0 means unlimited.
     max_size: u64,
     /// Approximate current on-disk usage (bytes). Maintained on put/remove/clear
-    /// and initialised by a directory walk at construction time. Only kept
-    /// while `max_size` is set; without a budget nothing reads it.
+    /// and initialised by a bounded directory walk at construction time. Only
+    /// kept while `max_size` is set; without a budget nothing reads it.
     current_size: Arc<AtomicU64>,
+    /// True when the startup bounded scan stopped before seeing every entry
+    /// and a full post-fork background scan still needs to resync `current_size`.
+    size_scan_pending: Arc<AtomicBool>,
     /// Set while a `put` is evicting for the budget. The others skip the
     /// walk and write, so a burst of writes over budget costs one directory
     /// walk, not one per write.
     evicting: Arc<AtomicBool>,
     /// Per-path single-flight slots coalescing concurrent cold disk reads.
-    cold_reads: Mutex<AHashMap<PathBuf, Arc<ColdReadSlot>>>,
+    cold_reads: Arc<Mutex<AHashMap<PathBuf, Arc<ColdReadSlot>>>>,
     #[cfg(test)]
     cold_disk_reads: AtomicU64,
     /// When the file of an object was last marked as read, in seconds; by
     /// a hash of its key, see [`FileCache::touch`].
     touched: Box<[AtomicU64]>,
+    /// Coalesced file paths waiting for their `atime` to be updated in batch.
+    pending_touches: Arc<Mutex<Vec<PathBuf>>>,
+    /// Whether an async touch-batch drainer task is currently active.
+    touch_flushing: Arc<AtomicBool>,
 }
+
+/// Maximum number of entries visited synchronously during startup `FileCache::new`.
+const INITIAL_SCAN_ENTRY_LIMIT: usize = 1024;
+
+/// Batch threshold that triggers immediate touch flushing without waiting `TOUCH_FLUSH_DELAY`.
+const TOUCH_BATCH_SIZE: usize = 64;
+/// Delay before flushing a smaller batch of pending `atime` updates.
+const TOUCH_FLUSH_DELAY: Duration = Duration::from_millis(50);
+
+/// Staging buffer threshold (128 KiB) before dispatching streaming `.tmp` writes.
+const STREAMING_STAGE_SIZE: usize = 128 * 1024;
 
 /// The share of `max_size` an eviction frees, as its divisor: a tenth.
 const EVICT_ROOM_DIVISOR: u64 = 10;
@@ -326,15 +344,20 @@ fn is_cache_tmp_file(name: &str) -> bool {
 /// `skip_tmp` leaves in-flight temporaries to the `put` that owns them; the
 /// inactive sweep keeps them, since one older than the inactive window was
 /// abandoned by a writer that died.
+#[inline]
+fn is_cache_file(entry: &walkdir::DirEntry, skip_tmp: bool) -> bool {
+    if !entry.file_type().is_file() {
+        return false;
+    }
+    let name = entry.file_name().to_string_lossy();
+    is_cache_key(&name) || (!skip_tmp && is_cache_tmp_file(&name))
+}
+
 fn walk_cache_files(dir: &Path, skip_tmp: bool) -> Vec<CacheFile> {
     WalkDir::new(dir)
         .into_iter()
         .filter_map(|item| item.ok())
-        .filter(|item| item.file_type().is_file())
-        .filter(|item| {
-            let name = item.file_name().to_string_lossy();
-            is_cache_key(&name) || (!skip_tmp && is_cache_tmp_file(&name))
-        })
+        .filter(|item| is_cache_file(item, skip_tmp))
         .filter_map(|item| {
             let metadata = item.metadata().ok()?;
             Some(CacheFile {
@@ -407,6 +430,67 @@ fn track_written_delta_atomic(
     }
 }
 
+fn apply_touch_batch(files: &[PathBuf]) {
+    if files.is_empty() {
+        return;
+    }
+    let times = std::fs::FileTimes::new().set_accessed(SystemTime::now());
+    for file in files {
+        // Opened for writing, which Windows asks for before it lets
+        // the times of a file be set. An object that is in memory
+        // only has no file.
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .open(file)
+            .and_then(|f| f.set_times(times));
+    }
+}
+
+fn flush_pending_touches_sync(pending_touches: &Mutex<Vec<PathBuf>>) {
+    let batch = {
+        let mut guard = pending_touches.lock();
+        if guard.is_empty() {
+            return;
+        }
+        std::mem::take(&mut *guard)
+    };
+    apply_touch_batch(&batch);
+}
+
+fn rearm_touch_drainer(
+    pending_touches: &Mutex<Vec<PathBuf>>,
+    touch_flushing: &AtomicBool,
+) -> bool {
+    touch_flushing.store(false, Ordering::Release);
+    std::sync::atomic::fence(Ordering::SeqCst);
+    !pending_touches.lock().is_empty()
+        && touch_flushing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+}
+
+async fn drain_pending_touches(
+    pending_touches: Arc<Mutex<Vec<PathBuf>>>,
+    touch_flushing: Arc<AtomicBool>,
+) {
+    loop {
+        let len = pending_touches.lock().len();
+        if len > 0 && len < TOUCH_BATCH_SIZE {
+            tokio::time::sleep(TOUCH_FLUSH_DELAY).await;
+        }
+        while !pending_touches.lock().is_empty() {
+            let pending = pending_touches.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                flush_pending_touches_sync(&pending);
+            })
+            .await;
+        }
+        if !rearm_touch_drainer(&pending_touches, &touch_flushing) {
+            break;
+        }
+    }
+}
+
 /// Makes room for `need` more bytes under `max_size` by deleting the least
 /// recently accessed files synchronously inside a blocking task.
 /// Returns `(allowed, evicted_any)`.
@@ -416,6 +500,7 @@ fn evict_disk_space_sync(
     need: u64,
     current_size: &AtomicU64,
     evicting: &AtomicBool,
+    pending_touches: &Mutex<Vec<PathBuf>>,
 ) -> (bool, bool) {
     if max_size == 0 {
         return (true, false);
@@ -437,6 +522,7 @@ fn evict_disk_space_sync(
     }
     defer!(evicting.store(false, Ordering::Release));
 
+    flush_pending_touches_sync(pending_touches);
     let mut files = walk_cache_files(dir, true);
     // The counter is an estimate: two writes of one key, a file removed
     // by another process or by hand, and it is off, for good. With the
@@ -517,16 +603,55 @@ fn remove_tracked_sync(
     }
 }
 
+fn validate_meta_lengths(meta: &BinaryMeta) -> Result<(u32, u32)> {
+    let meta0_len =
+        u32::try_from(meta.0.len()).map_err(|_| Error::Invalid {
+            message: "meta0 exceeds u32::MAX".to_string(),
+        })?;
+    let meta1_len =
+        u32::try_from(meta.1.len()).map_err(|_| Error::Invalid {
+            message: "meta1 exceeds u32::MAX".to_string(),
+        })?;
+    Ok((meta0_len, meta1_len))
+}
+
+#[inline]
+fn encode_cache_header(
+    meta0_len: u32,
+    meta1_len: u32,
+) -> [u8; META_SIZE_LENGTH] {
+    let mut header = [0u8; META_SIZE_LENGTH];
+    header[..4].copy_from_slice(&meta0_len.to_be_bytes());
+    header[4..].copy_from_slice(&meta1_len.to_be_bytes());
+    header
+}
+
+fn write_cache_header_and_meta(
+    writer: &mut impl std::io::Write,
+    meta: &BinaryMeta,
+    meta0_len: u32,
+    meta1_len: u32,
+) -> std::io::Result<()> {
+    let header = encode_cache_header(meta0_len, meta1_len);
+    writer.write_all(&header)?;
+    writer.write_all(&meta.0)?;
+    writer.write_all(&meta.1)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn put_file_sync(
     dir: &Path,
     file: &Path,
-    buf: &[u8],
+    data: &CacheObject,
+    meta0_len: u32,
+    meta1_len: u32,
     new_len: u64,
     max_size: u64,
     current_size: &AtomicU64,
     evicting: &AtomicBool,
+    pending_touches: &Mutex<Vec<PathBuf>>,
 ) -> Result<bool> {
-    use std::io::Write;
+    use std::io::{BufWriter, Write};
     let has_budget = max_size > 0;
     let mut old_len = if has_budget {
         std::fs::metadata(file).map(|m| m.len()).unwrap_or(0)
@@ -535,8 +660,14 @@ fn put_file_sync(
     };
     if has_budget {
         let need = new_len.saturating_sub(old_len);
-        let (allowed, evicted_any) =
-            evict_disk_space_sync(dir, max_size, need, current_size, evicting);
+        let (allowed, evicted_any) = evict_disk_space_sync(
+            dir,
+            max_size,
+            need,
+            current_size,
+            evicting,
+            pending_touches,
+        );
         if !allowed {
             return Ok(false);
         }
@@ -556,9 +687,17 @@ fn put_file_sync(
     // keeps concurrent writes of the same key inside one process apart.
     let tmp = temp_path_for(file);
     let write_result = (|| -> std::io::Result<()> {
-        let mut dst = create_temp_file(&tmp)?;
-        dst.write_all(buf)?;
-        drop(dst);
+        let dst = create_temp_file(&tmp)?;
+        let mut writer = BufWriter::new(dst);
+        write_cache_header_and_meta(
+            &mut writer,
+            &data.meta,
+            meta0_len,
+            meta1_len,
+        )?;
+        writer.write_all(&data.body)?;
+        writer.flush()?;
+        drop(writer);
         std::fs::rename(&tmp, file)
     })();
     if let Err(e) = write_result {
@@ -836,7 +975,12 @@ struct ClearFilesResult {
     hot_keys: Vec<String>,
 }
 
-fn clear_files_sync(dir: &Path, access_before: SystemTime) -> ClearFilesResult {
+fn clear_files_sync(
+    dir: &Path,
+    access_before: SystemTime,
+    pending_touches: &Mutex<Vec<PathBuf>>,
+) -> ClearFilesResult {
+    flush_pending_touches_sync(pending_touches);
     let mut success = 0;
     let mut fail = 0;
     let mut removed_bytes = 0u64;
@@ -909,13 +1053,35 @@ async fn wait_cold_read(
     }
 }
 
-/// Sum of file sizes under `directory` (skips missing paths). Used once at
-/// construction so the `max_size` budget starts from real disk usage.
+/// Sum of cache file sizes under `directory` (skips missing paths), stopping
+/// once visited `WalkDir` entries exceed `max_entries`. Returns `(sum, complete)`.
+fn measure_dir_size_bounded(
+    directory: &str,
+    max_entries: usize,
+) -> (u64, bool) {
+    let mut total = 0u64;
+    let mut visited = 0usize;
+    for item in WalkDir::new(directory) {
+        visited += 1;
+        if visited > max_entries {
+            return (total, false);
+        }
+        let Ok(entry) = item else {
+            continue;
+        };
+        if !is_cache_file(&entry, false) {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    (total, true)
+}
+
+/// Sum of file sizes under `directory` (skips missing paths).
 fn measure_dir_size(directory: &str) -> u64 {
-    walk_cache_files(Path::new(directory), false)
-        .iter()
-        .map(|file| file.len)
-        .sum()
+    measure_dir_size_bounded(directory, usize::MAX).0
 }
 
 /// Partitions and sorts only the oldest prefix of `files` needed to free at
@@ -962,6 +1128,18 @@ fn remove_empty_dirs(dir: &Path) {
 impl FileCache {
     /// Create a file cache and use tinyufo for hotspot data caching
     pub fn new(dir: &str) -> Result<Self> {
+        Self::new_with_scan_limit_inner(dir, INITIAL_SCAN_ENTRY_LIMIT)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_scan_limit(
+        dir: &str,
+        scan_limit: usize,
+    ) -> Result<Self> {
+        Self::new_with_scan_limit_inner(dir, scan_limit)
+    }
+
+    fn new_with_scan_limit_inner(dir: &str, scan_limit: usize) -> Result<Self> {
         let params = FileCacheParams::try_from(dir)?;
 
         let path = Path::new(&params.directory);
@@ -971,13 +1149,15 @@ impl FileCache {
                 .map_err(|e| Error::Io { source: e })?;
         }
         let max_size = params.max_size.map(|s| s.as_u64()).unwrap_or(0);
-        // One-shot walk so the budget starts from real usage rather than zero
-        // (which would otherwise allow a large overshoot after restart).
-        let current_size = if max_size > 0 {
-            measure_dir_size(&params.directory)
+        // Bounded startup walk keeps daemon boot fast on large cache dirs;
+        // if truncated, the full resync runs post-fork in the background.
+        let (current_size, scan_complete) = if max_size > 0 {
+            measure_dir_size_bounded(&params.directory, scan_limit)
         } else {
-            0
+            (0, true)
         };
+        let size_scan_pending =
+            Arc::new(AtomicBool::new(max_size > 0 && !scan_complete));
         info!(
             target: LOG_TARGET,
             dir = params.directory,
@@ -993,6 +1173,7 @@ impl FileCache {
             cache_file_max_weight = params.cache_file_max_weight,
             max_size,
             current_size,
+            scan_complete,
             "new file cache"
         );
         let max_pages = crate::max_safe_memory_pages();
@@ -1008,7 +1189,10 @@ impl FileCache {
             params.cache_max
         };
         let cache = (cache_max > 0).then(|| {
-            RwLock::new(MemoryCache::new(CacheMode::Normal, cache_max))
+            Arc::new(RwLock::new(MemoryCache::new(
+                CacheMode::Normal,
+                cache_max,
+            )))
         });
 
         Ok(FileCache {
@@ -1022,7 +1206,7 @@ impl FileCache {
             reading_max: params.reading_max.unwrap_or(10_000),
             #[cfg(feature = "tracing")]
             read_time: CACHE_READING_TIME.clone(),
-            writing: AtomicU32::new(0),
+            writing: Arc::new(AtomicU32::new(0)),
             writing_max: params.writing_max.unwrap_or(1_000),
             #[cfg(feature = "tracing")]
             write_time: CACHE_WRITING_TIME.clone(),
@@ -1034,12 +1218,56 @@ impl FileCache {
             levels: params.levels,
             max_size,
             current_size: Arc::new(AtomicU64::new(current_size)),
+            size_scan_pending,
             evicting: Arc::new(AtomicBool::new(false)),
-            cold_reads: Mutex::new(AHashMap::new()),
+            cold_reads: Arc::new(Mutex::new(AHashMap::new())),
             #[cfg(test)]
             cold_disk_reads: AtomicU64::new(0),
             touched: (0..TOUCH_SLOTS).map(|_| AtomicU64::new(0)).collect(),
+            pending_touches: Arc::new(Mutex::new(Vec::new())),
+            touch_flushing: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    fn maybe_schedule_full_size_scan(&self) {
+        if !self.size_scan_pending.load(Ordering::Relaxed) {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        if self
+            .size_scan_pending
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let dir = self.directory.clone();
+        let current_size = self.current_size.clone();
+        let evicting = self.evicting.clone();
+        tokio::task::spawn_blocking(move || {
+            if evicting
+                .compare_exchange(
+                    false,
+                    true,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+            {
+                return;
+            }
+            defer!(evicting.store(false, Ordering::Release));
+            let real_size = measure_dir_size(&dir);
+            current_size.store(real_size, Ordering::Relaxed);
+            debug!(
+                target: LOG_TARGET,
+                directory = dir,
+                real_size,
+                "completed deferred full cache directory size scan"
+            );
+        });
     }
 
     /// Whether the on-disk budget is tracked at all.
@@ -1220,18 +1448,34 @@ impl FileCache {
             return;
         }
         let file = self.get_file_path(key, namespace);
-        // Not waited for: the request has its object already.
-        tokio::task::spawn_blocking(move || {
-            let times =
-                std::fs::FileTimes::new().set_accessed(SystemTime::now());
-            // Opened for writing, which Windows asks for before it lets
-            // the times of a file be set. An object that is in memory
-            // only has no file.
-            let _ = std::fs::OpenOptions::new()
-                .write(true)
-                .open(&file)
-                .and_then(|file| file.set_times(times));
-        });
+        self.schedule_touch_flush(file);
+    }
+
+    fn schedule_touch_flush(&self, file: PathBuf) {
+        self.pending_touches.lock().push(file);
+        if self
+            .touch_flushing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(drain_pending_touches(
+                self.pending_touches.clone(),
+                self.touch_flushing.clone(),
+            ));
+        } else {
+            loop {
+                flush_pending_touches_sync(&self.pending_touches);
+                if !rearm_touch_drainer(
+                    &self.pending_touches,
+                    &self.touch_flushing,
+                ) {
+                    break;
+                }
+            }
+        }
     }
 
     #[inline]
@@ -1300,6 +1544,398 @@ fn elapsed_second(time: SystemTime) -> f64 {
     time.elapsed().unwrap_or_default().as_millis() as f64 / 1000.0
 }
 
+struct WritingCounterGuard<'a> {
+    writing: &'a AtomicU32,
+    active: bool,
+}
+
+impl<'a> WritingCounterGuard<'a> {
+    fn acquire(writing: &'a AtomicU32, max: u32) -> Option<Self> {
+        let prev = writing.fetch_add(1, Ordering::Relaxed);
+        if max > 0 && prev >= max {
+            writing.fetch_sub(1, Ordering::Relaxed);
+            return None;
+        }
+        Some(Self {
+            writing,
+            active: true,
+        })
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for WritingCounterGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.writing.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+struct StreamingInitParams {
+    dir: PathBuf,
+    file: PathBuf,
+    meta: BinaryMeta,
+    meta0_len: u32,
+    meta1_len: u32,
+    header_len: u64,
+    content_length: Option<u64>,
+    max_size: u64,
+    current_size: Arc<AtomicU64>,
+    evicting: Arc<AtomicBool>,
+    pending_touches: Arc<Mutex<Vec<PathBuf>>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+fn init_streaming_file_sync(
+    params: StreamingInitParams,
+) -> Result<Option<(PathBuf, std::fs::File)>> {
+    if params.max_size > 0 {
+        let expected_len =
+            params.content_length.map_or(params.header_len, |cl| {
+                params.header_len.saturating_add(cl)
+            });
+        if expected_len > params.max_size {
+            return Ok(None);
+        }
+        if params.content_length.is_some() {
+            let old_len = std::fs::metadata(&params.file)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let need = expected_len.saturating_sub(old_len);
+            let (allowed, _) = evict_disk_space_sync(
+                &params.dir,
+                params.max_size,
+                need,
+                &params.current_size,
+                &params.evicting,
+                &params.pending_touches,
+            );
+            if !allowed {
+                return Ok(None);
+            }
+        }
+    }
+    let tmp = temp_path_for(&params.file);
+    let write_result = (|| -> std::io::Result<std::fs::File> {
+        let mut dst = create_temp_file(&tmp)?;
+        write_cache_header_and_meta(
+            &mut dst,
+            &params.meta,
+            params.meta0_len,
+            params.meta1_len,
+        )?;
+        Ok(dst)
+    })();
+    match write_result {
+        Ok(dst) => {
+            if params.cancelled.load(Ordering::Acquire) {
+                drop(dst);
+                let _ = std::fs::remove_file(&tmp);
+                return Ok(None);
+            }
+            Ok(Some((tmp, dst)))
+        },
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(Error::Io { source: e })
+        },
+    }
+}
+
+fn write_chunks_sync(
+    mut file: std::fs::File,
+    first: Option<Bytes>,
+    second: Option<Bytes>,
+) -> std::io::Result<std::fs::File> {
+    use std::io::Write;
+    if let Some(chunk) = first {
+        file.write_all(&chunk)?;
+    }
+    if let Some(chunk) = second {
+        file.write_all(&chunk)?;
+    }
+    Ok(file)
+}
+
+struct StreamingFinishParams {
+    dir: PathBuf,
+    file: PathBuf,
+    tmp_path: PathBuf,
+    tmp_file: std::fs::File,
+    tail: Bytes,
+    new_len: u64,
+    max_size: u64,
+    current_size: Arc<AtomicU64>,
+    evicting: Arc<AtomicBool>,
+    pending_touches: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+fn finish_streaming_file_sync(params: StreamingFinishParams) -> Result<bool> {
+    use std::io::Write;
+    let StreamingFinishParams {
+        dir,
+        file,
+        tmp_path,
+        mut tmp_file,
+        tail,
+        new_len,
+        max_size,
+        current_size,
+        evicting,
+        pending_touches,
+    } = params;
+    let finish_result = (|| -> std::io::Result<bool> {
+        if !tail.is_empty() {
+            tmp_file.write_all(&tail)?;
+        }
+        tmp_file.flush()?;
+        drop(tmp_file);
+
+        let has_budget = max_size > 0;
+        if has_budget && new_len > max_size {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Ok(false);
+        }
+        let mut old_len = if has_budget {
+            std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
+        if has_budget {
+            let need = new_len.saturating_sub(old_len);
+            let (allowed, evicted_any) = evict_disk_space_sync(
+                &dir,
+                max_size,
+                need,
+                &current_size,
+                &evicting,
+                &pending_touches,
+            );
+            if !allowed {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Ok(false);
+            }
+            if evicted_any {
+                old_len =
+                    std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+            }
+        }
+        std::fs::rename(&tmp_path, &file)?;
+        track_written_delta_atomic(has_budget, &current_size, old_len, new_len);
+        Ok(true)
+    })();
+    match finish_result {
+        Ok(written) => Ok(written),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(Error::Io { source: e })
+        },
+    }
+}
+
+struct FileStreamingMissWriter {
+    dir: PathBuf,
+    file: PathBuf,
+    key: String,
+    tmp_path: Option<PathBuf>,
+    tmp_file: Option<std::fs::File>,
+    stage: BytesMut,
+    header_len: u64,
+    bytes_received: u64,
+    max_size: u64,
+    current_size: Arc<AtomicU64>,
+    evicting: Arc<AtomicBool>,
+    pending_touches: Arc<Mutex<Vec<PathBuf>>>,
+    cold_reads: Arc<Mutex<AHashMap<PathBuf, Arc<ColdReadSlot>>>>,
+    hot_cache: Option<Arc<RwLock<MemoryCache>>>,
+    writing: Arc<AtomicU32>,
+    holding_writing: bool,
+    aborted: bool,
+    finished: bool,
+    #[cfg(feature = "tracing")]
+    write_time: Box<Histogram>,
+    #[cfg(feature = "tracing")]
+    start: SystemTime,
+}
+
+impl FileStreamingMissWriter {
+    fn skipped(cache: &FileCache) -> Self {
+        Self {
+            dir: PathBuf::new(),
+            file: PathBuf::new(),
+            key: String::new(),
+            tmp_path: None,
+            tmp_file: None,
+            stage: BytesMut::new(),
+            header_len: 0,
+            bytes_received: 0,
+            max_size: 0,
+            current_size: cache.current_size.clone(),
+            evicting: cache.evicting.clone(),
+            pending_touches: cache.pending_touches.clone(),
+            cold_reads: cache.cold_reads.clone(),
+            hot_cache: None,
+            writing: cache.writing.clone(),
+            holding_writing: false,
+            aborted: true,
+            finished: true,
+            #[cfg(feature = "tracing")]
+            write_time: cache.write_time.clone(),
+            #[cfg(feature = "tracing")]
+            start: SystemTime::now(),
+        }
+    }
+
+    fn release_writing(&mut self) {
+        if self.holding_writing {
+            self.holding_writing = false;
+            self.writing.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    async fn abort_and_cleanup(&mut self) {
+        self.aborted = true;
+        self.finished = true;
+        self.stage.clear();
+        self.release_writing();
+        let file = self.tmp_file.take();
+        let tmp_path = self.tmp_path.take();
+        if file.is_some() || tmp_path.is_some() {
+            let _ = tokio::task::spawn_blocking(move || {
+                drop(file);
+                if let Some(path) = tmp_path {
+                    let _ = std::fs::remove_file(&path);
+                }
+            })
+            .await;
+        }
+    }
+
+    async fn flush_chunks(
+        &mut self,
+        first: Option<Bytes>,
+        second: Option<Bytes>,
+    ) -> Result<()> {
+        let Some(file) = self.tmp_file.take() else {
+            return Ok(());
+        };
+        let res = tokio::task::spawn_blocking(move || {
+            write_chunks_sync(file, first, second)
+        })
+        .await;
+        match res {
+            Ok(Ok(file)) => {
+                self.tmp_file = Some(file);
+                Ok(())
+            },
+            Ok(Err(e)) => {
+                self.abort_and_cleanup().await;
+                Err(Error::Io { source: e })
+            },
+            Err(e) => {
+                self.abort_and_cleanup().await;
+                Err(Error::Invalid {
+                    message: format!("file cache streaming write failed: {e}"),
+                })
+            },
+        }
+    }
+}
+
+impl Drop for FileStreamingMissWriter {
+    fn drop(&mut self) {
+        self.release_writing();
+        if !self.finished
+            && let Some(tmp_path) = self.tmp_path.take()
+        {
+            drop(self.tmp_file.take());
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+    }
+}
+
+#[async_trait]
+impl StreamingMissWriter for FileStreamingMissWriter {
+    async fn write_chunk(&mut self, data: Bytes) -> Result<()> {
+        if self.aborted || data.is_empty() {
+            return Ok(());
+        }
+        self.bytes_received =
+            self.bytes_received.saturating_add(data.len() as u64);
+        let new_total = self.header_len.saturating_add(self.bytes_received);
+        if self.max_size > 0 && new_total > self.max_size {
+            debug!(
+                target: LOG_TARGET,
+                key = self.key,
+                size = new_total,
+                max_size = self.max_size,
+                "streaming cache object exceeds max_size, aborting disk write"
+            );
+            self.abort_and_cleanup().await;
+            return Ok(());
+        }
+        if self.stage.len().saturating_add(data.len()) < STREAMING_STAGE_SIZE {
+            self.stage.extend_from_slice(&data);
+            return Ok(());
+        }
+        let staged =
+            (!self.stage.is_empty()).then(|| self.stage.split().freeze());
+        self.flush_chunks(staged, Some(data)).await
+    }
+
+    async fn finish(mut self: Box<Self>) -> Result<()> {
+        if self.aborted {
+            self.finished = true;
+            self.release_writing();
+            return Ok(());
+        }
+        let tail = self.stage.split().freeze();
+        let (Some(tmp_path), Some(tmp_file)) =
+            (self.tmp_path.clone(), self.tmp_file.take())
+        else {
+            self.finished = true;
+            self.release_writing();
+            return Ok(());
+        };
+        self.cold_reads.lock().remove(&self.file);
+        let new_len = self.header_len.saturating_add(self.bytes_received);
+        let params = StreamingFinishParams {
+            dir: self.dir.clone(),
+            file: self.file.clone(),
+            tmp_path,
+            tmp_file,
+            tail,
+            new_len,
+            max_size: self.max_size,
+            current_size: self.current_size.clone(),
+            evicting: self.evicting.clone(),
+            pending_touches: self.pending_touches.clone(),
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            finish_streaming_file_sync(params)
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache streaming finish failed: {e}"),
+        });
+        self.tmp_path = None;
+        self.finished = true;
+        self.release_writing();
+        let written = result??;
+        #[cfg(feature = "tracing")]
+        self.write_time.observe(elapsed_second(self.start));
+        self.cold_reads.lock().remove(&self.file);
+        if written && let Some(hot) = &self.hot_cache {
+            hot.read().remove(&self.key);
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl HttpCacheStorage for FileCache {
     /// Retrieves a cache object by key and namespace.
@@ -1319,6 +1955,7 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
+        self.maybe_schedule_full_size_scan();
         let ns = namespace_str(namespace);
         // Early return if found in cache
         if let Some(obj) = self.get_hot(key) {
@@ -1364,6 +2001,7 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &[u8],
     ) -> Result<Option<(BinaryMeta, HitBody)>> {
+        self.maybe_schedule_full_size_scan();
         let ns = namespace_str(namespace);
         if let Some(obj) = self.get_hot(key) {
             debug!(
@@ -1465,11 +2103,16 @@ impl HttpCacheStorage for FileCache {
         namespace: &[u8],
         data: CacheObject,
     ) -> Result<()> {
+        self.maybe_schedule_full_size_scan();
         let ns = namespace_str(namespace);
         self.put_hot(key, &data);
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
-        let buf: Bytes = data.into();
+        let (meta0_len, meta1_len) = validate_meta_lengths(&data.meta)?;
+        let new_len = (META_SIZE_LENGTH as u64)
+            .saturating_add(meta0_len as u64)
+            .saturating_add(meta1_len as u64)
+            .saturating_add(data.body.len() as u64);
         let file = self.get_file_path(key, ns);
         self.invalidate_cold_read(&file);
         // add writing count
@@ -1486,21 +2129,24 @@ impl HttpCacheStorage for FileCache {
             );
             return Ok(());
         }
-        let new_len = buf.len() as u64;
         let dir = PathBuf::from(&self.directory);
         let max_size = self.max_size;
         let current_size = self.current_size.clone();
         let evicting = self.evicting.clone();
+        let pending_touches = self.pending_touches.clone();
         let file_for_write = file.clone();
         let written = tokio::task::spawn_blocking(move || {
             put_file_sync(
                 &dir,
                 &file_for_write,
-                &buf,
+                &data,
+                meta0_len,
+                meta1_len,
                 new_len,
                 max_size,
                 &current_size,
                 &evicting,
+                &pending_touches,
             )
         })
         .await
@@ -1527,6 +2173,100 @@ impl HttpCacheStorage for FileCache {
             "put cache to file"
         );
         Ok(())
+    }
+
+    fn max_hot_body_bytes(&self) -> Option<usize> {
+        Some(if self.cache.is_some() {
+            (self.cache_file_max_weight as usize).saturating_mul(PAGE_SIZE)
+        } else {
+            0
+        })
+    }
+
+    async fn begin_streaming_put(
+        &self,
+        key: &str,
+        namespace: &[u8],
+        meta: BinaryMeta,
+        content_length: Option<u64>,
+    ) -> Result<Option<Box<dyn StreamingMissWriter>>> {
+        self.maybe_schedule_full_size_scan();
+        let (meta0_len, meta1_len) = validate_meta_lengths(&meta)?;
+        let header_len = (META_SIZE_LENGTH as u64)
+            .saturating_add(meta0_len as u64)
+            .saturating_add(meta1_len as u64);
+
+        let Some(mut writing_guard) =
+            WritingCounterGuard::acquire(&self.writing, self.writing_max)
+        else {
+            debug!(
+                target: LOG_TARGET,
+                key,
+                max = self.writing_max,
+                "file cache streaming write over quota, skip disk put"
+            );
+            return Ok(Some(Box::new(FileStreamingMissWriter::skipped(self))));
+        };
+
+        let ns = namespace_str(namespace);
+        let file = self.get_file_path(key, ns);
+        self.invalidate_cold_read(&file);
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel_guard = scopeguard::guard(cancelled.clone(), |c| {
+            c.store(true, Ordering::Release);
+        });
+        let init_params = StreamingInitParams {
+            dir: PathBuf::from(&self.directory),
+            file: file.clone(),
+            meta,
+            meta0_len,
+            meta1_len,
+            header_len,
+            content_length,
+            max_size: self.max_size,
+            current_size: self.current_size.clone(),
+            evicting: self.evicting.clone(),
+            pending_touches: self.pending_touches.clone(),
+            cancelled,
+        };
+        let init_outcome = tokio::task::spawn_blocking(move || {
+            init_streaming_file_sync(init_params)
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache streaming init failed: {e}"),
+        })??;
+        let _ = scopeguard::ScopeGuard::into_inner(cancel_guard);
+
+        let Some((tmp_path, tmp_file)) = init_outcome else {
+            return Ok(Some(Box::new(FileStreamingMissWriter::skipped(self))));
+        };
+        writing_guard.disarm();
+        Ok(Some(Box::new(FileStreamingMissWriter {
+            dir: PathBuf::from(&self.directory),
+            file,
+            key: key.to_string(),
+            tmp_path: Some(tmp_path),
+            tmp_file: Some(tmp_file),
+            stage: BytesMut::with_capacity(STREAMING_STAGE_SIZE),
+            header_len,
+            bytes_received: 0,
+            max_size: self.max_size,
+            current_size: self.current_size.clone(),
+            evicting: self.evicting.clone(),
+            pending_touches: self.pending_touches.clone(),
+            cold_reads: self.cold_reads.clone(),
+            hot_cache: self.cache.clone(),
+            writing: self.writing.clone(),
+            holding_writing: true,
+            aborted: false,
+            finished: false,
+            #[cfg(feature = "tracing")]
+            write_time: self.write_time.clone(),
+            #[cfg(feature = "tracing")]
+            start: SystemTime::now(),
+        })))
     }
 
     /// Updates metadata of an existing entry in the hot layer and on disk
@@ -1656,6 +2396,7 @@ impl HttpCacheStorage for FileCache {
         &self,
         access_before: SystemTime,
     ) -> Result<HttpCacheClearStats> {
+        self.maybe_schedule_full_size_scan();
         let dt_utc = time::OffsetDateTime::from(access_before);
         let offset = time::UtcOffset::local_offset_at(dt_utc)
             .unwrap_or(time::UtcOffset::UTC);
@@ -1669,8 +2410,9 @@ impl HttpCacheStorage for FileCache {
             self.directory
         );
         let dir = PathBuf::from(&self.directory);
+        let pending_touches = self.pending_touches.clone();
         let cleared = tokio::task::spawn_blocking(move || {
-            clear_files_sync(&dir, access_before)
+            clear_files_sync(&dir, access_before, &pending_touches)
         })
         .await
         .map_err(|e| Error::Invalid {
@@ -1701,6 +2443,8 @@ impl HttpCacheStorage for FileCache {
         if let Some(cache) = &self.cache {
             *cache.write() = MemoryCache::new(CacheMode::Normal, 1);
         }
+        self.pending_touches.lock().clear();
+        self.size_scan_pending.store(false, Ordering::Relaxed);
     }
 
     /// Removes every cached object under `<directory>/<namespace>`.
@@ -3189,5 +3933,397 @@ mod tests {
         );
         assert_eq!(false, p_trunc.exists());
         assert_eq!(0, cache.current_size.load(Ordering::Relaxed));
+    }
+
+    fn count_tmp_files(dir: &Path) -> usize {
+        WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.file_type().is_file()
+                    && entry.file_name().to_string_lossy().ends_with(".tmp")
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn test_bounded_startup_scan_resyncs_in_background() {
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=0&max_size=10mb",
+            dir.path().to_str().unwrap()
+        );
+        let writer = FileCache::new(&cfg).unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"m0"), Bytes::from_static(b"m1")),
+            body: Bytes::from(vec![9u8; 1024]),
+        };
+        let file_len = (8 + 2 + 2 + 1024) as u64;
+        for idx in 0..10 {
+            writer
+                .put(&key(&format!("b{idx}")), b"", obj.clone())
+                .await
+                .unwrap();
+        }
+        assert_eq!(10 * file_len, writer.current_size.load(Ordering::Relaxed));
+
+        let reader = FileCache::new_with_scan_limit(&cfg, 3).unwrap();
+        assert_eq!(true, reader.size_scan_pending.load(Ordering::Relaxed));
+        assert_eq!(
+            true,
+            reader.current_size.load(Ordering::Relaxed) < 10 * file_len
+        );
+
+        assert_eq!(
+            true,
+            reader.get(&key("missing"), b"").await.unwrap().is_none()
+        );
+        for _ in 0..200 {
+            if reader.current_size.load(Ordering::Relaxed) == 10 * file_len
+                && !reader.size_scan_pending.load(Ordering::Relaxed)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(false, reader.size_scan_pending.load(Ordering::Relaxed));
+        assert_eq!(10 * file_len, reader.current_size.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_touch_batch_flushed_before_clear() {
+        let dir = tempdir().unwrap();
+        let cfg = format!("{}?cache_max=100", dir.path().to_str().unwrap());
+        let cache = FileCache::new(&cfg).unwrap();
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from_static(b"hot-body"),
+        };
+        let name = key("flush-before-clear");
+        cache.put(&name, b"", obj.clone()).await.unwrap();
+        let file = cache.get_file_path(&name, "");
+        let three_days_ago =
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+        set_atime(&file, three_days_ago);
+
+        // Hot hit queues `touch` into `pending_touches` (50ms delay).
+        assert_eq!(Some(obj), cache.get(&name, b"").await.unwrap());
+        // Calling `clear` immediately flushes `pending_touches` before reading atime.
+        let stats = cache
+            .clear(SystemTime::now() - Duration::from_secs(48 * 3600))
+            .await
+            .unwrap();
+        assert_eq!(0, stats.success);
+        assert_eq!(true, file.exists());
+    }
+
+    #[tokio::test]
+    async fn test_streaming_large_miss_round_trip_known_and_unknown_len() {
+        use super::super::http_cache::{DiskHit, HttpCache};
+        use pingora::cache::key::CacheHashKey;
+        use pingora::cache::storage::MissFinishType;
+        use pingora::cache::{CacheKey, CacheMeta, Storage};
+
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=100&cache_file_max_weight=4&max_size=2mb",
+            dir.path().to_str().unwrap()
+        );
+        let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
+        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: Some(file_cache.directory.clone()),
+            cache: file_cache.clone(),
+            max_size: 0,
+        }));
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let now = SystemTime::now();
+
+        // 1. Known Content-Length > cache_file_max_weight (16 KiB) & >= 64 KiB,
+        //    also overwriting a stale small entry in the hot layer.
+        let known_key = CacheKey::new("/stream-known", "ns");
+        file_cache
+            .put(
+                &known_key.combined(),
+                b"ns",
+                CacheObject {
+                    meta: (
+                        Bytes::from_static(b"old0"),
+                        Bytes::from_static(b"old1"),
+                    ),
+                    body: Bytes::from_static(b"stale-small"),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, file_cache.get_hot(&known_key.combined()).is_some());
+
+        let known_body: Vec<u8> =
+            (0..280_000u32).map(|i| (i % 251) as u8).collect();
+        let mut known_resp =
+            pingora::http::ResponseHeader::build(200, None).unwrap();
+        known_resp
+            .insert_header("content-length", known_body.len().to_string())
+            .unwrap();
+        known_resp
+            .insert_header("etag", "\"stream-known\"")
+            .unwrap();
+        let known_meta = CacheMeta::new(
+            now + Duration::from_secs(60),
+            now,
+            0,
+            0,
+            known_resp,
+        );
+        let (km0, km1) = known_meta.serialize().unwrap();
+
+        let mut known_miss = http_cache
+            .get_miss_handler(&known_key, &known_meta, &span)
+            .await
+            .unwrap();
+        for chunk in [
+            &known_body[..1000],
+            &known_body[1000..66_536],
+            &known_body[66_536..216_536],
+            &known_body[216_536..],
+        ] {
+            known_miss
+                .write_body(Bytes::copy_from_slice(chunk), false)
+                .await
+                .unwrap();
+        }
+        let finish = known_miss.finish().await.unwrap();
+        match finish {
+            MissFinishType::Created(size) => {
+                assert_eq!(known_body.len() + km0.len() + km1.len(), size);
+            },
+            _ => panic!("expected MissFinishType::Created"),
+        }
+        assert_eq!(0, file_cache.stats().unwrap().writing);
+        assert_eq!(0, count_tmp_files(dir.path()));
+        assert_eq!(true, file_cache.get_hot(&known_key.combined()).is_none());
+
+        let known_file_len = std::fs::metadata(
+            file_cache.get_file_path(&known_key.combined(), "ns"),
+        )
+        .unwrap()
+        .len();
+        assert_eq!(
+            known_file_len,
+            file_cache.current_size.load(Ordering::Relaxed)
+        );
+
+        let (looked_meta, mut known_hit) =
+            http_cache.lookup(&known_key, &span).await.unwrap().unwrap();
+        assert_eq!(
+            Some(b"\"stream-known\"".as_slice()),
+            looked_meta.headers().get("etag").map(|v| v.as_bytes())
+        );
+        assert_eq!(
+            true,
+            known_hit.as_any().downcast_ref::<DiskHit>().is_some()
+        );
+        let mut read_known = Vec::new();
+        while let Some(piece) = known_hit.read_body().await.unwrap() {
+            read_known.extend_from_slice(&piece);
+        }
+        assert_eq!(known_body, read_known);
+
+        // 2. Unknown Content-Length spilling past 64 KiB across small chunks.
+        let unknown_key = CacheKey::new("/stream-unknown", "ns");
+        let unknown_body: Vec<u8> =
+            (0..200_000u32).map(|i| ((i * 7) % 253) as u8).collect();
+        let mut unknown_resp =
+            pingora::http::ResponseHeader::build(200, None).unwrap();
+        unknown_resp
+            .insert_header("etag", "\"stream-unknown\"")
+            .unwrap();
+        let unknown_meta = CacheMeta::new(
+            now + Duration::from_secs(60),
+            now,
+            0,
+            0,
+            unknown_resp,
+        );
+        let (um0, um1) = unknown_meta.serialize().unwrap();
+
+        let mut unknown_miss = http_cache
+            .get_miss_handler(&unknown_key, &unknown_meta, &span)
+            .await
+            .unwrap();
+        for chunk in unknown_body.chunks(30_000) {
+            unknown_miss
+                .write_body(Bytes::copy_from_slice(chunk), false)
+                .await
+                .unwrap();
+        }
+        let finish = unknown_miss.finish().await.unwrap();
+        match finish {
+            MissFinishType::Created(size) => {
+                assert_eq!(unknown_body.len() + um0.len() + um1.len(), size);
+            },
+            _ => panic!("expected MissFinishType::Created"),
+        }
+        assert_eq!(0, file_cache.stats().unwrap().writing);
+        assert_eq!(0, count_tmp_files(dir.path()));
+
+        let unknown_file_len = std::fs::metadata(
+            file_cache.get_file_path(&unknown_key.combined(), "ns"),
+        )
+        .unwrap()
+        .len();
+        assert_eq!(
+            known_file_len + unknown_file_len,
+            file_cache.current_size.load(Ordering::Relaxed)
+        );
+
+        let (looked_meta, mut unknown_hit) = http_cache
+            .lookup(&unknown_key, &span)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            Some(b"\"stream-unknown\"".as_slice()),
+            looked_meta.headers().get("etag").map(|v| v.as_bytes())
+        );
+        assert_eq!(
+            true,
+            unknown_hit.as_any().downcast_ref::<DiskHit>().is_some()
+        );
+        let mut read_unknown = Vec::new();
+        while let Some(piece) = unknown_hit.read_body().await.unwrap() {
+            read_unknown.extend_from_slice(&piece);
+        }
+        assert_eq!(unknown_body, read_unknown);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_miss_drop_cleans_up_tmp_and_writing() {
+        use super::super::http_cache::HttpCache;
+        use pingora::cache::key::CacheHashKey;
+        use pingora::cache::{CacheKey, CacheMeta, Storage};
+
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=100&cache_file_max_weight=4&max_size=2mb",
+            dir.path().to_str().unwrap()
+        );
+        let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
+        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: Some(file_cache.directory.clone()),
+            cache: file_cache.clone(),
+            max_size: 0,
+        }));
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let now = SystemTime::now();
+
+        let cache_key = CacheKey::new("/abort-mid-stream", "ns");
+        let mut resp = pingora::http::ResponseHeader::build(200, None).unwrap();
+        resp.insert_header("content-length", "300000").unwrap();
+        let meta =
+            CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+
+        let mut miss = http_cache
+            .get_miss_handler(&cache_key, &meta, &span)
+            .await
+            .unwrap();
+        assert_eq!(1, file_cache.stats().unwrap().writing);
+        assert_eq!(1, count_tmp_files(dir.path()));
+
+        miss.write_body(Bytes::from(vec![3u8; 140_000]), false)
+            .await
+            .unwrap();
+        assert_eq!(1, file_cache.stats().unwrap().writing);
+        assert_eq!(1, count_tmp_files(dir.path()));
+
+        drop(miss);
+        assert_eq!(0, file_cache.stats().unwrap().writing);
+        assert_eq!(0, count_tmp_files(dir.path()));
+        assert_eq!(
+            false,
+            file_cache
+                .get_file_path(&cache_key.combined(), "ns")
+                .exists()
+        );
+        assert_eq!(0, file_cache.current_size.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_miss_exceeds_max_size_cleans_up() {
+        use super::super::http_cache::HttpCache;
+        use pingora::cache::key::CacheHashKey;
+        use pingora::cache::{CacheKey, CacheMeta, Storage};
+
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=0&max_size=150000",
+            dir.path().to_str().unwrap()
+        );
+        let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
+        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: Some(file_cache.directory.clone()),
+            cache: file_cache.clone(),
+            max_size: 0,
+        }));
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let now = SystemTime::now();
+
+        let keep_key = key("keep-existing");
+        let keep_obj = CacheObject {
+            meta: (Bytes::from_static(b"k"), Bytes::from_static(b"v")),
+            body: Bytes::from(vec![1u8; 10_000]),
+        };
+        file_cache.put(&keep_key, b"ns", keep_obj).await.unwrap();
+        let kept_size = file_cache.current_size.load(Ordering::Relaxed);
+
+        // 1. Known Content-Length exceeding max_size skips without creating `.tmp` or evicting.
+        let known_big = CacheKey::new("/too-big-known", "ns");
+        let mut resp = pingora::http::ResponseHeader::build(200, None).unwrap();
+        resp.insert_header("content-length", "200000").unwrap();
+        let meta =
+            CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+        let mut miss = http_cache
+            .get_miss_handler(&known_big, &meta, &span)
+            .await
+            .unwrap();
+        miss.write_body(Bytes::from(vec![2u8; 200_000]), true)
+            .await
+            .unwrap();
+        miss.finish().await.unwrap();
+        assert_eq!(0, file_cache.stats().unwrap().writing);
+        assert_eq!(0, count_tmp_files(dir.path()));
+        assert_eq!(
+            false,
+            file_cache
+                .get_file_path(&known_big.combined(), "ns")
+                .exists()
+        );
+        assert_eq!(true, file_cache.get_file_path(&keep_key, "ns").exists());
+        assert_eq!(kept_size, file_cache.current_size.load(Ordering::Relaxed));
+
+        // 2. Unknown Content-Length crossing max_size mid-stream aborts and removes `.tmp`.
+        let unknown_big = CacheKey::new("/too-big-unknown", "ns");
+        let resp = pingora::http::ResponseHeader::build(200, None).unwrap();
+        let meta =
+            CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+        let mut miss = http_cache
+            .get_miss_handler(&unknown_big, &meta, &span)
+            .await
+            .unwrap();
+        for _ in 0..5 {
+            miss.write_body(Bytes::from(vec![4u8; 40_000]), false)
+                .await
+                .unwrap();
+        }
+        miss.finish().await.unwrap();
+        assert_eq!(0, file_cache.stats().unwrap().writing);
+        assert_eq!(0, count_tmp_files(dir.path()));
+        assert_eq!(
+            false,
+            file_cache
+                .get_file_path(&unknown_big.combined(), "ns")
+                .exists()
+        );
+        assert_eq!(true, file_cache.get_file_path(&keep_key, "ns").exists());
+        assert_eq!(kept_size, file_cache.current_size.load(Ordering::Relaxed));
     }
 }

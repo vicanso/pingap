@@ -24,26 +24,37 @@ use pingora::proxy::Session;
 use std::time::Duration;
 
 #[inline]
-pub(crate) fn initialize_telemetry(
-    name: &str,
-    session: &Session,
-    ctx: &mut Ctx,
-) {
-    let header = session.req_header();
-    let host = pingap_core::get_host(header).unwrap_or_default();
-    let path = header.uri.path();
-    // enable open telemetry
-    if let Some(tracer) = pingap_otel::new_http_proxy_tracer(name) {
-        let cx = pingap_otel::extract_header_context(name, &header.headers);
-        let mut span = tracer
-            .span_builder(path.to_string())
-            .with_kind(SpanKind::Server)
-            .start_with_context(&tracer, &cx);
+fn start_request_span(
+    tracer: &pingap_otel::global::BoxedTracer,
+    cx: &pingap_otel::Context,
+    header: &RequestHeader,
+) -> pingap_otel::global::BoxedSpan {
+    let mut span = tracer
+        .span_builder(header.uri.path().to_string())
+        .with_kind(SpanKind::Server)
+        .start_with_context(tracer, cx);
+    if span.is_recording() {
+        let host = pingap_core::get_host(header).unwrap_or_default();
         span.set_attributes(vec![
             KeyValue::new("http.method", header.method.to_string()),
             KeyValue::new("http.url", header.uri.to_string()),
             KeyValue::new("http.host", host.to_string()),
         ]);
+    }
+    span
+}
+
+#[inline]
+pub(crate) fn initialize_telemetry(
+    name: &str,
+    session: &Session,
+    ctx: &mut Ctx,
+) {
+    // enable open telemetry
+    if let Some(tracer) = pingap_otel::new_http_proxy_tracer(name) {
+        let header = session.req_header();
+        let cx = pingap_otel::extract_header_context(name, &header.headers);
+        let span = start_request_span(&tracer, &cx, header);
 
         let features = ctx.features.get_or_insert_default();
         features.otel_tracer = Some(OtelTracer {
@@ -63,6 +74,9 @@ pub(crate) fn update_otel_cache_attrs(
     if let Some(tracer) =
         ctx.features.as_mut().and_then(|f| f.otel_tracer.as_mut())
     {
+        if !tracer.http_request_span.is_recording() {
+            return;
+        }
         // Put into words here, for a request that is traced. It used to be
         // done by the caller for every cached response of a `tracing`
         // build, traced or not.
@@ -171,26 +185,29 @@ pub(crate) fn finish_otel_upstream_span(ctx: &mut Ctx, is_error: bool) {
     if let Some(mut span) =
         ctx.features.as_mut().and_then(|f| f.upstream_span.take())
     {
-        // Through the getters: a phase that never finished still holds
-        // its start marker, a negative number.
-        span.set_attributes([
-            KeyValue::new("upstream.addr", ctx.upstream.address.clone()),
-            KeyValue::new("upstream.reused", ctx.upstream.reused),
-            KeyValue::new(
-                "upstream.connect_time",
-                ctx.get_upstream_connect_time().unwrap_or_default() as i64,
-            ),
-            KeyValue::new(
-                "upstream.processing_time",
-                ctx.get_upstream_processing_time().unwrap_or_default() as i64,
-            ),
-            KeyValue::new(
-                "upstream.response_time",
-                ctx.get_upstream_response_time().unwrap_or_default() as i64,
-            ),
-        ]);
-        if is_error {
-            span.set_status(Status::error(""));
+        if span.is_recording() {
+            // Through the getters: a phase that never finished still holds
+            // its start marker, a negative number.
+            span.set_attributes([
+                KeyValue::new("upstream.addr", ctx.upstream.address.clone()),
+                KeyValue::new("upstream.reused", ctx.upstream.reused),
+                KeyValue::new(
+                    "upstream.connect_time",
+                    ctx.get_upstream_connect_time().unwrap_or_default() as i64,
+                ),
+                KeyValue::new(
+                    "upstream.processing_time",
+                    ctx.get_upstream_processing_time().unwrap_or_default()
+                        as i64,
+                ),
+                KeyValue::new(
+                    "upstream.response_time",
+                    ctx.get_upstream_response_time().unwrap_or_default() as i64,
+                ),
+            ]);
+            if is_error {
+                span.set_status(Status::error(""));
+            }
         }
         span.end();
     }
@@ -198,13 +215,22 @@ pub(crate) fn finish_otel_upstream_span(ctx: &mut Ctx, is_error: bool) {
 
 #[inline]
 pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
-    // Bail out before touching client_ip when there is no tracer to annotate.
-    if ctx
+    // Bail out before touching client_ip when there is no tracer to annotate,
+    // or when the span is not recording (unsampled).
+    let Some(is_recording) = ctx
         .features
         .as_ref()
         .and_then(|f| f.otel_tracer.as_ref())
-        .is_none()
-    {
+        .map(|tracer| tracer.http_request_span.is_recording())
+    else {
+        return;
+    };
+    if !is_recording {
+        if let Some(tracer) =
+            ctx.features.as_mut().and_then(|f| f.otel_tracer.as_mut())
+        {
+            tracer.http_request_span.end();
+        }
         return;
     }
 
@@ -243,7 +269,7 @@ mod tests {
         inject_telemetry_headers, inject_trace_context, set_otel_request_attrs,
         update_otel_cache_attrs,
     };
-    use pingap_core::{Ctx, Features};
+    use pingap_core::{Ctx, Features, OtelTracer};
     use pingap_otel::global::BoxedTracer;
     use pingap_otel::trace::{
         Span, SpanBuilder, SpanContext, SpanId, Status, TraceFlags, TraceId,
@@ -267,19 +293,28 @@ mod tests {
 
     struct RecordingSpan {
         context: SpanContext,
+        recording: bool,
         state: Arc<Mutex<RecordedSpanState>>,
     }
 
     type RecordedSpans = Arc<Mutex<Vec<Arc<Mutex<RecordedSpanState>>>>>;
 
     struct RecordingTracer {
+        recording: bool,
         spans: RecordedSpans,
     }
 
     impl RecordingTracer {
         fn create() -> (BoxedTracer, RecordedSpans) {
+            Self::create_with_recording(true)
+        }
+
+        fn create_with_recording(
+            recording: bool,
+        ) -> (BoxedTracer, RecordedSpans) {
             let spans = Arc::new(Mutex::new(Vec::new()));
             let tracer = BoxedTracer::new(Box::new(Self {
+                recording,
                 spans: spans.clone(),
             }));
             (tracer, spans)
@@ -296,14 +331,20 @@ mod tests {
         ) -> Self::Span {
             let state = Arc::new(Mutex::new(RecordedSpanState::default()));
             self.spans.lock().unwrap().push(state.clone());
+            let flags = if self.recording {
+                TraceFlags::SAMPLED
+            } else {
+                TraceFlags::default()
+            };
             RecordingSpan {
                 context: SpanContext::new(
                     TraceId::from(1),
                     SpanId::from(2),
-                    TraceFlags::SAMPLED,
+                    flags,
                     false,
                     TraceState::default(),
                 ),
+                recording: self.recording,
                 state,
             }
         }
@@ -325,7 +366,7 @@ mod tests {
         }
 
         fn is_recording(&self) -> bool {
-            true
+            self.recording
         }
 
         fn set_attribute(&mut self, attribute: KeyValue) {
@@ -502,5 +543,72 @@ mod tests {
         assert_eq!(true, ctx.features.is_none());
         set_otel_request_attrs(&session, &mut ctx);
         assert_eq!(true, ctx.features.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_unsampled_and_sampled_span_lifecycle() {
+        use super::start_request_span;
+
+        for recording in [false, true] {
+            let input = "GET /items?q=1 HTTP/1.1\r\nHost: example.com\r\n\r\n";
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+
+            let (tracer, spans) =
+                RecordingTracer::create_with_recording(recording);
+            let req_span = start_request_span(
+                &tracer,
+                &OtelContext::new(),
+                session.req_header(),
+            );
+            let upstream_span = tracer.start("upstream");
+            let mut ctx = Ctx {
+                features: Some(Box::new(Features {
+                    otel_tracer: Some(OtelTracer {
+                        tracer,
+                        http_request_span: req_span,
+                    }),
+                    upstream_span: Some(upstream_span),
+                    ..Features::default()
+                })),
+                ..Ctx::default()
+            };
+            ctx.upstream.address = "127.0.0.1:8080".into();
+            ctx.upstream.location = "api".into();
+            ctx.state.status = Some(http::StatusCode::OK);
+
+            // `OtelTracer` stays stored and span context stays valid for
+            // propagation headers regardless of sampling.
+            let mut response = ResponseHeader::build(200, None).unwrap();
+            inject_telemetry_headers(&ctx, &mut response);
+            assert_eq!(true, response.headers.get("x-trace-id").is_some());
+            assert_eq!(true, response.headers.get("x-span-id").is_some());
+
+            update_otel_cache_attrs(
+                &mut ctx,
+                "hit",
+                Some(Duration::from_millis(2)),
+                None,
+            );
+            finish_otel_upstream_span(&mut ctx, true);
+            set_otel_request_attrs(&session, &mut ctx);
+
+            let recorded = spans.lock().unwrap();
+            assert_eq!(2, recorded.len());
+            let req_state = recorded[0].lock().unwrap();
+            let up_state = recorded[1].lock().unwrap();
+            assert_eq!(true, req_state.ended);
+            assert_eq!(true, up_state.ended);
+            if recording {
+                assert_eq!(false, req_state.attrs.is_empty());
+                assert_eq!(false, up_state.attrs.is_empty());
+                assert!(matches!(up_state.status, Status::Error { .. }));
+            } else {
+                assert_eq!(true, req_state.attrs.is_empty());
+                assert_eq!(true, up_state.attrs.is_empty());
+                assert_eq!(Status::Unset, up_state.status);
+            }
+        }
     }
 }
