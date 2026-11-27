@@ -70,6 +70,8 @@ struct UpstreamReadiness {
 #[derive(Serialize, Debug, PartialEq)]
 struct Readiness {
     ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    draining: Option<bool>,
     upstreams: BTreeMap<String, UpstreamReadiness>,
 }
 
@@ -84,6 +86,7 @@ fn readiness(
     provider: &dyn UpstreamProvider,
     names: &[String],
     min_healthy: u32,
+    draining: bool,
 ) -> Readiness {
     let mut upstreams = BTreeMap::new();
     let mut look_at = |name: &str, named: bool| {
@@ -146,8 +149,10 @@ fn readiness(
             look_at(name, true);
         }
     }
+    let upstreams_ready = upstreams.values().all(|upstream| upstream.ready);
     Readiness {
-        ready: upstreams.values().all(|upstream| upstream.ready),
+        ready: !draining && upstreams_ready,
+        draining: draining.then_some(true),
         upstreams,
     }
 }
@@ -211,8 +216,12 @@ impl Plugin for Health {
             return Ok(RequestPluginResult::Skipped);
         }
         let provider = new_upstream_provider();
-        let readiness =
-            readiness(provider.as_ref(), &self.upstreams, self.min_healthy);
+        let readiness = readiness(
+            provider.as_ref(),
+            &self.upstreams,
+            self.min_healthy,
+            crate::process::is_shutting_down(),
+        );
         let mut resp = HttpResponse::try_from_json(&readiness)
             .unwrap_or_else(|e| HttpResponse::unknown_error(e.to_string()));
         if !readiness.ready {
@@ -297,8 +306,9 @@ mod tests {
 
         // Everything is up. The transparent upstream has nothing to look
         // at and is left out.
-        let ready = readiness(&provider, &all, 1);
+        let ready = readiness(&provider, &all, 1, false);
         assert_eq!(true, ready.ready);
+        assert_eq!(None, ready.draining);
         assert_eq!(
             vec!["api", "web"],
             ready
@@ -309,45 +319,131 @@ mod tests {
         );
         assert_eq!((2, 2), (ready.upstreams["api"].healthy, 2));
 
+        // While draining for graceful shutdown, readiness immediately fails
+        // with `draining: true` even when all upstreams remain healthy.
+        let draining = readiness(&provider, &all, 1, true);
+        assert_eq!(false, draining.ready);
+        assert_eq!(Some(true), draining.draining);
+        assert_eq!(true, draining.upstreams["api"].ready);
+        assert_eq!(true, draining.upstreams["web"].ready);
+        let draining_json = serde_json::to_string(&draining).unwrap();
+        assert_eq!(
+            true,
+            draining_json.contains(r#""ready":false,"draining":true"#),
+            "{draining_json}"
+        );
+
         // One backend of `api` goes: still enough of them for one, not
         // for two.
         take_down(&provider.get("api").unwrap(), "5001");
-        let ready = readiness(&provider, &all, 1);
+        let ready = readiness(&provider, &all, 1, false);
         assert_eq!(true, ready.ready);
         assert_eq!(1, ready.upstreams["api"].healthy);
         assert_eq!(
             vec!["127.0.0.1:5001".to_string()],
             ready.upstreams["api"].unhealthy_backends
         );
-        let ready = readiness(&provider, &all, 2);
+        let ready = readiness(&provider, &all, 2, false);
         assert_eq!(false, ready.ready);
         assert_eq!(
             (false, true),
             (ready.upstreams["api"].ready, ready.upstreams["web"].ready)
         );
         // Only the ones that were asked about count.
-        assert_eq!(true, readiness(&provider, &named(&["web"]), 2).ready);
-        assert_eq!(false, readiness(&provider, &named(&["api"]), 2).ready);
+        assert_eq!(
+            true,
+            readiness(&provider, &named(&["web"]), 2, false).ready
+        );
+        assert_eq!(
+            false,
+            readiness(&provider, &named(&["api"]), 2, false).ready
+        );
 
         // The other goes too: nothing left to send a request to.
         take_down(&provider.get("api").unwrap(), "5002");
-        let ready = readiness(&provider, &all, 1);
+        let ready = readiness(&provider, &all, 1, false);
         assert_eq!(false, ready.ready);
         assert_eq!(0, ready.upstreams["api"].healthy);
 
         // An upstream that was named and is not there is not ready, a
         // transparent one that was named has nothing that could be down.
-        let ready = readiness(&provider, &named(&["web", "gone"]), 1);
+        let ready = readiness(&provider, &named(&["web", "gone"]), 1, false);
         assert_eq!(false, ready.ready);
         assert_eq!(Some("no such upstream"), ready.upstreams["gone"].reason);
-        let ready = readiness(&provider, &named(&["web", "any"]), 1);
+        let ready = readiness(&provider, &named(&["web", "any"]), 1, false);
         assert_eq!(true, ready.ready);
 
         // What a probe reads.
-        let ready = readiness(&provider, &named(&["api"]), 1);
+        let ready = readiness(&provider, &named(&["api"]), 1, false);
+        assert_eq!(None, ready.draining);
         assert_eq!(
             r#"{"ready":false,"upstreams":{"api":{"healthy":0,"total":2,"ready":false,"unhealthy_backends":["127.0.0.1:5001","127.0.0.1:5002"]}}}"#,
             serde_json::to_string(&ready).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_health_graceful_drain_auto_503() {
+        use tokio_test::io::Builder;
+
+        struct ResetDraining;
+        impl Drop for ResetDraining {
+            fn drop(&mut self) {
+                crate::process::set_shutting_down_for_test(false);
+            }
+        }
+        let _reset = ResetDraining;
+
+        let plugin = Health::new(
+            &toml::from_str::<PluginConf>("path = \"/ready\"").unwrap(),
+        )
+        .unwrap();
+        let make_session = || async {
+            let mock_io = Builder::new()
+                .read(b"GET /ready HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            session
+        };
+
+        crate::process::set_shutting_down_for_test(false);
+        let mut session = make_session().await;
+        let RequestPluginResult::Respond(resp) = plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected Respond");
+        };
+        assert_eq!(StatusCode::OK, resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert_eq!(true, body.contains(r#""ready":true"#), "{body}");
+        assert_eq!(false, body.contains("draining"), "{body}");
+
+        crate::process::set_shutting_down_for_test(true);
+        let mut session = make_session().await;
+        let RequestPluginResult::Respond(resp) = plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected Respond");
+        };
+        assert_eq!(StatusCode::SERVICE_UNAVAILABLE, resp.status);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert_eq!(
+            true,
+            body.contains(r#""ready":false,"draining":true"#),
+            "{body}"
         );
     }
 

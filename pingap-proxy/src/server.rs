@@ -22,6 +22,7 @@ use crate::ServerLocationsProvider;
 use crate::ja4::{Ja4Collector, Ja4Store};
 use crate::proxy_protocol::{PreTls, ProxyProtocolApp};
 use ahash::AHashMap;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
@@ -160,6 +161,170 @@ struct ServerCounters {
     processing: AtomicI32,
 }
 
+/// Query parameter names on an access log target that only configure the
+/// per-request [`AccessLogFilter`] and do not affect the underlying writer task.
+const ACCESS_LOG_FILTER_PARAMS: &[&str] =
+    &["skip", "min_status", "min_latency", "sample"];
+
+/// Computes the sink identity for a server's `access_log` directive, returning
+/// `None` when lines go to the application log (or access logging is disabled)
+/// and `Some(sink_key)` when a dedicated writer task (`file`, `stdout`,
+/// `stderr`, or `syslog://`) is required.
+///
+/// Filter-only parameters (`skip`, `min_status`, `min_latency`, `sample`) are
+/// stripped so filter and format edits share the same `sink_key`, whereas path
+/// changes and writer parameters (`rolling`, `keep`, `channel_buffer`,
+/// `flush_timeout`, syslog transport params) produce a distinct key.
+pub fn access_log_sink_key(access_log: Option<&String>) -> Option<String> {
+    let (_, target) = parse_access_log_directive(access_log);
+    let target = target?;
+    let (base, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+    let normalized_base = match base {
+        "stdout" | "/dev/stdout" => "stdout",
+        "stderr" | "/dev/stderr" => "stderr",
+        _ => base,
+    };
+    let mut writer_params: Vec<&str> = query
+        .split('&')
+        .map(str::trim)
+        .filter(|pair| {
+            if pair.is_empty() {
+                return false;
+            }
+            let key = pair.split_once('=').map_or(*pair, |(k, _)| k).trim();
+            !key.is_empty() && !ACCESS_LOG_FILTER_PARAMS.contains(&key)
+        })
+        .collect();
+    writer_params.sort_unstable();
+    if writer_params.is_empty() {
+        Some(normalized_base.to_string())
+    } else {
+        Some(format!("{normalized_base}?{}", writer_params.join("&")))
+    }
+}
+
+/// Hot-reloadable per-server runtime fields swapped atomically via [`ArcSwap`].
+#[derive(Debug)]
+pub struct ServerRuntime {
+    /// Optional parser for customizing access log format and output
+    pub log_parser: Option<Parser>,
+    /// Which requests get a line in the access log; every one of them
+    /// when there is none.
+    pub log_filter: Option<AccessLogFilter>,
+    /// The access log names no destination: its lines are events of the
+    /// application log, handed to a task that writes them there.
+    pub access_log_to_application: bool,
+    /// HTML/JSON template used for rendering error responses, parsed once
+    pub error_template: ErrorTemplate,
+    /// Answer 421 Misdirected Request when a TLS request's Host would
+    /// select a different certificate than the connection's SNI did.
+    pub strict_sni: bool,
+    /// Whether to enable server-timing header
+    pub enable_server_timing: bool,
+    /// Downstream read timeout
+    pub downstream_read_timeout: Option<Duration>,
+    /// Downstream write timeout
+    pub downstream_write_timeout: Option<Duration>,
+    /// Serve HTTP/1.1 pipelined requests sequentially on a keep-alive connection
+    pub h1_pipelining: bool,
+}
+
+impl ServerRuntime {
+    /// Validates and builds a [`ServerRuntime`] snapshot from `conf`.
+    pub fn try_from_conf(conf: &ServerConf) -> Result<Self> {
+        let (access_log, access_log_path) =
+            parse_access_log_directive(conf.access_log.as_ref());
+        let log_parser =
+            access_log.map(|access_log| Parser::from(access_log.as_str()));
+        // The conditions are parameters of where the log goes to; one
+        // that goes to the application log has no place to carry them.
+        let log_filter = match &access_log_path {
+            Some(target) => {
+                let invalid = |message: String| Error::Common {
+                    category: "access_log".to_string(),
+                    message,
+                };
+                // The other parameters of the destination are read by
+                // the task that writes the log, which a check of the
+                // configuration does not start.
+                check_access_log_target(target)
+                    .map_err(|e| invalid(e.to_string()))?;
+                AccessLogFilter::new(target)
+                    .map_err(|e| invalid(e.to_string()))?
+            },
+            None => None,
+        };
+        Ok(Self {
+            log_parser,
+            log_filter,
+            access_log_to_application: access_log_path.is_none(),
+            error_template: ErrorTemplate::new(&conf.error_template),
+            strict_sni: conf.strict_sni,
+            enable_server_timing: conf.enable_server_timing,
+            downstream_read_timeout: conf.downstream_read_timeout,
+            downstream_write_timeout: conf.downstream_write_timeout,
+            h1_pipelining: conf.h1_pipelining,
+        })
+    }
+}
+
+struct ServerReloadEntry {
+    runtime: Arc<ArcSwap<ServerRuntime>>,
+    startup_sink_key: Option<String>,
+}
+
+static SERVER_REGISTRY: LazyLock<
+    parking_lot::RwLock<AHashMap<String, ServerReloadEntry>>,
+> = LazyLock::new(|| parking_lot::RwLock::new(AHashMap::new()));
+
+/// Returns whether changing `old_access_log` to `new_access_log` on server
+/// `name` can be hot-reloaded in place without restarting the process.
+pub fn can_hot_reload_server_access_log(
+    name: &str,
+    old_access_log: Option<&String>,
+    new_access_log: Option<&String>,
+) -> bool {
+    let new_sink_key = access_log_sink_key(new_access_log);
+    if new_sink_key.is_none() {
+        return true;
+    }
+    let old_sink_key = access_log_sink_key(old_access_log);
+    if new_sink_key == old_sink_key {
+        return true;
+    }
+    SERVER_REGISTRY
+        .read()
+        .get(name)
+        .is_some_and(|entry| entry.startup_sink_key == new_sink_key)
+}
+
+/// Validates and builds a new [`ServerRuntime`] from `conf`, swapping it onto
+/// the live registered server `name` if one is registered.
+///
+/// Returns `Ok(true)` when a registered server's runtime was swapped, and
+/// `Ok(false)` when no live server named `name` is currently registered.
+pub fn try_reload_server_runtime(
+    name: &str,
+    conf: &ServerConf,
+) -> Result<bool> {
+    let new_runtime = ServerRuntime::try_from_conf(conf)?;
+    let new_sink_key = access_log_sink_key(conf.access_log.as_ref());
+    let registry = SERVER_REGISTRY.read();
+    let Some(entry) = registry.get(name) else {
+        return Ok(false);
+    };
+    if new_sink_key.is_some() && new_sink_key != entry.startup_sink_key {
+        return Err(Error::Common {
+            category: "access_log".to_string(),
+            message: format!(
+                "server({name}) access_log sink changed and requires restart"
+            ),
+        });
+    }
+    entry.runtime.store(Arc::new(new_runtime));
+    Ok(true)
+}
+
 pub struct Server {
     /// Server name identifier used for logging and metrics
     name: String,
@@ -173,14 +338,11 @@ pub struct Server {
     /// Isolated per-server request counters
     counters: ServerCounters,
 
-    /// Optional parser for customizing access log format and output
-    log_parser: Option<Parser>,
-    /// Which requests get a line in the access log; every one of them
-    /// when there is none.
-    log_filter: Option<AccessLogFilter>,
+    /// Hot-reloadable runtime fields swapped via `try_reload_server_runtime`
+    runtime: Arc<ArcSwap<ServerRuntime>>,
 
-    /// HTML/JSON template used for rendering error responses, parsed once
-    error_template: ErrorTemplate,
+    /// Sink identity opened at startup (file/stdout/stderr/syslog), if any
+    startup_sink_key: Option<String>,
 
     /// Number of worker threads for request processing. None uses default.
     threads: Option<usize>,
@@ -213,8 +375,6 @@ pub struct Server {
     h2_initial_connection_window_size: Option<u32>,
     /// Idle timeout for downstream HTTP/2 connections
     h2_idle_timeout: Option<Duration>,
-    /// Serve HTTP/1.1 pipelined requests sequentially on a keep-alive connection
-    h1_pipelining: bool,
     /// Maximum number of HTTP/1.x requests per downstream keep-alive connection
     keepalive_request_limit: Option<u32>,
 
@@ -223,10 +383,6 @@ pub struct Server {
 
     /// Whether to use global certificate store for TLS
     global_certificates: bool,
-
-    /// Answer 421 Misdirected Request when a TLS request's Host would
-    /// select a different certificate than the connection's SNI did.
-    strict_sni: bool,
 
     /// The JA4 fingerprints of this server's open TLS connections, filled
     /// before each handshake; `None` unless `ja4` is enabled.
@@ -257,14 +413,6 @@ pub struct Server {
     /// List of enabled modules (e.g. "grpc-web")
     modules: Option<Vec<String>>,
 
-    /// Whether to enable server-timing header
-    enable_server_timing: bool,
-
-    // downstream read timeout
-    downstream_read_timeout: Option<Duration>,
-    // downstream write timeout
-    downstream_write_timeout: Option<Duration>,
-
     // server locations
     server_locations_provider: Arc<dyn ServerLocationsProvider>,
     // plugin loader
@@ -284,9 +432,6 @@ pub struct Server {
 
     // logger
     access_logger: Option<Sender<BytesMut>>,
-    /// The access log names no destination: its lines are events of the
-    /// application log, handed to a task that writes them there.
-    access_log_to_application: bool,
 }
 
 pub struct ServerServices {
@@ -662,30 +807,10 @@ impl Server {
     /// - Threading configuration
     pub fn new(conf: &ServerConf, ctx: AppContext) -> Result<Self> {
         debug!(target: LOG_TARGET, config = conf.to_string(), "new server");
-        let mut p = None;
-        let (access_log, access_log_path) =
-            parse_access_log_directive(conf.access_log.as_ref());
-        if let Some(access_log) = access_log {
-            p = Some(Parser::from(access_log.as_str()));
-        }
-        // The conditions are parameters of where the log goes to; one
-        // that goes to the application log has no place to carry them.
-        let log_filter = match &access_log_path {
-            Some(target) => {
-                let invalid = |message: String| Error::Common {
-                    category: "access_log".to_string(),
-                    message,
-                };
-                // The other parameters of the destination are read by
-                // the task that writes the log, which a check of the
-                // configuration does not start.
-                check_access_log_target(target)
-                    .map_err(|e| invalid(e.to_string()))?;
-                AccessLogFilter::new(target)
-                    .map_err(|e| invalid(e.to_string()))?
-            },
-            None => None,
-        };
+        let startup_sink_key = access_log_sink_key(conf.access_log.as_ref());
+        let runtime = Arc::new(ArcSwap::from_pointee(
+            ServerRuntime::try_from_conf(conf)?,
+        ));
         let tcp_socket_options = if conf.tcp_fastopen.is_some()
             || conf.tcp_keepalive.is_some()
             || conf.reuse_port.is_some()
@@ -715,9 +840,8 @@ impl Server {
             admin: conf.admin,
             counters: ServerCounters::default(),
             addr: conf.addr.clone(),
-            log_parser: p,
-            log_filter,
-            error_template: ErrorTemplate::new(&conf.error_template),
+            runtime,
+            startup_sink_key,
             tls_cipher_list: conf.tls_cipher_list.clone(),
             tls_ciphersuites: conf.tls_ciphersuites.clone(),
             tls_min_version: conf.tls_min_version.clone(),
@@ -727,7 +851,6 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
-            strict_sni: conf.strict_sni,
             ja4: conf.ja4.then(|| Arc::new(Ja4Store::default())),
             proxy_protocol: conf.proxy_protocol,
             enabled_h2: conf.enabled_h2,
@@ -737,7 +860,6 @@ impl Server {
             h2_initial_connection_window_size: conf
                 .h2_initial_connection_window_size,
             h2_idle_timeout: conf.h2_idle_timeout,
-            h1_pipelining: conf.h1_pipelining,
             keepalive_request_limit: conf.keepalive_request_limit,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
@@ -747,17 +869,13 @@ impl Server {
             prometheus_metrics,
             #[cfg(feature = "tracing")]
             prometheus,
-            enable_server_timing: conf.enable_server_timing,
             modules: conf.modules.clone(),
-            downstream_read_timeout: conf.downstream_read_timeout,
-            downstream_write_timeout: conf.downstream_write_timeout,
             server_locations_provider: ctx.server_locations_provider,
             location_provider: ctx.location_provider,
             upstream_provider: ctx.upstream_provider,
             plugin_provider: ctx.plugin_provider,
             certificate_provider: ctx.certificate_provider,
             access_logger: ctx.logger,
-            access_log_to_application: access_log_path.is_none(),
             config_manager: ctx.config_manager,
         };
         Ok(s)
@@ -853,7 +971,14 @@ impl Server {
         self,
         conf: Arc<configuration::ServerConf>,
     ) -> Result<ServerServices> {
-        self.build(conf, true)
+        let name = self.name.clone();
+        let entry = ServerReloadEntry {
+            runtime: self.runtime.clone(),
+            startup_sink_key: self.startup_sink_key.clone(),
+        };
+        let services = self.build(conf, true)?;
+        SERVER_REGISTRY.write().insert(name, entry);
+        Ok(services)
     }
     /// Builds what [`Server::run`] builds and drops it, for a check of the
     /// configuration: the TLS settings of each listener are made, which is
@@ -994,10 +1119,22 @@ impl Server {
         }
         Ok(false)
     }
+    #[cfg(test)]
     #[inline]
     fn initialize_context(&self, session: &mut Session, ctx: &mut Ctx) {
-        session.set_read_timeout(self.downstream_read_timeout);
-        session.set_write_timeout(self.downstream_write_timeout);
+        let runtime = self.runtime.load();
+        self.initialize_context_with(&runtime, session, ctx);
+    }
+
+    #[inline]
+    fn initialize_context_with(
+        &self,
+        runtime: &ServerRuntime,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) {
+        session.set_read_timeout(runtime.downstream_read_timeout);
+        session.set_write_timeout(runtime.downstream_write_timeout);
 
         if let Some(stream) = session.stream() {
             ctx.conn.id = stream.id() as usize;
@@ -1426,7 +1563,7 @@ impl Server {
         }
         keep_response_plugins(ctx, &plugins);
 
-        let record_timing = self.enable_server_timing
+        let record_timing = self.runtime.load().enable_server_timing
             || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         let result = async {
             let mut request_done = false;
@@ -1499,7 +1636,7 @@ impl Server {
             return Ok(());
         }
 
-        let record_timing = self.enable_server_timing
+        let record_timing = self.runtime.load().enable_server_timing
             || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         let result = async {
             for (name, plugin) in plugins.iter() {
@@ -1539,7 +1676,7 @@ impl Server {
             return Ok(());
         }
 
-        let record_timing = self.enable_server_timing
+        let record_timing = self.runtime.load().enable_server_timing
             || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // The plugins are put back whatever one of them says: the error
         // page that follows an error is asked of them. Left with `?`,
@@ -1596,7 +1733,7 @@ impl Server {
             return Ok(());
         }
 
-        let record_timing = self.enable_server_timing
+        let record_timing = self.runtime.load().enable_server_timing
             || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // Put back also after an error, as in
         // `handle_upstream_response_plugin`.
@@ -1663,7 +1800,7 @@ impl Server {
         if plugins.is_empty() {
             return Ok(());
         }
-        let record_timing = self.enable_server_timing
+        let record_timing = self.runtime.load().enable_server_timing
             || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // Put back also after an error, as in
         // `handle_upstream_response_plugin`.
@@ -1897,10 +2034,15 @@ fn close_unreusable_proxy_protocol_upstream(
 }
 
 impl Server {
-    fn write_access_log(&self, buf: BytesMut) {
-        let Some(logger) = &self.access_logger else {
+    fn write_access_log(&self, buf: BytesMut, to_application: bool) {
+        if (to_application && self.startup_sink_key.is_some())
+            || self.access_logger.is_none()
+        {
             let msg = buf.as_bstr();
             info!(target: LOG_TARGET, "{msg}");
+            return;
+        }
+        let Some(logger) = &self.access_logger else {
             return;
         };
         let Err(err) = logger.try_send(buf) else {
@@ -1910,7 +2052,7 @@ impl Server {
         // write draining requests to the application log so final access lines
         // are preserved. Under live overload (`Full`), drop rather than block
         // Tokio worker threads on synchronous stdout/stderr writes.
-        if self.access_log_to_application
+        if to_application
             && let tokio::sync::mpsc::error::TrySendError::Closed(msg) = err
         {
             info!(target: LOG_TARGET, "{}", msg.as_bstr());
@@ -2006,7 +2148,8 @@ impl ProxyHttp for Server {
         debug!(target: LOG_TARGET, "--> early request filter");
         defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
-        self.initialize_context(session, ctx);
+        let runtime = self.runtime.load();
+        self.initialize_context_with(&runtime, session, ctx);
         // Counted before anything can refuse the request, so the totals
         // cover requests that match no location, the admin endpoints,
         // ACME challenges, the metrics endpoint itself and a request whose
@@ -2026,12 +2169,13 @@ impl ProxyHttp for Server {
             ));
         }
         pingap_core::merge_cookie_headers(session.req_header_mut());
-        if self.h1_pipelining {
-            // Opt this HTTP/1.1 connection into sequential pipelining
-            // (RFC 9112 §9.3.2). pingora keeps the flag across keep-alive
-            // reuses and ignores it on HTTP/2.
-            session.as_downstream_mut().set_pipelining_enabled(true);
-        }
+        // Opt this HTTP/1.1 connection into sequential pipelining
+        // (RFC 9112 §9.3.2). pingora keeps the flag across keep-alive
+        // reuses and ignores it on HTTP/2, so pass the live boolean on
+        // every request to handle hot reloads in either direction.
+        session
+            .as_downstream_mut()
+            .set_pipelining_enabled(runtime.h1_pipelining);
         #[cfg(feature = "tracing")]
         if self.enabled_otel {
             initialize_telemetry(&self.name, session, ctx);
@@ -2039,7 +2183,7 @@ impl ProxyHttp for Server {
         // RFC 9110 §15.5.20: before a location is chosen by `Host`, refuse
         // a request on a TLS connection whose `Host` would have chosen a
         // different certificate than the handshake's SNI did.
-        if self.strict_sni && ctx.conn.tls_version.is_some() {
+        if runtime.strict_sni && ctx.conn.tls_version.is_some() {
             let host =
                 pingap_core::get_host(session.req_header()).unwrap_or_default();
             if !pingap_certificate::sni_matches_host_with(
@@ -2779,7 +2923,7 @@ impl ProxyHttp for Server {
         }
 
         // add server-timing response header
-        if self.enable_server_timing {
+        if self.runtime.load().enable_server_timing {
             let _ = upstream_response
                 .insert_header("server-timing", ctx.generate_server_timing());
         }
@@ -3102,12 +3246,13 @@ impl ProxyHttp for Server {
             })
         });
         let (content_type, buf) = own_page.unwrap_or_else(|| {
-            let content = self.error_template.render(
+            let runtime = self.runtime.load();
+            let content = runtime.error_template.render(
                 pingap_util::get_pkg_version(),
                 message,
                 error_type,
             );
-            let content_type = if self.error_template.is_json() {
+            let content_type = if runtime.error_template.is_json() {
                 "application/json; charset=utf-8"
             } else {
                 "text/html; charset=utf-8"
@@ -3273,10 +3418,11 @@ impl ProxyHttp for Server {
         #[cfg(feature = "tracing")]
         set_otel_request_attrs(session, ctx);
 
-        if let Some(p) = &self.log_parser {
+        let runtime = self.runtime.load();
+        if let Some(p) = &runtime.log_parser {
             // Before the line is made: a request that is not logged
             // costs no formatting.
-            if let Some(filter) = &self.log_filter {
+            if let Some(filter) = &runtime.log_filter {
                 // What the client asked for, not what a rewrite of the
                 // location made of it.
                 let uri = ctx
@@ -3298,7 +3444,7 @@ impl ProxyHttp for Server {
                 }
             }
             let buf = p.format(session, ctx);
-            self.write_access_log(buf);
+            self.write_access_log(buf, runtime.access_log_to_application);
         }
     }
 }
@@ -6793,10 +6939,33 @@ addr = "127.0.0.1:6188"
         assert_eq!(false, response.contains("ReadError"), "{response}");
     }
 
+    impl Server {
+        fn update_runtime_for_test(&self, f: impl FnOnce(&mut ServerRuntime)) {
+            let current = self.runtime.load();
+            assert!(
+                current.log_filter.is_none(),
+                "test helper requires no AccessLogFilter"
+            );
+            let mut next = ServerRuntime {
+                log_parser: current.log_parser.clone(),
+                log_filter: None,
+                access_log_to_application: current.access_log_to_application,
+                error_template: current.error_template.clone(),
+                strict_sni: current.strict_sni,
+                enable_server_timing: current.enable_server_timing,
+                downstream_read_timeout: current.downstream_read_timeout,
+                downstream_write_timeout: current.downstream_write_timeout,
+                h1_pipelining: current.h1_pipelining,
+            };
+            f(&mut next);
+            self.runtime.store(Arc::new(next));
+        }
+    }
+
     #[tokio::test]
     async fn test_strict_sni() {
-        let mut server = new_server();
-        server.strict_sni = true;
+        let server = new_server();
+        server.update_runtime_for_test(|rt| rt.strict_sni = true);
 
         let run = async |server: &Server, sni: Option<&str>, host: &str| {
             let req =
@@ -6831,7 +7000,7 @@ addr = "127.0.0.1:6188"
         assert_eq!(pingora::ErrorType::HTTPStatus(421), *err.etype());
 
         // Without strict_sni: mismatched Host is allowed.
-        server.strict_sni = false;
+        server.update_runtime_for_test(|rt| rt.strict_sni = false);
         let (res, ctx) =
             run(&server, Some("a.example.com"), "b.example.com").await;
         assert_eq!(true, res.is_ok());
@@ -6841,26 +7010,28 @@ addr = "127.0.0.1:6188"
     #[tokio::test]
     async fn test_write_access_log_overload_vs_shutdown() {
         let mut server = new_server();
-        server.access_log_to_application = true;
+        server.update_runtime_for_test(|rt| {
+            rt.access_log_to_application = true;
+        });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<BytesMut>(1);
         server.access_logger = Some(tx);
 
         let before = ACCESS_LOG_DROPPED.load(Ordering::Relaxed);
         // First message fills the channel without dropping.
-        server.write_access_log(BytesMut::from("first"));
+        server.write_access_log(BytesMut::from("first"), true);
         assert_eq!(before, ACCESS_LOG_DROPPED.load(Ordering::Relaxed));
 
         // Second message hits `TrySendError::Full`: dropped without blocking
         // even when `access_log_to_application` is true.
-        server.write_access_log(BytesMut::from("second"));
+        server.write_access_log(BytesMut::from("second"), true);
         let after_full = ACCESS_LOG_DROPPED.load(Ordering::Relaxed);
         assert_eq!(before + 1, after_full);
 
         // Once the receiver shuts down (`TrySendError::Closed`), draining
         // requests write inline instead of being counted as dropped.
         drop(rx);
-        server.write_access_log(BytesMut::from("draining"));
+        server.write_access_log(BytesMut::from("draining"), true);
         assert_eq!(after_full, ACCESS_LOG_DROPPED.load(Ordering::Relaxed));
     }
 
@@ -7445,8 +7616,8 @@ addr = "127.0.0.1:6188"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut server = new_server_with(Some(Arc::new(ModifyingProvider)));
-        server.enable_server_timing = false;
+        let server = new_server_with(Some(Arc::new(ModifyingProvider)));
+        server.update_runtime_for_test(|rt| rt.enable_server_timing = false);
         let mut ctx = Ctx {
             plugins: Some(Arc::from(vec![(
                 Arc::from("mod"),
@@ -7476,7 +7647,7 @@ addr = "127.0.0.1:6188"
                 .is_none()
         );
 
-        server.enable_server_timing = true;
+        server.update_runtime_for_test(|rt| rt.enable_server_timing = true);
         server
             .handle_request_plugin(PluginStep::Request, &mut session, &mut ctx)
             .await
@@ -7487,6 +7658,335 @@ addr = "127.0.0.1:6188"
                 .as_ref()
                 .and_then(|f| f.plugin_processing_times.as_ref())
                 .is_some_and(|times| times.len() == 1)
+        );
+    }
+
+    #[test]
+    fn test_access_log_sink_key_distinguishes_filter_and_writer_params() {
+        let s = |v: &str| v.to_string();
+        assert_eq!(None, access_log_sink_key(None));
+        assert_eq!(None, access_log_sink_key(Some(&s("tiny"))));
+        assert_eq!(None, access_log_sink_key(Some(&s("{method} {uri}"))));
+
+        assert_eq!(
+            Some("stdout".to_string()),
+            access_log_sink_key(Some(&s("stdout tiny")))
+        );
+        assert_eq!(
+            Some("stdout".to_string()),
+            access_log_sink_key(Some(&s(
+                "/dev/stdout?skip=^/health&min_status=500&sample=0.5 json"
+            )))
+        );
+        assert_eq!(
+            Some("stdout?flush_timeout=1s".to_string()),
+            access_log_sink_key(Some(&s(
+                "stdout?flush_timeout=1s&min_latency=100ms tiny"
+            )))
+        );
+
+        assert_eq!(
+            Some("/var/log/a.log?keep=7d&rolling=hourly".to_string()),
+            access_log_sink_key(Some(&s(
+                "/var/log/a.log?rolling=hourly&skip=/ping&keep=7d tiny"
+            )))
+        );
+        assert_eq!(
+            Some("/var/log/a.log?keep=7d&rolling=hourly".to_string()),
+            access_log_sink_key(Some(&s(
+                "/var/log/a.log?keep=7d&min_status=400&rolling=hourly&sample=0.1 combined"
+            )))
+        );
+        assert_ne!(
+            access_log_sink_key(Some(&s("/var/log/a.log?rolling=hourly tiny"))),
+            access_log_sink_key(Some(&s("/var/log/a.log?rolling=daily tiny")))
+        );
+        assert_ne!(
+            access_log_sink_key(Some(&s("/var/log/a.log tiny"))),
+            access_log_sink_key(Some(&s("/var/log/b.log tiny")))
+        );
+        assert_eq!(
+            Some(
+                "syslog://127.0.0.1:514?process=pingap&protocol=tcp"
+                    .to_string()
+            ),
+            access_log_sink_key(Some(&s(
+                "syslog://127.0.0.1:514?protocol=tcp&skip=/ping&process=pingap tiny"
+            )))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_server_runtime_hot_swap_and_access_log_routing() {
+        struct Cleanup(&'static str);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                SERVER_REGISTRY.write().remove(self.0);
+            }
+        }
+
+        const SERVER_NAME: &str = "runtime-hot-swap-test";
+        let _cleanup = Cleanup(SERVER_NAME);
+
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("access.log");
+        let initial_access_log = format!(
+            "{}?rolling=hourly&skip=^/health$ tiny",
+            log_path.display()
+        );
+
+        let mut base_conf = ServerConf {
+            name: SERVER_NAME.to_string(),
+            addr: "127.0.0.1:0".to_string(),
+            access_log: Some(initial_access_log.clone()),
+            error_template: "<html>{{content}}</html>".to_string(),
+            strict_sni: false,
+            enable_server_timing: false,
+            downstream_read_timeout: Some(Duration::from_secs(5)),
+            downstream_write_timeout: Some(Duration::from_secs(6)),
+            h1_pipelining: false,
+            ..Default::default()
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<BytesMut>(8);
+        let pingap_conf = PingapConfig::new(TEST_TOML.as_ref(), false).unwrap();
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        let config_manager = Arc::new(
+            new_file_config_manager(&file.path().to_string_lossy()).unwrap(),
+        );
+        let ctx_template = AppContext {
+            logger: Some(tx),
+            config_manager,
+            server_locations_provider: Arc::new({
+                struct EmptyServerLocations;
+                impl ServerLocationsProvider for EmptyServerLocations {
+                    fn get(
+                        &self,
+                        _name: &str,
+                    ) -> Option<Arc<crate::ServerLocationRoute>>
+                    {
+                        None
+                    }
+                }
+                EmptyServerLocations
+            }),
+            location_provider: Arc::new({
+                struct EmptyLocations;
+                impl LocationProvider for EmptyLocations {
+                    fn get(&self, _name: &str) -> Option<Arc<Location>> {
+                        None
+                    }
+                    fn stats(&self) -> HashMap<String, LocationStats> {
+                        HashMap::new()
+                    }
+                }
+                EmptyLocations
+            }),
+            upstream_provider: Arc::new({
+                struct EmptyUpstreams;
+                impl UpstreamProvider for EmptyUpstreams {
+                    fn get(&self, _name: &str) -> Option<Arc<Upstream>> {
+                        None
+                    }
+                    fn list(&self) -> Vec<(String, Arc<Upstream>)> {
+                        vec![]
+                    }
+                }
+                EmptyUpstreams
+            }),
+            plugin_provider: Arc::new({
+                struct EmptyPlugins;
+                impl PluginProvider for EmptyPlugins {
+                    fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                        None
+                    }
+                }
+                EmptyPlugins
+            }),
+            certificate_provider: Arc::new({
+                struct EmptyCerts;
+                impl CertificateProvider for EmptyCerts {
+                    fn get(&self, _sni: &str) -> Option<Arc<TlsCertificate>> {
+                        None
+                    }
+                    fn list(&self) -> Arc<DynamicCertificates> {
+                        Arc::new(AHashMap::new())
+                    }
+                    fn store(&self, _data: DynamicCertificates) {}
+                }
+                EmptyCerts
+            }),
+        };
+        let _ = pingap_conf;
+
+        let server = Server::new(&base_conf, ctx_template).unwrap();
+        let runtime_ref = server.runtime.clone();
+        // `check` must NOT register in SERVER_REGISTRY.
+        assert_eq!(false, SERVER_REGISTRY.read().contains_key(SERVER_NAME));
+
+        // Hold a second Server clone via `runtime_ref`? Instead keep one Server
+        // to drive hooks and register via `run()` on a matching Server sharing
+        // `SERVER_REGISTRY`! Wait: `run` consumes `self` into HttpProxy, so
+        // let's drive hooks via `Server` before `run`? Wait: `Server::run` builds
+        // HttpProxy which owns `Server`, and we also want to call `server.logging`!
+        // Let's register via a `Server` built with `Server::new` -> `run`, and
+        // inspect `runtime_ref` + `SERVER_REGISTRY`!
+        let server_for_run = Server::new(
+            &base_conf,
+            AppContext {
+                logger: server.access_logger.clone(),
+                config_manager: server.config_manager.clone(),
+                server_locations_provider: server
+                    .server_locations_provider
+                    .clone(),
+                location_provider: server.location_provider.clone(),
+                upstream_provider: server.upstream_provider.clone(),
+                plugin_provider: server.plugin_provider.clone(),
+                certificate_provider: server.certificate_provider.clone(),
+            },
+        )
+        .unwrap();
+        let _services = server_for_run
+            .run(Arc::new(configuration::ServerConf::default()))
+            .unwrap();
+        assert_eq!(true, SERVER_REGISTRY.read().contains_key(SERVER_NAME));
+        // Point `server.runtime` to the registered server's ArcSwap so calling
+        // `server.logging` / `fail_to_proxy` observes the live swap too.
+        let mut live_server = server;
+        live_server.runtime = SERVER_REGISTRY
+            .read()
+            .get(SERVER_NAME)
+            .unwrap()
+            .runtime
+            .clone();
+        drop(runtime_ref);
+
+        // Compatible filter + format + runtime field updates swap in place.
+        let same_sink_new_filter = format!(
+            "{}?rolling=hourly&min_status=500 json",
+            log_path.display()
+        );
+        assert_eq!(
+            true,
+            can_hot_reload_server_access_log(
+                SERVER_NAME,
+                base_conf.access_log.as_ref(),
+                Some(&same_sink_new_filter),
+            )
+        );
+        let new_file_sink = format!(
+            "{}?rolling=hourly tiny",
+            dir.path().join("other.log").display()
+        );
+        assert_eq!(
+            false,
+            can_hot_reload_server_access_log(
+                SERVER_NAME,
+                base_conf.access_log.as_ref(),
+                Some(&new_file_sink),
+            )
+        );
+
+        base_conf.access_log = Some(same_sink_new_filter.clone());
+        base_conf.error_template = r#"{"err":"{{content}}"}"#.to_string();
+        base_conf.strict_sni = true;
+        base_conf.enable_server_timing = true;
+        base_conf.downstream_read_timeout = Some(Duration::from_secs(12));
+        base_conf.downstream_write_timeout = Some(Duration::from_secs(15));
+        base_conf.h1_pipelining = true;
+
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &base_conf).unwrap()
+        );
+        {
+            let rt = live_server.runtime.load();
+            assert_eq!(true, rt.strict_sni);
+            assert_eq!(true, rt.enable_server_timing);
+            assert_eq!(
+                Some(Duration::from_secs(12)),
+                rt.downstream_read_timeout
+            );
+            assert_eq!(
+                Some(Duration::from_secs(15)),
+                rt.downstream_write_timeout
+            );
+            assert_eq!(true, rt.h1_pipelining);
+            assert_eq!(true, rt.error_template.is_json());
+            assert_eq!(false, rt.access_log_to_application);
+            assert_eq!(true, rt.log_filter.is_some());
+        }
+
+        // Invalid filter fails validation and leaves previous runtime intact.
+        let mut bad_conf = ServerConf {
+            name: SERVER_NAME.to_string(),
+            access_log: Some(format!(
+                "{}?rolling=hourly&skip=( tiny",
+                log_path.display()
+            )),
+            ..Default::default()
+        };
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &bad_conf).is_err()
+        );
+        assert_eq!(true, live_server.runtime.load().strict_sni);
+
+        // Incompatible sink is refused for registered server.
+        bad_conf.access_log = Some(new_file_sink);
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &bad_conf).is_err()
+        );
+
+        // Switching to application log stops sending lines to startup file channel.
+        let app_log = "tiny".to_string();
+        assert_eq!(
+            true,
+            can_hot_reload_server_access_log(
+                SERVER_NAME,
+                Some(&same_sink_new_filter),
+                Some(&app_log),
+            )
+        );
+        base_conf.access_log = Some(app_log.clone());
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &base_conf).unwrap()
+        );
+        assert_eq!(true, live_server.runtime.load().access_log_to_application);
+        live_server.write_access_log(
+            BytesMut::from("to-app-log"),
+            live_server.runtime.load().access_log_to_application,
+        );
+        assert_eq!(true, rx.try_recv().is_err());
+
+        // Switching back from application log to the startup sink is allowed!
+        assert_eq!(
+            true,
+            can_hot_reload_server_access_log(
+                SERVER_NAME,
+                Some(&app_log),
+                Some(&same_sink_new_filter),
+            )
+        );
+        base_conf.access_log = Some(same_sink_new_filter);
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &base_conf).unwrap()
+        );
+        assert_eq!(false, live_server.runtime.load().access_log_to_application);
+        live_server.write_access_log(
+            BytesMut::from("back-to-file"),
+            live_server.runtime.load().access_log_to_application,
+        );
+        assert_eq!(BytesMut::from("back-to-file"), rx.recv().await.unwrap());
+
+        // Unregistered server returns Ok(false).
+        assert_eq!(
+            false,
+            try_reload_server_runtime("unregistered-server", &base_conf)
+                .unwrap()
         );
     }
 }

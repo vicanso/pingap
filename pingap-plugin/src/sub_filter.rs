@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, body_will_change, get_hash_key, get_str_conf, get_str_slice_conf,
-    is_partial_content,
+    Error, body_will_change, get_hash_key, get_step_conf_in, get_str_conf,
+    get_str_slice_conf, is_partial_content,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -90,6 +90,11 @@ pub struct SubFilter {
     /// Shared concurrent memory budget for buffered replacement mode.
     buffered_bytes: Arc<AtomicUsize>,
     max_buffer_memory: usize,
+
+    /// Which response lifecycle step rewrites the headers and body
+    /// (`Response` or `UpstreamResponse`). `handle_request` always runs at
+    /// `PluginStep::Request` to strip `Range` and keep upstream bodies plain.
+    plugin_step: PluginStep,
 }
 
 // Regular expression for parsing filter rules in the format:
@@ -629,6 +634,12 @@ impl TryFrom<&PluginConf> for SubFilter {
             .unwrap_or(DEFAULT_MAX_BUFFER_MEMORY);
         let can_stream = max_size.is_none()
             && filters.iter().all(|f| f.regex_pattern.is_none());
+        let plugin_step = get_step_conf_in(
+            value,
+            &PluginCategory::SubFilter.to_string(),
+            PluginStep::Response,
+            &[PluginStep::Response, PluginStep::UpstreamResponse],
+        )?;
         let hash_value = get_hash_key(value);
 
         Ok(Self {
@@ -642,6 +653,7 @@ impl TryFrom<&PluginConf> for SubFilter {
             can_stream,
             buffered_bytes: Arc::new(AtomicUsize::new(0)),
             max_buffer_memory,
+            plugin_step,
         })
     }
 }
@@ -683,6 +695,80 @@ impl SubFilter {
             })
         }
     }
+    fn init_response_filter(
+        &self,
+        session: &Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> ResponsePluginResult {
+        if let Some(status_codes) = &self.status_codes
+            && !status_codes.contains(&upstream_response.status.as_u16())
+        {
+            return ResponsePluginResult::Unchanged;
+        }
+        if has_no_rewritable_body(session, upstream_response) {
+            return ResponsePluginResult::Unchanged;
+        }
+        // If request path matches, modify the response
+        if let Some(regex) = &self.path
+            && !regex.is_match(session.req_header().uri.path())
+        {
+            return ResponsePluginResult::Unchanged;
+        }
+        // Only what is of a type the rules are for.
+        if let Some(types) = &self.types
+            && !crate::compression::matches_types(
+                types,
+                &upstream_response.headers,
+            )
+        {
+            return ResponsePluginResult::Unchanged;
+        }
+        // A body that says it is larger than what is rewritten goes
+        // through as it is, streamed and with its length.
+        if let Some(max_size) = self.max_size
+            && upstream_response
+                .headers
+                .get(CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .is_some_and(|length| length > max_size as u64)
+        {
+            return ResponsePluginResult::Unchanged;
+        }
+
+        // Remove content-length since we're modifying the body
+        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        body_will_change(upstream_response);
+        // Switch to chunked transfer encoding
+        let _ = upstream_response.insert_header(
+            http::header::TRANSFER_ENCODING,
+            HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
+        );
+        // Set up the response body modifier
+        ctx.add_modify_body_handler(&self.handler_id, self.new_body_modifier());
+        ResponsePluginResult::Modified
+    }
+
+    fn apply_body_modifier(
+        &self,
+        session: &Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<ResponseBodyPluginResult> {
+        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
+            modifier.handle(session, body, end_of_stream)?;
+            let result = if end_of_stream {
+                ResponseBodyPluginResult::FullyReplaced
+            } else {
+                ResponseBodyPluginResult::PartialReplaced
+            };
+            Ok(result)
+        } else {
+            Ok(ResponseBodyPluginResult::Unchanged)
+        }
+    }
 }
 
 #[async_trait]
@@ -701,6 +787,10 @@ impl Plugin for SubFilter {
     /// cache every time, where pingora cuts the range out of the stored
     /// response itself. Without the header there is only the whole body;
     /// a server is free to answer a range request with all of it.
+    ///
+    /// Note: `Plugin::step()` keeps the default `PluginStep::Request` even
+    /// when `self.plugin_step` is `UpstreamResponse`, so `Range` stripping and
+    /// `keep_response_body_plain` still run during the request phase.
     async fn handle_request(
         &self,
         step: PluginStep,
@@ -731,71 +821,36 @@ impl Plugin for SubFilter {
     }
 
     /// Handles the response phase of the HTTP request/response lifecycle
-    ///
-    /// # Arguments
-    /// * `session` - HTTP session information
-    /// * `ctx` - Plugin state context
-    /// * `upstream_response` - Response headers from upstream server
-    ///
-    /// # Returns
-    /// * `pingora::Result<()>` - Success or error status
     async fn handle_response(
         &self,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if let Some(status_codes) = &self.status_codes
-            && !status_codes.contains(&upstream_response.status.as_u16())
-        {
+        if self.plugin_step != PluginStep::Response {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        if has_no_rewritable_body(session, upstream_response) {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-        // If request path matches, modify the response
-        if let Some(regex) = &self.path
-            && !regex.is_match(session.req_header().uri.path())
-        {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-        // Only what is of a type the rules are for.
-        if let Some(types) = &self.types
-            && !crate::compression::matches_types(
-                types,
-                &upstream_response.headers,
-            )
-        {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-        // A body that says it is larger than what is rewritten goes
-        // through as it is, streamed and with its length.
-        if let Some(max_size) = self.max_size
-            && upstream_response
-                .headers
-                .get(CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<u64>().ok())
-                .is_some_and(|length| length > max_size as u64)
-        {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
+        Ok(self.init_response_filter(session, ctx, upstream_response))
+    }
 
-        // Remove content-length since we're modifying the body
-        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
-        body_will_change(upstream_response);
-        // Switch to chunked transfer encoding
-        let _ = upstream_response.insert_header(
-            http::header::TRANSFER_ENCODING,
-            HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
-        );
-        // Set up the response body modifier
-        ctx.add_modify_body_handler(&self.handler_id, self.new_body_modifier());
-        Ok(ResponsePluginResult::Modified)
+    fn handle_upstream_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        if self.plugin_step != PluginStep::UpstreamResponse {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        Ok(self.init_response_filter(session, ctx, upstream_response))
     }
 
     fn handles_response_body(&self) -> bool {
-        true
+        self.plugin_step == PluginStep::Response
+    }
+
+    fn handles_upstream_response_body(&self) -> bool {
+        self.plugin_step == PluginStep::UpstreamResponse
     }
 
     fn handle_response_body(
@@ -805,17 +860,23 @@ impl Plugin for SubFilter {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if let Some(modifier) = ctx.get_modify_body_handler(&self.handler_id) {
-            modifier.handle(session, body, end_of_stream)?;
-            let result = if end_of_stream {
-                ResponseBodyPluginResult::FullyReplaced
-            } else {
-                ResponseBodyPluginResult::PartialReplaced
-            };
-            Ok(result)
-        } else {
-            Ok(ResponseBodyPluginResult::Unchanged)
+        if self.plugin_step != PluginStep::Response {
+            return Ok(ResponseBodyPluginResult::Unchanged);
         }
+        self.apply_body_modifier(session, ctx, body, end_of_stream)
+    }
+
+    fn handle_upstream_response_body(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<ResponseBodyPluginResult> {
+        if self.plugin_step != PluginStep::UpstreamResponse {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        }
+        self.apply_body_modifier(session, ctx, body, end_of_stream)
     }
 }
 
@@ -1496,5 +1557,184 @@ mod tests {
             "w".repeat(STREAM_FLUSH_SIZE)
         );
         assert_eq!(expected_chained.as_bytes(), chained_out.as_slice());
+    }
+
+    #[tokio::test]
+    async fn test_sub_filter_upstream_response_step() {
+        // Default step is `response`.
+        let default_plugin = new_plugin("");
+        assert_eq!(PluginStep::Response, default_plugin.plugin_step);
+        assert_eq!(true, default_plugin.handles_response_body());
+        assert_eq!(false, default_plugin.handles_upstream_response_body());
+
+        // Invalid steps are rejected.
+        for bad in ["request", "early_request", "proxy_upstream", "unknown"] {
+            let err = SubFilter::try_from(
+                &toml::from_str::<PluginConf>(&format!("step = \"{bad}\""))
+                    .unwrap(),
+            )
+            .err()
+            .unwrap()
+            .to_string();
+            assert_eq!(
+                true,
+                err.contains(&format!(
+                    "Invalid step({bad}), expect one of: response, upstream_response"
+                )),
+                "{bad}: {err}"
+            );
+        }
+
+        // 1. Literal streaming mode with `step = "upstream_response"`.
+        let stream_plugin =
+            new_plugin("step = \"upstream_response\"\ntypes = [\"text/html\"]");
+        assert_eq!(PluginStep::UpstreamResponse, stream_plugin.plugin_step);
+        assert_eq!(false, stream_plugin.handles_response_body());
+        assert_eq!(true, stream_plugin.handles_upstream_response_body());
+
+        let mut session = new_session(
+            "GET / HTTP/1.1\r\nRange: bytes=0-10\r\nIf-Range: \"v1\"\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        assert_eq!(
+            RequestPluginResult::Continue,
+            stream_plugin
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap()
+        );
+        assert_eq!(false, session.req_header().headers.contains_key("Range"));
+        assert_eq!(
+            false,
+            session.req_header().headers.contains_key("If-Range")
+        );
+        assert_eq!(
+            true,
+            ctx.response_body_stays_plain(|types| types == ["text/html"])
+        );
+
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        resp.append_header("Content-Type", "text/html").unwrap();
+        resp.append_header("Content-Length", "100").unwrap();
+        resp.append_header("ETag", "\"v1\"").unwrap();
+        resp.append_header("Accept-Ranges", "bytes").unwrap();
+
+        // Downstream response hook is a no-op when configured for upstream_response.
+        assert_eq!(
+            ResponsePluginResult::Unchanged,
+            stream_plugin
+                .handle_response(&mut session, &mut ctx, &mut resp)
+                .await
+                .unwrap()
+        );
+        assert_eq!(true, resp.headers.contains_key("Content-Length"));
+        assert_eq!("\"v1\"", resp.headers.get("ETag").unwrap());
+
+        assert_eq!(
+            ResponsePluginResult::Modified,
+            stream_plugin
+                .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+                .unwrap()
+        );
+        assert_eq!(false, resp.headers.contains_key("Content-Length"));
+        assert_eq!(false, resp.headers.contains_key("Accept-Ranges"));
+        assert_eq!("W/\"v1\"", resp.headers.get("ETag").unwrap());
+        assert_eq!("chunked", resp.headers.get("Transfer-Encoding").unwrap());
+
+        let prefix = "x".repeat(STREAM_FLUSH_SIZE);
+        let mut out = Vec::new();
+        let mut b1 = Some(Bytes::from(format!("{prefix} ol")));
+        assert_eq!(
+            ResponseBodyPluginResult::PartialReplaced,
+            stream_plugin
+                .handle_upstream_response_body(
+                    &mut session,
+                    &mut ctx,
+                    &mut b1,
+                    false
+                )
+                .unwrap()
+        );
+        out.extend_from_slice(&b1.unwrap());
+
+        let mut b2 = Some(Bytes::from_static(b"d_end"));
+        assert_eq!(
+            ResponseBodyPluginResult::FullyReplaced,
+            stream_plugin
+                .handle_upstream_response_body(
+                    &mut session,
+                    &mut ctx,
+                    &mut b2,
+                    true
+                )
+                .unwrap()
+        );
+        out.extend_from_slice(&b2.unwrap());
+        assert_eq!(format!("{prefix} new_end").as_bytes(), out.as_slice());
+
+        // Downstream body hook remains a no-op.
+        let mut untouched = Some(Bytes::from_static(b"old"));
+        assert_eq!(
+            ResponseBodyPluginResult::Unchanged,
+            stream_plugin
+                .handle_response_body(
+                    &mut session,
+                    &mut ctx,
+                    &mut untouched,
+                    true
+                )
+                .unwrap()
+        );
+        assert_eq!(b"old".as_ref(), untouched.unwrap().as_ref());
+
+        // 2. Regex buffered mode with `step = "upstream_response"`.
+        let regex_plugin = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "step = \"upstream_response\"\nfilters = [\"subs_filter 'old([0-9]+)' 'new$1' g\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(false, regex_plugin.can_stream);
+        assert_eq!(false, regex_plugin.handles_response_body());
+        assert_eq!(true, regex_plugin.handles_upstream_response_body());
+
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        assert_eq!(
+            ResponsePluginResult::Modified,
+            regex_plugin
+                .handle_upstream_response(&mut session, &mut ctx, &mut resp)
+                .unwrap()
+        );
+        let mut c1 = Some(Bytes::from_static(b"old1 "));
+        assert_eq!(
+            ResponseBodyPluginResult::PartialReplaced,
+            regex_plugin
+                .handle_upstream_response_body(
+                    &mut session,
+                    &mut ctx,
+                    &mut c1,
+                    false
+                )
+                .unwrap()
+        );
+        assert_eq!(true, c1.unwrap().is_empty());
+
+        let mut c2 = Some(Bytes::from_static(b"old2"));
+        assert_eq!(
+            ResponseBodyPluginResult::FullyReplaced,
+            regex_plugin
+                .handle_upstream_response_body(
+                    &mut session,
+                    &mut ctx,
+                    &mut c2,
+                    true
+                )
+                .unwrap()
+        );
+        assert_eq!(b"new1 new2".as_ref(), c2.unwrap().as_ref());
     }
 }

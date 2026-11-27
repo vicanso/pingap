@@ -270,6 +270,14 @@ mod tests {
                 updated.meta
             );
             assert_eq!(obj.body, updated.body);
+
+            let (lookup_meta, lookup_body) =
+                cache.lookup_hit(key, b"").await.unwrap().unwrap();
+            assert_eq!(updated.meta, lookup_meta);
+            assert_eq!(
+                crate::http_cache::HitBody::Memory(obj.body.clone()),
+                lookup_body
+            );
         }
     }
 

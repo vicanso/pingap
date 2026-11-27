@@ -376,12 +376,27 @@ impl Traffic {
     }
 
     fn snapshot(&self, now: u64) -> TrafficSnapshot {
+        self.snapshot_with(
+            now,
+            super::stream_metrics_snapshot(),
+            pingap_cache::memory_cache_evictions(),
+        )
+    }
+
+    fn snapshot_with(
+        &self,
+        now: u64,
+        stream_snap: super::StreamMetricsSnapshot,
+        cache_memory_evictions: u64,
+    ) -> TrafficSnapshot {
         let last = now / TRAFFIC_INTERVAL;
         // Fewer buckets on a clock that has not yet run fifteen minutes
         // from its start: a board without a clock that boots in 1970.
         let first = (last + 1).saturating_sub(BUCKETS);
         let mut snapshot = TrafficSnapshot {
             interval: TRAFFIC_INTERVAL,
+            streams: summarize_streams(stream_snap),
+            cache_memory_evictions,
             ..Default::default()
         };
         for epoch in first..=last {
@@ -529,6 +544,36 @@ pub fn record_traffic(ctx: &Ctx, error: Option<&pingora::Error>) {
     TRAFFIC.record(pingap_core::now_sec(), &Request::of(ctx, error));
 }
 
+fn summarize_streams(
+    stream_snap: super::StreamMetricsSnapshot,
+) -> BTreeMap<String, StreamTrafficSummary> {
+    let mut streams: BTreeMap<String, StreamTrafficSummary> = BTreeMap::new();
+    for (name, active) in stream_snap.active {
+        streams.entry(name).or_default().active_connections = active;
+    }
+    for ((name, _, _), count) in stream_snap.connections {
+        streams.entry(name).or_default().connections_total += count;
+    }
+    for ((name, direction), bytes) in stream_snap.bytes {
+        let entry = streams.entry(name).or_default();
+        match direction {
+            "tx" => entry.tx_bytes += bytes,
+            "rx" => entry.rx_bytes += bytes,
+            _ => {},
+        }
+    }
+    streams
+}
+
+/// Aggregated Layer 4 stream connection and byte counts for one stream listener.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct StreamTrafficSummary {
+    pub active_connections: i64,
+    pub connections_total: u64,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 /// What the requests of the last fifteen minutes came to, by bucket of
 /// [`TRAFFIC_INTERVAL`] seconds, the oldest first; the last bucket is the
 /// one under way. Each list has one value for each bucket.
@@ -553,6 +598,10 @@ pub struct TrafficSnapshot {
     pub latency_max: Vec<u64>,
     /// The upstreams that had requests in the window, by name.
     pub upstreams: BTreeMap<String, UpstreamTraffic>,
+    /// Aggregated Layer 4 stream metrics, by stream name.
+    pub streams: BTreeMap<String, StreamTrafficSummary>,
+    /// Objects evicted from the memory cache to stay within its size.
+    pub cache_memory_evictions: u64,
 }
 
 impl TrafficSnapshot {
@@ -829,5 +878,79 @@ mod tests {
         assert_eq!(total, *api.requests.last().unwrap());
         assert_eq!(errs, *api.errors.last().unwrap());
         assert_eq!(25, *api.latency_max.last().unwrap());
+    }
+
+    #[test]
+    fn test_traffic_snapshot_includes_streams_and_cache_evictions() {
+        let traffic = Traffic::new();
+        let stream_snap = super::super::StreamMetricsSnapshot {
+            active: vec![("tls_mux".to_string(), 3), ("idle".to_string(), 0)],
+            connections: vec![
+                (
+                    (
+                        "tls_mux".to_string(),
+                        "up_a".to_string(),
+                        "ok".to_string(),
+                    ),
+                    4,
+                ),
+                (
+                    (
+                        "tls_mux".to_string(),
+                        "up_b".to_string(),
+                        "err".to_string(),
+                    ),
+                    2,
+                ),
+            ],
+            bytes: vec![
+                (("tls_mux".to_string(), "tx"), 1024),
+                (("tls_mux".to_string(), "rx"), 2048),
+            ],
+        };
+        let snapshot = traffic.snapshot_with(1_000_000, stream_snap, 42);
+        assert_eq!(42, snapshot.cache_memory_evictions);
+        assert_eq!(
+            Some(&StreamTrafficSummary {
+                active_connections: 3,
+                connections_total: 6,
+                tx_bytes: 1024,
+                rx_bytes: 2048,
+            }),
+            snapshot.streams.get("tls_mux")
+        );
+        assert_eq!(
+            Some(&StreamTrafficSummary {
+                active_connections: 0,
+                connections_total: 0,
+                tx_bytes: 0,
+                rx_bytes: 0,
+            }),
+            snapshot.streams.get("idle")
+        );
+
+        let stream_name = format!("traffic-stream-{}", std::process::id());
+        super::super::stream_connection_open(&stream_name);
+        super::super::stream_connection_close(
+            &stream_name,
+            "up",
+            "ok",
+            100,
+            200,
+        );
+        let live = traffic_snapshot();
+        assert_eq!(
+            Some(&StreamTrafficSummary {
+                active_connections: 0,
+                connections_total: 1,
+                tx_bytes: 100,
+                rx_bytes: 200,
+            }),
+            live.streams.get(&stream_name)
+        );
+        assert_eq!(
+            pingap_cache::memory_cache_evictions(),
+            live.cache_memory_evictions
+        );
     }
 }

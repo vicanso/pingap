@@ -18,6 +18,7 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+use pingap_certificate::{CertificateProvider, DynamicCertificates};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::{Ctx, get_hostname};
@@ -61,6 +62,18 @@ static METRICS_LOCATION_PROVIDER: OnceLock<Arc<dyn LocationProvider>> =
 /// with their last values for as long as the process runs.
 pub fn set_metrics_location_provider(provider: Arc<dyn LocationProvider>) {
     let _ = METRICS_LOCATION_PROVIDER.set(provider);
+}
+
+/// Optional certificate provider used to refresh certificate expiry gauges on scrape.
+static METRICS_CERTIFICATE_PROVIDER: OnceLock<Arc<dyn CertificateProvider>> =
+    OnceLock::new();
+
+/// Registers the process-wide certificate provider so Prometheus scrapes can
+/// export certificate expiration timestamps and remaining lifetimes.
+pub fn set_metrics_certificate_provider(
+    provider: Arc<dyn CertificateProvider>,
+) {
+    let _ = METRICS_CERTIFICATE_PROVIDER.set(provider);
 }
 
 /// How long a location has to be gone before its series are dropped.
@@ -221,6 +234,12 @@ pub struct Prometheus {
 
     /// Circuit breaker state per upstream backend: 0 closed, 1 open, 2 half-open
     upstream_backend_circuit_state: IntGaugeVec,
+    /// Backend readiness per upstream backend: 1 healthy, 0 unhealthy
+    upstream_backend_healthy: IntGaugeVec,
+    /// Certificate expiration unix timestamp in seconds, per certificate name
+    certificate_not_after_seconds: IntGaugeVec,
+    /// Remaining lifetime in seconds before certificate expiry, per certificate name
+    certificate_remaining_seconds: IntGaugeVec,
     /// Seconds the latest backend refresh spent in service discovery, per upstream
     upstream_discovery_time: GaugeVec,
     /// Seconds the latest backend refresh spent rebuilding the selector, per upstream
@@ -843,6 +862,7 @@ impl Prometheus {
         self.tcp_count.set(info.tcp_count as i64);
         self.tcp6_count.set(info.tcp6_count as i64);
         self.refresh_upstream_backend_metrics();
+        self.refresh_certificate_metrics();
         if let Some(provider) = METRICS_LOCATION_PROVIDER.get() {
             self.forget_removed_locations(
                 |name| provider.get(name).is_some(),
@@ -905,12 +925,24 @@ impl Prometheus {
         }
     }
 
-    /// Push current per-backend stats/circuit state into the gauge vectors.
+    /// Push current per-backend stats/circuit/health state into the gauge vectors.
     fn refresh_upstream_backend_metrics(&self) {
         let Some(provider) = METRICS_UPSTREAM_PROVIDER.get() else {
             return;
         };
-        let all_stats = provider.get_all_stats();
+        self.refresh_upstream_backend_metrics_from(provider.as_ref());
+    }
+
+    fn refresh_upstream_backend_metrics_from(
+        &self,
+        provider: &dyn UpstreamProvider,
+    ) {
+        let upstreams = provider.list();
+        let all_stats: HashMap<String, pingap_upstream::UpstreamStats> =
+            upstreams
+                .iter()
+                .map(|(name, upstream)| (name.clone(), upstream.stats()))
+                .collect();
         // These gauges describe the state as of this scrape and every one of
         // them is written again below, so clearing them first is what drops
         // the label sets of backends that no longer exist. Without it a
@@ -920,11 +952,16 @@ impl Prometheus {
         self.upstream_backend_failure_rate.reset();
         self.upstream_backend_requests.reset();
         self.upstream_backend_circuit_state.reset();
+        self.upstream_backend_healthy.reset();
         self.upstream_discovery_time.reset();
         self.upstream_selector_build_time.reset();
         // The per-upstream series are written on the request path instead, so
         // they cannot be rebuilt here; drop the ones whose upstream is gone.
         self.forget_removed_upstreams(&all_stats);
+
+        for (upstream_name, upstream) in &upstreams {
+            self.refresh_upstream_backend_health(upstream_name, upstream);
+        }
 
         for (upstream_name, stats) in all_stats {
             self.refresh_upstream_update_timing(&upstream_name, &stats);
@@ -948,6 +985,64 @@ impl Prometheus {
                     .with_label_values(&labels)
                     .set(state as i64);
             }
+        }
+    }
+
+    fn refresh_upstream_backend_health(
+        &self,
+        upstream_name: &str,
+        upstream: &pingap_upstream::Upstream,
+    ) {
+        let Some(backends) = upstream.get_backends() else {
+            return;
+        };
+        for backend in backends.get_backend().iter() {
+            let addr = backend.addr.to_string();
+            self.upstream_backend_healthy
+                .with_label_values(&[upstream_name, addr.as_str()])
+                .set(i64::from(backends.ready(backend)));
+        }
+    }
+
+    fn refresh_certificate_metrics(&self) {
+        let Some(provider) = METRICS_CERTIFICATE_PROVIDER.get() else {
+            return;
+        };
+        let certs = provider.list();
+        let now = i64::try_from(pingap_core::now_sec()).unwrap_or(i64::MAX);
+        self.refresh_certificate_metrics_from(&certs, now);
+    }
+
+    fn refresh_certificate_metrics_from(
+        &self,
+        certs: &DynamicCertificates,
+        now: i64,
+    ) {
+        self.certificate_not_after_seconds.reset();
+        self.certificate_remaining_seconds.reset();
+        let mut by_name: HashMap<&str, i64> =
+            HashMap::with_capacity(certs.len());
+        for (key, cert) in certs.iter() {
+            let Some(info) = cert.info.as_ref() else {
+                continue;
+            };
+            let name = cert.name.as_deref().unwrap_or(key.as_str());
+            by_name
+                .entry(name)
+                .and_modify(|existing| {
+                    *existing = (*existing).min(info.not_after);
+                })
+                .or_insert(info.not_after);
+        }
+        for (name, not_after) in by_name {
+            let remaining = not_after.saturating_sub(now);
+            let labels = [name];
+            self.certificate_not_after_seconds
+                .with_label_values(&labels)
+                .set(not_after);
+            self.certificate_remaining_seconds
+                .with_label_values(&labels)
+                .set(remaining);
         }
     }
 
@@ -1651,6 +1746,30 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap backend circuit state (0=closed,1=open,2=half-open)",
         &["upstream", "backend"]
     )?;
+    let upstream_backend_healthy = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_upstream_backend_healthy",
+        "pingap upstream backend health status (1=healthy,0=unhealthy)",
+        &["upstream", "backend"]
+    )?;
+    let certificate_not_after_seconds = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_certificate_not_after_seconds",
+        "pingap tls certificate expiration unix timestamp in seconds",
+        &["name"]
+    )?;
+    let certificate_remaining_seconds = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_certificate_remaining_seconds",
+        "pingap tls certificate remaining lifetime in seconds",
+        &["name"]
+    )?;
 
     let collectors: Vec<Box<dyn Collector>> =
         vec![CACHE_READING_TIME.clone(), CACHE_WRITING_TIME.clone()];
@@ -1890,6 +2009,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         upstream_backend_failure_rate,
         upstream_backend_requests,
         upstream_backend_circuit_state,
+        upstream_backend_healthy,
+        certificate_not_after_seconds,
+        certificate_remaining_seconds,
         upstream_discovery_time,
         upstream_selector_build_time,
         upstream_pool_eviction_idle_time,
@@ -2622,5 +2744,205 @@ mod tests {
             ),
             "{buf}"
         );
+    }
+
+    #[test]
+    fn test_upstream_backend_healthy_metrics() {
+        type UpstreamEntryList = Vec<(String, Arc<pingap_upstream::Upstream>)>;
+        struct TestUpstreams(Arc<Mutex<UpstreamEntryList>>);
+        impl UpstreamProvider for TestUpstreams {
+            fn get(
+                &self,
+                name: &str,
+            ) -> Option<Arc<pingap_upstream::Upstream>> {
+                self.0
+                    .lock()
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+            }
+            fn list(&self) -> Vec<(String, Arc<pingap_upstream::Upstream>)> {
+                self.0.lock().clone()
+            }
+        }
+
+        let conf = pingap_config::UpstreamConf {
+            addrs: vec![
+                "127.0.0.1:9001".to_string(),
+                "127.0.0.1:9002".to_string(),
+            ],
+            ..Default::default()
+        };
+        let up = Arc::new(
+            pingap_upstream::Upstream::new("api", &conf, None).unwrap(),
+        );
+        let backends = up.get_backends().unwrap();
+        for backend in backends.get_backend().iter() {
+            if backend.addr.to_string() == "127.0.0.1:9002" {
+                backends.set_enable(backend, false);
+            }
+        }
+        let provider =
+            TestUpstreams(Arc::new(Mutex::new(vec![("api".to_string(), up)])));
+        let p = new_prometheus("pingap").unwrap();
+        p.refresh_upstream_backend_metrics_from(&provider);
+
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            Some("1".to_string()),
+            metric_value(
+                &buf,
+                "pingap_upstream_backend_healthy{",
+                &["upstream=\"api\"", "backend=\"127.0.0.1:9001\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("0".to_string()),
+            metric_value(
+                &buf,
+                "pingap_upstream_backend_healthy{",
+                &["upstream=\"api\"", "backend=\"127.0.0.1:9002\""]
+            ),
+            "{buf}"
+        );
+
+        // Removing the upstream drops its backend health series.
+        provider.0.lock().clear();
+        p.refresh_upstream_backend_metrics_from(&provider);
+        let buf = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            None,
+            metric_value(
+                &buf,
+                "pingap_upstream_backend_healthy{",
+                &["upstream=\"api\""]
+            ),
+            "{buf}"
+        );
+    }
+
+    #[test]
+    fn test_certificate_expiry_metrics() {
+        struct TestCertProvider(Arc<ArcSwap<DynamicCertificates>>);
+        impl CertificateProvider for TestCertProvider {
+            fn get(
+                &self,
+                sni: &str,
+            ) -> Option<Arc<pingap_certificate::TlsCertificate>> {
+                self.0.load().get(sni).cloned()
+            }
+            fn list(&self) -> Arc<DynamicCertificates> {
+                self.0.load().clone()
+            }
+            fn store(&self, data: DynamicCertificates) {
+                self.0.store(Arc::new(data));
+            }
+        }
+
+        let make_cert = |name: Option<&str>, not_after: i64| {
+            Arc::new(pingap_certificate::TlsCertificate {
+                name: name.map(str::to_string),
+                info: Some(pingap_certificate::Certificate {
+                    not_after,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+
+        let p = new_prometheus("pingap").unwrap();
+        let now = 2_000_000_000_i64;
+        let mut certs = DynamicCertificates::new();
+        // Same certificate name serving two domains is deduplicated.
+        let valid_cert = make_cert(Some("site"), now + 3600);
+        certs.insert("a.example.com".to_string(), valid_cert.clone());
+        certs.insert("b.example.com".to_string(), valid_cert);
+        // Expired certificate yields negative remaining seconds.
+        certs.insert(
+            "expired.example.com".to_string(),
+            make_cert(Some("old"), now - 120),
+        );
+        // Unparsed entry without `info` is skipped.
+        certs.insert(
+            "broken.example.com".to_string(),
+            Arc::new(pingap_certificate::TlsCertificate::default()),
+        );
+
+        p.refresh_certificate_metrics_from(&certs, now);
+        let encoder = TextEncoder::new();
+        let mut out = Vec::new();
+        encoder.encode(&p.r.gather(), &mut out).unwrap();
+        let buf = String::from_utf8(out).unwrap();
+        assert_eq!(
+            Some((now + 3600).to_string()),
+            metric_value(
+                &buf,
+                "pingap_certificate_not_after_seconds{",
+                &["name=\"site\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("3600".to_string()),
+            metric_value(
+                &buf,
+                "pingap_certificate_remaining_seconds{",
+                &["name=\"site\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some((now - 120).to_string()),
+            metric_value(
+                &buf,
+                "pingap_certificate_not_after_seconds{",
+                &["name=\"old\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(
+            Some("-120".to_string()),
+            metric_value(
+                &buf,
+                "pingap_certificate_remaining_seconds{",
+                &["name=\"old\""]
+            ),
+            "{buf}"
+        );
+        assert_eq!(false, buf.contains("broken.example.com"), "{buf}");
+
+        // Removed certificates are cleared on the next refresh, and provider registration works via gather().
+        let provider_store =
+            Arc::new(ArcSwap::from_pointee(DynamicCertificates::new()));
+        let provider = Arc::new(TestCertProvider(provider_store.clone()));
+        set_metrics_certificate_provider(provider.clone());
+        let mut live = DynamicCertificates::new();
+        live.insert(
+            "live.example.com".to_string(),
+            make_cert(Some("live"), pingap_core::now_sec() as i64 + 600),
+        );
+        provider.store(live);
+        let scraped = String::from_utf8(p.metrics().unwrap()).unwrap();
+        assert_eq!(
+            None,
+            metric_value(
+                &scraped,
+                "pingap_certificate_not_after_seconds{",
+                &["name=\"old\""]
+            ),
+            "{scraped}"
+        );
+        assert_eq!(
+            true,
+            metric_value(
+                &scraped,
+                "pingap_certificate_not_after_seconds{",
+                &["name=\"live\""]
+            )
+            .is_some(),
+            "{scraped}"
+        );
+        provider.store(DynamicCertificates::new());
     }
 }

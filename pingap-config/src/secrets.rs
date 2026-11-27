@@ -23,7 +23,8 @@
 //! A value that is a credential is replaced by a checksum of itself, so
 //! that a change of it still shows as a change.
 
-use std::collections::HashSet;
+use crate::{Category, PingapConfig};
+use std::collections::{HashMap, HashSet};
 use toml::{Table, Value};
 
 fn masked(value: &str) -> String {
@@ -287,6 +288,161 @@ pub fn masked_toml(table: &Table) -> String {
     mask_secrets(table).to_string()
 }
 
+fn mask_storage_value(raw: &str, referenced: &HashSet<String>) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    if !referenced.is_empty() && referenced.contains(raw) {
+        return masked(raw);
+    }
+    match toml::from_str::<Table>(raw) {
+        Ok(mut table) if !table.is_empty() => {
+            if !referenced.is_empty() {
+                let mut val = Value::Table(table);
+                mask_referenced(&mut val, referenced);
+                let Value::Table(t) = val else {
+                    return String::new();
+                };
+                table = t;
+            }
+            toml::to_string(&mask_secrets(&table)).unwrap_or_default()
+        },
+        _ => masked(raw),
+    }
+}
+
+fn mask_storage_table(table: &mut Table, referenced: &HashSet<String>) {
+    if table.values().any(Value::is_table) {
+        for (_, value) in table.iter_mut() {
+            if let Value::Table(entry) = value {
+                mask_storage_table(entry, referenced);
+            }
+        }
+        return;
+    }
+    if let Some(Value::String(raw)) = table.get_mut("value") {
+        *raw = mask_storage_value(raw, referenced);
+    }
+}
+
+/// Returns `value` with credentials masked for read-only viewing according to
+/// `category`: keys matching [`is_secret_key`], PEM keys/certs, URL
+/// credentials/paths/queries, auth headers, storage secret fragments, and
+/// values resolved from `$ENV:` or `$FILE:` references (`referenced`).
+pub fn mask_category_toml_value(
+    category: Category,
+    value: &Value,
+    referenced: &HashSet<String>,
+) -> Value {
+    let mut cloned = value.clone();
+    if let Value::Table(ref mut table) = cloned {
+        if category == Category::Storage {
+            mask_storage_table(table, referenced);
+        }
+        if !referenced.is_empty() {
+            mask_referenced(&mut cloned, referenced);
+        }
+        let Value::Table(table) = cloned else {
+            return value.clone();
+        };
+        return Value::Table(mask_secrets(&table));
+    }
+    if !referenced.is_empty() {
+        mask_referenced(&mut cloned, referenced);
+    }
+    cloned
+}
+
+fn mask_typed_entry<T>(
+    category: Category,
+    entry: &T,
+    referenced: &HashSet<String>,
+) -> T
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+{
+    let Ok(value) = Value::try_from(entry) else {
+        return T::default();
+    };
+    let masked = mask_category_toml_value(category.clone(), &value, referenced);
+    if let Ok(parsed) = masked.try_into::<T>() {
+        return parsed;
+    }
+    // Never fall back to the unmasked entry if a resolved reference value
+    // happened to collide with a non-string typed field; mask by key/format
+    // alone instead.
+    let empty = HashSet::new();
+    mask_category_toml_value(category, &value, &empty)
+        .try_into::<T>()
+        .unwrap_or_default()
+}
+
+fn mask_typed_map<T>(
+    category: Category,
+    entries: &HashMap<String, T>,
+    referenced: &HashSet<String>,
+) -> HashMap<String, T>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + Default,
+{
+    entries
+        .iter()
+        .map(|(name, entry)| {
+            (
+                name.clone(),
+                mask_typed_entry(category.clone(), entry, referenced),
+            )
+        })
+        .collect()
+}
+
+/// Returns a copy of `conf` with every secret, PEM key/cert, URL credential,
+/// auth header, storage secret fragment, and `$ENV`/`$FILE` `referenced`
+/// value replaced by its `crc32:` checksum.
+pub fn mask_pingap_config(conf: &PingapConfig) -> PingapConfig {
+    let referenced = &conf.referenced;
+    let plugins = conf
+        .plugins
+        .iter()
+        .map(|(name, plugin)| {
+            let masked = mask_category_toml_value(
+                Category::Plugin,
+                &Value::Table(plugin.clone()),
+                referenced,
+            );
+            let table = match masked {
+                Value::Table(table) => table,
+                _ => Table::new(),
+            };
+            (name.clone(), table)
+        })
+        .collect();
+
+    PingapConfig {
+        basic: mask_typed_entry(Category::Basic, &conf.basic, referenced),
+        upstreams: mask_typed_map(
+            Category::Upstream,
+            &conf.upstreams,
+            referenced,
+        ),
+        locations: mask_typed_map(
+            Category::Location,
+            &conf.locations,
+            referenced,
+        ),
+        servers: mask_typed_map(Category::Server, &conf.servers, referenced),
+        streams: mask_typed_map(Category::Stream, &conf.streams, referenced),
+        plugins,
+        certificates: mask_typed_map(
+            Category::Certificate,
+            &conf.certificates,
+            referenced,
+        ),
+        storages: mask_typed_map(Category::Storage, &conf.storages, referenced),
+        referenced: HashSet::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +572,139 @@ ip_list = ["127.0.0.1"]
         let text = masked_fragment("PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk=");
         assert_eq!(true, text.starts_with("crc32:"), "{text}");
         assert_eq!("", masked_fragment(""));
+    }
+
+    #[test]
+    fn test_mask_pingap_config_and_category_toml_value() {
+        let mut conf = crate::convert_pingap_config(
+            br#"
+[basic]
+name = "pingap"
+webhook = "https://hook.test/send?key=hook-secret"
+webhook_secret = "wh-sec-123"
+webhook_headers = ["Authorization: Bearer hdr-sec-456", "X-Env: prod"]
+
+[upstreams.api]
+addrs = ["127.0.0.1:5000"]
+health_check = "http://user:up-pass@127.0.0.1:5000/ping"
+client_cert = "-----BEGIN CERTIFICATE-----\nCERTDATA\n-----END CERTIFICATE-----"
+client_key = "-----BEGIN PRIVATE KEY-----\nKEYDATA\n-----END PRIVATE KEY-----"
+
+[locations.app]
+upstream = "api"
+proxy_set_headers = ["Authorization: Bearer loc-token", "X-App: demo"]
+
+[servers.web]
+addr = "0.0.0.0:8080"
+prometheus_metrics = "http://user:prom-pass@prom.test/metrics?token=q-tok"
+
+[plugins.auth]
+category = "jwt"
+secret = "jwt-secret-xyz"
+header = "Authorization"
+
+[certificates.site]
+domains = "example.com"
+tls_cert = "-----BEGIN CERTIFICATE-----\nSITECERT\n-----END CERTIFICATE-----"
+tls_key = "-----BEGIN PRIVATE KEY-----\nSITEKEY\n-----END PRIVATE KEY-----"
+acme_eab_hmac = "eab-secret"
+
+[storages.frag]
+category = "config"
+value = "read_timeout = \"7s\"\nsecret = \"frag-secret\"\n"
+secret = "storage-aes-secret"
+
+[storages.raw_sec]
+category = "secret"
+value = "raw-secret-token"
+"#,
+            false,
+        )
+        .unwrap();
+        conf.referenced.insert("resolved-env-secret".to_string());
+        conf.basic.error_template = Some("resolved-env-secret".to_string());
+
+        let masked = mask_pingap_config(&conf);
+        let serialized = toml::to_string_pretty(&masked).unwrap();
+        for secret in [
+            "hook-secret",
+            "wh-sec-123",
+            "hdr-sec-456",
+            "up-pass",
+            "CERTDATA",
+            "KEYDATA",
+            "loc-token",
+            "prom-pass",
+            "q-tok",
+            "jwt-secret-xyz",
+            "SITECERT",
+            "SITEKEY",
+            "eab-secret",
+            "frag-secret",
+            "storage-aes-secret",
+            "raw-secret-token",
+            "resolved-env-secret",
+        ] {
+            assert_eq!(
+                false,
+                serialized.contains(secret),
+                "{secret}: {serialized}"
+            );
+        }
+        assert_eq!(true, serialized.contains("crc32:"), "{serialized}");
+        assert_eq!(false, serialized.contains("X-Env: prod"), "{serialized}");
+        assert_eq!(true, serialized.contains("X-App: demo"), "{serialized}");
+        assert_eq!(true, serialized.contains("read_timeout"), "{serialized}");
+        assert_eq!(
+            true,
+            masked
+                .basic
+                .error_template
+                .as_deref()
+                .is_some_and(|v| v.starts_with("crc32:"))
+        );
+        assert_eq!(
+            true,
+            masked.storages["raw_sec"].value.starts_with("crc32:")
+        );
+        assert_eq!(
+            false,
+            masked.storages["frag"].value.contains("frag-secret")
+        );
+        assert_eq!(
+            true,
+            masked.storages["frag"].value.contains("read_timeout")
+        );
+
+        let referenced = HashSet::from(["custom-ref-val".to_string()]);
+        let storage_entry: Value = toml::from_str(
+            "category = \"config\"\nvalue = \"secret = \\\"inner\\\"\\nremark = \\\"custom-ref-val\\\"\"\nsecret = \"aes-key\"",
+        )
+        .unwrap();
+        let masked_storage = mask_category_toml_value(
+            Category::Storage,
+            &storage_entry,
+            &referenced,
+        );
+        let s = masked_storage.to_string();
+        assert_eq!(false, s.contains("inner"), "{s}");
+        assert_eq!(false, s.contains("custom-ref-val"), "{s}");
+        assert_eq!(false, s.contains("aes-key"), "{s}");
+        assert_eq!(true, s.contains("crc32:"), "{s}");
+
+        let plugin_entry: Value = toml::from_str(
+            "category = \"key_auth\"\nkeys = [\"k1\", \"custom-ref-val\"]\nheader = \"X-Key\"",
+        )
+        .unwrap();
+        let masked_plugin = mask_category_toml_value(
+            Category::Plugin,
+            &plugin_entry,
+            &referenced,
+        );
+        let p = masked_plugin.to_string();
+        assert_eq!(false, p.contains("\"k1\""), "{p}");
+        assert_eq!(false, p.contains("custom-ref-val"), "{p}");
+        assert_eq!(true, p.contains("X-Key"), "{p}");
+        assert_eq!(true, p.contains("crc32:"), "{p}");
     }
 }

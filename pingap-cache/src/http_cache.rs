@@ -28,6 +28,7 @@ use pingora::cache::{
     PurgeType, Storage,
 };
 use std::any::Any;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
@@ -36,6 +37,20 @@ use tracing::{error, info};
 /// The two halves of a serialized `CacheMeta`. `Bytes` so that parsing a
 /// cache file and cloning an object out of the memory layer copy nothing.
 pub type BinaryMeta = (Bytes, Bytes);
+
+/// Body payload returned by [`HttpCacheStorage::lookup_hit`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum HitBody {
+    /// Body already buffered in memory (e.g. TinyUFO hot hit or small entry).
+    Memory(Bytes),
+    /// Body stored on disk at `path`, starting at `body_offset` for `body_len` bytes,
+    /// read lazily in chunks on `HandleHit::read_body`.
+    Disk {
+        path: PathBuf,
+        body_offset: u64,
+        body_len: usize,
+    },
+}
 
 /// Represents a cached object containing metadata and body content
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -49,19 +64,25 @@ pub struct CacheObject {
 // Maximum size for a single cached object (40MB)
 static MAX_OBJECT_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
 
+/// Computes the TinyUFO page weight for a serialized cache payload
+/// (`meta0.len() + meta1.len() + body.len()`).
+#[inline]
+pub(crate) fn payload_weight(payload_len: usize) -> u16 {
+    if payload_len <= PAGE_SIZE {
+        return 1;
+    }
+    if payload_len >= MAX_OBJECT_CACHE_SIZE {
+        return u16::MAX;
+    }
+    payload_len.div_ceil(PAGE_SIZE) as u16
+}
+
 impl CacheObject {
     /// The weight of the object in the memory cache: its size in 4 KB
     /// pages, rounded up. Rounded down, 8191 bytes weighed one page, and
     /// a cache of small objects held up to twice its budget.
     pub fn get_weight(&self) -> u16 {
-        let size = self.body.len() + self.meta.0.len() + self.meta.1.len();
-        if size <= PAGE_SIZE {
-            return 1;
-        }
-        if size >= MAX_OBJECT_CACHE_SIZE {
-            return u16::MAX;
-        }
-        size.div_ceil(PAGE_SIZE) as u16
+        payload_weight(self.body.len() + self.meta.0.len() + self.meta.1.len())
     }
 }
 
@@ -165,6 +186,19 @@ pub trait HttpCacheStorage: Sync + Send {
         key: &str,
         namespace: &[u8],
     ) -> Result<Option<CacheObject>>;
+
+    /// Retrieves serialized metadata and a body handle (in-memory or lazy disk slice)
+    /// for a cache hit. Defaults to [`Self::get`] wrapped in [`HitBody::Memory`].
+    async fn lookup_hit(
+        &self,
+        key: &str,
+        namespace: &[u8],
+    ) -> Result<Option<(BinaryMeta, HitBody)>> {
+        Ok(self
+            .get(key, namespace)
+            .await?
+            .map(|obj| (obj.meta, HitBody::Memory(obj.body))))
+    }
 
     /// Stores a cache object with the given key and namespace
     async fn put(
@@ -329,7 +363,7 @@ impl HttpCache {
 /// `bandwidth_limit` - then had one piece to hold back: nothing for as
 /// long as all of it takes at the rate, and all of it at once after that.
 /// A piece of this size is what a read from an upstream brings.
-const HIT_CHUNK_SIZE: usize = 64 * 1024;
+pub(crate) const HIT_CHUNK_SIZE: usize = 64 * 1024;
 
 /// Handles cache hits by managing access to cached content
 pub struct CompleteHit {
@@ -343,6 +377,19 @@ pub struct CompleteHit {
     range_end: usize,
 }
 
+/// Handles cache hits backed by an on-disk file, reading only the requested
+/// byte range lazily in [`HIT_CHUNK_SIZE`] pieces.
+pub struct DiskHit {
+    path: PathBuf,
+    body_offset: u64,
+    body_len: usize,
+    file: Option<std::fs::File>,
+    needs_seek: bool,
+    done: bool,
+    range_start: usize,
+    range_end: usize,
+}
+
 /// Whether `hit` - the handler of a response found in a storage of this
 /// crate - has handed out the last piece of the body it was asked for.
 /// `false` for the handler of any other storage.
@@ -352,6 +399,7 @@ pub struct CompleteHit {
 pub fn is_hit_read_to_the_end(hit: &(dyn Any + Send + Sync)) -> bool {
     hit.downcast_ref::<CompleteHit>()
         .is_some_and(|hit| hit.done)
+        || hit.downcast_ref::<DiskHit>().is_some_and(|hit| hit.done)
 }
 
 impl CompleteHit {
@@ -414,6 +462,118 @@ impl HandleHit for CompleteHit {
         end: Option<usize>,
     ) -> pingora::Result<()> {
         self.seek(start, end)?;
+        Ok(())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + Sync) {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync) {
+        self
+    }
+}
+
+impl DiskHit {
+    /// Creates a lazy disk-backed hit handler over `[0, body_len)` starting at
+    /// `body_offset` in `path`.
+    pub fn new(path: PathBuf, body_offset: u64, body_len: usize) -> Self {
+        Self {
+            path,
+            body_offset,
+            body_len,
+            file: None,
+            needs_seek: true,
+            done: false,
+            range_start: 0,
+            range_end: body_len,
+        }
+    }
+
+    fn seek_range(&mut self, start: usize, end: Option<usize>) -> Result<()> {
+        if start >= self.body_len {
+            return Err(Error::Invalid {
+                message: format!(
+                    "seek start out of range {start} >= {}",
+                    self.body_len
+                ),
+            });
+        }
+        self.range_start = start;
+        self.range_end =
+            end.map_or(self.range_end, |e| std::cmp::min(self.body_len, e));
+        self.needs_seek = true;
+        // seek resets read so that one handler can be used for multiple ranges
+        self.done = false;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl HandleHit for DiskHit {
+    async fn read_body(&mut self) -> pingora::Result<Option<Bytes>> {
+        if self.done || self.range_start >= self.range_end {
+            self.done = true;
+            return Ok(None);
+        }
+        let len = (self.range_end - self.range_start).min(HIT_CHUNK_SIZE);
+        let target_offset =
+            self.body_offset.saturating_add(self.range_start as u64);
+        let path = self.path.clone();
+        let file = self.file.take();
+        let needs_seek = self.needs_seek;
+
+        let (file, buf) = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut f = match file {
+                Some(mut f) => {
+                    if needs_seek {
+                        f.seek(SeekFrom::Start(target_offset))?;
+                    }
+                    f
+                },
+                None => {
+                    let mut f = std::fs::File::open(&path)?;
+                    f.seek(SeekFrom::Start(target_offset))?;
+                    f
+                },
+            };
+            let mut buf = vec![0u8; len];
+            f.read_exact(&mut buf)?;
+            Ok::<_, std::io::Error>((f, buf))
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("disk cache read task failed: {e}"),
+        })?
+        .map_err(|source| Error::Io { source })?;
+
+        self.file = Some(file);
+        self.needs_seek = false;
+        self.range_start += len;
+        self.done = self.range_start >= self.range_end;
+        Ok(Some(Bytes::from(buf)))
+    }
+
+    async fn finish(
+        self: Box<Self>,
+        _storage: &'static (dyn Storage + Sync),
+        _key: &CacheKey,
+        _trace: &SpanHandle,
+    ) -> pingora::Result<()> {
+        Ok(())
+    }
+
+    fn can_seek(&self) -> bool {
+        true
+    }
+
+    fn seek(
+        &mut self,
+        start: usize,
+        end: Option<usize>,
+    ) -> pingora::Result<()> {
+        self.seek_range(start, end)?;
         Ok(())
     }
 
@@ -492,16 +652,27 @@ impl Storage for HttpCache {
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
         let namespace = key.user_tag().as_bytes();
         let hash = key.combined();
-        if let Some(obj) = self.cache.get(&hash, namespace).await? {
-            let meta = CacheMeta::deserialize(&obj.meta.0, &obj.meta.1)?;
-            let size = obj.body.len();
-            let hit_handler = CompleteHit {
-                body: obj.body,
-                done: false,
-                range_start: 0,
-                range_end: size,
+        if let Some((binary_meta, body)) =
+            self.cache.lookup_hit(&hash, namespace).await?
+        {
+            let meta = CacheMeta::deserialize(&binary_meta.0, &binary_meta.1)?;
+            let hit_handler: HitHandler = match body {
+                HitBody::Memory(body) => {
+                    let size = body.len();
+                    Box::new(CompleteHit {
+                        body,
+                        done: false,
+                        range_start: 0,
+                        range_end: size,
+                    })
+                },
+                HitBody::Disk {
+                    path,
+                    body_offset,
+                    body_len,
+                } => Box::new(DiskHit::new(path, body_offset, body_len)),
             };
-            Ok(Some((meta, Box::new(hit_handler))))
+            Ok(Some((meta, hit_handler)))
         } else {
             Ok(None)
         }
@@ -898,5 +1069,63 @@ mod tests {
         let body = hit.read_body().await.unwrap().unwrap();
         assert_eq!(b"cached-payload", body.as_ref());
         assert_eq!(true, hit.read_body().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_disk_hit_streaming_seek_and_eof() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("disk-hit.bin");
+        let prefix = b"HEADER_META_BYTES";
+        let content: Vec<u8> =
+            (0..150_000u32).map(|n| (n % 251) as u8).collect();
+        let mut raw = Vec::with_capacity(prefix.len() + content.len());
+        raw.extend_from_slice(prefix);
+        raw.extend_from_slice(&content);
+        std::fs::write(&path, &raw).unwrap();
+
+        let mut handle: HitHandler =
+            Box::new(DiskHit::new(path, prefix.len() as u64, content.len()));
+        assert_eq!(true, handle.can_seek());
+        assert_eq!(false, is_hit_read_to_the_end(handle.as_any()));
+
+        let mut pieces = vec![];
+        let mut ends = vec![];
+        while let Some(piece) = handle.read_body().await.unwrap() {
+            ends.push(is_hit_read_to_the_end(handle.as_any()));
+            pieces.push(piece);
+        }
+        assert_eq!(
+            vec![HIT_CHUNK_SIZE, HIT_CHUNK_SIZE, 150_000 - 2 * HIT_CHUNK_SIZE],
+            pieces.iter().map(|piece| piece.len()).collect::<Vec<_>>()
+        );
+        assert_eq!(vec![false, false, true], ends);
+        assert_eq!(content, pieces.concat());
+        assert_eq!(true, handle.read_body().await.unwrap().is_none());
+
+        // Range seek across multiple chunks resets `done` and reads only the slice.
+        handle.seek(1000, Some(140_000)).unwrap();
+        assert_eq!(false, is_hit_read_to_the_end(handle.as_any()));
+        let mut range_pieces = vec![];
+        let mut range_ends = vec![];
+        while let Some(piece) = handle.read_body().await.unwrap() {
+            range_ends.push(is_hit_read_to_the_end(handle.as_any()));
+            range_pieces.push(piece);
+        }
+        assert_eq!(vec![false, false, true], range_ends);
+        assert_eq!(content[1000..140_000].to_vec(), range_pieces.concat());
+
+        // Consecutive seek beyond the previous `range_end` validates against `body_len`.
+        handle.seek(149_990, Some(160_000)).unwrap();
+        assert_eq!(false, is_hit_read_to_the_end(handle.as_any()));
+        let tail = handle.read_body().await.unwrap().unwrap();
+        assert_eq!(true, is_hit_read_to_the_end(handle.as_any()));
+        assert_eq!(&content[149_990..], tail.as_ref());
+        assert_eq!(true, handle.read_body().await.unwrap().is_none());
+
+        // Leaving end unset keeps existing range_end, and out-of-range start fails.
+        handle.seek(149_995, None).unwrap();
+        let tail2 = handle.read_body().await.unwrap().unwrap();
+        assert_eq!(&content[149_995..], tail2.as_ref());
+        assert_eq!(true, handle.seek(150_000, None).is_err());
     }
 }

@@ -599,6 +599,137 @@ fn merge_hot_reload_streams(
     changed
 }
 
+fn merge_server_runtime_fields(
+    name: &str,
+    target: &mut pingap_config::ServerConf,
+    source: &pingap_config::ServerConf,
+) -> (bool, bool) {
+    let mut any_changed = false;
+    let mut runtime_changed = false;
+    if target.remark != source.remark {
+        target.remark.clone_from(&source.remark);
+        any_changed = true;
+    }
+    if target.strict_sni != source.strict_sni {
+        target.strict_sni = source.strict_sni;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.enable_server_timing != source.enable_server_timing {
+        target.enable_server_timing = source.enable_server_timing;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.downstream_read_timeout != source.downstream_read_timeout {
+        target.downstream_read_timeout = source.downstream_read_timeout;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.downstream_write_timeout != source.downstream_write_timeout {
+        target.downstream_write_timeout = source.downstream_write_timeout;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.h1_pipelining != source.h1_pipelining {
+        target.h1_pipelining = source.h1_pipelining;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.access_log != source.access_log
+        && pingap_proxy::can_hot_reload_server_access_log(
+            name,
+            target.access_log.as_ref(),
+            source.access_log.as_ref(),
+        )
+    {
+        target.access_log.clone_from(&source.access_log);
+        any_changed = true;
+        runtime_changed = true;
+    }
+    (any_changed, runtime_changed)
+}
+
+fn restore_server_runtime_fields(
+    target: &mut pingap_config::ServerConf,
+    source: &pingap_config::ServerConf,
+) {
+    target.remark.clone_from(&source.remark);
+    target.strict_sni = source.strict_sni;
+    target.enable_server_timing = source.enable_server_timing;
+    target.downstream_read_timeout = source.downstream_read_timeout;
+    target.downstream_write_timeout = source.downstream_write_timeout;
+    target.h1_pipelining = source.h1_pipelining;
+    target.access_log.clone_from(&source.access_log);
+}
+
+fn to_proxy_server_conf(
+    name: &str,
+    server: &pingap_config::ServerConf,
+    error_template: Option<&String>,
+) -> Option<pingap_proxy::ServerConf> {
+    let mut servers = HashMap::with_capacity(1);
+    servers.insert(name.to_string(), server.clone());
+    let mut conf = PingapConfig::default();
+    conf.basic.error_template = error_template.cloned();
+    conf.servers = servers;
+    pingap_proxy::parse_from_conf(conf).into_iter().next()
+}
+
+async fn reload_servers_runtime(
+    servers: &HashMap<String, pingap_config::ServerConf>,
+    names: &[String],
+    error_template: Option<&String>,
+    reload_fail_messages: &mut Vec<String>,
+) -> HashSet<String> {
+    let mut failed = HashSet::new();
+    let mut reloaded = Vec::new();
+    for name in names {
+        let Some(server_conf) = servers.get(name) else {
+            continue;
+        };
+        let Some(proxy_conf) =
+            to_proxy_server_conf(name, server_conf, error_template)
+        else {
+            continue;
+        };
+        match pingap_proxy::try_reload_server_runtime(name, &proxy_conf) {
+            Ok(live_swapped) => {
+                if live_swapped {
+                    reloaded.push(name.clone());
+                }
+            },
+            Err(e) => {
+                let error = e.to_string();
+                reload_fail_messages
+                    .push(format!("server({name}) reload fail: {error}"));
+                error!(
+                    target: LOG_TARGET,
+                    name,
+                    error,
+                    "reload server runtime fail"
+                );
+                failed.insert(name.clone());
+            },
+        }
+    }
+    if !reloaded.is_empty() {
+        reloaded.sort();
+        info!(
+            target: LOG_TARGET,
+            servers = reloaded.join(","),
+            "reload server runtime success"
+        );
+        send_notification(NotificationData {
+            category: "reload_config".to_string(),
+            level: NotificationLevel::Info,
+            message: format_reload_message("Server", &reloaded),
+            ..Default::default()
+        })
+        .await;
+    }
+    failed
+}
+
 fn format_reload_message(name: &str, list: &[String]) -> String {
     if list.is_empty() {
         return format!("{name} is removed");
@@ -628,6 +759,9 @@ async fn reload_streams_runtime(
             true
         },
         Ok(updated_streams) => {
+            let active_names: Vec<&str> =
+                streams.keys().map(String::as_str).collect();
+            pingap_performance::forget_removed_streams(&active_names);
             info!(target: LOG_TARGET, "reload stream success");
             if !updated_streams.is_empty() {
                 send_notification(NotificationData {
@@ -763,6 +897,8 @@ async fn apply_config_without_restart(
     let mut plugin_reload_failed = false;
     let mut location_reload_failed = false;
     let mut server_location_reload_failed = false;
+    let mut server_runtime_reload_failed = false;
+    let mut failed_runtime_servers = HashSet::new();
     let mut stream_reload_failed = false;
     let mut certificate_reload_failed = false;
     // The entries of ACME this reload hands to their service.
@@ -777,6 +913,7 @@ async fn apply_config_without_restart(
     hot_reload_config
         .referenced
         .extend(new_config.referenced.iter().cloned());
+    let servers_to_reload_runtime: Vec<String>;
     {
         // hot reload first,
         // only validate server.locations, locations, upstreams and plugins
@@ -808,18 +945,42 @@ async fn apply_config_without_restart(
             .basic
             .trusted_proxies
             .clone_from(&new_config.basic.trusted_proxies);
+        let error_template_changed = hot_reload_config.basic.error_template
+            != new_config.basic.error_template;
+        if error_template_changed {
+            hot_reload_config
+                .basic
+                .error_template
+                .clone_from(&new_config.basic.error_template);
+        }
 
         // update the values which can be hot reload
-        // set server locations
+        // set server locations and runtime fields
+        let mut runtime_reload_set = BTreeSet::new();
         for (name, server) in new_config.servers.iter() {
             if let Some(clone_server_conf) =
                 hot_reload_config.servers.get_mut(name)
-                && server.locations != clone_server_conf.locations
             {
-                clone_server_conf.locations.clone_from(&server.locations);
-                should_reload_server_location = true;
+                if server.locations != clone_server_conf.locations {
+                    clone_server_conf.locations.clone_from(&server.locations);
+                    should_reload_server_location = true;
+                }
+                let (_, runtime_changed) = merge_server_runtime_fields(
+                    name,
+                    clone_server_conf,
+                    server,
+                );
+                if runtime_changed {
+                    runtime_reload_set.insert(name.clone());
+                }
             }
         }
+        if error_template_changed {
+            for name in hot_reload_config.servers.keys() {
+                runtime_reload_set.insert(name.clone());
+            }
+        }
+        servers_to_reload_runtime = runtime_reload_set.into_iter().collect();
         let stream_runtime_changed = merge_hot_reload_streams(
             &mut hot_reload_config.streams,
             &new_config.streams,
@@ -1100,6 +1261,16 @@ async fn apply_config_without_restart(
                 },
             };
         }
+        if !servers_to_reload_runtime.is_empty() {
+            failed_runtime_servers = reload_servers_runtime(
+                &hot_reload_config.servers,
+                &servers_to_reload_runtime,
+                hot_reload_config.basic.error_template.as_ref(),
+                &mut reload_fail_messages,
+            )
+            .await;
+            server_runtime_reload_failed = !failed_runtime_servers.is_empty();
+        }
         if stream_runtime_changed {
             stream_reload_failed = reload_streams_runtime(
                 upstream_reload_failed,
@@ -1143,6 +1314,20 @@ async fn apply_config_without_restart(
     if stream_reload_failed {
         running_config.streams.clone_from(&current_config.streams);
     }
+    if server_runtime_reload_failed {
+        running_config
+            .basic
+            .error_template
+            .clone_from(&current_config.basic.error_template);
+        for name in &failed_runtime_servers {
+            if let (Some(running), Some(current)) = (
+                running_config.servers.get_mut(name),
+                current_config.servers.get(name),
+            ) {
+                restore_server_runtime_fields(running, current);
+            }
+        }
+    }
     running_config.prune_referenced();
     if routes_failed {
         for (name, server) in running_config.servers.iter_mut() {
@@ -1161,6 +1346,7 @@ async fn apply_config_without_restart(
         && !plugin_reload_failed
         && !location_reload_failed
         && !server_location_reload_failed
+        && !server_runtime_reload_failed
         && !stream_reload_failed
         && !certificate_reload_failed;
 
@@ -2268,5 +2454,228 @@ log_level = "info"
         .await
         .unwrap();
         assert_eq!(true, restart_requested);
+    }
+
+    #[tokio::test]
+    async fn test_apply_config_hot_reloads_server_runtime_and_keeps_listener_restarts()
+     {
+        let _lock = APPLY_CONFIG_TEST_LOCK.lock().await;
+        let _reset = GlobalTestReset;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_a = dir.path().join("a.log");
+        let file_b = dir.path().join("b.log");
+        let access_a =
+            format!("{}?rolling=hourly&skip=^/health$ tiny", file_a.display());
+        let access_a_new_filter = format!(
+            "{}?rolling=hourly&min_status=500&sample=0.5 json",
+            file_a.display()
+        );
+        let access_b = format!("{}?rolling=hourly tiny", file_b.display());
+
+        let base = test_pingap_config(&format!(
+            r#"
+[basic]
+log_level = "info"
+
+[upstreams.api]
+addrs = ["127.0.0.1:9000"]
+
+[locations.api]
+upstream = "api"
+path = "/api"
+
+[servers.web]
+addr = "127.0.0.1:18180"
+access_log = "{access_a}"
+locations = ["api"]
+"#
+        ));
+        let manager = std::sync::Arc::new(
+            pingap_config::new_memory_config_manager("", None),
+        );
+        manager.set_current_config(base.clone());
+
+        // 1. Hot-reloadable runtime fields + basic.error_template + sink-compatible
+        // access_log format/filter changes leave nothing for restart.
+        let mut runtime_updated = base.clone();
+        runtime_updated.basic.error_template =
+            Some(r#"{"error":"{{content}}"}"#.to_string());
+        if let Some(web) = runtime_updated.servers.get_mut("web") {
+            web.enable_server_timing = Some(true);
+            web.downstream_read_timeout =
+                Some(std::time::Duration::from_secs(10));
+            web.downstream_write_timeout =
+                Some(std::time::Duration::from_secs(15));
+            web.h1_pipelining = Some(true);
+            web.remark = Some("updated remark".to_string());
+            web.access_log = Some(access_a_new_filter.clone());
+        }
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &runtime_updated,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Vec::<String>::new(),
+            super::left_for_restart(
+                manager.get_current_config().as_ref(),
+                &runtime_updated
+            )
+        );
+        let current = manager.get_current_config();
+        assert_eq!(
+            Some(r#"{"error":"{{content}}"}"#.to_string()),
+            current.basic.error_template
+        );
+        assert_eq!(Some(true), current.servers["web"].enable_server_timing);
+        assert_eq!(
+            Some(std::time::Duration::from_secs(10)),
+            current.servers["web"].downstream_read_timeout
+        );
+        assert_eq!(
+            Some(std::time::Duration::from_secs(15)),
+            current.servers["web"].downstream_write_timeout
+        );
+        assert_eq!(Some(true), current.servers["web"].h1_pipelining);
+        assert_eq!(
+            Some("updated remark".to_string()),
+            current.servers["web"].remark
+        );
+        assert_eq!(
+            Some(access_a_new_filter.clone()),
+            current.servers["web"].access_log
+        );
+
+        // `strict_sni` on a TLS server also hot-reloads cleanly without restart.
+        let mut tls_base = base.clone();
+        if let Some(web) = tls_base.servers.get_mut("web") {
+            web.global_certificates = Some(true);
+            web.strict_sni = Some(false);
+        }
+        manager.set_current_config(tls_base.clone());
+        let mut tls_strict = tls_base.clone();
+        if let Some(web) = tls_strict.servers.get_mut("web") {
+            web.strict_sni = Some(true);
+        }
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &tls_strict,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some(true),
+            manager.get_current_config().servers["web"].strict_sni
+        );
+
+        // 2. Invalid access_log filter fails server runtime reload and keeps
+        // the prior running config in place without asking for restart.
+        let mut invalid_filter = tls_strict.clone();
+        if let Some(web) = invalid_filter.servers.get_mut("web") {
+            web.access_log = Some(format!(
+                "{}?rolling=hourly&skip=( tiny",
+                file_a.display()
+            ));
+            web.enable_server_timing = Some(false);
+        }
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &invalid_filter,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(false, restart_requested);
+        assert_eq!(
+            Some(access_a),
+            manager.get_current_config().servers["web"].access_log
+        );
+        assert_eq!(
+            None,
+            manager.get_current_config().servers["web"].enable_server_timing
+        );
+
+        // 3. Switching access_log to a different file path leaves changes for restart.
+        let mut new_file = tls_strict.clone();
+        if let Some(web) = new_file.servers.get_mut("web") {
+            web.access_log = Some(access_b);
+        }
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &new_file,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(true, restart_requested);
+        let left = super::left_for_restart(
+            manager.get_current_config().as_ref(),
+            &new_file,
+        )
+        .join("\n");
+        assert_eq!(true, left.contains("access_log"), "{left}");
+
+        // 4. Changing `addr` still leaves changes for restart.
+        let mut new_addr = tls_strict.clone();
+        if let Some(web) = new_addr.servers.get_mut("web") {
+            web.addr = "127.0.0.1:18181".to_string();
+        }
+        let restart_requested = super::apply_config_without_restart(
+            manager.clone(),
+            &new_addr,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(true, restart_requested);
+        let left = super::left_for_restart(
+            manager.get_current_config().as_ref(),
+            &new_addr,
+        )
+        .join("\n");
+        assert_eq!(true, left.contains("127.0.0.1:18181"), "{left}");
+    }
+
+    #[tokio::test]
+    async fn test_reload_streams_runtime_forgets_removed_stream_metrics() {
+        let _lock = APPLY_CONFIG_TEST_LOCK.lock().await;
+        let _reset = GlobalTestReset;
+
+        let pid = std::process::id();
+        let keep_name = format!("reload-keep-{pid}");
+        let gone_name = format!("reload-gone-{pid}");
+        pingap_performance::stream_connection_open(&keep_name);
+        pingap_performance::stream_connection_close(
+            &keep_name, "up", "ok", 10, 20,
+        );
+        pingap_performance::stream_connection_open(&gone_name);
+        pingap_performance::stream_connection_close(
+            &gone_name, "up", "ok", 30, 40,
+        );
+
+        let mut streams = HashMap::new();
+        streams.insert(
+            keep_name.clone(),
+            pingap_config::StreamConf {
+                addr: "127.0.0.1:19443".to_string(),
+                upstream: Some("tcp_a".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut fails = Vec::new();
+        let failed =
+            super::reload_streams_runtime(false, &streams, &mut fails).await;
+        assert_eq!(false, failed);
+        assert_eq!(true, fails.is_empty());
+
+        let snap = pingap_performance::stream_metrics_snapshot();
+        assert_eq!(true, snap.active.iter().any(|(s, _)| s == &keep_name));
+        assert_eq!(false, snap.active.iter().any(|(s, _)| s == &gone_name));
     }
 }

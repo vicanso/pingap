@@ -825,10 +825,21 @@ impl AdminServe {
     async fn get_config(
         &self,
         category: &str,
+        read_only: bool,
     ) -> pingora::Result<HttpResponse> {
         let conf = self.load_config(false).await?;
+        let conf = if read_only {
+            pingap_config::mask_pingap_config(&conf)
+        } else {
+            conf
+        };
         if category == "full" {
             let full_conf = self.load_config(true).await?;
+            let full_conf = if read_only {
+                pingap_config::mask_pingap_config(&full_conf)
+            } else {
+                full_conf
+            };
             let mut full_toml = toml::to_string_pretty(&full_conf)
                 .map_err(|e| pingap_core::new_internal_error(400, e))?;
             if let Ok(value) = pingap_util::toml_omit_empty_value(&full_toml) {
@@ -888,7 +899,8 @@ impl AdminServe {
         name: &str,
         buf: &[u8],
         category: Category,
-    ) -> pingora::Result<()>
+        dry_run: bool,
+    ) -> pingora::Result<Option<HttpResponse>>
     where
         T: DeserializeOwned + Serialize + Send + Sync + Validate,
     {
@@ -916,6 +928,19 @@ impl AdminServe {
             })?;
         }
 
+        if dry_run {
+            let stored = self.manager.load_all().await.map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "load config fail");
+                pingap_core::new_internal_error(400, e)
+            })?;
+            let value = toml::Value::try_from(&conf)
+                .map_err(|e| pingap_core::new_internal_error(400, e))?;
+            let mut candidate = stored.clone();
+            overlay_toml_entry(&mut candidate, &category, name, value);
+            let resp = self.preview_config_diff(stored, candidate).await?;
+            return Ok(Some(resp));
+        }
+
         // Not only the entry: the configuration the storage would hold
         // with it, checked the way `--test` checks one. A location with a
         // regex that does not compile, or a plugin option of the wrong
@@ -934,7 +959,55 @@ impl AdminServe {
                 pingap_core::new_internal_error(400, e)
             })?;
 
-        Ok(())
+        Ok(None)
+    }
+
+    async fn preview_config_diff(
+        &self,
+        stored_toml: PingapTomlConfig,
+        candidate_toml: PingapTomlConfig,
+    ) -> pingora::Result<HttpResponse> {
+        let fallback_current = self.manager.get_current_config();
+        let has_running = self.manager.current_config_hash().is_some();
+        let (mut updated_categories, diff) = tokio::task::spawn_blocking(
+            move || -> std::result::Result<(Vec<String>, Vec<String>), String> {
+                pingap_cache::dry_run(|| {
+                    crate::validate::validate_stored(&candidate_toml)
+                        .map_err(|e| e.to_string())?;
+                    let candidate = toml_to_running_config(&candidate_toml)?;
+                    let current =
+                        if stored_toml_is_empty(&stored_toml) && has_running {
+                            fallback_current.as_ref().clone()
+                        } else {
+                            toml_to_running_config(&stored_toml)
+                                .or_else(|_| {
+                                    stored_toml
+                                        .to_pingap_config(true)
+                                        .map_err(|e| e.to_string())
+                                })
+                                .unwrap_or_else(|_| {
+                                    fallback_current.as_ref().clone()
+                                })
+                        };
+                    Ok(current.diff(&candidate))
+                })
+            },
+        )
+        .await
+        .map_err(|e| pingap_core::new_internal_error(400, e))?
+        .map_err(|e| pingap_core::new_internal_error(400, e))?;
+
+        updated_categories.sort();
+        let restart_unsupported = no_restart()
+            .map(|obstacle| obstacle.code().to_string())
+            .unwrap_or_default();
+
+        HttpResponse::try_from_json(&ConfigDiffResponse {
+            valid: true,
+            updated_categories,
+            diff,
+            restart_unsupported,
+        })
     }
 
     async fn update_config(
@@ -949,77 +1022,92 @@ impl AdminServe {
                 "name is empty".to_string(),
             ));
         }
+        let dry_run = is_dry_run_query(session.req_header().uri.query());
         let buf = get_request_body(session).await?;
 
-        match category {
+        let preview = match category {
             CATEGORY_UPSTREAM => {
                 self.handle_update_config::<UpstreamConf>(
                     name,
                     &buf,
                     Category::Upstream,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_LOCATION => {
                 self.handle_update_config::<LocationConf>(
                     name,
                     &buf,
                     Category::Location,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_SERVER => {
                 self.handle_update_config::<ServerConf>(
                     name,
                     &buf,
                     Category::Server,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_STREAM => {
                 self.handle_update_config::<StreamConf>(
                     name,
                     &buf,
                     Category::Stream,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_PLUGIN => {
                 self.handle_update_config::<PluginConf>(
                     name,
                     &buf,
                     Category::Plugin,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_CERTIFICATE => {
                 self.handle_update_config::<CertificateConf>(
                     name,
                     &buf,
                     Category::Certificate,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             CATEGORY_STORAGE => {
                 self.handle_update_config::<StorageConf>(
                     name,
                     &buf,
                     Category::Storage,
+                    dry_run,
                 )
-                .await?;
+                .await?
             },
             // `pingap` is what the admin page posts the basic config as.
             CATEGORY_BASIC | "pingap" => {
-                self.handle_update_config::<BasicConf>(
-                    "",
-                    &buf,
-                    Category::Basic,
-                )
-                .await?;
-                // A control panel node runs with this one setting of
-                // what it stores.
-                crate::validate::apply_stored_trusted_proxies(&self.manager)
+                let preview = self
+                    .handle_update_config::<BasicConf>(
+                        "",
+                        &buf,
+                        Category::Basic,
+                        dry_run,
+                    )
+                    .await?;
+                if preview.is_none() {
+                    // A control panel node runs with this one setting of
+                    // what it stores.
+                    crate::validate::apply_stored_trusted_proxies(
+                        &self.manager,
+                    )
                     .await;
+                }
+                preview
             },
             // Anything else used to be stored as the basic config, which a
             // body meant for another category - `upstreams/x` for
@@ -1032,19 +1120,33 @@ impl AdminServe {
             },
         };
 
-        Ok(HttpResponse::no_content())
+        Ok(preview.unwrap_or_else(HttpResponse::no_content))
     }
     async fn import_config(
         &self,
         session: &mut Session,
+        force_diff: bool,
     ) -> pingora::Result<HttpResponse> {
+        let query = session.req_header().uri.query().map(str::to_string);
+        let dry_run = force_diff || is_dry_run_query(query.as_deref());
+        let format_hint =
+            query_param(query.as_deref(), "format").map(|v| v.into_owned());
+        let content_type = pingap_core::get_req_header_value(
+            session.req_header(),
+            "content-type",
+        )
+        .map(str::to_string);
         let buf = get_request_body(session).await?;
         let refuse = |message: String| {
             error!(target: LOG_TARGET, error = message, "import config fail");
             pingap_core::new_internal_error(400, message)
         };
-        let table: toml::Table =
-            toml::from_slice(&buf).map_err(|e| refuse(e.to_string()))?;
+        let table = parse_import_table(
+            &buf,
+            format_hint.as_deref(),
+            content_type.as_deref(),
+        )
+        .map_err(refuse)?;
         // An import replaces what is stored. One with nothing in it, or
         // with its sections under names pingap does not read
         // (`[upstream.x]` for `[upstreams.x]`), reads as an empty
@@ -1064,12 +1166,18 @@ impl AdminServe {
         let config: PingapTomlConfig = toml::Value::Table(table)
             .try_into()
             .map_err(|e: toml::de::Error| refuse(e.to_string()))?;
+        if dry_run {
+            let stored = self.manager.load_all().await.unwrap_or_default();
+            return self.preview_config_diff(stored, config).await;
+        }
         // And it has to stand on its own, checked the way `--test` checks
         // a configuration. It used to be written as it came.
         let config = tokio::task::spawn_blocking(move || {
-            crate::validate::validate_stored(&config)
-                .map(|_| config)
-                .map_err(|e| e.to_string())
+            pingap_cache::dry_run(|| {
+                crate::validate::validate_stored(&config)
+                    .map(|_| config)
+                    .map_err(|e| e.to_string())
+            })
         })
         .await
         .map_err(|e| refuse(e.to_string()))?
@@ -1780,6 +1888,149 @@ const IMPORT_SECTIONS: [&str; 8] = [
     "storages",
 ];
 
+#[derive(Serialize)]
+struct ConfigDiffResponse {
+    valid: bool,
+    updated_categories: Vec<String>,
+    diff: Vec<String>,
+    restart_unsupported: String,
+}
+
+fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<Cow<'a, str>> {
+    query.unwrap_or_default().split('&').find_map(|pair| {
+        if pair.is_empty() {
+            return None;
+        }
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        (k == key).then(|| decode(v).unwrap_or(Cow::Borrowed(v)))
+    })
+}
+
+fn is_dry_run_query(query: Option<&str>) -> bool {
+    query_param(query, "dry_run").is_some_and(|val| {
+        let trimmed = val.trim();
+        trimmed == "1" || trimmed.eq_ignore_ascii_case("true")
+    })
+}
+
+fn parse_import_table(
+    buf: &[u8],
+    format_hint: Option<&str>,
+    content_type: Option<&str>,
+) -> std::result::Result<toml::Table, String> {
+    let text = std::str::from_utf8(buf).map_err(|e| e.to_string())?;
+    let hint = format_hint
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .or_else(|| {
+            let ct = content_type?.to_ascii_lowercase();
+            if ct.contains("hcl") {
+                Some("hcl".to_string())
+            } else if ct.contains("kdl") {
+                Some("kdl".to_string())
+            } else if ct.contains("toml") {
+                Some("toml".to_string())
+            } else {
+                None
+            }
+        });
+    let toml_text = match hint.as_deref() {
+        Some("toml") => Cow::Borrowed(text),
+        Some("hcl") => Cow::Owned(
+            pingap_config::hcl::convert_hcl_to_toml(text)
+                .map_err(|e| e.to_string())?,
+        ),
+        Some("kdl") => Cow::Owned(
+            pingap_config::kdl::convert_kdl_to_toml(text)
+                .map_err(|e| e.to_string())?,
+        ),
+        Some(other) => {
+            return Err(format!(
+                "unsupported config format: {other} (expected toml, hcl, or kdl)"
+            ));
+        },
+        None => match toml::from_str::<toml::Table>(text) {
+            Ok(table) => return Ok(table),
+            Err(toml_err) => {
+                if let Ok(hcl_toml) =
+                    pingap_config::hcl::convert_hcl_to_toml(text)
+                {
+                    Cow::Owned(hcl_toml)
+                } else if let Ok(kdl_toml) =
+                    pingap_config::kdl::convert_kdl_to_toml(text)
+                {
+                    Cow::Owned(kdl_toml)
+                } else {
+                    return Err(toml_err.to_string());
+                }
+            },
+        },
+    };
+    toml::from_str::<toml::Table>(toml_text.as_ref()).map_err(|e| e.to_string())
+}
+
+fn overlay_toml_entry(
+    config: &mut PingapTomlConfig,
+    category: &Category,
+    name: &str,
+    value: toml::Value,
+) {
+    let name = name.to_string();
+    match category {
+        Category::Basic => config.basic = Some(value),
+        Category::Server => {
+            config.servers.get_or_insert_default().insert(name, value);
+        },
+        Category::Stream => {
+            config.streams.get_or_insert_default().insert(name, value);
+        },
+        Category::Location => {
+            config.locations.get_or_insert_default().insert(name, value);
+        },
+        Category::Upstream => {
+            config.upstreams.get_or_insert_default().insert(name, value);
+        },
+        Category::Plugin => {
+            config.plugins.get_or_insert_default().insert(name, value);
+        },
+        Category::Certificate => {
+            config
+                .certificates
+                .get_or_insert_default()
+                .insert(name, value);
+        },
+        Category::Storage => {
+            config.storages.get_or_insert_default().insert(name, value);
+        },
+    }
+}
+
+fn stored_toml_is_empty(conf: &PingapTomlConfig) -> bool {
+    conf.basic.is_none()
+        && conf.servers.as_ref().is_none_or(toml::map::Map::is_empty)
+        && conf.streams.as_ref().is_none_or(toml::map::Map::is_empty)
+        && conf.upstreams.as_ref().is_none_or(toml::map::Map::is_empty)
+        && conf.locations.as_ref().is_none_or(toml::map::Map::is_empty)
+        && conf.plugins.as_ref().is_none_or(toml::map::Map::is_empty)
+        && conf
+            .certificates
+            .as_ref()
+            .is_none_or(toml::map::Map::is_empty)
+        && conf.storages.as_ref().is_none_or(toml::map::Map::is_empty)
+}
+
+fn toml_to_running_config(
+    toml_conf: &PingapTomlConfig,
+) -> std::result::Result<PingapConfig, String> {
+    match toml_conf.to_running_config(pingap_config::MissingReference::Refuse) {
+        Ok(cfg) => Ok(cfg),
+        Err(_) => toml_conf
+            .to_running_config(pingap_config::MissingReference::Keep)
+            .map_err(|e| e.to_string()),
+    }
+}
+
 fn config_error_response(err: &pingora::Error) -> HttpResponse {
     let status = match err.etype() {
         pingora::ErrorType::HTTPStatus(code) => StatusCode::from_u16(*code)
@@ -1961,7 +2212,9 @@ async fn handle_request_admin(
         match method {
             Method::POST => {
                 if category == "import" {
-                    plugin.import_config(session).await
+                    plugin.import_config(session, false).await
+                } else if category == "diff" {
+                    plugin.import_config(session, true).await
                 } else if category == "quick-site" {
                     plugin.create_quick_site(session).await
                 } else if category == "apply-plugin-preset" {
@@ -1985,7 +2238,7 @@ async fn handle_request_admin(
                     plugin.remove_config(category, &params[3]).await
                 }
             },
-            _ => plugin.get_config(category).await,
+            _ => plugin.get_config(category, identity.read_only).await,
         }
         .unwrap_or_else(|err| config_error_response(&err))
     } else if path.starts_with("/config-history") {
@@ -2023,6 +2276,11 @@ async fn handle_request_admin(
         // file, and where that file is more than this entry most of them
         // are changes to something else: what is the same as the version
         // after it - or as the entry is now - is nothing to go back to.
+        let current_referenced = if identity.read_only {
+            plugin.manager.get_current_config().referenced.clone()
+        } else {
+            HashSet::new()
+        };
         let mut last = plugin
             .manager
             .fetch_raw(category.clone(), &name)
@@ -2037,9 +2295,18 @@ async fn handle_request_admin(
             if last.as_ref() == Some(&data) {
                 continue;
             }
+            let out_data = if identity.read_only {
+                pingap_config::mask_category_toml_value(
+                    category.clone(),
+                    &data,
+                    &current_referenced,
+                )
+            } else {
+                data.clone()
+            };
             history.push(json!({
                 "created_at": item.created_at,
-                "data": data,
+                "data": out_data,
             }));
             if history.len() >= MAX_HISTORY_VERSIONS {
                 break;
@@ -4666,5 +4933,386 @@ readonly_authorizations = ["cmVhZDpwYXNz"]
         );
         let (ro_status, _) = answer(&ro_admin, "127.0.0.1:3018", &ro_req).await;
         assert_eq!(403, ro_status);
+    }
+
+    #[tokio::test]
+    async fn test_readonly_masks_configs_and_history_while_rw_stays_raw() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        let make_doc =
+            |jwt_sec: &str, frag_sec: &str, wh_sec: &str, env_ref_val: &str| {
+                format!(
+                    r#"
+[basic]
+name = "pingap"
+error_template = "{env_ref_val}"
+webhook = "https://hook.test/send?key=wh-url-sec"
+webhook_secret = "{wh_sec}"
+webhook_headers = ["Authorization: Bearer wh-hdr-tok", "X-Env: prod"]
+
+[upstreams.u1]
+addrs = ["127.0.0.1:5000"]
+health_check = "http://admin:up-hc-pass@127.0.0.1:5000/ping"
+client_cert = "-----BEGIN CERTIFICATE-----\nUPCERT\n-----END CERTIFICATE-----"
+client_key = "-----BEGIN PRIVATE KEY-----\nUPKEY\n-----END PRIVATE KEY-----"
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+proxy_set_headers = ["Authorization: Bearer loc-auth-tok", "X-App: demo"]
+
+[plugins.jwt_auth]
+category = "jwt"
+secret = "{jwt_sec}"
+header = "Authorization"
+
+[certificates.site]
+domains = "example.com"
+tls_cert = "-----BEGIN CERTIFICATE-----\nSITECERT\n-----END CERTIFICATE-----"
+tls_key = "-----BEGIN PRIVATE KEY-----\nSITEKEY\n-----END PRIVATE KEY-----"
+acme_eab_hmac = "eab-hmac-raw"
+
+[storages.frag]
+category = "config"
+value = "read_timeout = \"7s\"\nsecret = \"{frag_sec}\""
+secret = "storage-aes-raw"
+"#
+                )
+            };
+        std::fs::write(
+            &file,
+            make_doc(
+                "jwt-current",
+                "frag-current",
+                "wh-secret-raw",
+                "resolved-ref-secret",
+            ),
+        )
+        .unwrap();
+        let url = format!("{}?enable_history=true", file.to_string_lossy());
+        let b64 = pingap_util::base64_encode;
+        let (admin, manager) = new_admin_on(
+            std::path::Path::new(&url),
+            &format!(
+                "authorizations = [\"{}\"]\nreadonly_authorizations = [\"{}\"]\ntokens = [\"{}\"]\nreadonly_tokens = [\"{}\"]",
+                b64("alice:pw-a"),
+                b64("bob:pw-b"),
+                token_entry("rw", "tok-rw"),
+                token_entry("ro", "tok-ro"),
+            ),
+        );
+        let mut current = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(true)
+            .unwrap();
+        current.referenced.insert("resolved-ref-secret".to_string());
+        manager.set_current_config(current);
+
+        let history = dir.path().join("pingap.toml-history");
+        std::fs::create_dir_all(&history).unwrap();
+        std::fs::write(
+            history.join("pingap.toml-100"),
+            make_doc(
+                "jwt-old-1",
+                "frag-old-1",
+                "wh-secret-old",
+                "resolved-ref-secret",
+            ),
+        )
+        .unwrap();
+
+        let get_with = async |path: &str, auth: &str| {
+            let (code, body) = answer(
+                &admin,
+                "127.0.0.1:3018",
+                &format!(
+                    "GET {path} HTTP/1.1\r\nAuthorization: {auth}\r\n\r\n"
+                ),
+            )
+            .await;
+            assert_eq!(200, code, "{path}: {body}");
+            body
+        };
+
+        let rw_auth = signed("alice", "pw-a");
+        let ro_auth = signed("bob", "pw-b");
+        let ro_token = "Bearer tok-ro";
+
+        let secrets = [
+            "jwt-current",
+            "wh-url-sec",
+            "wh-secret-raw",
+            "wh-hdr-tok",
+            "up-hc-pass",
+            "UPCERT",
+            "UPKEY",
+            "loc-auth-tok",
+            "SITECERT",
+            "SITEKEY",
+            "eab-hmac-raw",
+            "frag-current",
+            "storage-aes-raw",
+        ];
+
+        // RW sees raw values across /configs/full, /configs/*, and /config-history/*.
+        let rw_full = get_with("/api/configs/full", &rw_auth).await;
+        for sec in secrets {
+            assert_eq!(true, rw_full.contains(sec), "RW full missing {sec}");
+        }
+        let rw_toml = get_with("/api/configs/toml", &rw_auth).await;
+        assert_eq!(true, rw_toml.contains("jwt-current"));
+        assert_eq!(true, rw_toml.contains("frag-current"));
+        let rw_hist =
+            get_with("/api/config-history/plugin/jwt_auth", &rw_auth).await;
+        assert_eq!(true, rw_hist.contains("jwt-old-1"), "{rw_hist}");
+
+        // Read-only (both user and token) sees crc32:... masked values everywhere.
+        for ro in [&ro_auth, ro_token] {
+            let ro_full_raw = get_with("/api/configs/full", ro).await;
+            let ro_full: serde_json::Value =
+                serde_json::from_str(&ro_full_raw).unwrap();
+            for field in ["full", "original", "hcl", "kdl"] {
+                let text = ro_full[field].as_str().unwrap();
+                assert_eq!(true, text.contains("crc32:"), "{field}: {text}");
+                for sec in secrets {
+                    assert_eq!(
+                        false,
+                        text.contains(sec),
+                        "{field} leaked {sec}: {text}"
+                    );
+                }
+            }
+            for path in [
+                "/api/configs/plugin",
+                "/api/configs/certificate",
+                "/api/configs/upstream",
+                "/api/configs/location",
+                "/api/configs/toml",
+            ] {
+                let body = get_with(path, ro).await;
+                assert_eq!(true, body.contains("crc32:"), "{path}: {body}");
+                for sec in secrets {
+                    assert_eq!(
+                        false,
+                        body.contains(sec),
+                        "{path} leaked {sec}: {body}"
+                    );
+                }
+            }
+
+            let ro_hist_plugin =
+                get_with("/api/config-history/plugin/jwt_auth", ro).await;
+            assert_eq!(false, ro_hist_plugin.contains("jwt-old-1"));
+            assert_eq!(true, ro_hist_plugin.contains("crc32:"));
+
+            let ro_hist_storage =
+                get_with("/api/config-history/storage/frag", ro).await;
+            assert_eq!(false, ro_hist_storage.contains("frag-old-1"));
+            assert_eq!(false, ro_hist_storage.contains("storage-aes-raw"));
+            assert_eq!(true, ro_hist_storage.contains("read_timeout"));
+            assert_eq!(true, ro_hist_storage.contains("crc32:"));
+
+            let ro_hist_basic =
+                get_with("/api/config-history/basic/", ro).await;
+            assert_eq!(
+                true,
+                ro_hist_basic.contains("pingap"),
+                "{ro_hist_basic}"
+            );
+            assert_eq!(
+                false,
+                ro_hist_basic.contains("resolved-ref-secret"),
+                "{ro_hist_basic}"
+            );
+            assert_eq!(false, ro_hist_basic.contains("wh-secret-old"));
+            assert_eq!(false, ro_hist_basic.contains("wh-secret-raw"));
+            assert_eq!(true, ro_hist_basic.contains("crc32:"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_admin_dry_run_and_configs_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, STORED).unwrap();
+        let (admin, _) = new_admin_on(&file, "");
+        let stored_before = std::fs::read_to_string(&file).unwrap();
+
+        // 1. Invalid dry_run requests return 400 and leave storage untouched.
+        let cache_dir = dir.path().join("dry_run_cache");
+        for (path, body) in [
+            (
+                "/api/configs/location/bad?dry_run=1",
+                r#"{"upstream":"u1","path":"~ ^/api/("}"#.to_string(),
+            ),
+            (
+                "/api/configs/location/lost?dry_run=true",
+                r#"{"upstream":"missing_up"}"#.to_string(),
+            ),
+            (
+                "/api/configs/plugin/c?dry_run=1",
+                format!(
+                    r#"{{"category":"cache","directory":"{}?inactive=1m","max_ttl":"bad"}}"#,
+                    cache_dir.display()
+                ),
+            ),
+            (
+                "/api/configs/import?dry_run=1",
+                "[locations.bad]\nupstream = \"missing_up\"\n".to_string(),
+            ),
+            (
+                "/api/configs/diff",
+                "[locations.bad]\nupstream = \"missing_up\"\n".to_string(),
+            ),
+        ] {
+            let (code, message) = post(&admin, path, &body).await;
+            assert_eq!(400, code, "{path}: {message}");
+            assert_eq!(false, cache_dir.exists(), "{path}");
+            assert_eq!(
+                stored_before,
+                std::fs::read_to_string(&file).unwrap(),
+                "{path}"
+            );
+        }
+
+        // 2. Valid dry_run on POST /configs/:category/:name returns 200 with diff and masked secrets.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/upstream/u2?dry_run=1",
+            r#"{"addrs":["127.0.0.1:5002"]}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(true, resp["valid"].as_bool().unwrap());
+        assert_eq!(
+            vec!["upstream"],
+            resp["updated_categories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>()
+        );
+        let diff_text = resp["diff"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            true,
+            diff_text.contains("++ [ADDED] upstream:u2"),
+            "{diff_text}"
+        );
+        assert!(resp.get("restart_unsupported").is_some());
+        assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
+
+        // Dry run with a secret plugin must mask the secret in diff.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/plugin/jwt_auth?dry_run=true",
+            r#"{"category":"jwt","secret":"super-secret-value","header":"Authorization"}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        assert_eq!(false, body.contains("super-secret-value"), "{body}");
+        assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
+
+        // 3. Valid POST /configs/import?dry_run=1 and POST /configs/diff (TOML, HCL, KDL).
+        let candidate_toml = r#"[basic]
+name = "pingap"
+threads = 4
+
+[upstreams.u1]
+addrs = ["127.0.0.1:6000"]
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+"#;
+        for path in ["/api/configs/import?dry_run=1", "/api/configs/diff"] {
+            let (code, body) = post(&admin, path, candidate_toml).await;
+            assert_eq!(200, code, "{path}: {body}");
+            let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(true, resp["valid"].as_bool().unwrap());
+            let cats: Vec<&str> = resp["updated_categories"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert_eq!(vec!["basic", "upstream"], cats);
+            let diff_lines = resp["diff"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(
+                true,
+                diff_lines.contains("[MODIFIED] basic"),
+                "{diff_lines}"
+            );
+            assert_eq!(
+                true,
+                diff_lines.contains("[MODIFIED] upstream:u1"),
+                "{diff_lines}"
+            );
+            assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
+        }
+
+        // HCL payload on POST /configs/diff.
+        let candidate_hcl = r#"
+basic {
+  name = "pingap"
+  threads = 2
+}
+
+upstream "u1" {
+  addrs = ["127.0.0.1:5000"]
+}
+
+upstream "u_hcl" {
+  addrs = ["127.0.0.1:7000"]
+}
+
+location "l1" {
+  upstream = "u1"
+  path = "/api"
+}
+"#;
+        let (code, body) =
+            post(&admin, "/api/configs/diff", candidate_hcl).await;
+        assert_eq!(200, code, "{body}");
+        assert_eq!(true, body.contains("upstream:u_hcl"), "{body}");
+        assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
+
+        // KDL payload on POST /configs/diff.
+        let candidate_kdl = r#"
+basic {
+    name "pingap"
+    threads 2
+}
+upstream "u1" {
+    addrs "127.0.0.1:5000"
+}
+upstream "u_kdl" {
+    addrs "127.0.0.1:7001"
+}
+location "l1" {
+    upstream "u1"
+    path "/api"
+}
+"#;
+        let (code, body) =
+            post(&admin, "/api/configs/diff", candidate_kdl).await;
+        assert_eq!(200, code, "{body}");
+        assert_eq!(true, body.contains("upstream:u_kdl"), "{body}");
+        assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
     }
 }

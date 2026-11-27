@@ -47,9 +47,12 @@ HTTP/1.1 503 Service Unavailable
 | Situation | Result |
 | --- | --- |
 | 路径不是 `path` | 跳过插件 |
+| 进程正在优雅退出排流（收到 `SIGTERM` / `SIGQUIT`） | `503`，正文中包含 `"ready":false,"draining":true` |
 | 被检查的每个 upstream 都有 `min_healthy` 个健康后端 | `200` |
 | 其中某个不足 | `503`，正文里列出这个 upstream 和它不健康的后端 |
 | `upstreams` 里写了不存在的 upstream | `503`，`"reason":"no such upstream"` |
+
+一旦进入优雅退出排流阶段，就绪探针会立即返回 `503` 并在响应体附带 `"draining":true`（正常服务时不输出 `draining` 字段），以便负载均衡器或 Kubernetes 在存量请求排流期间及时摘除流量。
 
 后端是否健康以它的健康检查结果为准。熔断器不在判断之内：被熔断器暂时挡住的后端仍然算健康。upstream 的第一轮健康检查跑完之前，所有后端都算健康。
 

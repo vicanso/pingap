@@ -4294,6 +4294,8 @@ dependencies = [
  "num_cpus",
  "parking_lot 0.13.0",
  "pingap-cache",
+ "pingap-certificate",
+ "pingap-config",
  "pingap-core",
  "pingap-location",
  "pingap-upstream",
@@ -4372,6 +4374,7 @@ name = "pingap-proxy"
 version = "0.16.3"
 dependencies = [
  "ahash",
+ "arc-swap",
  "async-trait",
  "bstr",
  "bytes",

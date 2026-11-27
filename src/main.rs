@@ -57,7 +57,8 @@ use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 #[cfg(feature = "tracing")]
 use pingap_performance::{
-    set_metrics_location_provider, set_metrics_upstream_provider,
+    set_metrics_certificate_provider, set_metrics_location_provider,
+    set_metrics_upstream_provider,
 };
 use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
@@ -1463,6 +1464,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     let certificate_provider = new_certificate_provider();
+    #[cfg(feature = "tracing")]
+    set_metrics_certificate_provider(certificate_provider.clone());
 
     let mut simple_background_service = BackgroundTaskService::new(
         "simple_background_service",

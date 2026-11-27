@@ -227,6 +227,19 @@ static ABNORMAL_EXIT: OnceLock<Mark> = OnceLock::new();
 /// A panic has been put in the mark: the first is the one told.
 static PANIC_RECORDED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the process has entered its graceful shutdown / drain phase.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Returns whether the process is draining for shutdown.
+pub fn is_shutting_down() -> bool {
+    SHUTTING_DOWN.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+pub(crate) fn set_shutting_down_for_test(val: bool) {
+    SHUTTING_DOWN.store(val, Ordering::Release);
+}
+
 /// The run before this one, where it did not end cleanly: for the admin.
 pub fn abnormal_exit() -> Option<Mark> {
     ABNORMAL_EXIT.get().cloned()
@@ -366,6 +379,7 @@ impl pingora::services::background::BackgroundService for ExitMarkService {
         // `changed` only fails once the sender is gone, which is a stop as
         // well.
         let _ = shutdown.changed().await;
+        SHUTTING_DOWN.store(true, Ordering::Release);
         if let Some(path) = WRITTEN.get() {
             remove_own(path, pid);
         }

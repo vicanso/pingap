@@ -2,7 +2,7 @@
 
 在响应体中搜索替换，类似 nginx 的 `sub_filter` 与 `subs_filter` 模块。适用于改写绝对 URL、注入 script 标签，或修补无法修改的上游。
 
-- **步骤：** `response` 与 `response_body`
+- **步骤：** `response` 与 `response_body`（默认），或通过 `step = "upstream_response"` 设为 `upstream_response` 与 `upstream_response_body`；同时在 `request` 阶段运行
 - **注册名：** `sub_filter`
 
 ## 配置
@@ -10,6 +10,7 @@
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | 必须为 `sub_filter`。 |
+| `step` | string | `response` | `response`（在发往客户端时改写）或 `upstream_response`（在 [`cache`](cache.md) 存储之前改写上游响应，命中缓存时直接返回已改写内容而无需重复过滤）。其他值为配置错误。 |
 | `filters` | string[] | `[]` | 替换规则；见下方语法。 |
 | `path` | string | — | 请求路径上的正则。未设置表示所有路径。 |
 | `status_codes` | string | — | 逗号分隔的状态码，如 `"200,201"`。未设置表示全部；不是数字的项是配置错误。 |
@@ -69,6 +70,8 @@ plugins = ["rewriteLinks"]
 
 ## 使用说明
 
+- **执行阶段（`step = "upstream_response"`）：** 默认情况下（`step = "response"`），
+  `sub_filter` 在 [`cache`](cache.md) 之后、发往客户端之前改写正文，因此每次缓存命中都会再次执行过滤。将 `step` 设为 `"upstream_response"` 后，改写会在 `cache` 落盘之前作用于上游响应，使后续缓存命中直接返回已改写后的内容；默认模式下的下游 [`compression`](compression.md) 仍会在发往客户端时正常压缩缓存内容。无论选择哪一步，剥离 `Range` 与要求明文正文的标记仍在 `request` 阶段执行。
 - **仅缓冲模式会把整段响应体缓存在内存**（当任意规则为 `subs_filter` 正则，或配置了 `max_size` 时）。仅使用字面 `sub_filter` 规则且未配置 `max_size` 时，插件按 `8 KiB` 分片流式替换，内存占用只与模式重叠长度成正比。在缓冲模式下，请用 `path` 与 `status_codes` 收窄范围，远离大文件或流式端点，或显式限定：
   - **`types`**：其他类型的响应完全不动——照常流式转发，保留 `Content-Length`，不进内存。没有写明类型的响应同样不动。不配 `types` 时，同一个 location 上的图片或下载也会按页面处理（在缓冲模式下会被整个缓冲）。
   - **`max_size`**：更大的正文不动。`Content-Length` 已经说明超限的，完全不碰；没有给出长度的，先缓冲到上限，超过之后把已缓冲的部分和后续内容原样放行，整个正文都不改写。由于需要缓冲到上限才能判定，配置 `max_size` 会使字面规则也关闭流式模式、转为整段缓冲。

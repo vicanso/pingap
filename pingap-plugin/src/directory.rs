@@ -441,10 +441,10 @@ pub struct Directory {
     hash_value: String,
 }
 
-/// Reads file metadata and opens file for reading asynchronously
+/// Opens a file and reads its metadata in a single blocking task.
 ///
 /// # Arguments
-/// * `file` - PathBuf pointing to the file to be read
+/// * `file` - Path pointing to the file to be read
 ///
 /// # Returns
 /// * `Ok((Metadata, File))` - Tuple containing file metadata and opened file handle
@@ -454,17 +454,22 @@ pub struct Directory {
 /// - Returns NotFound error if path points to a directory
 /// - File is opened in read-only mode
 async fn get_data(
-    file: &PathBuf,
+    file: &Path,
 ) -> std::io::Result<(std::fs::Metadata, fs::File)> {
-    let meta = fs::metadata(file).await?;
+    let path = file.to_path_buf();
+    let (meta, f) = tokio::task::spawn_blocking(move || {
+        let f = std::fs::File::open(&path)?;
+        let meta = f.metadata()?;
+        // Don't serve directories directly
+        if meta.is_dir() {
+            return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        }
+        Ok((meta, f))
+    })
+    .await
+    .map_err(std::io::Error::other)??;
 
-    // Don't serve directories directly
-    if meta.is_dir() {
-        return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
-    }
-    let f = fs::OpenOptions::new().read(true).open(file).await?;
-
-    Ok((meta, f))
+    Ok((meta, fs::File::from_std(f)))
 }
 
 /// The response for a file system error: a missing file is a 404, the
@@ -1877,6 +1882,16 @@ follow_symlinks = {follow_symlinks}
         let (meta, _) = get_data(&file).await.unwrap();
 
         assert_ne!(0, meta.len());
+
+        let dir_err = get_data(Path::new(".")).await.err().unwrap();
+        assert_eq!(std::io::ErrorKind::NotFound, dir_err.kind());
+
+        let missing_err =
+            get_data(Path::new("./definitely_missing_file_for_test"))
+                .await
+                .err()
+                .unwrap();
+        assert_eq!(std::io::ErrorKind::NotFound, missing_err.kind());
 
         let (cacheable, _, headers) = get_cacheable_and_headers_from_meta(
             &file,

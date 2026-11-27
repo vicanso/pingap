@@ -28,8 +28,8 @@ pub use stream_metrics::{
     stream_connection_open, stream_metrics_snapshot,
 };
 pub use traffic::{
-    TRAFFIC_INTERVAL, TrafficSnapshot, UpstreamTraffic, record_traffic,
-    traffic_snapshot,
+    StreamTrafficSummary, TRAFFIC_INTERVAL, TrafficSnapshot, UpstreamTraffic,
+    record_traffic, traffic_snapshot,
 };
 #[cfg(feature = "tracing")]
 #[derive(Debug, Snafu)]
@@ -49,5 +49,6 @@ mod prom;
 #[cfg(feature = "tracing")]
 pub use prom::{
     Prometheus, new_prometheus, new_prometheus_push_service,
-    set_metrics_location_provider, set_metrics_upstream_provider,
+    set_metrics_certificate_provider, set_metrics_location_provider,
+    set_metrics_upstream_provider,
 };

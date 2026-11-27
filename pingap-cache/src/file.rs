@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{
-    BinaryMeta, CacheObject, HttpCacheClearStats, HttpCacheStats,
+    BinaryMeta, CacheObject, HitBody, HttpCacheClearStats, HttpCacheStats,
     HttpCacheStorage,
 };
 use super::tiny::{CacheMode, MemoryCache};
@@ -657,6 +657,144 @@ fn update_meta_file_sync(
     Ok(DiskUpdateMetaOutcome::Updated)
 }
 
+fn remove_corrupt_cache_file(
+    file: &Path,
+    key: &str,
+    has_budget: bool,
+    current_size: &AtomicU64,
+    len: u64,
+    reason: &str,
+) {
+    warn!(
+        target: LOG_TARGET,
+        key,
+        reason,
+        "remove corrupt cache file"
+    );
+    if std::fs::remove_file(file).is_ok() {
+        track_removed_atomic(has_budget, current_size, len);
+    }
+}
+
+enum ColdHitInspect {
+    Miss,
+    FallbackToGet,
+    Disk {
+        meta: BinaryMeta,
+        body_offset: u64,
+        body_len: usize,
+    },
+}
+
+fn read_cache_header_sync(
+    src: &mut std::fs::File,
+    file_len: u64,
+) -> std::io::Result<std::result::Result<(usize, usize, u64), &'static str>> {
+    use std::io::{ErrorKind, Read};
+    let mut header = [0u8; 8];
+    match src.read_exact(&mut header) {
+        Ok(()) => {},
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+            return Ok(Err("cache object is truncated, shorter than header"));
+        },
+        Err(e) => return Err(e),
+    }
+    // `CacheObject` stores big-endian `u32` metadata lengths.
+    let meta0_len =
+        u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+    let meta1_len =
+        u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+    let body_offset = 8u64
+        .saturating_add(meta0_len as u64)
+        .saturating_add(meta1_len as u64);
+    if file_len < body_offset {
+        return Ok(Err("cache object is truncated before metadata end"));
+    }
+    let (Ok(meta0_len), Ok(meta1_len)) =
+        (usize::try_from(meta0_len), usize::try_from(meta1_len))
+    else {
+        return Ok(Err("cache metadata size exceeds usize"));
+    };
+    Ok(Ok((meta0_len, meta1_len, body_offset)))
+}
+
+fn inspect_cache_file_sync(
+    file: &Path,
+    key: &str,
+    has_budget: bool,
+    current_size: &AtomicU64,
+    has_hot: bool,
+    hot_max_weight: u16,
+    hot_cache_max: usize,
+) -> std::io::Result<ColdHitInspect> {
+    use std::io::{ErrorKind, Read};
+    let mut src = match std::fs::File::open(file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Ok(ColdHitInspect::Miss);
+        },
+        Err(e) => return Err(e),
+    };
+    let file_len = src.metadata()?.len();
+    let (meta0_len, meta1_len, body_offset) =
+        match read_cache_header_sync(&mut src, file_len)? {
+            Ok(parsed) => parsed,
+            Err(reason) => {
+                drop(src);
+                remove_corrupt_cache_file(
+                    file,
+                    key,
+                    has_budget,
+                    current_size,
+                    file_len,
+                    reason,
+                );
+                return Ok(ColdHitInspect::Miss);
+            },
+        };
+    let body_len_u64 = file_len - body_offset;
+    let Ok(body_len) = usize::try_from(body_len_u64) else {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "cached body length exceeds usize::MAX",
+        ));
+    };
+    let fits_hot = has_hot
+        && usize::try_from(file_len - 8).is_ok_and(|payload_len| {
+            let weight = super::http_cache::payload_weight(payload_len);
+            weight < hot_max_weight && (weight as usize) <= hot_cache_max
+        });
+    if fits_hot || body_len_u64 <= super::http_cache::HIT_CHUNK_SIZE as u64 {
+        return Ok(ColdHitInspect::FallbackToGet);
+    }
+
+    let mut meta0 = vec![0u8; meta0_len];
+    let mut meta1 = vec![0u8; meta1_len];
+    match src
+        .read_exact(&mut meta0)
+        .and_then(|()| src.read_exact(&mut meta1))
+    {
+        Ok(()) => Ok(ColdHitInspect::Disk {
+            meta: (Bytes::from(meta0), Bytes::from(meta1)),
+            body_offset,
+            body_len,
+        }),
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+            drop(src);
+            remove_corrupt_cache_file(
+                file,
+                key,
+                has_budget,
+                current_size,
+                file_len,
+                "cache object truncated while reading metadata",
+            );
+            Ok(ColdHitInspect::Miss)
+        },
+        Err(e) => Err(e),
+    }
+}
+
 fn read_cache_file_sync(
     file: &Path,
     key: &str,
@@ -1218,6 +1356,101 @@ impl HttpCacheStorage for FileCache {
                         .await;
                 },
             }
+        }
+    }
+
+    async fn lookup_hit(
+        &self,
+        key: &str,
+        namespace: &[u8],
+    ) -> Result<Option<(BinaryMeta, HitBody)>> {
+        let ns = namespace_str(namespace);
+        if let Some(obj) = self.get_hot(key) {
+            debug!(
+                target: LOG_TARGET,
+                key, namespace, "get cache from tinyufo"
+            );
+            self.touch(key, ns);
+            return Ok(Some((obj.meta, HitBody::Memory(obj.body))));
+        }
+
+        let file = self.get_file_path(key, ns);
+        let inspect = {
+            #[cfg(feature = "tracing")]
+            let start = SystemTime::now();
+            let count = self.reading.fetch_add(1, Ordering::Relaxed);
+            defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
+            if self.reading_max > 0 && count >= self.reading_max {
+                debug!(
+                    target: LOG_TARGET,
+                    key,
+                    max = self.reading_max,
+                    "file cache read over quota, treat as miss"
+                );
+                return Ok(None);
+            }
+
+            let file_path = file.clone();
+            let has_budget = self.has_budget();
+            let current_size = self.current_size.clone();
+            let key_owned = key.to_string();
+            let has_hot = self.cache.is_some();
+            let hot_max_weight = self.cache_file_max_weight;
+            let hot_cache_max = self.cache_max;
+            let outcome = tokio::task::spawn_blocking(move || {
+                inspect_cache_file_sync(
+                    &file_path,
+                    &key_owned,
+                    has_budget,
+                    &current_size,
+                    has_hot,
+                    hot_max_weight,
+                    hot_cache_max,
+                )
+            })
+            .await
+            .map_err(|e| Error::Invalid {
+                message: format!("file cache lookup_hit task failed: {e}"),
+            })?
+            .map_err(|e| Error::Io { source: e })?;
+            #[cfg(feature = "tracing")]
+            if !matches!(outcome, ColdHitInspect::FallbackToGet) {
+                self.read_time.observe(elapsed_second(start));
+            }
+            outcome
+        };
+
+        match inspect {
+            ColdHitInspect::Miss => Ok(None),
+            ColdHitInspect::FallbackToGet => Ok(self
+                .get(key, namespace)
+                .await?
+                .map(|obj| (obj.meta, HitBody::Memory(obj.body)))),
+            ColdHitInspect::Disk {
+                meta,
+                body_offset,
+                body_len,
+            } => {
+                #[cfg(test)]
+                self.cold_disk_reads.fetch_add(1, Ordering::Relaxed);
+                self.touch(key, ns);
+                debug!(
+                    target: LOG_TARGET,
+                    key,
+                    namespace = ns,
+                    body_offset,
+                    body_len,
+                    "lookup disk cache hit"
+                );
+                Ok(Some((
+                    meta,
+                    HitBody::Disk {
+                        path: file,
+                        body_offset,
+                        body_len,
+                    },
+                )))
+            },
         }
     }
     /// Stores a cache object both in TinyUfo cache and on disk.
@@ -2755,5 +2988,206 @@ mod tests {
         drop(leader_guard);
         assert_eq!(true, wait_cold_read(&mut rx).await.is_none());
         assert_eq!(Some(obj), reader.get(&k, b"ns").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_lookup_hit_cold_large_disk_object() {
+        use super::super::http_cache::{
+            CompleteHit, DiskHit, HttpCache, is_hit_read_to_the_end,
+        };
+        use pingora::cache::key::CacheHashKey;
+        use pingora::cache::{CacheKey, CacheMeta, Storage};
+
+        let dir = tempdir().unwrap();
+        // `cache_file_max_weight = 4` (16 KiB) with 150 KiB body ensures cold disk path.
+        let cfg = format!(
+            "{}?cache_max=100&cache_file_max_weight=4",
+            dir.path().to_str().unwrap()
+        );
+        let writer = FileCache::new(&cfg).unwrap();
+
+        let now = SystemTime::now();
+        let mut resp = pingora::http::ResponseHeader::build(200, None).unwrap();
+        resp.insert_header("etag", "\"cold-disk\"").unwrap();
+        let meta =
+            CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+        let (meta0, meta1) = meta.serialize().unwrap();
+        let large_body: Vec<u8> =
+            (0..150_000u32).map(|i| (i % 251) as u8).collect();
+        let mut cache_key = CacheKey::new("ns", "/large-object");
+        cache_key.user_tag = "ns".to_string();
+        let combined = cache_key.combined();
+        let large_obj = CacheObject {
+            meta: (Bytes::from(meta0.clone()), Bytes::from(meta1.clone())),
+            body: Bytes::from(large_body.clone()),
+        };
+        writer.put(&combined, b"ns", large_obj).await.unwrap();
+        assert_eq!(true, writer.get_hot(&combined).is_none());
+
+        let file_path = writer.get_file_path(&combined, "ns");
+        let three_days_ago =
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+        set_atime(&file_path, three_days_ago);
+
+        // Fresh FileCache with empty hot layer serves lazy `HitBody::Disk` and updates atime.
+        let reader = Arc::new(FileCache::new(&cfg).unwrap());
+        let (looked_meta, hit_body) =
+            reader.lookup_hit(&combined, b"ns").await.unwrap().unwrap();
+        assert_eq!(
+            (Bytes::from(meta0.clone()), Bytes::from(meta1.clone())),
+            looked_meta
+        );
+        let expected_offset = (8 + meta0.len() + meta1.len()) as u64;
+        assert_eq!(
+            HitBody::Disk {
+                path: file_path.clone(),
+                body_offset: expected_offset,
+                body_len: large_body.len(),
+            },
+            hit_body
+        );
+        assert_eq!(true, reader.get_hot(&combined).is_none());
+
+        for _ in 0..200 {
+            if std::fs::metadata(&file_path).unwrap().accessed().unwrap()
+                > three_days_ago + Duration::from_secs(3600)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            true,
+            std::fs::metadata(&file_path).unwrap().accessed().unwrap()
+                > three_days_ago + Duration::from_secs(3600)
+        );
+
+        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: Some(reader.directory.clone()),
+            cache: reader.clone(),
+            max_size: 0,
+        }));
+        let span = pingora::cache::trace::Span::inactive().handle();
+
+        // 1. HEAD lookup does not read body bytes.
+        let (head_meta, head_hit) =
+            http_cache.lookup(&cache_key, &span).await.unwrap().unwrap();
+        assert_eq!(
+            Some(b"\"cold-disk\"".as_slice()),
+            head_meta.headers().get("etag").map(|v| v.as_bytes())
+        );
+        assert_eq!(true, head_hit.as_any().downcast_ref::<DiskHit>().is_some());
+        assert_eq!(false, is_hit_read_to_the_end(head_hit.as_any()));
+        head_hit
+            .finish(http_cache, &cache_key, &span)
+            .await
+            .unwrap();
+
+        // 2. Range seek reads only the requested slice.
+        let (_, mut range_hit) =
+            http_cache.lookup(&cache_key, &span).await.unwrap().unwrap();
+        assert_eq!(true, range_hit.can_seek());
+        range_hit.seek(1000, Some(140_000)).unwrap();
+        let mut range_buf = vec![];
+        let mut range_ends = vec![];
+        while let Some(piece) = range_hit.read_body().await.unwrap() {
+            range_ends.push(is_hit_read_to_the_end(range_hit.as_any()));
+            range_buf.extend_from_slice(&piece);
+        }
+        assert_eq!(vec![false, false, true], range_ends);
+        assert_eq!(&large_body[1000..140_000], range_buf.as_slice());
+
+        // 3. Full multi-chunk streaming read + `is_hit_read_to_the_end`.
+        let (_, mut full_hit) =
+            http_cache.lookup(&cache_key, &span).await.unwrap().unwrap();
+        let mut full_buf = vec![];
+        let mut full_ends = vec![];
+        while let Some(piece) = full_hit.read_body().await.unwrap() {
+            full_ends.push(is_hit_read_to_the_end(full_hit.as_any()));
+            full_buf.extend_from_slice(&piece);
+        }
+        assert_eq!(vec![false, false, true], full_ends);
+        assert_eq!(large_body, full_buf);
+
+        // 4. Objects fitting the hot layer or <= 64 KiB fall back to `get` + `CompleteHit`.
+        let hot_cfg = format!("{}?cache_max=100", dir.path().to_str().unwrap());
+        let hot_reader = Arc::new(FileCache::new(&hot_cfg).unwrap());
+        let mut medium_key = CacheKey::new("ns", "/medium-fits-hot");
+        medium_key.user_tag = "ns".to_string();
+        let medium_body: Vec<u8> =
+            (0..80_000u32).map(|i| (i % 251) as u8).collect();
+        let medium_obj = CacheObject {
+            meta: (Bytes::from(meta0), Bytes::from(meta1)),
+            body: Bytes::from(medium_body.clone()),
+        };
+        hot_reader
+            .put(&medium_key.combined(), b"ns", medium_obj)
+            .await
+            .unwrap();
+        hot_reader.remove_hot(&medium_key.combined());
+        assert_eq!(true, hot_reader.get_hot(&medium_key.combined()).is_none());
+
+        let hot_http: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: Some(hot_reader.directory.clone()),
+            cache: hot_reader.clone(),
+            max_size: 0,
+        }));
+        let (_, mut mem_hit) =
+            hot_http.lookup(&medium_key, &span).await.unwrap().unwrap();
+        assert_eq!(
+            true,
+            mem_hit.as_any().downcast_ref::<CompleteHit>().is_some()
+        );
+        assert_eq!(true, hot_reader.get_hot(&medium_key.combined()).is_some());
+        let mut mem_buf = vec![];
+        while let Some(piece) = mem_hit.read_body().await.unwrap() {
+            mem_buf.extend_from_slice(&piece);
+        }
+        assert_eq!(medium_body, mem_buf);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_hit_truncated_file_is_miss_and_removed() {
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=0&max_size=1mb",
+            dir.path().to_str().unwrap()
+        );
+        let cache = FileCache::new(&cfg).unwrap();
+
+        let k_short = key("lookup-short");
+        let k_trunc = key("lookup-trunc");
+        let obj = CacheObject {
+            meta: (
+                Bytes::from_static(b"header0"),
+                Bytes::from_static(b"header1"),
+            ),
+            body: Bytes::from(vec![7u8; 100_000]),
+        };
+        cache.put(&k_short, b"ns", obj.clone()).await.unwrap();
+        cache.put(&k_trunc, b"ns", obj).await.unwrap();
+
+        let p_short = cache.get_file_path(&k_short, "ns");
+        let p_trunc = cache.get_file_path(&k_trunc, "ns");
+        let full = std::fs::read(&p_trunc).unwrap();
+        std::fs::write(&p_short, &full[..4]).unwrap();
+        std::fs::write(&p_trunc, &full[..12]).unwrap();
+
+        let cache = FileCache::new(&cfg).unwrap();
+        assert_eq!(16, cache.current_size.load(Ordering::Relaxed));
+
+        assert_eq!(
+            true,
+            cache.lookup_hit(&k_short, b"ns").await.unwrap().is_none()
+        );
+        assert_eq!(false, p_short.exists());
+        assert_eq!(12, cache.current_size.load(Ordering::Relaxed));
+
+        assert_eq!(
+            true,
+            cache.lookup_hit(&k_trunc, b"ns").await.unwrap().is_none()
+        );
+        assert_eq!(false, p_trunc.exists());
+        assert_eq!(0, cache.current_size.load(Ordering::Relaxed));
     }
 }

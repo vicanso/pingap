@@ -49,9 +49,15 @@ HTTP/1.1 503 Service Unavailable
 | Situation | Result |
 | --- | --- |
 | Path is not `path` | Plugin skipped |
+| Process is draining for graceful shutdown (`SIGTERM` / `SIGQUIT`) | `503`, with `"ready":false,"draining":true` in the body |
 | Every upstream looked at has `min_healthy` healthy backends | `200` |
 | One of them has fewer | `503`, with the upstream and its unhealthy backends in the body |
 | An upstream named in `upstreams` does not exist | `503`, `"reason":"no such upstream"` |
+
+As soon as graceful shutdown begins, the probe switches immediately to `503`
+with `"draining":true` (the `draining` field is omitted while serving normally)
+so load balancers and Kubernetes can pull the instance out of rotation while
+in-flight requests finish draining.
 
 A backend is healthy when its health check says so. The circuit breaker is
 not looked at: a backend it is holding back still counts. Every backend counts

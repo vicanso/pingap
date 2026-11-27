@@ -459,7 +459,10 @@ pub use reference::{
     FILE_PREFIX as FILE_REFERENCE_PREFIX, MissingReference,
     entry_has_reference, is_reference,
 };
-pub use secrets::{is_secret_key, mask_secrets, masked_toml};
+pub use secrets::{
+    is_secret_key, mask_category_toml_value, mask_pingap_config, mask_secrets,
+    masked_toml,
+};
 pub use storage::*;
 
 #[cfg(test)]

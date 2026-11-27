@@ -4,7 +4,7 @@ Search-and-replace inside the response body, in the spirit of nginx's
 `sub_filter` and the `subs_filter` module. Useful for rewriting absolute URLs,
 injecting a script tag, or patching an upstream you cannot change.
 
-- **Step:** `response` and `response_body`
+- **Step:** `response` and `response_body` (default), or `upstream_response` and `upstream_response_body` when `step = "upstream_response"`; also runs at `request`
 - **Registered as:** `sub_filter`
 
 ## Configuration
@@ -12,6 +12,7 @@ injecting a script tag, or patching an upstream you cannot change.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `sub_filter`. |
+| `step` | string | `response` | `response` (rewrite on the way to the client) or `upstream_response` (rewrite the upstream response before [`cache`](cache.md) stores it, so cache hits serve the rewritten body directly). Any other value is a configuration error. |
 | `filters` | string[] | `[]` | Substitution rules; see the syntax below. |
 | `path` | string | — | Regex on the request path. Unset means every path. |
 | `status_codes` | string | — | Comma-separated status codes to apply to, e.g. `"200,201"`. Unset means all; an entry that is not a number is a configuration error. |
@@ -97,6 +98,14 @@ becomes a weak one (`W/"v1"`): both described the body the upstream sent.
 
 ## Usage notes
 
+- **Step selection (`step = "upstream_response"`):** by default (`step = "response"`),
+  `sub_filter` rewrites the body on the way to the client, after [`cache`](cache.md),
+  so every cache hit runs the filters again. Setting `step = "upstream_response"`
+  moves rewriting into the upstream response hook before `cache` stores the
+  object, so cache hits serve the already-rewritten body directly; downstream
+  [`compression`](compression.md) (default mode) still compresses cached responses
+  on the way to the client. `Range` stripping and plain-body signalling still
+  run at the `request` step in both modes.
 - **Only buffered mode holds the full response body in memory** (when any rule
   is a regex `subs_filter`, or when `max_size` is set). Literal-only
   `sub_filter` rules without `max_size` stream in `8 KiB` chunks with bounded

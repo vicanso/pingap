@@ -17,8 +17,16 @@ path = "src/lib.rs"
 [features]
 # TLS backend, mirrored from the workspace root: exactly one must be on.
 default = ["openssl"]
-openssl = ["pingora/openssl", "pingap-upstream/openssl"]
-tls-rustls = ["pingora/rustls", "pingap-upstream/tls-rustls"]
+openssl = [
+    "pingora/openssl",
+    "pingap-upstream/openssl",
+    "pingap-certificate?/openssl",
+]
+tls-rustls = [
+    "pingora/rustls",
+    "pingap-upstream/tls-rustls",
+    "pingap-certificate?/tls-rustls",
+]
 tracing = [
     "dep:prometheus",
     "dep:reqwest",
@@ -27,6 +35,7 @@ tracing = [
     "dep:http",
     "dep:snafu",
     "dep:pingap-util",
+    "dep:pingap-certificate",
     "pingap-cache/tracing",
 ]
 
@@ -41,6 +50,7 @@ memory-stats = { workspace = true }
 num_cpus = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 pingap-cache = { workspace = true }
+pingap-certificate = { workspace = true, default-features = false, optional = true }
 pingap-core = { workspace = true }
 pingap-location = { workspace = true }
 pingap-upstream = { workspace = true }
@@ -60,6 +70,7 @@ procfs = { workspace = true }
 
 
 [dev-dependencies]
+pingap-config = { workspace = true }
 pretty_assertions = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-test = { workspace = true }
