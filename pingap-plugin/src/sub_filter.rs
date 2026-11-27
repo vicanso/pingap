@@ -119,6 +119,9 @@ struct SubFilterParams {
     /// Stores the literal string to search for as UTF-8 bytes
     pattern: Vec<u8>,
 
+    /// Pre-built literal substring finder for `sub_filter` rules.
+    literal_finder: Option<bstr::Finder<'static>>,
+
     /// The content to substitute in place of matches
     /// Stored as UTF-8 bytes to support both text and binary replacements
     replacement: Vec<u8>,
@@ -128,6 +131,14 @@ struct SubFilterParams {
 }
 
 impl SubFilterParams {
+    #[inline]
+    fn find(&self, haystack: &[u8]) -> Option<usize> {
+        match &self.literal_finder {
+            Some(finder) => finder.find(haystack),
+            None => haystack.find(&self.pattern),
+        }
+    }
+
     /// Applies this rule to `data`, which is returned untouched (no
     /// allocation) when nothing matches.
     fn apply(&self, data: Vec<u8>) -> Vec<u8> {
@@ -141,7 +152,7 @@ impl SubFilterParams {
                 Cow::Borrowed(_) => data,
                 Cow::Owned(replaced) => replaced,
             }
-        } else if data.find(&self.pattern).is_none() {
+        } else if self.find(&data).is_none() {
             data
         } else if self.global {
             data.replace(&self.pattern, &self.replacement)
@@ -166,6 +177,7 @@ fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
     let mut params = SubFilterParams {
         regex_pattern: None,
         pattern: vec![],
+        literal_finder: None,
         replacement: replacement.as_bytes().to_vec(),
         global: flags.contains('g'),
     };
@@ -178,6 +190,8 @@ fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
         );
     } else {
         params.pattern = pattern.as_bytes().to_vec();
+        params.literal_finder =
+            Some(bstr::Finder::new(pattern.as_bytes()).into_owned());
     }
     Some(params)
 }
@@ -289,6 +303,61 @@ struct LiteralStage {
 }
 
 impl LiteralStage {
+    fn feed_remainder(
+        &mut self,
+        input: &[u8],
+        eof: bool,
+        rule: &SubFilterParams,
+        out: &mut Vec<u8>,
+    ) -> Option<usize> {
+        let pat = rule.pattern.as_slice();
+        let overlap_max = pat.len().saturating_sub(1);
+        if input.is_empty() {
+            if eof {
+                out.extend_from_slice(&self.rem);
+                self.rem.clear();
+            }
+            return None;
+        }
+        if overlap_max == 0 {
+            out.extend_from_slice(&self.rem);
+            self.rem.clear();
+            return Some(0);
+        }
+        let bridge_len = self.rem.len();
+        let overlap_end = input.len().min(overlap_max);
+        self.rem.extend_from_slice(&input[..overlap_end]);
+        if let Some(start) = rule.find(&self.rem) {
+            out.extend_from_slice(&self.rem[..start]);
+            out.extend_from_slice(&rule.replacement);
+            let consumed = (start + pat.len()).saturating_sub(bridge_len);
+            self.rem.clear();
+            if !rule.global {
+                self.done = true;
+                out.extend_from_slice(&input[consumed..]);
+                return None;
+            }
+            return Some(consumed);
+        }
+        if input.len() < overlap_max {
+            if eof {
+                out.extend_from_slice(&self.rem);
+                self.rem.clear();
+            } else {
+                let keep = self.rem.len().min(overlap_max);
+                let emit_end = self.rem.len() - keep;
+                if emit_end > 0 {
+                    out.extend_from_slice(&self.rem[..emit_end]);
+                    self.rem.drain(..emit_end);
+                }
+            }
+            return None;
+        }
+        out.extend_from_slice(&self.rem[..bridge_len]);
+        self.rem.clear();
+        Some(0)
+    }
+
     fn feed(
         &mut self,
         input: &[u8],
@@ -300,30 +369,35 @@ impl LiteralStage {
             out.extend_from_slice(input);
             return;
         }
-        let mut combined = Vec::new();
-        let work: &[u8] = if self.rem.is_empty() {
-            input
-        } else {
-            combined.reserve(self.rem.len() + input.len());
-            combined.extend_from_slice(&self.rem);
-            combined.extend_from_slice(input);
-            self.rem.clear();
-            &combined
-        };
         let pat = rule.pattern.as_slice();
-        let mut cursor = 0;
-        while let Some(pos) = work[cursor..].find(pat) {
+        if pat.is_empty() {
+            if !self.rem.is_empty() {
+                out.extend_from_slice(&self.rem);
+                self.rem.clear();
+            }
+            out.extend_from_slice(input);
+            return;
+        }
+        let mut cursor = if self.rem.is_empty() {
+            0
+        } else {
+            match self.feed_remainder(input, eof, rule, out) {
+                Some(next_cursor) => next_cursor,
+                None => return,
+            }
+        };
+        while let Some(pos) = rule.find(&input[cursor..]) {
             let start = cursor + pos;
-            out.extend_from_slice(&work[cursor..start]);
+            out.extend_from_slice(&input[cursor..start]);
             out.extend_from_slice(&rule.replacement);
             cursor = start + pat.len();
             if !rule.global {
                 self.done = true;
-                out.extend_from_slice(&work[cursor..]);
+                out.extend_from_slice(&input[cursor..]);
                 return;
             }
         }
-        let rem = &work[cursor..];
+        let rem = &input[cursor..];
         let keep = if eof {
             0
         } else {
@@ -335,20 +409,37 @@ impl LiteralStage {
     }
 }
 
-fn run_literal_stages(
+fn run_literal_stages<'a>(
     stages: &mut [LiteralStage],
     filters: &[SubFilterParams],
     input: &[u8],
     eof: bool,
-) -> Vec<u8> {
-    let mut current = input.to_vec();
-    let mut next = Vec::with_capacity(current.len());
-    for (stage, rule) in stages.iter_mut().zip(filters.iter()) {
-        next.clear();
-        stage.feed(&current, eof, rule, &mut next);
-        std::mem::swap(&mut current, &mut next);
+    scratch_a: &'a mut Vec<u8>,
+    scratch_b: &'a mut Vec<u8>,
+) -> &'a [u8] {
+    if filters.is_empty() {
+        scratch_a.clear();
+        scratch_a.extend_from_slice(input);
+        return scratch_a.as_slice();
     }
-    current
+    scratch_a.clear();
+    stages[0].feed(input, eof, &filters[0], scratch_a);
+    let mut current_is_a = true;
+    for (stage, rule) in stages[1..].iter_mut().zip(&filters[1..]) {
+        if current_is_a {
+            scratch_b.clear();
+            stage.feed(scratch_a, eof, rule, scratch_b);
+        } else {
+            scratch_a.clear();
+            stage.feed(scratch_b, eof, rule, scratch_a);
+        }
+        current_is_a = !current_is_a;
+    }
+    if current_is_a {
+        scratch_a.as_slice()
+    } else {
+        scratch_b.as_slice()
+    }
 }
 
 /// Sliding-window streaming replacer for literal `sub_filter` rules.
@@ -357,6 +448,45 @@ struct SubFilterStreamReplacer {
     filters: Arc<[SubFilterParams]>,
     stages: Vec<LiteralStage>,
     pending: BytesMut,
+    scratch_a: Vec<u8>,
+    scratch_b: Vec<u8>,
+}
+
+impl SubFilterStreamReplacer {
+    fn can_passthrough_zero_copy(&self, chunk: &[u8]) -> bool {
+        self.stages.iter().all(|stage| stage.rem.is_empty())
+            && self
+                .stages
+                .iter()
+                .zip(self.filters.iter())
+                .filter(|(stage, _)| !stage.done)
+                .all(|(_, rule)| rule.find(chunk).is_none())
+    }
+
+    fn passthrough_overlap(&self) -> usize {
+        self.stages
+            .iter()
+            .zip(self.filters.iter())
+            .filter(|(stage, _)| !stage.done)
+            .map(|(_, rule)| rule.pattern.len().saturating_sub(1))
+            .sum()
+    }
+
+    fn emit_stages(&mut self, input: &[u8], end_of_stream: bool) -> Bytes {
+        let out = run_literal_stages(
+            &mut self.stages,
+            &self.filters,
+            input,
+            end_of_stream,
+            &mut self.scratch_a,
+            &mut self.scratch_b,
+        );
+        if out.is_empty() {
+            Bytes::new()
+        } else {
+            Bytes::copy_from_slice(out)
+        }
+    }
 }
 
 impl ModifyResponseBody for SubFilterStreamReplacer {
@@ -366,6 +496,33 @@ impl ModifyResponseBody for SubFilterStreamReplacer {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
+        if self.pending.is_empty() {
+            let incoming = body.as_ref().map_or(0, Bytes::len);
+            if !end_of_stream && incoming < STREAM_FLUSH_SIZE {
+                if let Some(data) = body {
+                    self.pending.extend_from_slice(data);
+                    data.clear();
+                }
+                return Ok(());
+            }
+            let chunk = body.take().unwrap_or_default();
+            if self.can_passthrough_zero_copy(&chunk) {
+                let overlap = if end_of_stream {
+                    0
+                } else {
+                    self.passthrough_overlap()
+                };
+                let emit_len = chunk.len().saturating_sub(overlap);
+                if emit_len < chunk.len() {
+                    self.pending.extend_from_slice(&chunk[emit_len..]);
+                }
+                *body = Some(chunk.slice(..emit_len));
+                return Ok(());
+            }
+            *body = Some(self.emit_stages(&chunk, end_of_stream));
+            return Ok(());
+        }
+
         if let Some(data) = body {
             self.pending.extend_from_slice(data);
             data.clear();
@@ -374,13 +531,7 @@ impl ModifyResponseBody for SubFilterStreamReplacer {
             return Ok(());
         }
         let chunk = self.pending.split();
-        let out = run_literal_stages(
-            &mut self.stages,
-            &self.filters,
-            &chunk,
-            end_of_stream,
-        );
-        *body = Some(Bytes::from(out));
+        *body = Some(self.emit_stages(&chunk, end_of_stream));
         Ok(())
     }
     fn name(&self) -> &str {
@@ -516,6 +667,8 @@ impl SubFilter {
                 filters: self.filters.clone(),
                 stages,
                 pending: BytesMut::new(),
+                scratch_a: Vec::new(),
+                scratch_b: Vec::new(),
             })
         } else {
             Box::new(SubFilterReplacer {
@@ -1216,5 +1369,132 @@ mod tests {
             .unwrap();
         assert_eq!(b"new_12_bytes".as_ref(), b1_end.unwrap().as_ref());
         assert_eq!(0, plugin.buffered_bytes.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_sub_filter_streaming_zero_copy_passthrough_and_chains() {
+        // 1. Zero-copy no-match passthrough on single EOF chunk.
+        let plugin = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "filters = [\"sub_filter 'old_token' 'new_val' g\", \"sub_filter 'missing' 'found'\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        plugin
+            .handle_response(&mut session, &mut ctx, &mut resp)
+            .await
+            .unwrap();
+
+        let single = Bytes::from(vec![b'a'; STREAM_FLUSH_SIZE + 128]);
+        let single_ptr = single.as_ptr();
+        let mut body = Some(single);
+        plugin
+            .handle_response_body(&mut session, &mut ctx, &mut body, true)
+            .unwrap();
+        let emitted = body.unwrap();
+        assert_eq!(single_ptr, emitted.as_ptr());
+        assert_eq!(STREAM_FLUSH_SIZE + 128, emitted.len());
+
+        // 2. Zero-copy no-match passthrough on non-EOF chunk slices directly,
+        // holding only the multi-rule overlap suffix in `pending`, then
+        // catches a match across the multi-rule boundary!
+        let multi = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "filters = [\"sub_filter 'old_long_pattern' 'new' g\", \"sub_filter 'aaaaaaaaa_new' 'Z' g\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        multi
+            .handle_response(&mut session, &mut ctx, &mut resp)
+            .await
+            .unwrap();
+
+        let mut raw_chunk1 = vec![b'x'; STREAM_FLUSH_SIZE];
+        raw_chunk1.extend_from_slice(b"aaaaaaaaa_old_long_p");
+        let chunk1 = Bytes::from(raw_chunk1);
+        let chunk1_ptr = chunk1.as_ptr();
+        let expected_overlap =
+            ("old_long_pattern".len() - 1) + ("aaaaaaaaa_new".len() - 1);
+        let expected_emit_len = chunk1.len() - expected_overlap;
+
+        let mut out = Vec::new();
+        let mut b1 = Some(chunk1);
+        multi
+            .handle_response_body(&mut session, &mut ctx, &mut b1, false)
+            .unwrap();
+        let emitted1 = b1.unwrap();
+        assert_eq!(chunk1_ptr, emitted1.as_ptr());
+        assert_eq!(expected_emit_len, emitted1.len());
+        out.extend_from_slice(&emitted1);
+
+        // Next chunk completes the split rule 0 match, whose replacement then
+        // completes the rule 1 match across the chain; followed by a large
+        // non-matching chunk while stage remainder may be held.
+        let mut b2 = Some(Bytes::from_static(b"attern_mid_"));
+        multi
+            .handle_response_body(&mut session, &mut ctx, &mut b2, false)
+            .unwrap();
+        out.extend_from_slice(&b2.unwrap());
+
+        let mut chunk3 = vec![b'y'; STREAM_FLUSH_SIZE];
+        chunk3.extend_from_slice(b"end");
+        let mut b3 = Some(Bytes::from(chunk3));
+        multi
+            .handle_response_body(&mut session, &mut ctx, &mut b3, true)
+            .unwrap();
+        out.extend_from_slice(&b3.unwrap());
+
+        let expected = format!(
+            "{}Z_mid_{}end",
+            "x".repeat(STREAM_FLUSH_SIZE),
+            "y".repeat(STREAM_FLUSH_SIZE)
+        );
+        assert_eq!(expected.as_bytes(), out.as_slice());
+
+        // 3. Multi-rule chain with split matches after an earlier match
+        // (when `stage.rem` is non-empty even though `pending` is empty).
+        let chain = SubFilter::try_from(
+            &toml::from_str::<PluginConf>(
+                "filters = [\"sub_filter 'ab' 'cd' g\", \"sub_filter 'cd' 'ef' g\", \"sub_filter 'ef' 'GH'\"]",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut session = new_session("GET / HTTP/1.1\r\n\r\n").await;
+        let mut ctx = Ctx::default();
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        chain
+            .handle_response(&mut session, &mut ctx, &mut resp)
+            .await
+            .unwrap();
+
+        let mut chained_out = Vec::new();
+        let p1 = format!("ab{}a", "z".repeat(STREAM_FLUSH_SIZE));
+        let p2 = format!("b{}ab", "w".repeat(STREAM_FLUSH_SIZE));
+        let mut c1 = Some(Bytes::from(p1));
+        chain
+            .handle_response_body(&mut session, &mut ctx, &mut c1, false)
+            .unwrap();
+        chained_out.extend_from_slice(&c1.unwrap());
+        let mut c2 = Some(Bytes::from(p2));
+        chain
+            .handle_response_body(&mut session, &mut ctx, &mut c2, true)
+            .unwrap();
+        chained_out.extend_from_slice(&c2.unwrap());
+
+        let expected_chained = format!(
+            "GH{}ef{}ef",
+            "z".repeat(STREAM_FLUSH_SIZE),
+            "w".repeat(STREAM_FLUSH_SIZE)
+        );
+        assert_eq!(expected_chained.as_bytes(), chained_out.as_slice());
     }
 }

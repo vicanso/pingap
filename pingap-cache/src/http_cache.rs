@@ -35,7 +35,7 @@ use tracing::{error, info};
 
 /// The two halves of a serialized `CacheMeta`. `Bytes` so that parsing a
 /// cache file and cloning an object out of the memory layer copy nothing.
-type BinaryMeta = (Bytes, Bytes);
+pub type BinaryMeta = (Bytes, Bytes);
 
 /// Represents a cached object containing metadata and body content
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -173,6 +173,22 @@ pub trait HttpCacheStorage: Sync + Send {
         namespace: &[u8],
         data: CacheObject,
     ) -> Result<()>;
+
+    /// Updates only the metadata of an existing cached object when supported by
+    /// the storage backend, returning `Ok(false)` when no object exists.
+    async fn update_meta(
+        &self,
+        key: &str,
+        namespace: &[u8],
+        meta: BinaryMeta,
+    ) -> Result<bool> {
+        let Some(mut obj) = self.get(key, namespace).await? else {
+            return Ok(false);
+        };
+        obj.meta = meta;
+        self.put(key, namespace, obj).await?;
+        Ok(true)
+    }
 
     /// Removes a cached object from storage.
     ///
@@ -553,10 +569,12 @@ impl Storage for HttpCache {
     ) -> pingora::Result<bool> {
         let namespace = key.user_tag().as_bytes();
         let hash = key.combined();
-        if let Some(mut obj) = self.cache.get(&hash, namespace).await? {
-            let (meta0, meta1) = meta.serialize()?;
-            obj.meta = (meta0.into(), meta1.into());
-            let _ = self.cache.put(&hash, namespace, obj).await?;
+        let (meta0, meta1) = meta.serialize()?;
+        if self
+            .cache
+            .update_meta(&hash, namespace, (meta0.into(), meta1.into()))
+            .await?
+        {
             Ok(true)
         } else {
             Err(Error::Invalid {
@@ -829,5 +847,56 @@ mod tests {
             body: vec![0; MAX_OBJECT_CACHE_SIZE + 1].into(),
         };
         assert_eq!(u16::MAX, obj.get_weight());
+    }
+
+    #[tokio::test]
+    async fn test_http_cache_update_meta() {
+        let storage = Arc::new(TinyUfoCache::new(CacheMode::Normal, 100));
+        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
+            directory: None,
+            cache: storage,
+            max_size: 4096 * 100,
+        }));
+        let key = CacheKey::new("ns", "/update-meta");
+        let span = pingora::cache::trace::Span::inactive().handle();
+
+        let now = SystemTime::now();
+        let mut h1 = pingora::http::ResponseHeader::build(200, None).unwrap();
+        h1.insert_header("etag", "\"v1\"").unwrap();
+        let m1 = CacheMeta::new(now + Duration::from_secs(10), now, 0, 0, h1);
+
+        // Missing entry returns Err("no meta found").
+        let err = http_cache
+            .update_meta(&key, &m1, &span)
+            .await
+            .expect_err("missing key should error");
+        assert!(err.to_string().contains("no meta found"), "{err}");
+
+        // Seed via get_miss_handler.
+        let mut miss =
+            http_cache.get_miss_handler(&key, &m1, &span).await.unwrap();
+        miss.write_body(Bytes::from_static(b"cached-payload"), true)
+            .await
+            .unwrap();
+        miss.finish().await.unwrap();
+
+        // Update meta via Storage::update_meta and verify lookup preserves body.
+        let mut h2 = pingora::http::ResponseHeader::build(200, None).unwrap();
+        h2.insert_header("etag", "\"v2\"").unwrap();
+        let m2 = CacheMeta::new(now + Duration::from_secs(120), now, 0, 0, h2);
+        assert_eq!(
+            true,
+            http_cache.update_meta(&key, &m2, &span).await.unwrap()
+        );
+
+        let (looked_meta, mut hit) =
+            http_cache.lookup(&key, &span).await.unwrap().unwrap();
+        assert_eq!(
+            Some(b"\"v2\"".as_slice()),
+            looked_meta.headers().get("etag").map(|v| v.as_bytes())
+        );
+        let body = hit.read_body().await.unwrap().unwrap();
+        assert_eq!(b"cached-payload", body.as_ref());
+        assert_eq!(true, hit.read_body().await.unwrap().is_none());
     }
 }

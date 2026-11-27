@@ -18,7 +18,7 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `max_file_size` | bytesize | `1mb` | 大于此尺寸的响应不缓存。 |
 | `lock` | duration | `1s` | 防惊群的缓存锁窗口。任意非零时长都有效；`0s` 关闭锁定。 |
 | `lock_retries` | int | `2` | 等锁的请求在放弃、自行回源之前重新查询缓存的次数。 |
-| `eviction` | bool | `false` | `true` 启用 LRU 淘汰。仅内存后端有效。 |
+| `eviction` | bool | `false` | `true` 附加 16 分片 LRU 淘汰管理器（仅内存后端有效；`memory://` 即使在 `eviction = false` 时也已通过 TinyUFO S3-FIFO 无锁执行 `max_size` 预算限制）。 |
 | `predictor` | bool | `false` | `true` 启用可缓存性预测。 |
 | `check_cache_control` | bool | `false` | 要求响应带 `Cache-Control`，否则不存储。 |
 | `purge_ip_list` | string[] | `[]` | 允许发起 `PURGE` 的 IP / CIDR。既不是 IP 也不是 CIDR 的条目会在配置校验时报错。校验的是哪个地址见[谁可以清理](#谁可以清理)。 |
@@ -158,7 +158,7 @@ bypass_headers = ["X-Preview"]
 - **`eviction` 与 `predictor` 按取值生效。** 以前只要键存在就开启，所以 `eviction = false`（admin 表单选“否”时保存的值）反而会开启。如果配置里靠写 `false` 来表示开启，需要改成 `true`。
 - **只带了部分 `headers` 的请求会换一个缓存键。** `headers = ["X-A", "X-B"]` 时，以前各个值直接拼接、不保留位置，只带 `X-A: 1` 的请求和只带 `X-B: 1` 的请求共用一个条目。现在每个头占一个位置。所列的头全带或全不带的请求，键不变；只带了其中一部分的请求以前写入的条目不会再被命中，等过期后回收。头的值里含有 `:` 或 `%`（例如 `Origin`）的条目同理：这两个字符现在在键里会被转义。
 - **`example.com.` 与 `example.com` 分开缓存。** 域名末尾写出根标签时，路由按不带点的域名处理，但转发给上游的 `Host` 保持原样，所以它的响应用单独的键保存。
-- **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。
+- **`eviction` 需要有界后端。** 仅在后端报告非零 `max_size` 时接线，文件后端没有——因此 `eviction` 实际仅对内存有效。文件缓存条目由 inactive 扫描回收（`?inactive=…`）。在 `memory://` 上，即使 `eviction = false`，`TinyUfoCache` 也已经通过 S3-FIFO 无锁执行 `max_size` 预算限制；开启 `eviction = true` 会附加一个 16 分片的 LRU 淘汰管理器。
 - **每个进程只有一个内存后端。** 第一个请求内存缓存的 `cache` 插件创建进程级单例；第二个声明不同 `max_size` 或 `mode` 时会静默复用第一个。用 `namespace` 分隔内容，不要再声明第二个 `directory`。
 - 每个不同的 `lock` 时长会在进程生命周期内分配一把共享锁，因此重要的是不同取值的数量，而不是插件实例数。
 - 按 `Accept-Encoding` 缓存时请搭配 [`accept_encoding`](accept_encoding.md)，否则变体数量会爆炸。

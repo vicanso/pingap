@@ -4284,6 +4284,7 @@ dependencies = [
 name = "pingap-performance"
 version = "0.16.3"
 dependencies = [
+ "ahash",
  "arc-swap",
  "async-trait",
  "bytesize",
@@ -4394,6 +4395,7 @@ dependencies = [
  "pingora",
  "pretty_assertions",
  "scopeguard",
+ "smallvec",
  "snafu",
  "tempfile",
  "tokio",
@@ -4445,6 +4447,7 @@ dependencies = [
  "rcgen",
  "rustls-pki-types",
  "serde",
+ "smallvec",
  "snafu",
  "tokio",
  "tokio-test",

@@ -24,8 +24,8 @@ pub use process::*;
 #[cfg(feature = "tracing")]
 use snafu::Snafu;
 pub use stream_metrics::{
-    StreamMetricsSnapshot, stream_connection_close, stream_connection_open,
-    stream_metrics_snapshot,
+    StreamMetricsSnapshot, forget_removed_streams, stream_connection_close,
+    stream_connection_open, stream_metrics_snapshot,
 };
 pub use traffic::{
     TRAFFIC_INTERVAL, TrafficSnapshot, UpstreamTraffic, record_traffic,

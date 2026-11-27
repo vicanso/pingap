@@ -15,6 +15,7 @@
 use super::{
     Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
+use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use argon2::PasswordVerifier;
 use async_trait::async_trait;
@@ -29,7 +30,6 @@ use pingap_core::{
 use pingap_util::{base64_decode, parse_duration};
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -105,7 +105,7 @@ struct Hashed {
     accounts: Arc<Vec<HashedAccount>>,
     /// The digest of credentials that were verified, with the time, in
     /// seconds, until which that holds.
-    verified: ArcSwap<HashMap<[u8; 32], u64>>,
+    verified: ArcSwap<AHashMap<[u8; 32], u64>>,
     key: [u8; 32],
     /// How many hashes are computed at once. A request with credentials
     /// that are not verified yet costs one whoever sends it, and without
@@ -120,7 +120,7 @@ impl Hashed {
             .map_or(2, |cores| cores.get().max(2));
         Self {
             accounts: Arc::new(accounts),
-            verified: ArcSwap::from_pointee(HashMap::new()),
+            verified: ArcSwap::from_pointee(AHashMap::new()),
             key: rand::random(),
             slots: Semaphore::new(slots),
         }
@@ -146,15 +146,25 @@ impl Hashed {
         let now = pingap_core::now_sec();
         let until = now + VERIFIED_TTL.as_secs();
         self.verified.rcu(|current| {
-            let mut next: HashMap<[u8; 32], u64> = current
+            let mut next: AHashMap<[u8; 32], u64> = current
                 .iter()
                 .filter(|(_, until)| **until > now)
                 .map(|(digest, until)| (*digest, *until))
                 .collect();
-            // Full of credentials that still hold: start over. Each of
-            // them is verified once more, which is all it costs.
+            // Evict the older half (smallest expiry timestamps) when at
+            // capacity so remaining valid entries stay cached without
+            // triggering a full-cache re-hash stampede.
             if next.len() >= VERIFIED_CAPACITY {
-                next.clear();
+                let evict_count = next.len() / 2;
+                if evict_count > 0 {
+                    let mut entries: Vec<([u8; 32], u64)> =
+                        next.drain().collect();
+                    entries.select_nth_unstable_by_key(
+                        evict_count - 1,
+                        |(_, ts)| *ts,
+                    );
+                    next.extend(entries.drain(evict_count..));
+                }
             }
             next.insert(digest, until);
             next
@@ -597,11 +607,11 @@ mod tests {
     use super::{
         BasicAuth, HashKind, Hashed, HashedAccount, Plugin, VERIFIED_CAPACITY,
     };
+    use ahash::AHashMap;
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
@@ -963,7 +973,7 @@ hide_credentials = true
         assert_eq!(true, hashed.is_verified(b"first"));
         // Its time is up: not verified any more, and dropped by the next
         // one that is remembered.
-        hashed.verified.store(Arc::new(HashMap::from([(
+        hashed.verified.store(Arc::new(AHashMap::from([(
             hashed.digest(b"first"),
             pingap_core::now_sec() - 1,
         )])));
@@ -981,6 +991,47 @@ hide_credentials = true
                 format!("user-{}", VERIFIED_CAPACITY + 9).as_bytes()
             )
         );
+    }
+
+    #[test]
+    fn test_verified_cache_half_eviction_keeps_newer_entries() {
+        let hashed = Hashed::new(vec![]);
+        let now = pingap_core::now_sec();
+        let half = VERIFIED_CAPACITY / 2;
+        let mut seeded = AHashMap::with_capacity(VERIFIED_CAPACITY);
+        for index in 0..half {
+            seeded.insert(
+                hashed.digest(format!("older-{index}").as_bytes()),
+                now + 60,
+            );
+        }
+        for index in 0..(VERIFIED_CAPACITY - half) {
+            seeded.insert(
+                hashed.digest(format!("newer-{index}").as_bytes()),
+                now + 240,
+            );
+        }
+        hashed.verified.store(Arc::new(seeded));
+        assert_eq!(VERIFIED_CAPACITY, hashed.verified.load().len());
+
+        hashed.remember(b"trigger-eviction");
+        let after = hashed.verified.load();
+        assert_eq!(VERIFIED_CAPACITY - half + 1, after.len());
+        assert_eq!(true, hashed.is_verified(b"trigger-eviction"));
+        for index in 0..(VERIFIED_CAPACITY - half) {
+            assert_eq!(
+                true,
+                hashed.is_verified(format!("newer-{index}").as_bytes()),
+                "newer-{index} should remain cached after half-eviction"
+            );
+        }
+        for index in 0..half {
+            assert_eq!(
+                false,
+                hashed.is_verified(format!("older-{index}").as_bytes()),
+                "older-{index} should be evicted first"
+            );
+        }
     }
 
     #[test]

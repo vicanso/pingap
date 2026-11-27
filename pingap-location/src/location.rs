@@ -57,6 +57,20 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Request counters for one [`Location`], isolated onto their own cache line
+/// so per-request atomic increments/decrements do not false-share with
+/// read-only routing and config fields.
+#[repr(align(128))]
+#[derive(Debug, Default)]
+struct LocationCounters {
+    /// Total number of requests accepted by this location
+    /// Used for metrics and monitoring
+    accepted: AtomicU64,
+    /// Number of requests currently being processed
+    /// Used for concurrency control
+    processing: AtomicI32,
+}
+
 pub struct LocationStats {
     pub processing: i32,
     pub accepted: u64,
@@ -505,13 +519,8 @@ pub struct Location {
     /// every name up again.
     resolved_plugins: ArcSwapOption<ResolvedPlugins>,
 
-    /// Total number of requests accepted by this location
-    /// Used for metrics and monitoring
-    accepted: AtomicU64,
-
-    /// Number of requests currently being processed
-    /// Used for concurrency control
-    processing: AtomicI32,
+    /// Isolated request counters for this location
+    counters: LocationCounters,
 
     /// Maximum number of concurrent requests allowed
     /// Zero means unlimited
@@ -682,8 +691,7 @@ impl Location {
                 list.iter().map(|name| Arc::from(name.as_str())).collect()
             }),
             resolved_plugins: ArcSwapOption::const_empty(),
-            accepted: AtomicU64::new(0),
-            processing: AtomicI32::new(0),
+            counters: LocationCounters::default(),
             max_processing: conf.max_processing.unwrap_or_default(),
             grpc_web: conf.grpc_web.unwrap_or_default(),
             headers: if headers.is_empty() {
@@ -880,8 +888,8 @@ impl Location {
 
     pub fn stats(&self) -> LocationStats {
         LocationStats {
-            processing: self.processing.load(Ordering::Relaxed),
-            accepted: self.accepted.load(Ordering::Relaxed),
+            processing: self.counters.processing.load(Ordering::Relaxed),
+            accepted: self.counters.accepted.load(Ordering::Relaxed),
         }
     }
 }
@@ -909,7 +917,7 @@ impl LocationInstance for Location {
         &self.fallback_upstream
     }
     fn on_response(&self) {
-        self.processing.fetch_sub(1, Ordering::Relaxed);
+        self.counters.processing.fetch_sub(1, Ordering::Relaxed);
     }
     /// Increments the processing and accepted request counters for this location.
     ///
@@ -927,8 +935,10 @@ impl LocationInstance for Location {
     /// Returns `Error::TooManyRequest` if the number of currently processing requests
     /// would exceed the configured `max_processing` limit (when non-zero).
     fn on_request(&self) -> pingora::Result<(u64, i32)> {
-        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        let accepted =
+            self.counters.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        let processing =
+            self.counters.processing.fetch_add(1, Ordering::Relaxed) + 1;
         if self.max_processing != 0 && processing > self.max_processing {
             let err = Error::TooManyRequest {
                 max: self.max_processing,
@@ -2009,5 +2019,19 @@ mod tests {
                 .unwrap()
                 .to_string()
         );
+    }
+
+    #[test]
+    fn test_location_counters_cache_line_alignment() {
+        assert!(std::mem::align_of::<LocationCounters>() >= 128);
+        assert!(std::mem::size_of::<LocationCounters>() >= 128);
+
+        let lo = Location::new("lo", &LocationConf::default()).unwrap();
+        assert_eq!((1, 1), lo.on_request().unwrap());
+        assert_eq!((2, 2), lo.on_request().unwrap());
+        lo.on_response();
+        let stats = lo.stats();
+        assert_eq!(2, stats.accepted);
+        assert_eq!(1, stats.processing);
     }
 }

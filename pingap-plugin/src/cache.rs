@@ -33,7 +33,7 @@ use pingap_core::{
 use pingap_util::{IpRules, parse_duration};
 use pingora::cache::CacheOptionOverrides;
 use pingora::cache::eviction::EvictionManager;
-use pingora::cache::eviction::simple_lru::Manager;
+use pingora::cache::eviction::lru::Manager;
 use pingora::cache::key::CacheHashKey;
 use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
@@ -57,7 +57,7 @@ static PREDICTOR: OnceLock<Predictor<32>> = OnceLock::new();
 // `session.cache.enable` wants a `&'static` eviction manager, so one is leaked
 // per distinct `max_size` and reused from then on — allowing hot reloads that
 // resize `max_size` to take effect without leaking on repeated reloads.
-static EVICTION_MANAGERS: LazyLock<Mutex<HashMap<u64, &'static Manager>>> =
+static EVICTION_MANAGERS: LazyLock<Mutex<HashMap<u64, &'static Manager<16>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 // CacheLock: Prevents multiple requests from generating the same cache entry
 // simultaneously. `session.cache.enable` wants a `&'static` lock, so one is
@@ -188,7 +188,7 @@ fn wants_fresh(header: &pingora::http::RequestHeader) -> bool {
 /// In a dry run (`pingap_cache::dry_run`) nothing is created: the manager
 /// is sized by whoever asks first, for good, and that must not be a
 /// configuration that is only being checked.
-fn get_eviction_manager(cache_max_size: u64) -> Option<&'static Manager> {
+fn get_eviction_manager(cache_max_size: u64) -> Option<&'static Manager<16>> {
     let mut managers = EVICTION_MANAGERS.lock().ok()?;
     if let Some(manager) = managers.get(&cache_max_size) {
         return Some(*manager);
@@ -198,8 +198,9 @@ fn get_eviction_manager(cache_max_size: u64) -> Option<&'static Manager> {
     if pingap_cache::is_dry_run() {
         return None;
     }
-    let manager: &'static Manager =
-        Box::leak(Box::new(Manager::new(cache_max_size as usize)));
+    let manager: &'static Manager<16> = Box::leak(Box::new(
+        Manager::<16>::with_capacity(cache_max_size as usize, 128),
+    ));
     managers.insert(cache_max_size, manager);
     Some(manager)
 }

@@ -144,6 +144,22 @@ fn is_interim_response(status: StatusCode) -> bool {
 /// connection; its presence is the whole message.
 struct KeepaliveReuse;
 
+/// Carried across reused HTTP/1 TLS connections when JA4 is enabled so the
+/// next request restores the fingerprint without locking `Ja4Store`.
+struct KeepaliveReuseWithJa4(Arc<pingap_core::Ja4Fingerprint>);
+
+/// Request counters for one [`Server`], isolated onto their own cache line
+/// so per-request atomic increments/decrements do not false-share with
+/// read-only server configuration fields.
+#[repr(align(128))]
+#[derive(Default)]
+struct ServerCounters {
+    /// Counter tracking total number of accepted connections since server start
+    accepted: AtomicU64,
+    /// Counter tracking number of currently active request processing operations
+    processing: AtomicI32,
+}
+
 pub struct Server {
     /// Server name identifier used for logging and metrics
     name: String,
@@ -154,11 +170,8 @@ pub struct Server {
     /// Comma-separated list of listening addresses (e.g. "127.0.0.1:8080,127.0.0.1:8081")
     addr: String,
 
-    /// Counter tracking total number of accepted connections since server start
-    accepted: AtomicU64,
-
-    /// Counter tracking number of currently active request processing operations
-    processing: AtomicI32,
+    /// Isolated per-server request counters
+    counters: ServerCounters,
 
     /// Optional parser for customizing access log format and output
     log_parser: Option<Parser>,
@@ -506,7 +519,7 @@ fn cache_variance(
     req: &RequestHeader,
     allowed: Option<&[String]>,
 ) -> Option<HashBinary> {
-    let mut names: Vec<String> = vary_header_names(headers)
+    let mut names: smallvec::SmallVec<[String; 4]> = vary_header_names(headers)
         .filter(|name| {
             allowed.is_none_or(|allowed| allowed.iter().any(|a| a == name))
         })
@@ -700,8 +713,7 @@ impl Server {
         let s = Server {
             name: conf.name.clone(),
             admin: conf.admin,
-            accepted: AtomicU64::new(0),
-            processing: AtomicI32::new(0),
+            counters: ServerCounters::default(),
             addr: conf.addr.clone(),
             log_parser: p,
             log_filter,
@@ -1025,8 +1037,10 @@ impl Server {
                 ctx.conn.tls_server_name = digest_detail.tls_server_name;
                 ctx.conn.tls_client_cert = digest_detail.tls_client_cert;
                 // The fingerprint was filed under this connection's socket
-                // digest before its handshake.
-                if let Some(store) = &self.ja4
+                // digest before its handshake. On reused HTTP/1 TLS connections
+                // `on_connection_reuse` has already restored `ctx.conn.ja4`.
+                if ctx.conn.ja4.is_none()
+                    && let Some(store) = &self.ja4
                     && let Some(socket_digest) = &digest.socket_digest
                 {
                     ctx.conn.ja4 = store.get(socket_digest);
@@ -1036,9 +1050,9 @@ impl Server {
         accept_request();
 
         ctx.state.processing_count =
-            self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+            self.counters.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.state.accepted_count =
-            self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+            self.counters.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some((remote_addr, remote_port)) =
             pingap_core::get_remote_addr_str(session)
         {
@@ -1412,6 +1426,8 @@ impl Server {
         }
         keep_response_plugins(ctx, &plugins);
 
+        let record_timing = self.enable_server_timing
+            || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         let result = async {
             let mut request_done = false;
             for (index, (name, plugin)) in plugins.iter().enumerate() {
@@ -1419,12 +1435,15 @@ impl Server {
                 if plugin.step() != step {
                     continue;
                 }
-                let now = Instant::now();
+                let now = record_timing.then(Instant::now);
                 let result = plugin.handle_request(step, session, ctx).await?;
-                let elapsed = now.elapsed().as_millis() as u32;
 
                 // extract repeated logging and timing logic
                 let mut record_time = |msg: &str| {
+                    let Some(now) = now else {
+                        return;
+                    };
+                    let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         target: LOG_TARGET,
                         name = &**name,
@@ -1480,12 +1499,15 @@ impl Server {
             return Ok(());
         }
 
+        let record_timing = self.enable_server_timing
+            || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         let result = async {
             for (name, plugin) in plugins.iter() {
-                let now = Instant::now();
+                let now = record_timing.then(Instant::now);
                 if let ResponsePluginResult::Modified = plugin
                     .handle_response(session, ctx, upstream_response)
                     .await?
+                    && let Some(now) = now
                 {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
@@ -1517,26 +1539,30 @@ impl Server {
             return Ok(());
         }
 
+        let record_timing = self.enable_server_timing
+            || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // The plugins are put back whatever one of them says: the error
         // page that follows an error is asked of them. Left with `?`,
         // they were gone with it.
         let mut result = Ok(());
         for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
+            let now = record_timing.then(Instant::now);
             match plugin.handle_upstream_response(
                 session,
                 ctx,
                 upstream_response,
             ) {
                 Ok(ResponsePluginResult::Modified) => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        target: LOG_TARGET,
-                        name = &**name,
-                        elapsed,
-                        "upstream response plugin modify headers"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
+                    if let Some(now) = now {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        debug!(
+                            target: LOG_TARGET,
+                            name = &**name,
+                            elapsed,
+                            "upstream response plugin modify headers"
+                        );
+                        ctx.add_plugin_processing_time(name, elapsed);
+                    }
                 },
                 Ok(_) => {},
                 Err(e) => {
@@ -1570,6 +1596,8 @@ impl Server {
             return Ok(());
         }
 
+        let record_timing = self.enable_server_timing
+            || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // Put back also after an error, as in
         // `handle_upstream_response_plugin`.
         let mut result = Ok(());
@@ -1577,7 +1605,7 @@ impl Server {
             if !plugin.handles_upstream_response_body() {
                 continue;
             }
-            let now = Instant::now();
+            let now = record_timing.then(Instant::now);
             match plugin.handle_upstream_response_body(
                 session,
                 ctx,
@@ -1588,12 +1616,14 @@ impl Server {
                     ResponseBodyPluginResult::PartialReplaced
                     | ResponseBodyPluginResult::FullyReplaced,
                 ) => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    debug!(
-                        target: LOG_TARGET,
-                        name = &**name, elapsed, "response body plugin modify body"
-                    );
+                    if let Some(now) = now {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        debug!(
+                            target: LOG_TARGET,
+                            name = &**name, elapsed, "response body plugin modify body"
+                        );
+                    }
                 },
                 Ok(_) => {},
                 Err(e) => {
@@ -1633,6 +1663,8 @@ impl Server {
         if plugins.is_empty() {
             return Ok(());
         }
+        let record_timing = self.enable_server_timing
+            || tracing::enabled!(target: LOG_TARGET, tracing::Level::DEBUG);
         // Put back also after an error, as in
         // `handle_upstream_response_plugin`.
         let mut result = Ok(());
@@ -1640,19 +1672,21 @@ impl Server {
             if !plugin.handles_response_body() {
                 continue;
             }
-            let now = Instant::now();
+            let now = record_timing.then(Instant::now);
             match plugin.handle_response_body(session, ctx, body, end_of_stream)
             {
                 Ok(
                     ResponseBodyPluginResult::PartialReplaced
                     | ResponseBodyPluginResult::FullyReplaced,
                 ) => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    debug!(
-                        target: LOG_TARGET,
-                        name = &**name, elapsed, "response body plugin modify body"
-                    );
+                    if let Some(now) = now {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        debug!(
+                            target: LOG_TARGET,
+                            name = &**name, elapsed, "response body plugin modify body"
+                        );
+                    }
                 },
                 Ok(_) => {},
                 Err(e) => {
@@ -2008,11 +2042,10 @@ impl ProxyHttp for Server {
         if self.strict_sni && ctx.conn.tls_version.is_some() {
             let host =
                 pingap_core::get_host(session.req_header()).unwrap_or_default();
-            let certs = self.certificate_provider.list();
-            if !pingap_certificate::sni_matches_host(
-                &certs,
+            if !pingap_certificate::sni_matches_host_with(
                 ctx.conn.tls_server_name.as_deref(),
                 host,
+                || self.certificate_provider.list(),
             ) {
                 return Err(new_internal_error(
                     421,
@@ -2227,9 +2260,12 @@ impl ProxyHttp for Server {
     fn persist_connection_context(
         &self,
         _session: &Session,
-        _ctx: &Self::CTX,
+        ctx: &Self::CTX,
     ) -> Option<Box<dyn Any + Send + Sync>> {
-        Some(Box::new(KeepaliveReuse))
+        match &ctx.conn.ja4 {
+            Some(ja4) => Some(Box::new(KeepaliveReuseWithJa4(ja4.clone()))),
+            None => Some(Box::new(KeepaliveReuse)),
+        }
     }
 
     /// The exact HTTP/1 keepalive signal. It replaces the "connection older
@@ -2240,9 +2276,12 @@ impl ProxyHttp for Server {
         &self,
         _session: &mut Session,
         ctx: &mut Self::CTX,
-        _prev_ctx: Box<dyn Any + Send + Sync>,
+        prev_ctx: Box<dyn Any + Send + Sync>,
     ) {
         ctx.conn.reused = true;
+        if let Ok(with_ja4) = prev_ctx.downcast::<KeepaliveReuseWithJa4>() {
+            ctx.conn.ja4 = Some(with_ja4.0);
+        }
     }
 
     /// Called when connection is established to upstream.
@@ -3183,7 +3222,7 @@ impl ProxyHttp for Server {
         debug!(target: LOG_TARGET, "--> logging");
         defer!(debug!(target: LOG_TARGET, "<-- logging"););
         end_request();
-        self.processing.fetch_sub(1, Ordering::Relaxed);
+        self.counters.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.upstream.location_instance {
             location.on_response();
         }
@@ -7308,5 +7347,146 @@ addr = "127.0.0.1:6188"
             assert_eq!(Status::Unset, state.status);
             assert_eq!(5, state.attrs.len());
         }
+    }
+
+    #[tokio::test]
+    async fn test_keepalive_reuse_restores_ja4_and_skips_store_lookup() {
+        use pingap_core::Ja4Fingerprint;
+        use pingap_core::ja4::testing::spec_example_body;
+        use pingora::protocols::SocketDigest;
+
+        assert!(std::mem::align_of::<ServerCounters>() >= 128);
+        assert!(std::mem::size_of::<ServerCounters>() >= 128);
+        assert_eq!(0, std::mem::size_of::<KeepaliveReuse>());
+
+        let mut server = new_server();
+        let store = Arc::new(Ja4Store::default());
+        server.ja4 = Some(store.clone());
+
+        let fp = Arc::new(
+            Ja4Fingerprint::from_client_hello(&spec_example_body())
+                .expect("spec example"),
+        );
+        #[cfg(unix)]
+        let socket_digest = Arc::new(SocketDigest::from_raw_fd(0));
+        #[cfg(unix)]
+        store.insert(&socket_digest, fp.clone());
+
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut ctx = Ctx::new();
+        ctx.conn.ja4 = Some(fp.clone());
+        let carried = server
+            .persist_connection_context(&session, &ctx)
+            .expect("carried marker");
+
+        let mut reused_ctx = Ctx::new();
+        server.on_connection_reuse(&mut session, &mut reused_ctx, carried);
+        assert_eq!(true, reused_ctx.conn.reused);
+        assert_eq!(
+            Some(fp.ja4()),
+            reused_ctx.conn.ja4.as_deref().map(|f| f.ja4())
+        );
+
+        // Even if the store no longer holds a matching fingerprint (e.g., if
+        // dropped/cleared), `initialize_context` keeps the restored one
+        // without calling `store.get`.
+        let another_fp = Arc::new(
+            Ja4Fingerprint::from_client_hello(&spec_example_body())
+                .expect("spec example"),
+        );
+        reused_ctx.conn.ja4 = Some(another_fp.clone());
+        server.initialize_context(&mut session, &mut reused_ctx);
+        assert_eq!(
+            true,
+            Arc::ptr_eq(reused_ctx.conn.ja4.as_ref().unwrap(), &another_fp)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_plugin_timing_skipped_when_server_timing_disabled() {
+        struct ModifyingPlugin;
+        #[async_trait::async_trait]
+        impl Plugin for ModifyingPlugin {
+            fn handles_response_body(&self) -> bool {
+                true
+            }
+            async fn handle_request(
+                &self,
+                _step: PluginStep,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+            ) -> pingora::Result<RequestPluginResult> {
+                Ok(RequestPluginResult::Continue)
+            }
+            fn handle_response_body(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _body: &mut Option<bytes::Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<ResponseBodyPluginResult> {
+                Ok(ResponseBodyPluginResult::PartialReplaced)
+            }
+        }
+        struct ModifyingProvider;
+        impl PluginProvider for ModifyingProvider {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                Some(Arc::new(ModifyingPlugin))
+            }
+        }
+
+        let input_header = "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut server = new_server_with(Some(Arc::new(ModifyingProvider)));
+        server.enable_server_timing = false;
+        let mut ctx = Ctx {
+            plugins: Some(Arc::from(vec![(
+                Arc::from("mod"),
+                Arc::new(ModifyingPlugin) as Arc<dyn Plugin>,
+            )])),
+            ..Default::default()
+        };
+
+        server
+            .handle_request_plugin(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let mut body = Some(bytes::Bytes::from_static(b"hi"));
+        server
+            .handle_response_body_plugin(
+                &mut session,
+                &mut ctx,
+                &mut body,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            true,
+            ctx.features
+                .as_ref()
+                .and_then(|f| f.plugin_processing_times.as_ref())
+                .is_none()
+        );
+
+        server.enable_server_timing = true;
+        server
+            .handle_request_plugin(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            true,
+            ctx.features
+                .as_ref()
+                .and_then(|f| f.plugin_processing_times.as_ref())
+                .is_some_and(|times| times.len() == 1)
+        );
     }
 }

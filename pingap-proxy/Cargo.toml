@@ -33,6 +33,7 @@ pingap-upstream = { workspace = true }
 pingap-util = { workspace = true }
 pingora = { workspace = true }
 scopeguard = { workspace = true }
+smallvec = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "sync", "time"] }
 tracing = { workspace = true }

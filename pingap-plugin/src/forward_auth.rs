@@ -156,6 +156,7 @@ impl TryFrom<&PluginConf> for ForwardAuth {
         // form) became the verdict, letting the request through.
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .connect_timeout(timeout.min(Duration::from_secs(5)))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| Error::Invalid {
@@ -245,7 +246,7 @@ impl Plugin for ForwardAuth {
             .header("x-real-ip", client_ip);
 
         // Phase 2: call the auth service.
-        let resp = match builder.send().await {
+        let mut resp = match builder.send().await {
             Ok(resp) => resp,
             Err(e) => {
                 // Without the url, which is the configured `auth_url`
@@ -293,6 +294,15 @@ impl Plugin for ForwardAuth {
             // so the upstream saw a request the auth service had said
             // nothing about.
             protect_from_connection_header(req_header, &self.add_headers);
+            // Drain small response bodies so reqwest/hyper can return the
+            // socket to the keep-alive pool instead of closing it on drop.
+            let mut drained = 0usize;
+            while let Ok(Some(chunk)) = resp.chunk().await {
+                drained += chunk.len();
+                if drained >= 64 * 1024 {
+                    break;
+                }
+            }
             return Ok(RequestPluginResult::Continue);
         }
 
@@ -665,5 +675,77 @@ auth_url = "not a url"
         .err()
         .unwrap();
         assert_eq!(true, err.to_string().contains("invalid auth_url"));
+    }
+
+    #[tokio::test]
+    async fn test_forward_auth_reuses_keepalive_connection() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepts = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let accepts_counter = accepts.clone();
+        let requests_counter = requests.clone();
+
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                accepts_counter.fetch_add(1, Ordering::Relaxed);
+                let requests_counter = requests_counter.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let mut pending = Vec::new();
+                    loop {
+                        while !pending.windows(4).any(|w| w == b"\r\n\r\n") {
+                            let n = match stream.read(&mut buf).await {
+                                Ok(0) | Err(_) => return,
+                                Ok(n) => n,
+                            };
+                            pending.extend_from_slice(&buf[..n]);
+                        }
+                        let Some(end) =
+                            pending.windows(4).position(|w| w == b"\r\n\r\n")
+                        else {
+                            return;
+                        };
+                        pending.drain(..end + 4);
+                        requests_counter.fetch_add(1, Ordering::Relaxed);
+                        let resp = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}";
+                        if stream.write_all(resp).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        let plugin = ForwardAuth::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                "category = \"forward_auth\"\nauth_url = \"http://{addr}/verify\"\n"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        for _ in 0..5 {
+            let mock_io = Builder::new()
+                .read(b"GET /api HTTP/1.1\r\nHost: example.com\r\n\r\n")
+                .build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = plugin
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(true, result == RequestPluginResult::Continue);
+        }
+
+        assert_eq!(5, requests.load(Ordering::Relaxed));
+        assert_eq!(1, accepts.load(Ordering::Relaxed));
     }
 }

@@ -1658,14 +1658,15 @@ impl Upstream {
         let backends = lb.backends();
         // Snapshot per-backend loads once so `level` and `select_with` do not
         // repeatedly hash and lock DashMap shards for every candidate check.
-        let loads: AHashMap<&BackendAddr, (u64, u64)> = set
+        let loads: smallvec::SmallVec<[(&BackendAddr, (u64, u64)); 16]> = set
             .iter()
             .map(|b| (&b.addr, weighted_load(counts, b)))
             .collect();
         let load_of = |backend: &Backend| {
             loads
-                .get(&backend.addr)
-                .copied()
+                .iter()
+                .find(|(addr, _)| *addr == &backend.addr)
+                .map(|(_, load)| *load)
                 .unwrap_or((0, backend.weight.max(1) as u64))
         };
         // One of those that `allow` lets through and that carry the least.
@@ -4668,5 +4669,32 @@ mod tests {
                 .await
                 .is_some()
         );
+    }
+
+    #[test]
+    fn test_select_least_conn_exact_with_small_and_large_sets() {
+        for count in [4usize, 20usize] {
+            let addrs: Vec<String> = (0..count)
+                .map(|i| format!("127.0.0.1:{}", 18000 + i))
+                .collect();
+            let up = Upstream::new(
+                &format!("lc-{count}"),
+                &UpstreamConf {
+                    addrs: addrs.clone(),
+                    algo: Some("least_conn".to_string()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+            let first = up.select_tcp_peer(None, &[], false).unwrap();
+            let second = up.select_tcp_peer(None, &[], false).unwrap();
+            assert_ne!(first.addr_str, second.addr_str);
+            // Retry skips the failed backend even when SmallVec spills (>16).
+            let retried = up
+                .select_tcp_peer(None, &[first.addr_str.to_string()], false)
+                .unwrap();
+            assert_ne!(first.addr_str, retried.addr_str);
+        }
     }
 }

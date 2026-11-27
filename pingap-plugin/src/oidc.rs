@@ -14,7 +14,7 @@
 
 use super::jwt::{
     ClaimMap, JwksSource, claim_header_value, parse_claims_to_headers,
-    strip_claim_headers,
+    strip_claim_headers, try_claim_refresh,
 };
 use super::{Error, get_duration_conf, get_hash_key, get_str_conf};
 use super::{get_step_conf_in, get_str_slice_conf};
@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, warn};
 
@@ -100,9 +101,10 @@ pub struct Oidc {
     /// write, or to take away.
     own_headers: Vec<HeaderName>,
     client: reqwest::Client,
-    provider: ArcSwapOption<Provider>,
+    provider: Arc<ArcSwapOption<Provider>>,
     /// One discovery at a time, and when the last one was started.
-    discovery_lock: tokio::sync::Mutex<Option<Instant>>,
+    discovery_lock: Arc<tokio::sync::Mutex<Option<Instant>>>,
+    refreshing: Arc<AtomicBool>,
 }
 
 /// What the provider says of itself, at
@@ -126,7 +128,7 @@ struct Provider {
     /// form.
     basic_auth: bool,
     jwks: Arc<JwksSource>,
-    fetched_at: Instant,
+    expires_at: Instant,
 }
 
 /// What is kept of a login while the browser is at the provider.
@@ -311,6 +313,7 @@ impl TryFrom<&PluginConf> for Oidc {
             .into();
         let client = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
+            .connect_timeout(HTTP_TIMEOUT.min(Duration::from_secs(5)))
             // What the provider sends is taken from the provider, not
             // from where it points to.
             .redirect(reqwest::redirect::Policy::none())
@@ -332,8 +335,9 @@ impl TryFrom<&PluginConf> for Oidc {
             claims_to_headers,
             own_headers,
             client,
-            provider: ArcSwapOption::empty(),
-            discovery_lock: tokio::sync::Mutex::new(None),
+            provider: Arc::new(ArcSwapOption::empty()),
+            discovery_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -348,6 +352,90 @@ enum Refusal {
     Denied(String),
     /// The provider did not do its part.
     Provider(String),
+}
+
+async fn discover_provider(
+    issuer: &str,
+    client: &reqwest::Client,
+) -> std::result::Result<Provider, String> {
+    let url = format!("{issuer}/.well-known/openid-configuration");
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("discovery answers {}", response.status()));
+    }
+    let discovery = response
+        .json::<Discovery>()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    // Who answers has to be who was asked: the tokens are held to
+    // this name.
+    if discovery.issuer.trim_end_matches('/') != issuer {
+        return Err(format!(
+            "the provider calls itself {:?}, not {:?}",
+            discovery.issuer, issuer
+        ));
+    }
+    for (name, url) in [
+        ("authorization_endpoint", &discovery.authorization_endpoint),
+        ("token_endpoint", &discovery.token_endpoint),
+        ("jwks_uri", &discovery.jwks_uri),
+    ] {
+        if !is_http_url(url) {
+            return Err(format!("{name} of the provider is not a url"));
+        }
+    }
+    let basic_auth = discovery
+        .token_endpoint_auth_methods_supported
+        .is_none_or(|methods| {
+            methods.iter().any(|method| method == "client_secret_basic")
+        });
+    Ok(Provider {
+        authorization_endpoint: discovery.authorization_endpoint,
+        token_endpoint: discovery.token_endpoint,
+        end_session_endpoint: discovery
+            .end_session_endpoint
+            .filter(|url| is_http_url(url)),
+        basic_auth,
+        jwks: Arc::new(JwksSource::new(discovery.jwks_uri, client.clone())),
+        expires_at: Instant::now() + DISCOVERY_TTL,
+    })
+}
+
+async fn refresh_provider(
+    issuer: &str,
+    client: &reqwest::Client,
+    provider_slot: &ArcSwapOption<Provider>,
+    discovery_lock: &tokio::sync::Mutex<Option<Instant>>,
+) {
+    let mut last_attempt = discovery_lock.lock().await;
+    if provider_slot
+        .load_full()
+        .is_some_and(|provider| Instant::now() < provider.expires_at)
+    {
+        return;
+    }
+    if last_attempt.is_none_or(|at| at.elapsed() >= DISCOVERY_COOLDOWN) {
+        match discover_provider(issuer, client).await {
+            Ok(provider) => provider_slot.store(Some(Arc::new(provider))),
+            Err(e) => {
+                error!(
+                    category = CATEGORY,
+                    issuer = issuer,
+                    error = e,
+                    "oidc discovery failed"
+                );
+            },
+        }
+        // From the end of the attempt: one that ran into the timeout
+        // has used up as long as the wait is, and counted from its
+        // start the next request in line would ask at once - each
+        // one holding its client for the whole timeout.
+        *last_attempt = Some(Instant::now());
+    }
 }
 
 impl Oidc {
@@ -430,90 +518,46 @@ impl Oidc {
         Some(format!("{scheme}://{host}{}", self.redirect_path))
     }
 
-    async fn discover(&self) -> std::result::Result<Provider, String> {
-        let url = format!("{}/.well-known/openid-configuration", self.issuer);
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| e.without_url().to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("discovery answers {}", response.status()));
+    fn spawn_refresh_provider(&self) {
+        if self.refreshing.load(std::sync::atomic::Ordering::Acquire) {
+            return;
         }
-        let discovery = response
-            .json::<Discovery>()
-            .await
-            .map_err(|e| e.without_url().to_string())?;
-        // Who answers has to be who was asked: the tokens are held to
-        // this name.
-        if discovery.issuer.trim_end_matches('/') != self.issuer {
-            return Err(format!(
-                "the provider calls itself {:?}, not {:?}",
-                discovery.issuer, self.issuer
-            ));
+        if let Ok(last_attempt) = self.discovery_lock.try_lock()
+            && last_attempt.is_some_and(|at| at.elapsed() < DISCOVERY_COOLDOWN)
+        {
+            return;
         }
-        for (name, url) in [
-            ("authorization_endpoint", &discovery.authorization_endpoint),
-            ("token_endpoint", &discovery.token_endpoint),
-            ("jwks_uri", &discovery.jwks_uri),
-        ] {
-            if !is_http_url(url) {
-                return Err(format!("{name} of the provider is not a url"));
-            }
-        }
-        let basic_auth = discovery
-            .token_endpoint_auth_methods_supported
-            .is_none_or(|methods| {
-                methods.iter().any(|method| method == "client_secret_basic")
-            });
-        Ok(Provider {
-            authorization_endpoint: discovery.authorization_endpoint,
-            token_endpoint: discovery.token_endpoint,
-            end_session_endpoint: discovery
-                .end_session_endpoint
-                .filter(|url| is_http_url(url)),
-            basic_auth,
-            jwks: Arc::new(JwksSource::new(
-                discovery.jwks_uri,
-                self.client.clone(),
-            )),
-            fetched_at: Instant::now(),
-        })
+        let Some(guard) = try_claim_refresh(&self.refreshing) else {
+            return;
+        };
+        let issuer = self.issuer.clone();
+        let client = self.client.clone();
+        let provider_slot = Arc::clone(&self.provider);
+        let discovery_lock = Arc::clone(&self.discovery_lock);
+        tokio::spawn(async move {
+            let _guard = guard;
+            refresh_provider(&issuer, &client, &provider_slot, &discovery_lock)
+                .await;
+        });
     }
 
-    /// The provider: what it said of itself the last time, asked again
-    /// when that was long ago. What there is stays when it does not
-    /// answer.
+    /// The provider: what it said of itself the last time, refreshed
+    /// asynchronously in the background when its TTL expires so callers never
+    /// stall on discovery. Cold start remains synchronous.
     async fn provider(&self) -> Option<Arc<Provider>> {
-        let fresh = |provider: &Arc<Provider>| {
-            provider.fetched_at.elapsed() < DISCOVERY_TTL
-        };
-        if let Some(provider) = self.provider.load_full().filter(fresh) {
-            return Some(provider);
-        }
-        let mut last_attempt = self.discovery_lock.lock().await;
-        if let Some(provider) = self.provider.load_full().filter(fresh) {
-            return Some(provider);
-        }
-        if last_attempt.is_none_or(|at| at.elapsed() >= DISCOVERY_COOLDOWN) {
-            match self.discover().await {
-                Ok(provider) => self.provider.store(Some(Arc::new(provider))),
-                Err(e) => {
-                    error!(
-                        category = CATEGORY,
-                        issuer = self.issuer,
-                        error = e,
-                        "oidc discovery failed"
-                    );
-                },
+        if let Some(provider) = self.provider.load_full() {
+            if Instant::now() >= provider.expires_at {
+                self.spawn_refresh_provider();
             }
-            // From the end of the attempt: one that ran into the timeout
-            // has used up as long as the wait is, and counted from its
-            // start the next request in line would ask at once - each
-            // one holding its client for the whole timeout.
-            *last_attempt = Some(Instant::now());
+            return Some(provider);
         }
+        refresh_provider(
+            &self.issuer,
+            &self.client,
+            &self.provider,
+            &self.discovery_lock,
+        )
+        .await;
         self.provider.load_full()
     }
 
@@ -981,6 +1025,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(5))
+            .connect_timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap()
@@ -1010,7 +1055,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             end_session_endpoint: Some("https://idp.test/logout".to_string()),
             basic_auth: true,
             jwks: Arc::new(JwksSource::with_ec_key(PUBLIC_KEY)),
-            fetched_at: Instant::now(),
+            expires_at: Instant::now() + DISCOVERY_TTL,
         })
     }
 
@@ -1977,7 +2022,7 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
                 end_session_endpoint: None,
                 basic_auth,
                 jwks: Arc::new(JwksSource::with_ec_key(PUBLIC_KEY)),
-                fetched_at: Instant::now(),
+                expires_at: Instant::now() + DISCOVERY_TTL,
             };
             plugin
                 .exchange(&provider, "c-1", login, "https://app.test/cb")
@@ -2126,7 +2171,7 @@ Pz7glwkTfq+X/7U/TTdWanLivIQqzKjyNBu3kgzx7GeUYcjtuw4RKof6
             token_endpoint: "http://127.0.0.1:1/token".to_string(),
             basic_auth: true,
             jwks: Arc::new(JwksSource::with_ec_key(PUBLIC_KEY)),
-            fetched_at: Instant::now(),
+            expires_at: Instant::now() + DISCOVERY_TTL,
         })));
         let handle = |request: &'static str| {
             let plugin = &plugin;
@@ -2229,6 +2274,103 @@ Pz7glwkTfq+X/7U/TTdWanLivIQqzKjyNBu3kgzx7GeUYcjtuw4RKof6
                 "pingap_oidc_bbbb2222"
             ],
             cleared
+        );
+    }
+
+    #[tokio::test]
+    async fn test_oidc_provider_swr_serves_expired_without_stalling() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let doc = serde_json::json!({
+            "issuer": base,
+            "authorization_endpoint": format!("{base}/authorize-v2"),
+            "token_endpoint": format!("{base}/token-v2"),
+            "jwks_uri": format!("{base}/jwks"),
+        })
+        .to_string();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let counter = counter.clone();
+                let doc = doc.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let mut head = Vec::new();
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = stream.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                    }
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        doc.len(),
+                        doc
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+
+        let mut plugin = Oidc::new(
+            &toml::from_str::<PluginConf>(
+                &BASE.replace("https://idp.test/", &base),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        plugin.client = test_client();
+        plugin.provider.store(Some(Arc::new(Provider {
+            authorization_endpoint: format!("{base}/authorize-v1"),
+            token_endpoint: format!("{base}/token-v1"),
+            end_session_endpoint: None,
+            basic_auth: true,
+            jwks: Arc::new(JwksSource::with_ec_key(PUBLIC_KEY)),
+            expires_at: Instant::now() - Duration::from_secs(1),
+        })));
+        let plugin = Arc::new(plugin);
+
+        let started = Instant::now();
+        let mut tasks = Vec::new();
+        for _ in 0..5 {
+            let oidc = Arc::clone(&plugin);
+            tasks.push(tokio::spawn(async move { oidc.provider().await }));
+        }
+        for task in tasks {
+            let p = task.await.unwrap().unwrap();
+            assert_eq!(
+                format!("{base}/authorize-v1"),
+                p.authorization_endpoint
+            );
+        }
+        assert_eq!(true, started.elapsed() < Duration::from_millis(100));
+
+        for _ in 0..100 {
+            if !plugin.refreshing.load(Ordering::Acquire)
+                && hits.load(Ordering::Relaxed) >= 1
+                && plugin.provider.load().as_ref().is_some_and(|p| {
+                    p.authorization_endpoint.ends_with("/authorize-v2")
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(1, hits.load(Ordering::Relaxed));
+        assert_eq!(false, plugin.refreshing.load(Ordering::Acquire));
+        assert_eq!(
+            format!("{base}/authorize-v2"),
+            plugin.provider().await.unwrap().authorization_endpoint
         );
     }
 }

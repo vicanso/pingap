@@ -21,14 +21,14 @@ use tracing::debug;
 // UpstreamPeerTracer tracks active connections to upstream servers
 #[derive(Clone, Debug)]
 pub(crate) struct UpstreamPeerTracer {
-    name: String,
+    name: Arc<str>,
     connected: Arc<AtomicI32>, // Number of active connections
 }
 
 impl UpstreamPeerTracer {
     pub fn new(name: &str) -> Self {
         Self {
-            name: name.to_string(),
+            name: Arc::from(name),
             connected: Arc::new(AtomicI32::new(0)),
         }
     }
@@ -42,7 +42,7 @@ impl Tracing for UpstreamPeerTracer {
     fn on_connected(&self) {
         debug!(
             target: LOG_TARGET,
-            name = self.name,
+            name = &*self.name,
             "upstream peer connected"
         );
         self.connected.fetch_add(1, Ordering::Relaxed);
@@ -50,7 +50,7 @@ impl Tracing for UpstreamPeerTracer {
     fn on_disconnected(&self) {
         debug!(
             target: LOG_TARGET,
-            name = self.name,
+            name = &*self.name,
             "upstream peer disconnected"
         );
         self.connected.fetch_sub(1, Ordering::Relaxed);

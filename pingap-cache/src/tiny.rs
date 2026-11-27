@@ -229,6 +229,47 @@ mod tests {
             cache.remove(key, b"").await.unwrap().unwrap();
             let result = cache.get(key, b"").await.unwrap();
             assert_eq!(true, result.is_none());
+
+            // `update_meta` returns Ok(false) on a miss, and updates metadata
+            // in place while keeping the body intact on a hit.
+            assert_eq!(
+                false,
+                cache
+                    .update_meta(
+                        key,
+                        b"",
+                        (
+                            Bytes::from_static(b"NewMeta0"),
+                            Bytes::from_static(b"NewMeta1"),
+                        ),
+                    )
+                    .await
+                    .unwrap()
+            );
+            cache.put(key, b"", obj.clone()).await.unwrap();
+            assert_eq!(
+                true,
+                cache
+                    .update_meta(
+                        key,
+                        b"",
+                        (
+                            Bytes::from_static(b"NewMeta0"),
+                            Bytes::from_static(b"NewMeta1"),
+                        ),
+                    )
+                    .await
+                    .unwrap()
+            );
+            let updated = cache.get(key, b"").await.unwrap().unwrap();
+            assert_eq!(
+                (
+                    Bytes::from_static(b"NewMeta0"),
+                    Bytes::from_static(b"NewMeta1"),
+                ),
+                updated.meta
+            );
+            assert_eq!(obj.body, updated.body);
         }
     }
 

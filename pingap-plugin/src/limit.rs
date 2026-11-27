@@ -536,14 +536,14 @@ impl Limiter {
     fn check_rate(&self, backend: &RateBackend, key: &str) -> (f64, u64) {
         match backend {
             RateBackend::Sketch(rate) => {
-                rate.observe(&key, 1);
                 let max = self.max;
-                let (value, seconds) = rate.rate_with(&key, |info| {
-                    let value = info.prev_samples.max(0) as f64
+                let (candidate, seconds) = rate.rate_with(&key, |info| {
+                    let candidate = info.prev_samples.max(0) as f64
                         * (1.0 - info.current_interval_fraction)
-                        + info.curr_samples.max(0) as f64;
-                    let counted = if value > max {
-                        info.curr_samples - 1
+                        + info.curr_samples.max(0) as f64
+                        + 1.0;
+                    let counted = if candidate <= max {
+                        info.curr_samples + 1
                     } else {
                         info.curr_samples
                     };
@@ -553,12 +553,12 @@ impl Limiter {
                         counted,
                         info.current_interval_fraction,
                     );
-                    (value, seconds)
+                    (candidate, seconds)
                 });
-                if value > self.max {
-                    rate.observe(&key, -1);
+                if candidate <= max {
+                    rate.observe(&key, 1);
                 }
-                (value, seconds)
+                (candidate, seconds)
             },
             RateBackend::Exact(rate) => rate.observe_and_check(key, self.max),
         }
@@ -1820,5 +1820,32 @@ interval = "1s"
             vec!["max_keys is only read when mode = \"exact\"".to_string()],
             unread
         );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_rejected_requests_do_not_increment_sketch() {
+        let limiter = new_rate_limiter("max = 3\ninterval = \"1m\"");
+        assert_eq!(
+            3,
+            admitted(&limiter, 50, "1.1.1.1", |_| String::new()).await
+        );
+        let RateBackend::Sketch(rate) = limiter.rate.as_ref().unwrap() else {
+            panic!("expected sketch rate backend");
+        };
+        let count = rate.rate_with(&Cow::Borrowed("1.1.1.1"), |info| {
+            info.curr_samples + info.prev_samples
+        });
+        assert_eq!(3, count);
+
+        let zero = new_rate_limiter("max = 0\ninterval = \"1m\"");
+        assert_eq!(0, admitted(&zero, 10, "2.2.2.2", |_| String::new()).await);
+        let RateBackend::Sketch(zero_rate) = zero.rate.as_ref().unwrap() else {
+            panic!("expected sketch rate backend");
+        };
+        let zero_count = zero_rate
+            .rate_with(&Cow::Borrowed("2.2.2.2"), |info| {
+                info.curr_samples + info.prev_samples
+            });
+        assert_eq!(0, zero_count);
     }
 }

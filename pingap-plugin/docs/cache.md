@@ -20,7 +20,7 @@ IP-restricted `PURGE` method.
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
 | `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
 | `lock_retries` | int | `2` | How many times a request that waited on the lock re-checks the cache before it gives up and fetches from upstream itself. |
-| `eviction` | bool | `false` | `true` enables LRU eviction. Memory backend only. |
+| `eviction` | bool | `false` | `true` attaches a 16-shard LRU eviction manager (memory backend only; `memory://` already enforces its `max_size` budget lock-free via TinyUFO S3-FIFO even with `eviction = false`). |
 | `predictor` | bool | `false` | `true` enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
 | `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. An entry that is neither fails configuration validation. See [who may purge](#who-may-purge) for the address that is checked. |
@@ -335,6 +335,9 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   reports a non-zero `max_size`, which the file backend does not — so `eviction`
   is memory-only, and setting it on a file cache logs an error and is ignored.
   File cache entries are reclaimed by the inactive sweep instead (`?inactive=…`).
+  On `memory://`, `TinyUfoCache` already enforces its `max_size` budget lock-free
+  via S3-FIFO even with `eviction = false`; setting `eviction = true` attaches
+  a 16-shard LRU eviction manager.
 - **One memory backend per process.** The memory cache is a process-wide
   singleton created by the first `cache` plugin that asks for it; a second
   declaration with a different `max_size` or `mode` silently reuses the first

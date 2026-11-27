@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Error, LOG_TARGET, Result, get_process_system_info};
+use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -111,11 +112,11 @@ pub struct Prometheus {
     /// upstream, each a hash of the labels, a read lock on the vector and a
     /// reference count taken and given back - on state all worker threads
     /// share.
-    location_series: ArcSwap<HashMap<String, Arc<LocationSeries>>>,
+    location_series: ArcSwap<AHashMap<String, Arc<LocationSeries>>>,
 
     /// The same for each upstream. An upstream that is removed is dropped
     /// from here together with its series.
-    upstream_series: ArcSwap<HashMap<String, Arc<UpstreamSeries>>>,
+    upstream_series: ArcSwap<AHashMap<String, Arc<UpstreamSeries>>>,
 
     /// Upstream names seen by the previous metrics refresh, so the
     /// per-upstream series of an upstream that has since been removed from
@@ -437,7 +438,7 @@ struct UpstreamSeries {
 /// would be a count every worker thread writes to, per request.
 #[inline]
 fn with_series<T, R>(
-    map: &ArcSwap<HashMap<String, Arc<T>>>,
+    map: &ArcSwap<AHashMap<String, Arc<T>>>,
     name: &str,
     new: impl FnOnce() -> T,
     f: impl FnOnce(&T) -> R,
@@ -1855,8 +1856,8 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         upstream_errors,
         upstream_retries,
         access_log_dropped,
-        location_series: ArcSwap::from_pointee(HashMap::new()),
-        upstream_series: ArcSwap::from_pointee(HashMap::new()),
+        location_series: ArcSwap::from_pointee(AHashMap::new()),
+        upstream_series: ArcSwap::from_pointee(AHashMap::new()),
         known_upstreams: ArcSwap::from_pointee(Vec::new()),
         locations_gone_since: Mutex::new(HashMap::new()),
         http_requests_total,

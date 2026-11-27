@@ -31,6 +31,7 @@ pingora = { workspace = true }
 pingora-runtime = { workspace = true }
 rustls-pki-types = { workspace = true, optional = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

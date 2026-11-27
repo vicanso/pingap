@@ -32,7 +32,7 @@ use pingap_core::ja4::{
     ClientHelloStatus, MAX_CLIENT_HELLO_SIZE, extract_sni, read_client_hello,
 };
 use pingap_core::{
-    UpstreamInstance, is_trusted_proxy, new_proxy_protocol_header,
+    AddrStr, UpstreamInstance, is_trusted_proxy, new_proxy_protocol_header,
     new_tcp_keepalive, now_ms, unix_socket_path,
 };
 use pingap_performance::{stream_connection_close, stream_connection_open};
@@ -213,14 +213,16 @@ pub trait StreamProvider: Send + Sync {
 }
 
 /// Decrements `counter` automatically on drop so every early exit releases its
-/// slot cleanly.
+/// slot cleanly. `counter` is `None` when `max_connections` is unlimited.
 struct ActiveConnectionGuard {
-    counter: Arc<AtomicUsize>,
+    counter: Option<Arc<AtomicUsize>>,
 }
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::AcqRel);
+        if let Some(counter) = &self.counter {
+            counter.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
@@ -228,9 +230,12 @@ fn try_acquire_connection(
     counter: &Arc<AtomicUsize>,
     max: Option<usize>,
 ) -> Option<ActiveConnectionGuard> {
+    let Some(limit) = max else {
+        return Some(ActiveConnectionGuard { counter: None });
+    };
     loop {
         let current = counter.load(Ordering::Acquire);
-        if max.is_some_and(|limit| current >= limit) {
+        if current >= limit {
             return None;
         }
         if counter
@@ -243,7 +248,7 @@ fn try_acquire_connection(
             .is_ok()
         {
             return Some(ActiveConnectionGuard {
-                counter: counter.clone(),
+                counter: Some(counter.clone()),
             });
         }
     }
@@ -490,7 +495,7 @@ async fn dial_upstream(
     peeked_bytes: &[u8],
     shutdown: &ShutdownWatch,
 ) -> std::result::Result<DialSuccess, &'static str> {
-    let client_ip = client_addr.map(|addr| addr.ip().to_string());
+    let client_ip = client_addr.map(|addr| AddrStr::from(addr.ip()));
     let attempts = upstream.backend_count().clamp(1, MAX_CONNECT_ATTEMPTS);
     let mut failed = Vec::with_capacity(attempts);
     let mut processing = UpstreamProcessingGuard { upstream: None };
@@ -535,29 +540,44 @@ async fn dial_upstream(
     Err("connect_failed")
 }
 
+struct ByteCounterGuard<'a> {
+    counter: &'a AtomicU64,
+    bytes: u64,
+}
+
+impl Drop for ByteCounterGuard<'_> {
+    fn drop(&mut self) {
+        if self.bytes > 0 {
+            self.counter.fetch_add(self.bytes, Ordering::Relaxed);
+        }
+    }
+}
+
 async fn read_with_shared_idle<R: AsyncRead + Unpin>(
     reader: &mut R,
     buf: &mut [u8],
     idle_limit_ms: Option<u64>,
     last_active_ms: &AtomicU64,
+    mut sleep: Option<std::pin::Pin<&mut tokio::time::Sleep>>,
 ) -> std::io::Result<usize> {
-    let Some(limit_ms) = idle_limit_ms else {
+    let (Some(limit_ms), Some(sleep)) = (idle_limit_ms, sleep.as_mut()) else {
         return reader.read(buf).await;
     };
     loop {
-        let elapsed =
-            now_ms().saturating_sub(last_active_ms.load(Ordering::Relaxed));
-        if elapsed >= limit_ms {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "stream idle timeout",
-            ));
-        }
-        let deadline =
-            TokioInstant::now() + Duration::from_millis(limit_ms - elapsed);
         tokio::select! {
             res = reader.read(buf) => return res,
-            _ = tokio::time::sleep_until(deadline) => {},
+            _ = sleep.as_mut() => {
+                let elapsed = now_ms()
+                    .saturating_sub(last_active_ms.load(Ordering::Relaxed));
+                if elapsed >= limit_ms {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "stream idle timeout",
+                    ));
+                }
+                let remaining = Duration::from_millis(limit_ms - elapsed);
+                sleep.as_mut().reset(TokioInstant::now() + remaining);
+            },
         }
     }
 }
@@ -574,22 +594,32 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut buf = [0u8; RELAY_BUF_SIZE];
+    let mut transferred = ByteCounterGuard {
+        counter: byte_counter,
+        bytes: 0,
+    };
+    let sleep_fut = idle_limit_ms
+        .map(|limit_ms| tokio::time::sleep(Duration::from_millis(limit_ms)));
+    let mut sleep = std::pin::pin!(sleep_fut);
     loop {
         let n = read_with_shared_idle(
             reader,
             &mut buf,
             idle_limit_ms,
             last_active_ms,
+            sleep.as_mut().as_pin_mut(),
         )
         .await?;
         if n == 0 {
             let _ = writer.shutdown().await;
             return Ok(());
         }
-        last_active_ms.store(now_ms(), Ordering::Relaxed);
+        if idle_limit_ms.is_some() {
+            last_active_ms.store(now_ms(), Ordering::Relaxed);
+        }
         writer.write_all(&buf[..n]).await?;
         writer.flush().await?;
-        byte_counter.fetch_add(n as u64, Ordering::Relaxed);
+        transferred.bytes += n as u64;
     }
 }
 
@@ -617,7 +647,8 @@ where
     let (mut down_r, mut down_w) = tokio::io::split(down);
     let idle_limit_ms = idle_timeout
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX).max(1));
-    let last_active_ms = AtomicU64::new(now_ms());
+    let last_active_ms =
+        AtomicU64::new(if idle_limit_ms.is_some() { now_ms() } else { 0 });
 
     if client_eof {
         let _ = up_w.shutdown().await;
@@ -1964,5 +1995,55 @@ mod tests {
 
         bad_task.abort();
         good_task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_try_acquire_connection_fast_path_and_byte_counter_guard() {
+        // When max_connections is None, try_acquire_connection does not touch the atomic counter.
+        let active = Arc::new(AtomicUsize::new(0));
+        let guard = try_acquire_connection(&active, None).expect("unlimited");
+        assert_eq!(true, guard.counter.is_none());
+        assert_eq!(0, active.load(Ordering::Relaxed));
+        drop(guard);
+        assert_eq!(0, active.load(Ordering::Relaxed));
+
+        // When max_connections is Some(1), acquires atomically and blocks the second.
+        let g1 = try_acquire_connection(&active, Some(1)).expect("slot 1");
+        assert_eq!(1, active.load(Ordering::Relaxed));
+        assert_eq!(true, try_acquire_connection(&active, Some(1)).is_none());
+        drop(g1);
+        assert_eq!(0, active.load(Ordering::Relaxed));
+
+        // ByteCounterGuard flushes accumulated bytes once even on cancellation/timeout.
+        let (mut c_in, mut s_in) = tokio::io::duplex(1024);
+        let (s_out, mut c_out) = tokio::io::duplex(1024);
+        let mut s_out = s_out;
+        let last_active = Arc::new(AtomicU64::new(now_ms()));
+        let counter = Arc::new(AtomicU64::new(0));
+        let last_active_task = last_active.clone();
+        let counter_task = counter.clone();
+
+        let task = tokio::spawn(async move {
+            copy_one_way(
+                &mut s_in,
+                &mut s_out,
+                Some(60),
+                &last_active_task,
+                &counter_task,
+            )
+            .await
+        });
+
+        c_in.write_all(b"HELLO").await.unwrap();
+        let mut got = [0u8; 5];
+        c_out.read_exact(&mut got).await.unwrap();
+        assert_eq!(b"HELLO", &got);
+        // Before EOF/timeout, the shared atomic hasn't been touched per-chunk.
+        assert_eq!(0, counter.load(Ordering::Relaxed));
+
+        // Stay silent past 60ms so idle timeout fires and Drop guard flushes bytes.
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(std::io::ErrorKind::TimedOut, err.kind());
+        assert_eq!(5, counter.load(Ordering::Relaxed));
     }
 }

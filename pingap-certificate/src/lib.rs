@@ -430,6 +430,31 @@ fn same_certificate(
     }
 }
 
+fn normalize_sni_and_host<'a>(
+    sni: Option<&'a str>,
+    host: &'a str,
+) -> Option<(&'a str, &'a str)> {
+    let sni = sni
+        .map(pingap_core::strip_root_label)
+        .filter(|s| !s.is_empty())?;
+    let host = pingap_core::strip_root_label(host);
+    (!host.is_empty()).then_some((sni, host))
+}
+
+fn sni_matches_certificate(
+    certificates: &DynamicCertificates,
+    sni: &str,
+    host: &str,
+) -> bool {
+    let sni_pair = lookup_domain_certificates(certificates, sni);
+    if sni_pair.is_empty() || sni_pair.iter().any(|cert| cert.is_ca) {
+        return false;
+    }
+    let host_pair = lookup_domain_certificates(certificates, host);
+    same_certificate(sni_pair.other.as_ref(), host_pair.other.as_ref())
+        && same_certificate(sni_pair.rsa.as_ref(), host_pair.rsa.as_ref())
+}
+
 /// Whether a request for `host` may be served on a TLS connection opened
 /// with `sni` (`strict_sni`, RFC 9110 §15.5.20).
 ///
@@ -442,26 +467,31 @@ pub fn sni_matches_host(
     sni: Option<&str>,
     host: &str,
 ) -> bool {
-    let Some(sni) = sni
-        .map(pingap_core::strip_root_label)
-        .filter(|s| !s.is_empty())
-    else {
+    let Some((sni, host)) = normalize_sni_and_host(sni, host) else {
         return false;
     };
-    let host = pingap_core::strip_root_label(host);
-    if host.is_empty() {
-        return false;
-    }
     if sni.eq_ignore_ascii_case(host) {
         return true;
     }
-    let sni_pair = lookup_domain_certificates(certificates, sni);
-    if sni_pair.is_empty() || sni_pair.iter().any(|cert| cert.is_ca) {
+    sni_matches_certificate(certificates, sni, host)
+}
+
+/// Like [`sni_matches_host`], but defers invoking `certificates` until an
+/// exact case-insensitive match fails so the common matching-host path skips
+/// cloning the certificate map `Arc`.
+pub fn sni_matches_host_with(
+    sni: Option<&str>,
+    host: &str,
+    certificates: impl FnOnce() -> Arc<DynamicCertificates>,
+) -> bool {
+    let Some((sni, host)) = normalize_sni_and_host(sni, host) else {
         return false;
+    };
+    if sni.eq_ignore_ascii_case(host) {
+        return true;
     }
-    let host_pair = lookup_domain_certificates(certificates, host);
-    same_certificate(sni_pair.other.as_ref(), host_pair.other.as_ref())
-        && same_certificate(sni_pair.rsa.as_ref(), host_pair.rsa.as_ref())
+    let certs = certificates();
+    sni_matches_certificate(&certs, sni, host)
 }
 
 pub trait CertificateProvider: Send + Sync {
@@ -595,5 +625,48 @@ CRVQZGgOQL6WDg3tUUDXYOs=
             issuer("CN=mkcert vicanso@tree, O=mkcert").get_issuer_common_name()
         );
         assert_eq!("", issuer("O=no common name").get_issuer_common_name());
+    }
+
+    #[test]
+    fn test_sni_matches_host_with_skips_certificates_on_exact_match() {
+        use super::sni_matches_host_with;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = AtomicBool::new(false);
+        assert_eq!(
+            true,
+            sni_matches_host_with(
+                Some("A.Example.COM."),
+                "a.example.com",
+                || {
+                    called.store(true, Ordering::Relaxed);
+                    Arc::new(super::DynamicCertificates::new())
+                },
+            )
+        );
+        assert_eq!(false, called.load(Ordering::Relaxed));
+
+        assert_eq!(
+            false,
+            sni_matches_host_with(None, "a.example.com", || {
+                called.store(true, Ordering::Relaxed);
+                Arc::new(super::DynamicCertificates::new())
+            })
+        );
+        assert_eq!(false, called.load(Ordering::Relaxed));
+
+        assert_eq!(
+            false,
+            sni_matches_host_with(
+                Some("a.example.com"),
+                "b.example.com",
+                || {
+                    called.store(true, Ordering::Relaxed);
+                    Arc::new(super::DynamicCertificates::new())
+                },
+            )
+        );
+        assert_eq!(true, called.load(Ordering::Relaxed));
     }
 }

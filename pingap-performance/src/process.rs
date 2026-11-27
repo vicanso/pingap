@@ -20,24 +20,56 @@ use serde::{Deserialize, Serialize};
 use std::process;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 
-static ACCEPTED: AtomicU64 = AtomicU64::new(0);
-static PROCESSING: AtomicI32 = AtomicI32::new(0);
+const REQUEST_COUNTER_SHARDS: usize = 16;
+
+/// Per-thread-shard request counters, padded to 128 bytes so concurrent workers
+/// never share cache lines across x86_64 or Apple Silicon cores.
+#[repr(align(128))]
+struct RequestCounterShard {
+    processing: AtomicI64,
+    accepted: AtomicU64,
+}
+
+impl RequestCounterShard {
+    const fn new() -> Self {
+        Self {
+            processing: AtomicI64::new(0),
+            accepted: AtomicU64::new(0),
+        }
+    }
+}
+
+static REQUEST_COUNTERS: [RequestCounterShard; REQUEST_COUNTER_SHARDS] =
+    [const { RequestCounterShard::new() }; REQUEST_COUNTER_SHARDS];
+static NEXT_SHARD: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    static SHARD_INDEX: usize =
+        NEXT_SHARD.fetch_add(1, Ordering::Relaxed) & (REQUEST_COUNTER_SHARDS - 1);
+}
+
+#[inline]
+fn current_shard() -> &'static RequestCounterShard {
+    let index = SHARD_INDEX.with(|idx| *idx);
+    &REQUEST_COUNTERS[index]
+}
 
 /// Increments the request acceptance and processing counters.
 /// This should be called when a new request is received to track request metrics.
 pub fn accept_request() {
-    ACCEPTED.fetch_add(1, Ordering::Relaxed);
-    PROCESSING.fetch_add(1, Ordering::Relaxed);
+    let shard = current_shard();
+    shard.accepted.fetch_add(1, Ordering::Relaxed);
+    shard.processing.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Decrements the request processing counter when a request completes.
 /// This should be called when a request finishes processing to maintain accurate metrics.
 pub fn end_request() {
-    PROCESSING.fetch_sub(1, Ordering::Relaxed);
+    current_shard().processing.fetch_sub(1, Ordering::Relaxed);
 }
 
 /// Returns a tuple of (currently processing requests, total accepted requests).
@@ -46,9 +78,13 @@ pub fn end_request() {
 /// - `i32`: Number of requests currently being processed
 /// - `u64`: Total number of requests accepted since startup
 pub fn get_processing_accepted() -> (i32, u64) {
-    let processing = PROCESSING.load(Ordering::Relaxed);
-    let accepted = ACCEPTED.load(Ordering::Relaxed);
-    (processing, accepted)
+    let mut processing_sum: i64 = 0;
+    let mut accepted_sum: u64 = 0;
+    for shard in &REQUEST_COUNTERS {
+        processing_sum += shard.processing.load(Ordering::Relaxed);
+        accepted_sum += shard.accepted.load(Ordering::Relaxed);
+    }
+    (processing_sum.max(0) as i32, accepted_sum)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -247,15 +283,70 @@ mod tests {
         assert_eq!(info.arch, again.arch);
     }
 
+    static TEST_COUNTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// The counters are global, so the test asserts on the change it makes
     /// rather than on absolute values another test could have moved.
     #[test]
     fn test_get_processing_accepted() {
+        let _guard =
+            TEST_COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (processing, accepted) = get_processing_accepted();
         accept_request();
         assert_eq!((processing + 1, accepted + 1), get_processing_accepted());
         end_request();
         assert_eq!((processing, accepted + 1), get_processing_accepted());
+    }
+
+    #[test]
+    fn test_get_processing_accepted_multithreaded() {
+        let _guard =
+            TEST_COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(std::mem::align_of::<RequestCounterShard>() >= 128);
+        assert!(std::mem::size_of::<RequestCounterShard>() >= 128);
+
+        let (base_processing, base_accepted) = get_processing_accepted();
+        let threads = 20usize;
+        let per_thread = 100usize;
+        let total = threads * per_thread;
+        let barrier = Arc::new(std::sync::Barrier::new(threads));
+
+        // Phase 1: each thread accepts `per_thread` requests on its shard,
+        // synchronizes at the barrier while another set of fresh threads ends
+        // them on different shards, verifying signed cross-shard cancellation.
+        let mut accept_handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            let barrier = barrier.clone();
+            accept_handles.push(std::thread::spawn(move || {
+                for _ in 0..per_thread {
+                    accept_request();
+                }
+                barrier.wait();
+            }));
+        }
+        for handle in accept_handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(
+            (base_processing + total as i32, base_accepted + total as u64),
+            get_processing_accepted()
+        );
+
+        let mut end_handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            end_handles.push(std::thread::spawn(move || {
+                for _ in 0..per_thread {
+                    end_request();
+                }
+            }));
+        }
+        for handle in end_handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(
+            (base_processing, base_accepted + total as u64),
+            get_processing_accepted()
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -13,31 +13,107 @@
 // limitations under the License.
 
 use super::http_cache::{
-    CacheObject, HttpCacheClearStats, HttpCacheStats, HttpCacheStorage,
+    BinaryMeta, CacheObject, HttpCacheClearStats, HttpCacheStats,
+    HttpCacheStorage,
 };
 use super::tiny::{CacheMode, MemoryCache};
 #[cfg(feature = "tracing")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use super::{Error, LOG_TARGET, PAGE_SIZE, Result};
+use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use path_absolutize::*;
 #[cfg(feature = "tracing")]
 use prometheus::Histogram;
 use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
-use tokio::fs;
+use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
 /// Distinguishes the temporary files of concurrent `put`s within this process;
 /// the pid in the file name distinguishes processes.
 static TMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone)]
+enum ColdReadState {
+    Pending,
+    Hit(CacheObject),
+    Miss,
+    IoError(std::io::ErrorKind, String),
+    Cancelled,
+}
+
+struct ColdReadSlot {
+    tx: watch::Sender<ColdReadState>,
+}
+
+enum ColdReadRole<'a> {
+    Leader(ColdReadGuard<'a>),
+    Follower(watch::Receiver<ColdReadState>),
+}
+
+struct ColdReadGuard<'a> {
+    cold_reads: &'a Mutex<AHashMap<PathBuf, Arc<ColdReadSlot>>>,
+    file: PathBuf,
+    slot: Arc<ColdReadSlot>,
+    published: bool,
+}
+
+impl ColdReadGuard<'_> {
+    fn is_current(&self) -> bool {
+        self.cold_reads
+            .lock()
+            .get(&self.file)
+            .is_some_and(|cur| Arc::ptr_eq(cur, &self.slot))
+    }
+
+    fn publish(mut self, state: ColdReadState) {
+        self.published = true;
+        {
+            let mut map = self.cold_reads.lock();
+            if map
+                .get(&self.file)
+                .is_some_and(|cur| Arc::ptr_eq(cur, &self.slot))
+            {
+                map.remove(&self.file);
+            }
+        }
+        let _ = self.slot.tx.send(state);
+    }
+}
+
+impl Drop for ColdReadGuard<'_> {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        {
+            let mut map = self.cold_reads.lock();
+            if map
+                .get(&self.file)
+                .is_some_and(|cur| Arc::ptr_eq(cur, &self.slot))
+            {
+                map.remove(&self.file);
+            }
+        }
+        self.slot.tx.send_if_modified(|state| {
+            if matches!(state, ColdReadState::Pending) {
+                *state = ColdReadState::Cancelled;
+                true
+            } else {
+                false
+            }
+        });
+    }
+}
 
 /// A file-based cache implementation that combines disk storage with in-memory caching
 /// using TinyUfo for hot data.
@@ -76,11 +152,15 @@ pub struct FileCache {
     /// Approximate current on-disk usage (bytes). Maintained on put/remove/clear
     /// and initialised by a directory walk at construction time. Only kept
     /// while `max_size` is set; without a budget nothing reads it.
-    current_size: AtomicU64,
+    current_size: Arc<AtomicU64>,
     /// Set while a `put` is evicting for the budget. The others skip the
     /// walk and write, so a burst of writes over budget costs one directory
     /// walk, not one per write.
-    evicting: AtomicBool,
+    evicting: Arc<AtomicBool>,
+    /// Per-path single-flight slots coalescing concurrent cold disk reads.
+    cold_reads: Mutex<AHashMap<PathBuf, Arc<ColdReadSlot>>>,
+    #[cfg(test)]
+    cold_disk_reads: AtomicU64,
     /// When the file of an object was last marked as read, in seconds; by
     /// a hash of its key, see [`FileCache::touch`].
     touched: Box<[AtomicU64]>,
@@ -266,13 +346,429 @@ fn walk_cache_files(dir: &Path, skip_tmp: bool) -> Vec<CacheFile> {
         .collect()
 }
 
-/// `walk_cache_files` on the blocking pool: the walk stats every file, and
-/// eviction and purge run inside requests, on worker threads that would
-/// otherwise stall for the duration.
-async fn list_cache_files(dir: PathBuf, skip_tmp: bool) -> Vec<CacheFile> {
-    tokio::task::spawn_blocking(move || walk_cache_files(&dir, skip_tmp))
-        .await
-        .unwrap_or_default()
+/// Distinguishes the temporary files of concurrent writes with `<key>.<pid>.<seq>.tmp`.
+fn temp_path_for(file: &Path) -> PathBuf {
+    file.with_file_name(format!(
+        "{}.{}.{}.tmp",
+        file.file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default(),
+        std::process::id(),
+        TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
+    ))
+}
+
+/// Opens a new temporary file, creating missing parent directories only when
+/// `File::create` reports `ErrorKind::NotFound`.
+fn create_temp_file(tmp: &Path) -> std::io::Result<std::fs::File> {
+    match std::fs::File::create(tmp) {
+        Ok(file) => Ok(file),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(parent) =
+                tmp.parent().filter(|p| !p.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::File::create(tmp)
+        },
+        Err(e) => Err(e),
+    }
+}
+
+/// Accounts `len` bytes leaving the disk. Saturating: the counter is an
+/// estimate (files can be removed behind our back) and must never wrap
+/// into a number that makes every write look over budget.
+fn track_removed_atomic(has_budget: bool, current_size: &AtomicU64, len: u64) {
+    if !has_budget || len == 0 {
+        return;
+    }
+    current_size.update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+        cur.saturating_sub(len)
+    });
+}
+
+/// Adjusts `current_size` by the exact signed size delta `new_len - old_len`.
+fn track_written_delta_atomic(
+    has_budget: bool,
+    current_size: &AtomicU64,
+    old_len: u64,
+    new_len: u64,
+) {
+    if !has_budget || old_len == new_len {
+        return;
+    }
+    if new_len >= old_len {
+        current_size.fetch_add(new_len - old_len, Ordering::Relaxed);
+    } else {
+        let diff = old_len - new_len;
+        current_size.update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+            cur.saturating_sub(diff)
+        });
+    }
+}
+
+/// Makes room for `need` more bytes under `max_size` by deleting the least
+/// recently accessed files synchronously inside a blocking task.
+/// Returns `(allowed, evicted_any)`.
+fn evict_disk_space_sync(
+    dir: &Path,
+    max_size: u64,
+    need: u64,
+    current_size: &AtomicU64,
+    evicting: &AtomicBool,
+) -> (bool, bool) {
+    if max_size == 0 {
+        return (true, false);
+    }
+    if need > max_size {
+        return (false, false);
+    }
+    let over =
+        current_size.load(Ordering::Relaxed).saturating_add(need) > max_size;
+    if !over {
+        return (true, false);
+    }
+    // Another put is already evicting; let it finish the job.
+    if evicting
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return (true, false);
+    }
+    defer!(evicting.store(false, Ordering::Release));
+
+    let mut files = walk_cache_files(dir, true);
+    // The counter is an estimate: two writes of one key, a file removed
+    // by another process or by hand, and it is off, for good. With the
+    // whole directory listed here anyway, it is set to what is there.
+    let real_size: u64 = files.iter().map(|file| file.len).sum();
+    current_size.store(real_size, Ordering::Relaxed);
+    if real_size.saturating_add(need) <= max_size {
+        return (true, false);
+    }
+    // Room for this object, and when that is less, for a tenth of the
+    // budget. With no more freed than the one object needed the cache
+    // was full again after it, and every write from then on walked the
+    // whole directory to evict one file: forty milliseconds a write at
+    // twenty thousand files.
+    let room = need.max(max_size / EVICT_ROOM_DIVISOR);
+    let keep = max_size.saturating_sub(room);
+    let bytes_to_free = real_size.saturating_sub(keep);
+    order_oldest_for_eviction(
+        &mut files,
+        bytes_to_free.saturating_add(bytes_to_free / 4),
+    );
+    let mut evicted = 0u64;
+    let mut count = 0u32;
+    let mut evicted_any = false;
+    for file in files {
+        if current_size.load(Ordering::Relaxed) <= keep {
+            break;
+        }
+        match std::fs::remove_file(&file.path) {
+            Ok(()) => {
+                track_removed_atomic(true, current_size, file.len);
+                evicted += file.len;
+                count += 1;
+                evicted_any = true;
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                track_removed_atomic(true, current_size, file.len);
+                evicted_any = true;
+            },
+            Err(e) => {
+                warn!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    file = %file.path.display(),
+                    "evict cache file fail"
+                );
+            },
+        }
+    }
+    debug!(
+        target: LOG_TARGET,
+        count,
+        evicted,
+        current_size = current_size.load(Ordering::Relaxed),
+        max_size,
+        "evict cache files for max_size budget"
+    );
+    (true, evicted_any)
+}
+
+fn remove_tracked_sync(
+    path: &Path,
+    has_budget: bool,
+    current_size: &AtomicU64,
+) -> std::io::Result<bool> {
+    let len = if has_budget {
+        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    match std::fs::remove_file(path) {
+        Ok(()) => {
+            track_removed_atomic(has_budget, current_size, len);
+            Ok(true)
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+fn put_file_sync(
+    dir: &Path,
+    file: &Path,
+    buf: &[u8],
+    new_len: u64,
+    max_size: u64,
+    current_size: &AtomicU64,
+    evicting: &AtomicBool,
+) -> Result<bool> {
+    use std::io::Write;
+    let has_budget = max_size > 0;
+    let mut old_len = if has_budget {
+        std::fs::metadata(file).map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    if has_budget {
+        let need = new_len.saturating_sub(old_len);
+        let (allowed, evicted_any) =
+            evict_disk_space_sync(dir, max_size, need, current_size, evicting);
+        if !allowed {
+            return Ok(false);
+        }
+        if evicted_any {
+            old_len = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+        }
+    }
+
+    // Write to a temporary file and rename it over the final path. Writing
+    // the final path directly is not atomic: a concurrent `get` could read
+    // a half written file, and a crash or a full disk would leave one
+    // behind permanently. The rename also means a reader only ever sees
+    // either the old complete object or the new complete object.
+    //
+    // The suffix carries the pid because two instances share the cache
+    // directory during a zero-downtime upgrade, and a per-process counter
+    // keeps concurrent writes of the same key inside one process apart.
+    let tmp = temp_path_for(file);
+    let write_result = (|| -> std::io::Result<()> {
+        let mut dst = create_temp_file(&tmp)?;
+        dst.write_all(buf)?;
+        drop(dst);
+        std::fs::rename(&tmp, file)
+    })();
+    if let Err(e) = write_result {
+        // Never leave the temporary file behind: nothing else knows about
+        // it, so nothing else would ever clean it up.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(Error::Io { source: e });
+    }
+    track_written_delta_atomic(has_budget, current_size, old_len, new_len);
+    Ok(true)
+}
+
+enum DiskUpdateMetaOutcome {
+    Updated,
+    NotFound,
+    Corrupt,
+}
+
+fn update_meta_file_sync(
+    file: &Path,
+    meta: &BinaryMeta,
+    new_meta0_len: u32,
+    new_meta1_len: u32,
+    has_budget: bool,
+    current_size: &AtomicU64,
+) -> Result<DiskUpdateMetaOutcome> {
+    use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+    let mut src = match std::fs::File::open(file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Ok(DiskUpdateMetaOutcome::NotFound);
+        },
+        Err(e) => return Err(Error::Io { source: e }),
+    };
+    let old_len = src.metadata().map_err(|e| Error::Io { source: e })?.len();
+    let mut header = [0u8; 8];
+    match src.read_exact(&mut header) {
+        Ok(()) => {},
+        Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+            drop(src);
+            if std::fs::remove_file(file).is_ok() {
+                track_removed_atomic(has_budget, current_size, old_len);
+            }
+            return Ok(DiskUpdateMetaOutcome::Corrupt);
+        },
+        Err(e) => return Err(Error::Io { source: e }),
+    }
+    // `CacheObject` stores big-endian `u32` metadata lengths.
+    let old_meta0_len =
+        u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as u64;
+    let old_meta1_len =
+        u32::from_be_bytes([header[4], header[5], header[6], header[7]]) as u64;
+    let body_offset = 8u64
+        .saturating_add(old_meta0_len)
+        .saturating_add(old_meta1_len);
+    if old_len < body_offset {
+        drop(src);
+        if std::fs::remove_file(file).is_ok() {
+            track_removed_atomic(has_budget, current_size, old_len);
+        }
+        return Ok(DiskUpdateMetaOutcome::Corrupt);
+    }
+    src.seek(SeekFrom::Start(body_offset))
+        .map_err(|e| Error::Io { source: e })?;
+
+    let mut new_header = [0u8; 8];
+    new_header[..4].copy_from_slice(&new_meta0_len.to_be_bytes());
+    new_header[4..].copy_from_slice(&new_meta1_len.to_be_bytes());
+
+    let tmp = temp_path_for(file);
+    let write_result = (|| -> std::io::Result<u64> {
+        let dst = create_temp_file(&tmp)?;
+        let mut writer = BufWriter::new(dst);
+        writer.write_all(&new_header)?;
+        writer.write_all(&meta.0)?;
+        writer.write_all(&meta.1)?;
+        let copied = std::io::copy(&mut src, &mut writer)?;
+        writer.flush()?;
+        drop(writer);
+        drop(src);
+        std::fs::rename(&tmp, file)?;
+        Ok(copied)
+    })();
+    let copied = match write_result {
+        Ok(copied) => copied,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(Error::Io { source: e });
+        },
+    };
+    let new_len = 8u64
+        .saturating_add(new_meta0_len as u64)
+        .saturating_add(new_meta1_len as u64)
+        .saturating_add(copied);
+    track_written_delta_atomic(has_budget, current_size, old_len, new_len);
+    Ok(DiskUpdateMetaOutcome::Updated)
+}
+
+fn read_cache_file_sync(
+    file: &Path,
+    key: &str,
+    has_budget: bool,
+    current_size: &AtomicU64,
+) -> std::io::Result<Option<CacheObject>> {
+    match std::fs::read(file) {
+        Ok(buf) => {
+            let len = buf.len() as u64;
+            match CacheObject::try_from(Bytes::from(buf)) {
+                Ok(obj) => Ok(Some(obj)),
+                // A truncated file (crash or full disk mid write) is a miss,
+                // not an error: an error would surface as a 5xx on every hit of
+                // this key while the file kept lying on disk. Remove it so the
+                // next request re-fetches and rewrites it.
+                Err(e) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        key,
+                        error = %e,
+                        "remove corrupt cache file"
+                    );
+                    if std::fs::remove_file(file).is_ok() {
+                        track_removed_atomic(has_budget, current_size, len);
+                    }
+                    Ok(None)
+                },
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+struct ClearFilesResult {
+    success: i32,
+    fail: i32,
+    removed_bytes: u64,
+    hot_keys: Vec<String>,
+}
+
+fn clear_files_sync(dir: &Path, access_before: SystemTime) -> ClearFilesResult {
+    let mut success = 0;
+    let mut fail = 0;
+    let mut removed_bytes = 0u64;
+    let mut hot_keys = Vec::new();
+    for file in walk_cache_files(dir, false)
+        .into_iter()
+        .filter(|f| f.accessed <= access_before)
+    {
+        let removed = match std::fs::remove_file(&file.path) {
+            Ok(()) => {
+                removed_bytes = removed_bytes.saturating_add(file.len);
+                debug!(
+                    target: LOG_TARGET,
+                    file = %file.path.display(),
+                    "remove cache file success"
+                );
+                success += 1;
+                true
+            },
+            // Removed by a purge or an eviction in the meantime.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) => {
+                fail += 1;
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    file = %file.path.display(),
+                    "remove cache file fail"
+                );
+                false
+            },
+        };
+        // Evict only the swept entry from the hot layer; unlike
+        // `purge_namespace`, `clear` must leave active hot entries intact.
+        if removed
+            && let Some(name) = file.path.file_name().and_then(|n| n.to_str())
+            && is_cache_key(name)
+        {
+            hot_keys.push(name.to_string());
+        }
+    }
+    ClearFilesResult {
+        success,
+        fail,
+        removed_bytes,
+        hot_keys,
+    }
+}
+
+async fn wait_cold_read(
+    rx: &mut watch::Receiver<ColdReadState>,
+) -> Option<Result<Option<CacheObject>>> {
+    loop {
+        let state = rx.borrow_and_update().clone();
+        match state {
+            ColdReadState::Pending => {
+                if rx.changed().await.is_err() {
+                    return None;
+                }
+            },
+            ColdReadState::Hit(obj) => return Some(Ok(Some(obj))),
+            ColdReadState::Miss => return Some(Ok(None)),
+            ColdReadState::IoError(kind, msg) => {
+                return Some(Err(Error::Io {
+                    source: std::io::Error::new(kind, msg),
+                }));
+            },
+            ColdReadState::Cancelled => return None,
+        }
+    }
 }
 
 /// Sum of file sizes under `directory` (skips missing paths). Used once at
@@ -399,8 +895,11 @@ impl FileCache {
                 .unwrap_or(Duration::from_secs(48 * 3600)),
             levels: params.levels,
             max_size,
-            current_size: AtomicU64::new(current_size),
-            evicting: AtomicBool::new(false),
+            current_size: Arc::new(AtomicU64::new(current_size)),
+            evicting: Arc::new(AtomicBool::new(false)),
+            cold_reads: Mutex::new(AHashMap::new()),
+            #[cfg(test)]
+            cold_disk_reads: AtomicU64::new(0),
             touched: (0..TOUCH_SLOTS).map(|_| AtomicU64::new(0)).collect(),
         })
     }
@@ -411,142 +910,129 @@ impl FileCache {
         self.max_size > 0
     }
 
-    /// Accounts `len` bytes leaving the disk. Saturating: the counter is an
-    /// estimate (files can be removed behind our back) and must never wrap
-    /// into a number that makes every write look over budget.
+    /// Accounts `len` bytes leaving the disk.
     fn track_removed(&self, len: u64) {
-        if !self.has_budget() {
-            return;
-        }
-        self.current_size
-            .update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-                cur.saturating_sub(len)
-            });
+        track_removed_atomic(self.has_budget(), &self.current_size, len);
     }
 
-    /// Accounts an object of `new_len` bytes replacing one of `old_len`.
-    fn track_written(&self, old_len: u64, new_len: u64) {
-        if !self.has_budget() {
-            return;
-        }
-        self.current_size
-            .update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-                cur.saturating_sub(old_len).saturating_add(new_len)
-            });
+    /// Drops any in-flight cold-read slot for `file` so subsequent cold reads
+    /// observe mutations and an in-flight reader skips `put_hot`.
+    fn invalidate_cold_read(&self, file: &Path) {
+        self.cold_reads.lock().remove(file);
     }
 
-    /// Size of the file at `path`, when the budget needs it.
-    async fn tracked_len(&self, path: &Path) -> u64 {
-        if !self.has_budget() {
-            return 0;
+    fn acquire_cold_read_role(&self, file: &Path) -> ColdReadRole<'_> {
+        let mut map = self.cold_reads.lock();
+        if let Some(slot) = map.get(file) {
+            return ColdReadRole::Follower(slot.tx.subscribe());
         }
-        fs::metadata(path).await.map(|m| m.len()).unwrap_or(0)
+        let (tx, _rx) = watch::channel(ColdReadState::Pending);
+        let slot = Arc::new(ColdReadSlot { tx });
+        map.insert(file.to_path_buf(), slot.clone());
+        ColdReadRole::Leader(ColdReadGuard {
+            cold_reads: &self.cold_reads,
+            file: file.to_path_buf(),
+            slot,
+            published: false,
+        })
     }
 
-    /// Removes the file at `path` and accounts for it. `Ok(false)` when it
-    /// was already gone.
-    async fn remove_tracked(&self, path: &Path) -> std::io::Result<bool> {
-        let len = self.tracked_len(path).await;
-        match fs::remove_file(path).await {
-            Ok(()) => {
-                self.track_removed(len);
-                Ok(true)
+    async fn run_cold_read_leader(
+        &self,
+        key: &str,
+        ns: &str,
+        file: &Path,
+        guard: ColdReadGuard<'_>,
+    ) -> Result<Option<CacheObject>> {
+        // Re-check hot layer once after winning leadership in case a concurrent
+        // `put` or finished reader populated TinyUFO right before we inserted.
+        if let Some(obj) = self.get_hot(key) {
+            self.touch(key, ns);
+            guard.publish(ColdReadState::Hit(obj.clone()));
+            return Ok(Some(obj));
+        }
+
+        #[cfg(feature = "tracing")]
+        let start = SystemTime::now();
+
+        let count = self.reading.fetch_add(1, Ordering::Relaxed);
+        defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
+        // Over quota: degrade to a miss (origin fetch) rather than 5xx.
+        if self.reading_max > 0 && count >= self.reading_max {
+            debug!(
+                target: LOG_TARGET,
+                key,
+                max = self.reading_max,
+                "file cache read over quota, treat as miss"
+            );
+            guard.publish(ColdReadState::Miss);
+            return Ok(None);
+        }
+
+        #[cfg(test)]
+        self.cold_disk_reads.fetch_add(1, Ordering::Relaxed);
+
+        let file_path = file.to_path_buf();
+        let has_budget = self.has_budget();
+        let current_size = self.current_size.clone();
+        let key_owned = key.to_string();
+        let read_outcome = tokio::task::spawn_blocking(move || {
+            read_cache_file_sync(
+                &file_path,
+                &key_owned,
+                has_budget,
+                &current_size,
+            )
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache read task failed: {e}"),
+        })?;
+        #[cfg(feature = "tracing")]
+        self.read_time.observe(elapsed_second(start));
+
+        let obj = match read_outcome {
+            Ok(obj) => obj,
+            Err(e) => {
+                guard.publish(ColdReadState::IoError(e.kind(), e.to_string()));
+                return Err(Error::Io { source: e });
             },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Makes room for `need` more bytes under `max_size` by deleting the
-    /// least recently accessed files first. Returns whether the write may
-    /// go ahead: an object larger than the whole budget never fits, and
-    /// evicting everything for it would only empty the cache.
-    ///
-    /// One directory walk, then deletions in access order until the budget
-    /// holds. The walk used to be repeated for every single file evicted,
-    /// which on a large directory made one over-budget write cost dozens
-    /// of full walks.
-    async fn ensure_disk_space(&self, need: u64) -> bool {
-        if !self.has_budget() {
-            return true;
-        }
-        if need > self.max_size {
-            return false;
-        }
-        let over = |need: u64| {
-            self.current_size
-                .load(Ordering::Relaxed)
-                .saturating_add(need)
-                > self.max_size
         };
-        if !over(need) {
-            return true;
-        }
-        // Another put is already evicting; let it finish the job.
-        if self
-            .evicting
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return true;
-        }
-        defer!(self.evicting.store(false, Ordering::Release));
 
-        let mut files =
-            list_cache_files(PathBuf::from(&self.directory), true).await;
-        // The counter is an estimate: two writes of one key, a file removed
-        // by another process or by hand, and it is off, for good. With the
-        // whole directory listed here anyway, it is set to what is there.
-        let real_size: u64 = files.iter().map(|file| file.len).sum();
-        self.current_size.store(real_size, Ordering::Relaxed);
-        if real_size.saturating_add(need) <= self.max_size {
-            return true;
-        }
-        // Room for this object, and when that is less, for a tenth of the
-        // budget. With no more freed than the one object needed the cache
-        // was full again after it, and every write from then on walked the
-        // whole directory to evict one file: forty milliseconds a write at
-        // twenty thousand files.
-        let room = need.max(self.max_size / EVICT_ROOM_DIVISOR);
-        let keep = self.max_size.saturating_sub(room);
-        let bytes_to_free = real_size.saturating_sub(keep);
-        order_oldest_for_eviction(
-            &mut files,
-            bytes_to_free.saturating_add(bytes_to_free / 4),
-        );
-        let mut evicted = 0u64;
-        let mut count = 0u32;
-        for file in files {
-            if self.current_size.load(Ordering::Relaxed) <= keep {
-                break;
+        if let Some(obj) = &obj {
+            if guard.is_current() {
+                self.put_hot(key, obj);
             }
-            match fs::remove_file(&file.path).await {
-                Ok(()) => {
-                    self.track_removed(file.len);
-                    evicted += file.len;
-                    count += 1;
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    self.track_removed(file.len);
-                },
-                Err(e) => {
-                    warn!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        file = %file.path.display(),
-                        "evict cache file fail"
-                    );
-                },
-            }
+            self.touch(key, ns);
+            guard.publish(ColdReadState::Hit(obj.clone()));
+        } else {
+            guard.publish(ColdReadState::Miss);
         }
+
         debug!(
             target: LOG_TARGET,
-            count,
-            evicted,
-            current_size = self.current_size.load(Ordering::Relaxed),
-            max_size = self.max_size,
-            "evict cache files for max_size budget"
+            key,
+            namespace = ns,
+            "get cache from file"
         );
+        Ok(obj)
+    }
+
+    fn apply_hot_meta(
+        &self,
+        key: &str,
+        mut obj: CacheObject,
+        meta: BinaryMeta,
+    ) -> bool {
+        obj.meta = meta;
+        let weight = obj.get_weight();
+        if weight >= self.cache_file_max_weight
+            || weight as usize > self.cache_max
+        {
+            self.remove_hot(key);
+            return false;
+        }
+        self.put_hot(key, &obj);
         true
     }
 
@@ -680,7 +1166,8 @@ fn elapsed_second(time: SystemTime) -> f64 {
 impl HttpCacheStorage for FileCache {
     /// Retrieves a cache object by key and namespace.
     ///
-    /// First checks the in-memory TinyUfo cache, then falls back to file system if not found.
+    /// First checks the in-memory TinyUfo cache, then falls back to file system if not found,
+    /// coalescing concurrent cold disk reads for the same path.
     /// Enforces a maximum concurrent reading limit.
     ///
     /// # Returns
@@ -694,70 +1181,44 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
+        let ns = namespace_str(namespace);
         // Early return if found in cache
         if let Some(obj) = self.get_hot(key) {
             debug!(
                 target: LOG_TARGET,
                 key, namespace, "get cache from tinyufo"
             );
-            self.touch(key, namespace_str(namespace));
+            self.touch(key, ns);
             return Ok(Some(obj));
         }
 
-        #[cfg(feature = "tracing")]
-        let start = SystemTime::now();
-        let file = self.get_file_path(key, namespace_str(namespace));
-
-        // add reading count
-        let count = self.reading.fetch_add(1, Ordering::Relaxed);
-        defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
-        // Over quota: degrade to a miss (origin fetch) rather than 5xx.
-        if self.reading_max > 0 && count >= self.reading_max {
-            debug!(
-                target: LOG_TARGET,
-                key,
-                max = self.reading_max,
-                "file cache read over quota, treat as miss"
-            );
-            return Ok(None);
-        }
-        let result = fs::read(&file).await;
-        #[cfg(feature = "tracing")]
-        self.read_time.observe(elapsed_second(start));
-
-        let obj = match result {
-            Ok(buf) => match CacheObject::try_from(Bytes::from(buf)) {
-                Ok(obj) => Some(obj),
-                // A truncated file (crash or full disk mid write) is a miss,
-                // not an error: an error would surface as a 5xx on every hit of
-                // this key while the file kept lying on disk. Remove it so the
-                // next request re-fetches and rewrites it.
-                Err(e) => {
-                    warn!(
-                        target: LOG_TARGET,
-                        key,
-                        error = %e,
-                        "remove corrupt cache file"
-                    );
-                    let _ = self.remove_tracked(&file).await;
-                    None
+        let file = self.get_file_path(key, ns);
+        loop {
+            match self.acquire_cold_read_role(&file) {
+                ColdReadRole::Follower(mut rx) => {
+                    match wait_cold_read(&mut rx).await {
+                        Some(Ok(Some(obj))) => {
+                            self.touch(key, ns);
+                            debug!(
+                                target: LOG_TARGET,
+                                key,
+                                namespace = ns,
+                                "get cache from coalesced cold read"
+                            );
+                            return Ok(Some(obj));
+                        },
+                        Some(Ok(None)) => return Ok(None),
+                        Some(Err(e)) => return Err(e),
+                        None => continue,
+                    }
                 },
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(Error::Io { source: e }),
-        };
-        // cache get from file, but not in tinyufo, put it to tinyufo
-        if let Some(obj) = &obj {
-            self.put_hot(key, obj);
-            self.touch(key, namespace_str(namespace));
+                ColdReadRole::Leader(guard) => {
+                    return self
+                        .run_cold_read_leader(key, ns, &file, guard)
+                        .await;
+                },
+            }
         }
-        debug!(
-            target: LOG_TARGET,
-            key,
-            namespace = namespace_str(namespace),
-            "get cache from file"
-        );
-        Ok(obj)
     }
     /// Stores a cache object both in TinyUfo cache and on disk.
     ///
@@ -771,11 +1232,13 @@ impl HttpCacheStorage for FileCache {
         namespace: &[u8],
         data: CacheObject,
     ) -> Result<()> {
+        let ns = namespace_str(namespace);
         self.put_hot(key, &data);
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
-        let file = self.get_file_path(key, namespace_str(namespace));
+        let file = self.get_file_path(key, ns);
+        self.invalidate_cold_read(&file);
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
         defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
@@ -790,18 +1253,31 @@ impl HttpCacheStorage for FileCache {
             );
             return Ok(());
         }
-        if let Some(parent) = file.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| Error::Io { source: e })?;
-        }
         let new_len = buf.len() as u64;
-        // Account for overwriting an existing object so the budget stays honest.
-        let old_len = self.tracked_len(&file).await;
-        if !self
-            .ensure_disk_space(new_len.saturating_sub(old_len))
-            .await
-        {
+        let dir = PathBuf::from(&self.directory);
+        let max_size = self.max_size;
+        let current_size = self.current_size.clone();
+        let evicting = self.evicting.clone();
+        let file_for_write = file.clone();
+        let written = tokio::task::spawn_blocking(move || {
+            put_file_sync(
+                &dir,
+                &file_for_write,
+                &buf,
+                new_len,
+                max_size,
+                &current_size,
+                &evicting,
+            )
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache put task failed: {e}"),
+        })??;
+        #[cfg(feature = "tracing")]
+        self.write_time.observe(elapsed_second(start));
+        self.invalidate_cold_read(&file);
+        if !written {
             debug!(
                 target: LOG_TARGET,
                 key,
@@ -811,47 +1287,89 @@ impl HttpCacheStorage for FileCache {
             );
             return Ok(());
         }
-
-        // Write to a temporary file and rename it over the final path. Writing
-        // the final path directly is not atomic: a concurrent `get` could read
-        // a half written file, and a crash or a full disk would leave one
-        // behind permanently. The rename also means a reader only ever sees
-        // either the old complete object or the new complete object.
-        //
-        // The suffix carries the pid because two instances share the cache
-        // directory during a zero-downtime upgrade, and a per-process counter
-        // keeps concurrent writes of the same key inside one process apart.
-        let tmp = file.with_file_name(format!(
-            "{}.{}.{}.tmp",
-            file.file_name()
-                .map(|name| name.to_string_lossy())
-                .unwrap_or_default(),
-            std::process::id(),
-            TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
-        ));
-        let result = async {
-            fs::write(&tmp, &buf).await?;
-            fs::rename(&tmp, &file).await
-        }
-        .await;
-        // Never leave the temporary file behind: nothing else knows about
-        // it, so nothing else would ever clean it up. A write that fails
-        // halfway, on a full disk, leaves one just as a failed rename does.
-        if result.is_err() {
-            let _ = fs::remove_file(&tmp).await;
-        }
-        #[cfg(feature = "tracing")]
-        self.write_time.observe(elapsed_second(start));
-        result.map_err(|e| Error::Io { source: e })?;
-        self.track_written(old_len, new_len);
         debug!(
             target: LOG_TARGET,
             key,
-            namespace = namespace_str(namespace),
+            namespace = ns,
             "put cache to file"
         );
         Ok(())
     }
+
+    /// Updates metadata of an existing entry in the hot layer and on disk
+    /// without loading or allocating the body buffer.
+    async fn update_meta(
+        &self,
+        key: &str,
+        namespace: &[u8],
+        meta: BinaryMeta,
+    ) -> Result<bool> {
+        let new_meta0_len =
+            u32::try_from(meta.0.len()).map_err(|_| Error::Invalid {
+                message: "meta0 exceeds u32::MAX".to_string(),
+            })?;
+        let new_meta1_len =
+            u32::try_from(meta.1.len()).map_err(|_| Error::Invalid {
+                message: "meta1 exceeds u32::MAX".to_string(),
+            })?;
+        let hot_obj = self.get_hot(key);
+        let hot_meta = meta.clone();
+
+        #[cfg(feature = "tracing")]
+        let start = SystemTime::now();
+        let file = self.get_file_path(key, namespace_str(namespace));
+        let has_budget = self.has_budget();
+        let current_size = self.current_size.clone();
+        let file_for_update = file.clone();
+        let _writing = self.writing.fetch_add(1, Ordering::Relaxed);
+        defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
+
+        let outcome = tokio::task::spawn_blocking(move || {
+            update_meta_file_sync(
+                &file_for_update,
+                &meta,
+                new_meta0_len,
+                new_meta1_len,
+                has_budget,
+                &current_size,
+            )
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache update_meta task failed: {e}"),
+        })??;
+        #[cfg(feature = "tracing")]
+        self.write_time.observe(elapsed_second(start));
+
+        match outcome {
+            DiskUpdateMetaOutcome::Updated => {
+                self.invalidate_cold_read(&file);
+                if let Some(obj) = hot_obj {
+                    self.apply_hot_meta(key, obj, hot_meta);
+                }
+                Ok(true)
+            },
+            DiskUpdateMetaOutcome::NotFound => {
+                if let Some(obj) = hot_obj {
+                    Ok(self.apply_hot_meta(key, obj, hot_meta))
+                } else {
+                    Ok(false)
+                }
+            },
+            DiskUpdateMetaOutcome::Corrupt => {
+                self.invalidate_cold_read(&file);
+                if hot_obj.is_some() {
+                    self.remove_hot(key);
+                }
+                warn!(
+                    target: LOG_TARGET,
+                    key, "remove corrupt cache file during update_meta"
+                );
+                Ok(false)
+            },
+        }
+    }
+
     /// Removes a cache entry from both TinyUfo and disk storage.
     ///
     /// # Returns
@@ -870,12 +1388,20 @@ impl HttpCacheStorage for FileCache {
             self.remove_hot(key);
         }
         let file = self.get_file_path(key, namespace_str(namespace));
+        self.invalidate_cold_read(&file);
+        let has_budget = self.has_budget();
+        let current_size = self.current_size.clone();
+        let file_for_rm = file.clone();
         // Already gone (e.g. external cleanup) is the same as a cache miss
         // on get, not an operational error.
-        let removed = self
-            .remove_tracked(&file)
-            .await
-            .map_err(|e| Error::Io { source: e })?;
+        let removed = tokio::task::spawn_blocking(move || {
+            remove_tracked_sync(&file_for_rm, has_budget, &current_size)
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache remove task failed: {e}"),
+        })?
+        .map_err(|e| Error::Io { source: e })?;
         if removed {
             debug!(
                 target: LOG_TARGET,
@@ -897,8 +1423,6 @@ impl HttpCacheStorage for FileCache {
         &self,
         access_before: SystemTime,
     ) -> Result<HttpCacheClearStats> {
-        let mut success = 0;
-        let mut fail = 0;
         let dt_utc = time::OffsetDateTime::from(access_before);
         let offset = time::UtcOffset::local_offset_at(dt_utc)
             .unwrap_or(time::UtcOffset::UTC);
@@ -911,46 +1435,26 @@ impl HttpCacheStorage for FileCache {
             "clear cache file, directory: {}, access before: {datetime_local}",
             self.directory
         );
-        let files =
-            list_cache_files(PathBuf::from(&self.directory), false).await;
-        for file in files.into_iter().filter(|f| f.accessed <= access_before) {
-            let removed = match fs::remove_file(&file.path).await {
-                Ok(()) => {
-                    self.track_removed(file.len);
-                    debug!(
-                        target: LOG_TARGET,
-                        file = %file.path.display(),
-                        "remove cache file success"
-                    );
-                    success += 1;
-                    true
-                },
-                // Removed by a purge or an eviction in the meantime.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-                Err(e) => {
-                    fail += 1;
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        file = %file.path.display(),
-                        "remove cache file fail"
-                    );
-                    false
-                },
-            };
-            // Evict only the swept entry from the hot layer; unlike
-            // `purge_namespace`, `clear` must leave active hot entries intact.
-            if removed
-                && let Some(name) =
-                    file.path.file_name().and_then(|n| n.to_str())
-                && is_cache_key(name)
-            {
-                self.remove_hot(name);
-            }
+        let dir = PathBuf::from(&self.directory);
+        let cleared = tokio::task::spawn_blocking(move || {
+            clear_files_sync(&dir, access_before)
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache clear task failed: {e}"),
+        })?;
+        self.track_removed(cleared.removed_bytes);
+        if !cleared.hot_keys.is_empty() {
+            self.cold_reads.lock().clear();
+            self.with_hot(|cache| {
+                for name in &cleared.hot_keys {
+                    cache.remove(name);
+                }
+            });
         }
         Ok(HttpCacheClearStats {
-            success,
-            fail,
+            success: cleared.success,
+            fail: cleared.fail,
             description,
         })
     }
@@ -993,29 +1497,43 @@ impl HttpCacheStorage for FileCache {
             "purge cache namespace, directory: {}",
             dir.to_string_lossy()
         );
-        let mut success = 0;
-        let mut fail = 0;
         // In-flight temporaries still belong to their writer; the rename
         // that follows will land the object post-purge, which is the same
         // as a write that started after the purge.
-        for file in list_cache_files(dir.clone(), true).await {
-            match fs::remove_file(&file.path).await {
-                Ok(()) => {
-                    self.track_removed(file.len);
-                    success += 1;
-                },
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
-                Err(e) => {
-                    fail += 1;
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        file = %file.path.display(),
-                        "purge cache file fail"
-                    );
-                },
-            }
-        }
+        let dir_for_delete = dir.clone();
+        let (success, fail, removed_bytes) =
+            tokio::task::spawn_blocking(move || {
+                let mut success = 0;
+                let mut fail = 0;
+                let mut removed_bytes = 0u64;
+                for file in walk_cache_files(&dir_for_delete, true) {
+                    match std::fs::remove_file(&file.path) {
+                        Ok(()) => {
+                            removed_bytes =
+                                removed_bytes.saturating_add(file.len);
+                            success += 1;
+                        },
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        },
+                        Err(e) => {
+                            fail += 1;
+                            error!(
+                                target: LOG_TARGET,
+                                error = %e,
+                                file = %file.path.display(),
+                                "purge cache file fail"
+                            );
+                        },
+                    }
+                }
+                (success, fail, removed_bytes)
+            })
+            .await
+            .map_err(|e| Error::Invalid {
+                message: format!("file cache purge task failed: {e}"),
+            })?;
+        self.track_removed(removed_bytes);
+        self.cold_reads.lock().clear();
         // The memory copies go as well, all of them. Dropping the copy of
         // each file that was removed, as this used to, missed the objects
         // that are in memory only - a write that was skipped over quota or
@@ -1179,9 +1697,7 @@ mod tests {
 
         // Create a file and set its access time to be in the past.
         let old_file_path = cache.get_file_path(&key("old"), "ns");
-        fs::create_dir_all(old_file_path.parent().unwrap())
-            .await
-            .unwrap();
+        std::fs::create_dir_all(old_file_path.parent().unwrap()).unwrap();
         File::create(&old_file_path).unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(3600);
         set_atime(&old_file_path, old_time);
@@ -1893,5 +2409,351 @@ mod tests {
         for (idx, item) in files.iter().take(100).enumerate() {
             assert_eq!(base + Duration::from_secs(idx as u64), item.accessed);
         }
+    }
+
+    #[tokio::test]
+    async fn test_update_meta_cold_disk_only() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=0&max_size=1mb",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+
+        let body: Vec<u8> =
+            (0..(64 * 1024 + 123)).map(|i| (i % 251) as u8).collect();
+        let obj = CacheObject {
+            meta: (
+                Bytes::from_static(b"meta0-initial"),
+                Bytes::from_static(b"meta1-initial"),
+            ),
+            body: Bytes::from(body.clone()),
+        };
+        let k = key("cold-meta");
+        assert_eq!(
+            false,
+            cache
+                .update_meta(
+                    &k,
+                    b"ns",
+                    (Bytes::from_static(b"a"), Bytes::from_static(b"b"))
+                )
+                .await
+                .unwrap()
+        );
+
+        cache.put(&k, b"ns", obj).await.unwrap();
+        let initial_file_len = (8 + 13 + 13 + body.len()) as u64;
+        assert_eq!(
+            initial_file_len,
+            cache.current_size.load(Ordering::Relaxed)
+        );
+
+        // Grow metadata.
+        let bigger_meta =
+            (Bytes::from(vec![b'x'; 256]), Bytes::from(vec![b'y'; 128]));
+        assert_eq!(
+            true,
+            cache
+                .update_meta(&k, b"ns", bigger_meta.clone())
+                .await
+                .unwrap()
+        );
+        let grown_file_len = (8 + 256 + 128 + body.len()) as u64;
+        assert_eq!(grown_file_len, cache.current_size.load(Ordering::Relaxed));
+
+        // Verify big-endian header bytes directly on disk.
+        let raw = std::fs::read(cache.get_file_path(&k, "ns")).unwrap();
+        assert_eq!(256u32, u32::from_be_bytes(raw[0..4].try_into().unwrap()));
+        assert_eq!(128u32, u32::from_be_bytes(raw[4..8].try_into().unwrap()));
+
+        let loaded = cache.get(&k, b"ns").await.unwrap().unwrap();
+        assert_eq!(bigger_meta, loaded.meta);
+        assert_eq!(body.as_slice(), loaded.body.as_ref());
+
+        // Shrink metadata (negative signed delta).
+        let smaller_meta =
+            (Bytes::from_static(b"m0"), Bytes::from_static(b"m1"));
+        assert_eq!(
+            true,
+            cache
+                .update_meta(&k, b"ns", smaller_meta.clone())
+                .await
+                .unwrap()
+        );
+        let shrunk_file_len = (8 + 2 + 2 + body.len()) as u64;
+        assert_eq!(shrunk_file_len, cache.current_size.load(Ordering::Relaxed));
+        let loaded = cache.get(&k, b"ns").await.unwrap().unwrap();
+        assert_eq!(smaller_meta, loaded.meta);
+        assert_eq!(body.as_slice(), loaded.body.as_ref());
+
+        // Empty-body entry also preserves 0-byte body cleanly.
+        let empty_key = key("cold-empty");
+        cache
+            .put(
+                &empty_key,
+                b"ns",
+                CacheObject {
+                    meta: (Bytes::from_static(b"a"), Bytes::from_static(b"b")),
+                    body: Bytes::new(),
+                },
+            )
+            .await
+            .unwrap();
+        let new_empty_meta =
+            (Bytes::from_static(b"abcd"), Bytes::from_static(b"ef"));
+        assert_eq!(
+            true,
+            cache
+                .update_meta(&empty_key, b"ns", new_empty_meta.clone())
+                .await
+                .unwrap()
+        );
+        let loaded_empty = cache.get(&empty_key, b"ns").await.unwrap().unwrap();
+        assert_eq!(new_empty_meta, loaded_empty.meta);
+        assert_eq!(true, loaded_empty.body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_meta_hot_layer_and_disk() {
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=100&max_size=1mb",
+            dir.path().to_str().unwrap()
+        );
+        let cache = FileCache::new(&cfg).unwrap();
+        let k = key("hot-and-disk");
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"old0"), Bytes::from_static(b"old1")),
+            body: Bytes::from_static(b"hot-and-disk-body"),
+        };
+        cache.put(&k, b"ns", obj).await.unwrap();
+        assert!(cache.get_hot(&k).is_some());
+
+        let new_meta = (
+            Bytes::from_static(b"new-meta-0"),
+            Bytes::from_static(b"new-meta-1-longer"),
+        );
+        assert_eq!(
+            true,
+            cache
+                .update_meta(&k, b"ns", new_meta.clone())
+                .await
+                .unwrap()
+        );
+
+        let hot = cache.get_hot(&k).unwrap();
+        assert_eq!(new_meta, hot.meta);
+        assert_eq!(b"hot-and-disk-body", hot.body.as_ref());
+
+        let expected_len =
+            (8 + new_meta.0.len() + new_meta.1.len() + 17) as u64;
+        assert_eq!(expected_len, cache.current_size.load(Ordering::Relaxed));
+
+        // Fresh FileCache with empty hot layer observes updated metadata from disk.
+        let cold = FileCache::new(&cfg).unwrap();
+        let disk = cold.get(&k, b"ns").await.unwrap().unwrap();
+        assert_eq!(new_meta, disk.meta);
+        assert_eq!(b"hot-and-disk-body", disk.body.as_ref());
+    }
+
+    #[tokio::test]
+    async fn test_update_meta_memory_only() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=100&writing_max=1",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        let k = key("mem-only");
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"m0"), Bytes::from_static(b"m1")),
+            body: Bytes::from_static(b"memory-only-body"),
+        };
+        cache.writing.store(1, Ordering::Relaxed);
+        cache.put(&k, b"ns", obj).await.unwrap();
+        cache.writing.store(0, Ordering::Relaxed);
+
+        assert_eq!(false, cache.get_file_path(&k, "ns").exists());
+        let new_meta =
+            (Bytes::from_static(b"fresh0"), Bytes::from_static(b"fresh1"));
+        assert_eq!(
+            true,
+            cache
+                .update_meta(&k, b"ns", new_meta.clone())
+                .await
+                .unwrap()
+        );
+        assert_eq!(false, cache.get_file_path(&k, "ns").exists());
+
+        let loaded = cache.get(&k, b"ns").await.unwrap().unwrap();
+        assert_eq!(new_meta, loaded.meta);
+        assert_eq!(b"memory-only-body", loaded.body.as_ref());
+    }
+
+    #[tokio::test]
+    async fn test_update_meta_corrupt_file_removed() {
+        let dir = tempdir().unwrap();
+        let cfg = format!(
+            "{}?cache_max=0&max_size=1mb",
+            dir.path().to_str().unwrap()
+        );
+        let cache = FileCache::new(&cfg).unwrap();
+
+        let k_short = key("corrupt-short");
+        let k_trunc = key("corrupt-trunc");
+        let obj = CacheObject {
+            meta: (
+                Bytes::from_static(b"header0"),
+                Bytes::from_static(b"header1"),
+            ),
+            body: Bytes::from_static(b"body-bytes"),
+        };
+        cache.put(&k_short, b"ns", obj.clone()).await.unwrap();
+        cache.put(&k_trunc, b"ns", obj).await.unwrap();
+
+        let p_short = cache.get_file_path(&k_short, "ns");
+        let p_trunc = cache.get_file_path(&k_trunc, "ns");
+        // Overwrite with < 8 bytes and with header claiming more bytes than present.
+        let full = std::fs::read(&p_trunc).unwrap();
+        std::fs::write(&p_short, &full[..4]).unwrap();
+        std::fs::write(&p_trunc, &full[..10]).unwrap();
+
+        // Reload so `current_size` matches the corrupt files on disk (14 bytes).
+        let cache = FileCache::new(&cfg).unwrap();
+        assert_eq!(14, cache.current_size.load(Ordering::Relaxed));
+
+        let new_meta = (Bytes::from_static(b"n0"), Bytes::from_static(b"n1"));
+        assert_eq!(
+            false,
+            cache
+                .update_meta(&k_short, b"ns", new_meta.clone())
+                .await
+                .unwrap()
+        );
+        assert_eq!(false, p_short.exists());
+        assert_eq!(10, cache.current_size.load(Ordering::Relaxed));
+
+        assert_eq!(
+            false,
+            cache.update_meta(&k_trunc, b"ns", new_meta).await.unwrap()
+        );
+        assert_eq!(false, p_trunc.exists());
+        assert_eq!(0, cache.current_size.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_put_creates_nested_dirs_lazily_on_not_found() {
+        let dir = tempdir().unwrap();
+        let cache = FileCache::new(&format!(
+            "{}?levels=1:2&max_size=1mb",
+            dir.path().to_str().unwrap()
+        ))
+        .unwrap();
+        let k = key("nested");
+        let obj1 = CacheObject {
+            meta: (Bytes::from_static(b"m0"), Bytes::from_static(b"m1")),
+            body: Bytes::from_static(b"first-body"),
+        };
+        let obj2 = CacheObject {
+            meta: (Bytes::from_static(b"m00"), Bytes::from_static(b"m11")),
+            body: Bytes::from_static(b"second-body-longer"),
+        };
+        assert_eq!(false, dir.path().join("ns").exists());
+        cache.put(&k, b"ns", obj1.clone()).await.unwrap();
+        assert_eq!(true, cache.get_file_path(&k, "ns").exists());
+        assert_eq!(Some(obj1), cache.get(&k, b"ns").await.unwrap());
+        assert_eq!(22, cache.current_size.load(Ordering::Relaxed));
+
+        cache.put(&k, b"ns", obj2.clone()).await.unwrap();
+        assert_eq!(Some(obj2), cache.get(&k, b"ns").await.unwrap());
+        assert_eq!(32, cache.current_size.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_cold_read_single_flight() {
+        let dir = tempdir().unwrap();
+        let cfg_no_hot =
+            format!("{}?cache_max=0", dir.path().to_str().unwrap());
+        let writer = FileCache::new(&cfg_no_hot).unwrap();
+        let k = key("single-flight");
+        let obj = CacheObject {
+            meta: (Bytes::from_static(b"sf0"), Bytes::from_static(b"sf1")),
+            body: Bytes::from(vec![42u8; 32 * 1024]),
+        };
+        writer.put(&k, b"ns", obj.clone()).await.unwrap();
+
+        let file_path = writer.get_file_path(&k, "ns");
+        let three_days_ago =
+            SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+        set_atime(&file_path, three_days_ago);
+
+        // Concurrent cold reads with `cache_max=0` (no hot-layer shortcut)
+        // coalesce onto a single disk read while updating `touch`.
+        // On a current-thread executor `join!` polls every future up to its
+        // first `.await` before the leader resumes past `spawn_blocking`.
+        let reader = FileCache::new(&cfg_no_hot).unwrap();
+        let (r1, r2, r3, r4, r5, r6, r7, r8) = tokio::join!(
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+            reader.get(&k, b"ns"),
+        );
+        for res in [r1, r2, r3, r4, r5, r6, r7, r8] {
+            assert_eq!(obj, res.unwrap().unwrap());
+        }
+        assert_eq!(1, reader.cold_disk_reads.load(Ordering::Relaxed));
+        for _ in 0..200 {
+            if std::fs::metadata(&file_path).unwrap().accessed().unwrap()
+                > three_days_ago + Duration::from_secs(3600)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            true,
+            std::fs::metadata(&file_path).unwrap().accessed().unwrap()
+                > three_days_ago + Duration::from_secs(3600),
+            "file access time was not updated after coalesced cold read"
+        );
+
+        // Multi-task concurrent reads with hot layer enabled also succeed identically.
+        let cfg_hot = format!("{}?cache_max=100", dir.path().to_str().unwrap());
+        let hot_reader = Arc::new(FileCache::new(&cfg_hot).unwrap());
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let mut handles = Vec::with_capacity(16);
+        for _ in 0..16 {
+            let hot_reader = hot_reader.clone();
+            let barrier = barrier.clone();
+            let k = k.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                hot_reader.get(&k, b"ns").await
+            }));
+        }
+        for handle in handles {
+            assert_eq!(obj, handle.await.unwrap().unwrap().unwrap());
+        }
+        assert_eq!(1, hot_reader.cold_disk_reads.load(Ordering::Relaxed));
+
+        // Leader cancellation wakes followers cleanly and lets them re-elect a leader.
+        let ColdReadRole::Leader(leader_guard) =
+            reader.acquire_cold_read_role(&file_path)
+        else {
+            panic!("expected Leader");
+        };
+        let ColdReadRole::Follower(mut rx) =
+            reader.acquire_cold_read_role(&file_path)
+        else {
+            panic!("expected Follower");
+        };
+        drop(leader_guard);
+        assert_eq!(true, wait_cold_read(&mut rx).await.is_none());
+        assert_eq!(Some(obj), reader.get(&k, b"ns").await.unwrap());
     }
 }

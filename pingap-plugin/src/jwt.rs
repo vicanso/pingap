@@ -36,9 +36,11 @@ use pingap_util::parse_duration;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use serde::Deserialize;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::time::Instant;
 use tokio::time::sleep;
@@ -146,6 +148,20 @@ pub(crate) fn claim_header_value(
     HeaderValue::from_bytes(text.as_bytes()).ok()
 }
 
+#[inline]
+fn eq_folded_header(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).all(|(lhs, rhs)| {
+        let fold = |byte: u8| match byte {
+            b'_' => b'-',
+            other => other.to_ascii_lowercase(),
+        };
+        fold(lhs) == fold(rhs)
+    })
+}
+
 /// Removes from a request every header that is one of `own` to an
 /// upstream: the names themselves, and what folds to them when `_` is
 /// read as `-` (see `ClaimRules::strip`).
@@ -156,17 +172,13 @@ pub(crate) fn strip_claim_headers(
     if own.is_empty() {
         return;
     }
-    let folded = |name: &str| {
-        name.bytes()
-            .map(|byte| if byte == b'_' { b'-' } else { byte })
-            .collect::<Vec<u8>>()
-    };
-    let own: Vec<Vec<u8>> =
-        own.iter().map(|name| folded(name.as_str())).collect();
-    let sent: Vec<HeaderName> = header
+    let sent: SmallVec<[HeaderName; 4]> = header
         .headers
         .keys()
-        .filter(|name| own.contains(&folded(name.as_str())))
+        .filter(|name| {
+            own.iter()
+                .any(|claim| eq_folded_header(name.as_str(), claim.as_str()))
+        })
         .cloned()
         .collect();
     for name in sent {
@@ -624,10 +636,10 @@ struct JwkEntry {
     key: DecodingKey,
 }
 
-/// Cached JWKS decoding keys plus the fetch time.
+/// Cached JWKS decoding keys plus their expiry time.
 struct JwksCache {
     keys: Vec<JwkEntry>,
-    fetched_at: Instant,
+    expires_at: Instant,
 }
 
 impl JwksCache {
@@ -660,6 +672,25 @@ impl JwksCache {
     }
 }
 
+/// Clears a single-flight background refresh flag even on early return or panic.
+pub(crate) struct RefreshGuard(Arc<AtomicBool>);
+
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Atomically claims a background refresh slot (`false -> true`), returning a
+/// guard that clears the flag on drop.
+pub(crate) fn try_claim_refresh(
+    flag: &Arc<AtomicBool>,
+) -> Option<RefreshGuard> {
+    flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .ok()
+        .map(|_| RefreshGuard(Arc::clone(flag)))
+}
+
 /// Verifies `token` under `key`: `None` when it does not check out,
 /// otherwise its claims when they are asked for. They are only put into a
 /// map for a plugin that has rules about them.
@@ -681,8 +712,9 @@ fn verify_with_key(
 }
 
 /// A remote JWKS endpoint with a TTL cache, single-flight refresh and key
-/// rotation. Verification serves cached keys lock-free; only a cache miss /
-/// expiry / unknown `kid` triggers a rate-limited refetch.
+/// rotation. Verification serves cached keys lock-free; routine TTL expiry
+/// triggers a stale-while-revalidate background refresh while cold starts and
+/// unknown `kid` misses refresh synchronously (rate-limited by `cooldown`).
 pub(crate) struct JwksSource {
     url: String,
     ttl: Duration,
@@ -693,9 +725,77 @@ pub(crate) struct JwksSource {
     require_exp: bool,
     /// See `JwtAuth::leeway`.
     leeway: Duration,
-    cache: ArcSwapOption<JwksCache>,
+    cache: Arc<ArcSwapOption<JwksCache>>,
     /// Serializes refetches, and holds when the last one was started.
-    refresh_lock: tokio::sync::Mutex<Option<Instant>>,
+    refresh_lock: Arc<tokio::sync::Mutex<Option<Instant>>>,
+    /// Guards background stale-while-revalidate refresh spawning.
+    refreshing: Arc<AtomicBool>,
+}
+
+async fn fetch_jwks(
+    url: &str,
+    ttl: Duration,
+    client: &reqwest::Client,
+) -> std::result::Result<JwksCache, String> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("jwks endpoint answers {}", resp.status()));
+    }
+    let set = resp
+        .json::<JwkSet>()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
+    let keys = set
+        .keys
+        .iter()
+        .filter_map(|jwk| {
+            DecodingKey::from_jwk(jwk).ok().map(|key| JwkEntry {
+                kid: jwk.common.key_id.clone(),
+                key,
+            })
+        })
+        .collect();
+    Ok(JwksCache {
+        keys,
+        expires_at: Instant::now() + ttl,
+    })
+}
+
+async fn refresh_jwks(
+    url: &str,
+    ttl: Duration,
+    cooldown: Duration,
+    client: &reqwest::Client,
+    cache: &ArcSwapOption<JwksCache>,
+    refresh_lock: &tokio::sync::Mutex<Option<Instant>>,
+) {
+    let mut last_attempt = refresh_lock.lock().await;
+    // Re-check after acquiring the lock: a peer may have just refreshed, or
+    // we may still be inside the cooldown window (bounds unknown-kid churn).
+    //
+    // The window starts at the last attempt, whether it worked or not.
+    // It used to start at the last success: while the endpoint was down
+    // nothing ever opened it, and every request waited its turn at the
+    // lock to spend the client's whole timeout on a fetch of its own.
+    //
+    // And it starts when the attempt is over. Counted from its start,
+    // an endpoint that does not answer used up the window with the
+    // attempt itself - the timeout of the client is as long - and
+    // the next request in line made the next attempt at once.
+    if last_attempt.is_some_and(|at| at.elapsed() < cooldown) {
+        return;
+    }
+    match fetch_jwks(url, ttl, client).await {
+        Ok(next) => cache.store(Some(Arc::new(next))),
+        Err(e) => {
+            error!(category = "jwt", error = e, "fetch jwks failed");
+        },
+    }
+    *last_attempt = Some(Instant::now());
 }
 
 impl JwksSource {
@@ -710,8 +810,9 @@ impl JwksSource {
             client,
             require_exp: true,
             leeway: DEFAULT_LEEWAY,
-            cache: ArcSwapOption::empty(),
-            refresh_lock: tokio::sync::Mutex::new(None),
+            cache: Arc::new(ArcSwapOption::empty()),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -730,16 +831,8 @@ impl JwksSource {
         }
         let validation = validation(header.alg);
         let kid = header.kid.as_deref();
-        if let Some(cache) = self.cache.load_full()
-            && cache.fetched_at.elapsed() <= self.ttl
-            && let Some(claims) = cache.verify(token, kid, &validation, true)
-        {
-            return claims;
-        }
-        self.refresh().await;
-        self.cache
-            .load_full()
-            .and_then(|cache| cache.verify(token, kid, &validation, true))
+        self.verify_with_validation(token, kid, &validation, true)
+            .await
             .flatten()
     }
 
@@ -752,6 +845,7 @@ impl JwksSource {
             reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(1))
+                .connect_timeout(Duration::from_secs(1))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
@@ -763,67 +857,74 @@ impl JwksSource {
             .collect();
         source.cache.store(Some(Arc::new(JwksCache {
             keys,
-            fetched_at: Instant::now(),
+            expires_at: Instant::now() + source.ttl,
         })));
         source
-    }
-
-    async fn fetch(&self) -> std::result::Result<JwksCache, String> {
-        let resp = self
-            .client
-            .get(&self.url)
-            .send()
-            .await
-            .map_err(|e| e.without_url().to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("jwks endpoint answers {}", resp.status()));
-        }
-        let set = resp
-            .json::<JwkSet>()
-            .await
-            .map_err(|e| e.without_url().to_string())?;
-        let keys = set
-            .keys
-            .iter()
-            .filter_map(|jwk| {
-                DecodingKey::from_jwk(jwk).ok().map(|key| JwkEntry {
-                    kid: jwk.common.key_id.clone(),
-                    key,
-                })
-            })
-            .collect();
-        Ok(JwksCache {
-            keys,
-            fetched_at: Instant::now(),
-        })
     }
 
     /// Refreshes the cache with single-flight + rate limiting. On fetch failure
     /// the previous cache is kept (graceful degradation).
     async fn refresh(&self) {
-        let mut last_attempt = self.refresh_lock.lock().await;
-        // Re-check after acquiring the lock: a peer may have just refreshed, or
-        // we may still be inside the cooldown window (bounds unknown-kid churn).
-        //
-        // The window starts at the last attempt, whether it worked or not.
-        // It used to start at the last success: while the endpoint was down
-        // nothing ever opened it, and every request waited its turn at the
-        // lock to spend the client's whole timeout on a fetch of its own.
-        //
-        // And it starts when the attempt is over. Counted from its start,
-        // an endpoint that does not answer used up the window with the
-        // attempt itself - the timeout of the client is as long - and
-        // the next request in line made the next attempt at once.
-        if last_attempt.is_some_and(|at| at.elapsed() < self.cooldown) {
+        refresh_jwks(
+            &self.url,
+            self.ttl,
+            self.cooldown,
+            &self.client,
+            &self.cache,
+            &self.refresh_lock,
+        )
+        .await;
+    }
+
+    fn spawn_refresh(&self) {
+        if self.refreshing.load(Ordering::Acquire) {
             return;
         }
-        match self.fetch().await {
-            Ok(cache) => self.cache.store(Some(Arc::new(cache))),
-            Err(e) => {
-                error!(category = "jwt", error = e, "fetch jwks failed");
-            },
+        if let Ok(last_attempt) = self.refresh_lock.try_lock()
+            && last_attempt.is_some_and(|at| at.elapsed() < self.cooldown)
+        {
+            return;
         }
-        *last_attempt = Some(Instant::now());
+        let Some(guard) = try_claim_refresh(&self.refreshing) else {
+            return;
+        };
+        let url = self.url.clone();
+        let ttl = self.ttl;
+        let cooldown = self.cooldown;
+        let client = self.client.clone();
+        let cache = Arc::clone(&self.cache);
+        let refresh_lock = Arc::clone(&self.refresh_lock);
+        tokio::spawn(async move {
+            let _guard = guard;
+            refresh_jwks(&url, ttl, cooldown, &client, &cache, &refresh_lock)
+                .await;
+        });
+    }
+
+    async fn verify_with_validation(
+        &self,
+        token: &str,
+        kid: Option<&str>,
+        validation: &Validation,
+        with_claims: bool,
+    ) -> Option<Option<ClaimMap>> {
+        if let Some(cache) = self.cache.load_full() {
+            let expired = Instant::now() >= cache.expires_at;
+            if let Some(claims) =
+                cache.verify(token, kid, validation, with_claims)
+            {
+                if expired {
+                    self.spawn_refresh();
+                }
+                return Some(claims);
+            }
+        }
+        // Cold start (`None`) or cache miss / rotated kid: refresh
+        // synchronously (rate-limited), then retry with whatever we have.
+        self.refresh().await;
+        self.cache
+            .load_full()
+            .and_then(|cache| cache.verify(token, kid, validation, with_claims))
     }
 
     #[cfg(test)]
@@ -849,20 +950,8 @@ impl JwksSource {
         let validation =
             jwks_validation(header.alg, self.require_exp, self.leeway);
         let kid = header.kid.as_deref();
-        // Fresh cache hit: verify without touching the network.
-        if let Some(cache) = self.cache.load_full()
-            && cache.fetched_at.elapsed() <= self.ttl
-            && let Some(claims) =
-                cache.verify(token, kid, &validation, with_claims)
-        {
-            return Some(claims);
-        }
-        // Miss / expired / rotated kid: refresh (rate-limited), then retry with
-        // whatever we have (including a stale cache if the refetch failed).
-        self.refresh().await;
-        self.cache.load_full().and_then(|cache| {
-            cache.verify(token, kid, &validation, with_claims)
-        })
+        self.verify_with_validation(token, kid, &validation, with_claims)
+            .await
     }
 }
 
@@ -921,8 +1010,10 @@ fn build_jwks_source(
     let ttl = get_duration_conf(value, "jwks_ttl")
         .unwrap_or(Duration::from_secs(3600));
     let cooldown = ttl.min(Duration::from_secs(10));
+    let timeout = Duration::from_secs(10);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(timeout)
+        .connect_timeout(timeout.min(Duration::from_secs(5)))
         // Do not follow redirects from a JWKS endpoint to arbitrary hosts.
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -937,8 +1028,9 @@ fn build_jwks_source(
         client,
         require_exp,
         leeway,
-        cache: ArcSwapOption::empty(),
-        refresh_lock: tokio::sync::Mutex::new(None),
+        cache: Arc::new(ArcSwapOption::empty()),
+        refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+        refreshing: Arc::new(AtomicBool::new(false)),
     })))
 }
 
@@ -1709,11 +1801,12 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             client: reqwest::Client::new(),
             require_exp: true,
             leeway: Duration::ZERO,
-            cache: ArcSwapOption::new(Some(Arc::new(JwksCache {
+            cache: Arc::new(ArcSwapOption::new(Some(Arc::new(JwksCache {
                 keys,
-                fetched_at: Instant::now(),
-            }))),
-            refresh_lock: tokio::sync::Mutex::new(None),
+                expires_at: Instant::now() + Duration::from_secs(3600),
+            })))),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         };
         let entry = |kid: Option<&str>| JwkEntry {
             kid: kid.map(|k| k.to_string()),
@@ -1831,8 +1924,9 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
             client: reqwest::Client::new(),
             require_exp: true,
             leeway: Duration::ZERO,
-            cache: ArcSwapOption::empty(),
-            refresh_lock: tokio::sync::Mutex::new(None),
+            cache: Arc::new(ArcSwapOption::empty()),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         };
         for _ in 0..5 {
             source.refresh().await;
@@ -2839,12 +2933,14 @@ auth_path = "/login"
             client: reqwest::Client::builder()
                 .no_proxy()
                 .timeout(wait)
+                .connect_timeout(wait.min(Duration::from_secs(5)))
                 .build()
                 .unwrap(),
             require_exp: true,
             leeway: Duration::ZERO,
-            cache: ArcSwapOption::empty(),
-            refresh_lock: tokio::sync::Mutex::new(None),
+            cache: Arc::new(ArcSwapOption::empty()),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
         };
         let started = Instant::now();
         source.refresh().await;
@@ -2854,6 +2950,191 @@ auth_path = "/login"
         // starts when the failed attempt completes.
         source.refresh().await;
         assert_eq!(1, attempts.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_strip_claim_headers_folding() {
+        assert_eq!(true, eq_folded_header("X-User-Id", "x_user_id"));
+        assert_eq!(true, eq_folded_header("X_USER_ID", "x-user-id"));
+        assert_eq!(false, eq_folded_header("X-User-Id", "x-user-ids"));
+        assert_eq!(false, eq_folded_header("X-User-Id", "x-role-id"));
+
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("X-User-Id", "1").unwrap();
+        req.insert_header("X_User_Id", "2").unwrap();
+        req.insert_header("x-tenant_name", "acme").unwrap();
+        req.insert_header("X-Other_Header", "keep").unwrap();
+        let own = [
+            HeaderName::from_static("x-user-id"),
+            HeaderName::from_static("x-tenant-name"),
+        ];
+        strip_claim_headers(&mut req, &own);
+        assert_eq!(false, req.headers.contains_key("x-user-id"));
+        assert_eq!(false, req.headers.contains_key("x_user_id"));
+        assert_eq!(false, req.headers.contains_key("x-tenant_name"));
+        assert_eq!(true, req.headers.contains_key("x-other_header"));
+    }
+
+    #[tokio::test]
+    async fn test_jwks_swr_serves_expired_cache_without_stalling() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let public_key_es = r#"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECE/4ox+pGq+yiB3RqIXINmlHJp+l
+6V8vXffF5UzI/h3RPK3l9MphCKS2wg50uVoWlBITXMRhh5LVB/93vQZa0Q==
+-----END PUBLIC KEY-----"#;
+        // spellchecker:off
+        let private_key_es = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6V2VwZk30Az6VKMF
+Bt6nfEa2r4hCQuuMB6azsjMB7xmhRANCAAQIT/ijH6kar7KIHdGohcg2aUcmn6Xp
+Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
+-----END PRIVATE KEY-----"#;
+        let private_key_ed = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJJTTQkyOiwPTX0NvxGAoNi6WosIFJJbFpt9ivsmWJM6\n-----END PRIVATE KEY-----";
+        let jwks_body = r#"{"keys":[{"kty":"OKP","crv":"Ed25519","alg":"EdDSA","use":"sig","kid":"kid-2","x":"jKwmFJwgUVvShgVbDiUw8Er4IKACUnfHr9XbsU7SmTo"}]}"#;
+        // spellchecker:on
+
+        let listener =
+            tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let counter = counter.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let mut head = Vec::new();
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = stream.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                    }
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        jwks_body.len(),
+                        jwks_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+
+        let source = Arc::new(JwksSource {
+            url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(60),
+            cooldown: Duration::from_secs(10),
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(2))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            require_exp: true,
+            leeway: Duration::ZERO,
+            cache: Arc::new(ArcSwapOption::new(Some(Arc::new(JwksCache {
+                keys: vec![JwkEntry {
+                    kid: Some("kid-1".to_string()),
+                    key: DecodingKey::from_ec_pem(public_key_es.as_bytes())
+                        .unwrap(),
+                }],
+                // Already expired by 1s to trigger background SWR refresh.
+                expires_at: Instant::now() - Duration::from_secs(1),
+            })))),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
+        });
+
+        let mut h1 = Header::new(Algorithm::ES256);
+        h1.kid = Some("kid-1".to_string());
+        let token_kid1 = encode(
+            &h1,
+            &serde_json::json!({
+                "sub": "u-1",
+                "exp": pingap_core::now_sec() + 3600,
+            }),
+            &EncodingKey::from_ec_pem(private_key_es.as_bytes()).unwrap(),
+        )
+        .unwrap();
+
+        let mut h2 = Header::new(Algorithm::EdDSA);
+        h2.kid = Some("kid-2".to_string());
+        let token_kid2 = encode(
+            &h2,
+            &serde_json::json!({
+                "sub": "u-2",
+                "exp": pingap_core::now_sec() + 3600,
+            }),
+            &EncodingKey::from_ed_pem(private_key_ed.as_bytes()).unwrap(),
+        )
+        .unwrap();
+
+        // Concurrent requests with valid cached kid-1 succeed immediately
+        // without blocking on the 200ms remote JWKS fetch.
+        let started = Instant::now();
+        let mut tasks = Vec::new();
+        for _ in 0..5 {
+            let src = Arc::clone(&source);
+            let tok = token_kid1.clone();
+            tasks.push(tokio::spawn(async move { src.verify(&tok).await }));
+        }
+        for task in tasks {
+            assert_eq!(true, task.await.unwrap());
+        }
+        assert_eq!(true, started.elapsed() < Duration::from_millis(100));
+
+        // Wait for the single background refresh to complete and clear `refreshing`.
+        for _ in 0..100 {
+            if !source.refreshing.load(Ordering::Acquire)
+                && hits.load(Ordering::Relaxed) >= 1
+                && source.cache.load().as_ref().is_some_and(|c| {
+                    c.keys.iter().any(|k| k.kid.as_deref() == Some("kid-2"))
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(1, hits.load(Ordering::Relaxed));
+        assert_eq!(false, source.refreshing.load(Ordering::Acquire));
+        assert_eq!(true, source.verify(&token_kid2).await);
+
+        // Unknown-kid miss remains synchronous (blocks until fetch completes).
+        let sync_source = JwksSource {
+            url: format!("http://{addr}/jwks"),
+            ttl: Duration::from_secs(60),
+            cooldown: Duration::from_secs(10),
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(2))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            require_exp: true,
+            leeway: Duration::ZERO,
+            cache: Arc::new(ArcSwapOption::new(Some(Arc::new(JwksCache {
+                keys: vec![JwkEntry {
+                    kid: Some("kid-1".to_string()),
+                    key: DecodingKey::from_ec_pem(public_key_es.as_bytes())
+                        .unwrap(),
+                }],
+                expires_at: Instant::now() + Duration::from_secs(60),
+            })))),
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(None)),
+            refreshing: Arc::new(AtomicBool::new(false)),
+        };
+        let sync_start = Instant::now();
+        assert_eq!(true, sync_source.verify(&token_kid2).await);
+        assert_eq!(true, sync_start.elapsed() >= Duration::from_millis(180));
+        assert_eq!(2, hits.load(Ordering::Relaxed));
     }
 
     /// Regression: `JwksSource` must not follow HTTP redirects returned by

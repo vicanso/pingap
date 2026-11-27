@@ -208,6 +208,7 @@ impl TryFrom<&PluginConf> for Mirror {
         // What the target answers is not looked at, a redirect included.
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .connect_timeout(timeout.min(Duration::from_secs(5)))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| invalid(e.to_string()))?;
