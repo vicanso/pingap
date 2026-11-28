@@ -684,6 +684,20 @@ export default {
     downstreamWriteTimeout: "Downstream Write Timeout",
     downstreamWriteTimeoutPlaceholder:
       "Input the write timeout for downstream(e.g. 10s)",
+    minSendRate: "Min Send Rate",
+    minSendRatePlaceholder: "Minimum response send rate per second (e.g. 1kb)",
+    minSendRateTips:
+      "Closes slow-reading client connections that fall below this downstream send rate (bytes/sec, e.g. 1kb).",
+    totalDrainTimeout: "Total Drain Timeout",
+    totalDrainTimeoutPlaceholder: "Max request body drain duration (e.g. 10s)",
+    totalDrainTimeoutTips:
+      "Caps total time spent draining an unread client request body before closing the connection.",
+    allowIps: "Allow IP / CIDR",
+    allowIpsPlaceholder: "Input allowed IP or CIDR(e.g. 10.0.0.0/8)",
+    denyIps: "Deny IP / CIDR",
+    denyIpsPlaceholder: "Input denied IP or CIDR(e.g. 192.0.2.0/24)",
+    ipAclTips:
+      "Evaluated at connection accept before TLS handshake (using PROXY protocol address when enabled from trusted proxies). Deny takes precedence over allow.",
     reusePort: "Enable SO_REUSEPORT",
     proxyProtocol: "PROXY Protocol",
     proxyProtocolTips:
@@ -705,6 +719,11 @@ export default {
     tlsClientAuth: "Client Certificate",
     tlsClientAuthTips:
       "Require (the default with a client CA) ends the handshake of a client without a certificate; optional lets it in. A certificate that does not verify is refused in both.",
+    tlsClientCrl: "Client Certificate CRL",
+    tlsClientCrlPlaceholder:
+      "Input X.509 CRL(s) to reject revoked client certificates (PEM, base64 or a PEM file path)",
+    tlsClientCrlTips:
+      "Revocation list(s) checked during mTLS verification on both OpenSSL and rustls builds. Needs Client CA.",
     tlsSettingsRustlsTips:
       "Not supported by this rustls build: TLS is fixed to 1.2/1.3 with rustls default cipher suites. Remove the value or use an openssl build.",
     tcpFastOpen: "Tcp Fast Open",
@@ -728,13 +747,15 @@ export default {
   stream: {
     title: "L4 Stream",
     description:
-      "Configure native L4 TCP & TLS SNI passthrough listeners without terminating TLS",
+      "Configure native L4 TCP, TLS SNI passthrough, and local TLS termination stream listeners",
     add: "New Stream",
     summary_one: "{{count}} stream configured",
     summary_other: "{{count}} streams configured",
     empty: "No L4 stream configured yet",
     sectionBasic: "Basic",
     sectionRouting: "SNI & Upstream Routing",
+    sectionLogging: "Logging",
+    sectionTls: "TLS",
     sectionLimits: "Timeouts & ACL",
     sectionTcp: "Listener & TCP Tuning",
     name: "Name",
@@ -757,6 +778,39 @@ export default {
     proxyProtocol: "Inbound PROXY Protocol",
     proxyProtocolTips:
       "Read inbound v1/v2 PROXY protocol header from basic.trusted_proxies before evaluating IP ACLs and forwarding.",
+    sendProxyProtocol: "Outbound PROXY Protocol",
+    sendProxyProtocolTips:
+      "Write a v1 or v2 PROXY protocol header carrying the client address to the selected backend ahead of stream bytes.",
+    accessLog: "Access Log Format",
+    accessLogPlaceholder:
+      "Preset (combined, common, short, tiny, json) or format with optional destination",
+    accessLogTips:
+      "Supports presets or custom {tags} such as {stream}, {client_ip}, {sni}, {upstream}, {backend}, {bytes_rx}, {bytes_tx}, {duration_ms}, {result}, {tls_*}, {pp_*}. Prepend a file path, stdout, stderr, or syslog:// URL (with ?skip, min_status, min_latency, sample, keep) to write outside the app log.",
+    globalCertificates: "Terminate TLS (Global Certificates)",
+    globalCertificatesTips:
+      "Terminate TLS locally on this stream using Pingap's certificate store before forwarding plaintext to the upstream.",
+    tlsCipherList: "Tls Cipher List",
+    tlsCipherListPlaceholder:
+      "Input the cipher list for protocols before tlsv1.3",
+    tlsCiphersuites: "Tls Ciphers",
+    tlsCiphersuitesPlaceholder: "Input the ciphers for protocol tlsv1.3",
+    tlsMinVersion: "Min Tls",
+    tlsMaxVersion: "Max Tls",
+    tlsSettingsRustlsTips:
+      "Not supported by this rustls build: TLS is fixed to 1.2/1.3 with rustls default cipher suites. Remove the value or use an openssl build.",
+    tlsClientCa: "Client CA",
+    tlsClientCaPlaceholder:
+      "Input the CA that clients' certificates are verified against (PEM, base64 or a PEM file path)",
+    tlsClientCaTips:
+      "Ask every client for a certificate during stream TLS handshake (mutual TLS). Needs Terminate TLS enabled.",
+    tlsClientAuth: "Client Certificate",
+    tlsClientAuthTips:
+      "Require (the default with a client CA) ends the handshake of a client without a certificate; optional lets it in. Invalid certificates are refused in both.",
+    tlsClientCrl: "Client Certificate CRL",
+    tlsClientCrlPlaceholder:
+      "Input X.509 CRL(s) to reject revoked client certificates (PEM, base64 or a PEM file path)",
+    tlsClientCrlTips:
+      "Revocation list(s) checked during stream mTLS verification on both OpenSSL and rustls builds. Needs Client CA.",
     connectTimeout: "Connect Timeout",
     connectTimeoutPlaceholder: "Override upstream TCP connect timeout (e.g. 5s)",
     idleTimeout: "Idle Timeout",

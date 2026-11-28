@@ -299,6 +299,9 @@ pub struct TlsSettingParams {
     /// path, base64-encoded PEM or raw PEM, with one or more
     /// certificates. `None` asks clients for no certificate.
     pub client_ca: Option<String>,
+    /// Optional X.509 CRL(s) (PEM text, file path, or base64-encoded PEM)
+    /// checked during mTLS client verification. Needs `client_ca`.
+    pub client_crl: Option<String>,
     /// With `client_ca`: a client that shows no certificate is let in
     /// all the same. One that shows a certificate which does not verify
     /// is not, in either case.
@@ -312,6 +315,13 @@ fn client_ca_error(server: &str, message: impl fmt::Display) -> Error {
     }
 }
 
+fn client_crl_error(server: &str, message: impl fmt::Display) -> Error {
+    Error::Invalid {
+        category: "tls_client_crl".to_string(),
+        message: format!("server {server}: {message}"),
+    }
+}
+
 /// The certificates of `tls_client_ca` as PEM blocks; an error when
 /// there is none in it.
 fn client_ca_pems(server: &str, value: &str) -> Result<Vec<Vec<u8>>> {
@@ -321,6 +331,132 @@ fn client_ca_pems(server: &str, value: &str) -> Result<Vec<Vec<u8>>> {
         return Err(client_ca_error(server, "no certificate found"));
     }
     Ok(pems)
+}
+
+/// Parses `tls_client_crl` (inline PEM, file path, or base64-encoded PEM)
+/// into individual `X509 CRL` PEM blocks. Rejects empty input or non-CRL PEMs.
+fn load_crl_pems(server: &str, value: &str) -> Result<Vec<Vec<u8>>> {
+    let pems = pingap_util::convert_pem(value)
+        .map_err(|e| client_crl_error(server, e))?;
+    if pems.is_empty() {
+        return Err(client_crl_error(server, "no CRL found"));
+    }
+    for pem in &pems {
+        let (_, block) = x509_parser::pem::parse_x509_pem(pem)
+            .map_err(|e| client_crl_error(server, e))?;
+        if block.label != "X509 CRL" {
+            return Err(client_crl_error(
+                server,
+                format!("expected X509 CRL PEM block, got {}", block.label),
+            ));
+        }
+    }
+    Ok(pems)
+}
+
+#[cfg(feature = "openssl")]
+struct TempCrlFile {
+    path: std::path::PathBuf,
+}
+
+#[cfg(feature = "openssl")]
+impl TempCrlFile {
+    fn write(pems: &[Vec<u8>]) -> std::io::Result<Self> {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        for _ in 0..16 {
+            let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!("pingap-crl-{pid}-{seq}.pem"));
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let guard = Self { path };
+                    for pem in pems {
+                        file.write_all(pem)?;
+                        if !pem.ends_with(b"\n") {
+                            file.write_all(b"\n")?;
+                        }
+                    }
+                    file.flush()?;
+                    return Ok(guard);
+                },
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    continue;
+                },
+                Err(err) => return Err(err),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "unable to create temporary CRL file",
+        ))
+    }
+}
+
+#[cfg(feature = "openssl")]
+impl Drop for TempCrlFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(feature = "openssl")]
+fn add_client_crls_to_store(
+    server: &str,
+    store: &mut pingora::tls::x509::store::X509StoreBuilder,
+    client_crl: &str,
+) -> Result<()> {
+    use pingora::tls::ssl::SslFiletype;
+    use pingora::tls::x509::X509Crl;
+    use pingora::tls::x509::store::X509Lookup;
+    use pingora::tls::x509::verify::X509VerifyFlags;
+
+    let pems = load_crl_pems(server, client_crl)?;
+    for pem in &pems {
+        let _ =
+            X509Crl::from_pem(pem).map_err(|e| client_crl_error(server, e))?;
+    }
+    let temp =
+        TempCrlFile::write(&pems).map_err(|e| client_crl_error(server, e))?;
+    let lookup = store
+        .add_lookup(X509Lookup::file())
+        .map_err(|e| client_crl_error(server, e))?;
+    let count = lookup
+        .load_crl_file(&temp.path, SslFiletype::PEM)
+        .map_err(|e| client_crl_error(server, e))?;
+    if count <= 0 {
+        return Err(client_crl_error(server, "no CRL found"));
+    }
+    store
+        .set_flags(X509VerifyFlags::CRL_CHECK)
+        .map_err(|e| client_crl_error(server, e))?;
+    Ok(())
+}
+
+#[cfg(feature = "tls-rustls")]
+fn collect_client_crls(
+    server: &str,
+    client_crl: &str,
+) -> Result<Vec<rustls_pki_types::CertificateRevocationListDer<'static>>> {
+    use rustls_pki_types::CertificateRevocationListDer;
+    use rustls_pki_types::pem::PemObject;
+
+    let mut crls = Vec::new();
+    for pem in load_crl_pems(server, client_crl)? {
+        for crl in CertificateRevocationListDer::pem_slice_iter(&pem) {
+            crls.push(crl.map_err(|e| client_crl_error(server, e))?);
+        }
+    }
+    if crls.is_empty() {
+        return Err(client_crl_error(server, "no CRL found"));
+    }
+    Ok(crls)
 }
 
 /// What is kept of the certificate a client showed, for the requests of
@@ -639,6 +775,22 @@ impl GlobalCertificate {
             )?)
             .map_err(|e| invalid("set tls max proto version", &e))?;
 
+        let client_crl = params
+            .client_crl
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let has_client_ca = params
+            .client_ca
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty());
+        if client_crl.is_some() && !has_client_ca {
+            return Err(client_crl_error(
+                name,
+                "tls_client_crl needs tls_client_ca",
+            ));
+        }
+
         if let Some(client_ca) = &params.client_ca {
             use pingora::tls::ssl::SslVerifyMode;
             use pingora::tls::x509::X509;
@@ -661,6 +813,9 @@ impl GlobalCertificate {
             }
             if count == 0 {
                 return Err(client_ca_error(name, "no certificate found"));
+            }
+            if let Some(client_crl) = client_crl {
+                add_client_crls_to_store(name, &mut store, client_crl)?;
             }
             tls_settings
                 .set_verify_cert_store(store.build())
@@ -721,6 +876,22 @@ impl GlobalCertificate {
             message: e.to_string(),
         })?;
         tls_settings.set_cert_resolver(Arc::new(self.clone()));
+        let client_crl = params
+            .client_crl
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let has_client_ca = params
+            .client_ca
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty());
+        if client_crl.is_some() && !has_client_ca {
+            return Err(client_crl_error(
+                &name,
+                "tls_client_crl needs tls_client_ca",
+            ));
+        }
+
         if let Some(client_ca) = &params.client_ca {
             use pingora::tls::{CertificateDer, WebPkiClientVerifier};
             use rustls_pki_types::pem::PemObject;
@@ -740,15 +911,24 @@ impl GlobalCertificate {
             // has to be one by now: without it making the verifier does
             // not fail, it panics.
             crate::install_default_crypto_provider();
-            let builder = WebPkiClientVerifier::builder(Arc::new(roots));
+            let mut builder = WebPkiClientVerifier::builder(Arc::new(roots));
+            if let Some(client_crl) = client_crl {
+                let crls = collect_client_crls(&name, client_crl)?;
+                builder =
+                    builder.with_crls(crls).only_check_end_entity_revocation();
+            }
             let builder = if params.client_auth_optional {
                 builder.allow_unauthenticated()
             } else {
                 builder
             };
-            tls_settings.set_client_cert_verifier(
-                builder.build().map_err(|e| invalid(&e))?,
-            );
+            let verifier = builder.build().map_err(|e| match e {
+                rustls::server::VerifierBuilderError::InvalidCrl(_) => {
+                    client_crl_error(&name, e)
+                },
+                other => invalid(&other),
+            })?;
+            tls_settings.set_client_cert_verifier(verifier);
         }
         if params.enabled_h2 {
             tls_settings.enable_h2();
@@ -2009,5 +2189,373 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 
         remove_acme_alpn_cert(domain);
         assert_eq!(true, get_acme_alpn_cert(domain).is_none());
+    }
+
+    struct MtlsCrlFixture {
+        ca_pem: String,
+        crl_pem: String,
+        server_cert_pem: String,
+        server_key_pem: String,
+        valid_cert_pem: String,
+        valid_key_pem: String,
+        revoked_cert_pem: String,
+        revoked_key_pem: String,
+    }
+
+    fn build_mtls_crl_fixture() -> MtlsCrlFixture {
+        let mut ca_params =
+            rcgen::CertificateParams::new(vec!["pingap-ca.test".to_string()])
+                .unwrap();
+        ca_params.is_ca =
+            rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            rcgen::KeyUsagePurpose::KeyCertSign,
+            rcgen::KeyUsagePurpose::DigitalSignature,
+            rcgen::KeyUsagePurpose::CrlSign,
+        ];
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+        let ca_pem = ca_cert.pem();
+        let issuer = rcgen::Issuer::from_ca_cert_pem(&ca_pem, &ca_key).unwrap();
+
+        let mut server_params =
+            rcgen::CertificateParams::new(vec!["server.test".to_string()])
+                .unwrap();
+        server_params.extended_key_usages =
+            vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        let server_key = rcgen::KeyPair::generate().unwrap();
+        let server_cert =
+            server_params.signed_by(&server_key, &issuer).unwrap();
+
+        let sign_client = |cn: &str, serial: u64| {
+            let mut params =
+                rcgen::CertificateParams::new(vec![cn.to_string()]).unwrap();
+            params.serial_number = Some(rcgen::SerialNumber::from(serial));
+            params.extended_key_usages =
+                vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+            let mut dn = rcgen::DistinguishedName::new();
+            dn.push(rcgen::DnType::CommonName, cn);
+            params.distinguished_name = dn;
+            let key = rcgen::KeyPair::generate().unwrap();
+            let cert = params.signed_by(&key, &issuer).unwrap();
+            (cert.pem(), key.serialize_pem())
+        };
+
+        let (valid_cert_pem, valid_key_pem) = sign_client("valid-client", 1001);
+        let (revoked_cert_pem, revoked_key_pem) =
+            sign_client("revoked-client", 1002);
+
+        let now = time::OffsetDateTime::now_utc();
+        let crl = rcgen::CertificateRevocationListParams {
+            this_update: now - time::Duration::hours(1),
+            next_update: now + time::Duration::hours(24),
+            crl_number: rcgen::SerialNumber::from(1u64),
+            issuing_distribution_point: None,
+            revoked_certs: vec![rcgen::RevokedCertParams {
+                serial_number: rcgen::SerialNumber::from(1002u64),
+                revocation_time: now - time::Duration::minutes(5),
+                reason_code: Some(rcgen::RevocationReason::KeyCompromise),
+                invalidity_date: None,
+            }],
+            key_identifier_method: rcgen::KeyIdMethod::Sha256,
+        }
+        .signed_by(&issuer)
+        .unwrap();
+
+        MtlsCrlFixture {
+            ca_pem,
+            crl_pem: crl.pem().unwrap(),
+            server_cert_pem: server_cert.pem(),
+            server_key_pem: server_key.serialize_pem(),
+            valid_cert_pem,
+            valid_key_pem,
+            revoked_cert_pem,
+            revoked_key_pem,
+        }
+    }
+
+    #[test]
+    fn test_tls_settings_with_client_crl_validation() {
+        let fixture = build_mtls_crl_fixture();
+        let certificates = GlobalCertificate::new(Arc::new(NoCertificates));
+        let make = |ca: Option<&str>, crl: Option<&str>| {
+            certificates.new_tls_settings(&TlsSettingParams {
+                server_name: "web".to_string(),
+                client_ca: ca.map(str::to_string),
+                client_crl: crl.map(str::to_string),
+                ..Default::default()
+            })
+        };
+
+        // CRL without CA fails clearly.
+        let err = make(None, Some(&fixture.crl_pem))
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains("tls_client_crl needs tls_client_ca"), "{err}");
+
+        // Valid CRL in inline PEM, base64, and file path forms succeeds.
+        assert!(make(Some(&fixture.ca_pem), Some(&fixture.crl_pem)).is_ok());
+        let encoded_crl = pingap_util::base64_encode(&fixture.crl_pem);
+        assert!(make(Some(&fixture.ca_pem), Some(&encoded_crl)).is_ok());
+        let crl_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(crl_file.path(), &fixture.crl_pem).unwrap();
+        assert!(
+            make(
+                Some(&fixture.ca_pem),
+                Some(&crl_file.path().to_string_lossy())
+            )
+            .is_ok()
+        );
+
+        // Non-CRL PEM, junk, and missing file path are rejected.
+        let bad_der_crl =
+            "-----BEGIN X509 CRL-----\nZm9v\n-----END X509 CRL-----\n";
+        for bad in [
+            fixture.ca_pem.as_str(),
+            "not a crl",
+            "/pingap/not/there-crl.pem",
+            bad_der_crl,
+        ] {
+            let err = make(Some(&fixture.ca_pem), Some(bad))
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(
+                err.contains("category: tls_client_crl")
+                    && err.contains("server web: "),
+                "{bad}: {err}"
+            );
+        }
+    }
+
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn test_openssl_mtls_crl_loopback_handshake() {
+        use pingora::listeners::TlsAccept;
+        use pingora::tls::pkey::PKey;
+        use pingora::tls::ssl::{
+            Ssl, SslAcceptor, SslConnector, SslMethod, SslVerifyMode,
+        };
+        use pingora::tls::x509::X509;
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        let fixture = build_mtls_crl_fixture();
+        let configs = HashMap::from([(
+            "server".to_string(),
+            CertificateConf {
+                is_default: Some(true),
+                tls_cert: Some(fixture.server_cert_pem.clone()),
+                tls_key: Some(fixture.server_key_pem.clone()),
+                ..Default::default()
+            },
+        )]);
+        let (certs, errors) = parse_certificates(&configs);
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        let certificates = GlobalCertificate::new(Arc::new(Store(certs)));
+
+        let run_handshake = |optional: bool,
+                             client_auth: Option<(&str, &str)>|
+         -> bool {
+            let mut tls_settings = certificates
+                .new_tls_settings(&TlsSettingParams {
+                    server_name: "web".to_string(),
+                    client_ca: Some(fixture.ca_pem.clone()),
+                    client_crl: Some(fixture.crl_pem.clone()),
+                    client_auth_optional: optional,
+                    ..Default::default()
+                })
+                .unwrap();
+            let acceptor = std::mem::replace(
+                &mut *tls_settings,
+                SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap(),
+            )
+            .build();
+
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let certs_cb = certificates.clone();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut ssl = Ssl::new(acceptor.context()).unwrap();
+                tokio_test::block_on(certs_cb.certificate_callback(&mut ssl));
+                match ssl.accept(stream) {
+                    Ok(mut tls) => {
+                        let _ = tls.write_all(b"ok");
+                        let _ = tls.flush();
+                        true
+                    },
+                    Err(_) => false,
+                }
+            });
+
+            let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+            builder.set_verify(SslVerifyMode::NONE);
+            if let Some((cert_pem, key_pem)) = client_auth {
+                let cert = X509::from_pem(cert_pem.as_bytes()).unwrap();
+                let key =
+                    PKey::private_key_from_pem(key_pem.as_bytes()).unwrap();
+                builder.set_certificate(&cert).unwrap();
+                builder.set_private_key(&key).unwrap();
+            }
+            let client_ok = match builder
+                .build()
+                .connect("server.test", TcpStream::connect(addr).unwrap())
+            {
+                Ok(mut tls) => {
+                    let mut buf = [0u8; 2];
+                    tls.read_exact(&mut buf).is_ok() && &buf == b"ok"
+                },
+                Err(_) => false,
+            };
+            let server_ok = server.join().unwrap();
+            client_ok && server_ok
+        };
+
+        assert_eq!(
+            true,
+            run_handshake(
+                false,
+                Some((&fixture.valid_cert_pem, &fixture.valid_key_pem))
+            )
+        );
+        assert_eq!(
+            false,
+            run_handshake(
+                false,
+                Some((&fixture.revoked_cert_pem, &fixture.revoked_key_pem))
+            )
+        );
+        assert_eq!(false, run_handshake(false, None));
+        assert_eq!(true, run_handshake(true, None));
+        assert_eq!(
+            false,
+            run_handshake(
+                true,
+                Some((&fixture.revoked_cert_pem, &fixture.revoked_key_pem))
+            )
+        );
+    }
+
+    #[cfg(feature = "tls-rustls")]
+    #[test]
+    fn test_rustls_mtls_crl_loopback_handshake() {
+        use pingora::protocols::l4::stream::Stream as L4Stream;
+        use pingora::tls::{ClientConfig, RootCertStore, TlsConnector};
+        use rustls_pki_types::pem::PemObject;
+        use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let fixture = build_mtls_crl_fixture();
+        let configs = HashMap::from([(
+            "server".to_string(),
+            CertificateConf {
+                is_default: Some(true),
+                tls_cert: Some(fixture.server_cert_pem.clone()),
+                tls_key: Some(fixture.server_key_pem.clone()),
+                ..Default::default()
+            },
+        )]);
+        let (certs, errors) = parse_certificates(&configs);
+        assert_eq!(true, errors.is_empty(), "{errors:?}");
+        let certificates = GlobalCertificate::new(Arc::new(Store(certs)));
+
+        let run_handshake = |optional: bool,
+                             client_auth: Option<(&str, &str)>|
+         -> bool {
+            tokio_test::block_on(async {
+                let tls_settings = certificates
+                    .new_tls_settings(&TlsSettingParams {
+                        server_name: "web".to_string(),
+                        client_ca: Some(fixture.ca_pem.clone()),
+                        client_crl: Some(fixture.crl_pem.clone()),
+                        client_auth_optional: optional,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                let acceptor = tls_settings.build();
+                let listener =
+                    tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+
+                let server = tokio::spawn(async move {
+                    let (tcp_stream, _) = listener.accept().await.unwrap();
+                    match acceptor
+                        .tls_handshake(L4Stream::from(tcp_stream))
+                        .await
+                    {
+                        Ok(mut tls) => {
+                            let _ = tls.write_all(b"ok").await;
+                            let _ = tls.flush().await;
+                            true
+                        },
+                        Err(_) => false,
+                    }
+                });
+
+                let mut roots = RootCertStore::empty();
+                for cert in
+                    CertificateDer::pem_slice_iter(fixture.ca_pem.as_bytes())
+                {
+                    roots.add(cert.unwrap()).unwrap();
+                }
+                let builder =
+                    ClientConfig::builder().with_root_certificates(roots);
+                let client_config = match client_auth {
+                    Some((cert_pem, key_pem)) => {
+                        let certs: Vec<CertificateDer<'static>> =
+                            CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+                                .map(|c| c.unwrap())
+                                .collect();
+                        let key =
+                            PrivateKeyDer::from_pem_slice(key_pem.as_bytes())
+                                .unwrap();
+                        builder.with_client_auth_cert(certs, key).unwrap()
+                    },
+                    None => builder.with_no_client_auth(),
+                };
+
+                let connector = TlsConnector::from(Arc::new(client_config));
+                let stream =
+                    tokio::net::TcpStream::connect(addr).await.unwrap();
+                let server_name = ServerName::try_from("server.test").unwrap();
+                let client_ok =
+                    match connector.connect(server_name, stream).await {
+                        Ok(mut tls) => {
+                            let mut buf = [0u8; 2];
+                            tls.read_exact(&mut buf).await.is_ok()
+                                && &buf == b"ok"
+                        },
+                        Err(_) => false,
+                    };
+                let server_ok = server.await.unwrap();
+                client_ok && server_ok
+            })
+        };
+
+        assert_eq!(
+            true,
+            run_handshake(
+                false,
+                Some((&fixture.valid_cert_pem, &fixture.valid_key_pem))
+            )
+        );
+        assert_eq!(
+            false,
+            run_handshake(
+                false,
+                Some((&fixture.revoked_cert_pem, &fixture.revoked_key_pem))
+            )
+        );
+        assert_eq!(false, run_handshake(false, None));
+        assert_eq!(true, run_handshake(true, None));
+        assert_eq!(
+            false,
+            run_handshake(
+                true,
+                Some((&fixture.revoked_cert_pem, &fixture.revoked_key_pem))
+            )
+        );
     }
 }

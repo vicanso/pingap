@@ -32,6 +32,13 @@
 
 - **写成 IPv4 映射形式的网段就是对应的 IPv4 网段。** `ip_list`、`basic.trusted_proxies`，以及用同一套匹配的其他列表（`maintenance`、`combined_auth`、cache 的 `purge_ip_list`）里的 `::ffff:192.168.1.0/120` 以前匹配不到任何地址：查询被收成 IPv4，网段却仍按 IPv6 保存。现在它匹配 `192.168.1.0/24`，包括被看成 `::ffff:192.168.1.7` 的客户端。写成 IPv4 的网段不变。短于 96 的前缀（`::/0`）仍然只匹配 IPv6。
 
+### 服务与四层代理
+
+- **新增的 server、stream 与 PROXY protocol 选项均为可选开启**，未配置时保持原有行为不变：
+  - `[servers.*]` 新增 `tls_client_crl`（OpenSSL 与 rustls 双后端双向 TLS 吊销列表校验）、TLS 握手前的 `allow_ips` / `deny_ips`、`min_send_rate` 与 `total_drain_timeout`。
+  - `[streams.*]` 新增本地 TLS 终结与双向 TLS（`global_certificates`、`tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`、`tls_client_ca`、`tls_client_auth`、`tls_client_crl`）、`access_log`（支持 `combined`/`common`/`short`/`tiny`/`json` 预设与 `{stream}`、`{tls_*}`、`{pp_*}` 等标签）及 `send_proxy_protocol`（`v1`/`v2`）。在 `tls-rustls` 构建下，stream 的 `tls_cipher_list` / `tls_ciphersuites` / `tls_min_version` / `tls_max_version` 会在配置校验时拒绝，与 `[servers.*]` 一致。
+  - 入站 PROXY protocol v2 头可通过 `$proxy_protocol_*` / `$proxy_protocol_tlv_0x..` 注入请求头，并在访问日志中使用 `{:proxy_protocol_*}`。与 `$tls_client_*` 相同，当连接上没有对应 TLV 时，对应请求头会设置为空值，防止客户端自带头伪造。
+
 ### 使用这些 crate 的开发者
 
 - **pingap-util**：新增 `home_dir()`，`resolve_path` 展开 `~` 用的就是它。`IpRules` 把 IPv4 映射前缀存成对应的 IPv4 网段：`::ffff:192.168.1.0/120` 匹配 `192.168.1.7`。
@@ -43,7 +50,8 @@
 - **pingap-core**：代理只在 `Plugin::step()` 等于当前回调时调用 `handle_request`，默认是 `request`。请求阶段不是 `request`、又没有实现 `step()` 的插件不再被调用。`handle_response_body` 和 `handle_upstream_response_body` 只在 `handles_response_body()` 或 `handles_upstream_response_body()` 返回 `true` 时调用，默认都是 `false`。改写了 body 方法但标记仍是 `false` 的插件不再被调用。改响应头的回调不变。
 - **pingap-proxy**：服务器的压缩模块换成了 `pingap_core::ResponseCompression`（它会补全 brotli 流，[#256](https://github.com/vicanso/pingap/issues/256)），不再是 pingora 的。自己写的插件如果要调整压缩，得按这个类型取：`downstream_modules_ctx.get_mut::<pingap_core::ResponseCompression>()`。按 pingora 的 `ResponseCompression` 取会拿到空，插件也就静默地不再调整压缩，不会报错。它 deref 到 pingora 的 `ResponseCompressionCtx`，上面的调用不用改。
 - **tokio 可以回到 1.54。** pingora 0.9.1 不再给连接建容量为 0 的缓冲区，这些 crate 不再要求 `tokio = ">=1.53.3, <1.54"`（[cloudflare/pingora#1059](https://github.com/cloudflare/pingora/issues/1059)）。原先把 tokio 限制在 1.54 以下的项目可以升到 1.54.1。
-- **pingap-core / pingap-logger**：`UpstreamInfo.address` 改为 `Arc<str>`（与 `location`、`name` 一致），`OtelTracer::new_upstream_span` 接受 `impl Into<Cow<'static, str>>`，`Parser` 新增 `needs_latency` 字段。
+- **pingap-core / pingap-logger**：`UpstreamInfo.address` 改为 `Arc<str>`（与 `location`、`name` 一致），`OtelTracer::new_upstream_span` 接受 `impl Into<Cow<'static, str>>`，`Parser` 新增 `needs_latency` 字段。`ConnectionInfo` 新增 `proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvs>>`，`CtxLogField` 新增 `ProxyProtocol*` 变体；`pingap-logger` 新增 `StreamLogContext`、`StreamLogParser` 与 `StreamLogger`。
+- **pingap-certificate**：`TlsSettingParams` 新增 `client_crl: Option<String>`，同时导出 `validate_streams_tls_for_backend`（与 `validate_servers_tls_for_backend` 对应）。
 
 ## 从 0.15 升级到 0.16
 

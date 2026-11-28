@@ -1545,6 +1545,11 @@ pub struct ServerConf {
     /// A certificate that does not verify ends the handshake in both.
     pub tls_client_auth: Option<String>,
 
+    /// Optional X.509 CRL(s) (PEM text, file path, or base64-encoded PEM)
+    /// checked during mTLS client certificate verification. Needs
+    /// `tls_client_ca`.
+    pub tls_client_crl: Option<String>,
+
     /// Whether to use global certificates instead of per-server certs
     pub global_certificates: Option<bool>,
 
@@ -1564,6 +1569,14 @@ pub struct ServerConf {
     /// from it. Only from the addresses of `basic.trusted_proxies`,
     /// which this needs: a header from anyone else is not read.
     pub proxy_protocol: Option<bool>,
+
+    /// Pre-TLS / connection-level client IP/CIDR allowlist, evaluated after
+    /// optional inbound `proxy_protocol`.
+    pub allow_ips: Option<Vec<String>>,
+
+    /// Pre-TLS / connection-level client IP/CIDR denylist (`deny` wins over
+    /// `allow`), evaluated after optional inbound `proxy_protocol`.
+    pub deny_ips: Option<Vec<String>>,
 
     /// Whether to enable HTTP/2 protocol support
     pub enabled_h2: Option<bool>,
@@ -1631,6 +1644,17 @@ pub struct ServerConf {
     #[serde(with = "pingap_util::duration_serde")]
     pub downstream_write_timeout: Option<Duration>,
 
+    /// Minimum downstream response send rate per second (`bytes/sec`), passed
+    /// to pingora `set_min_send_rate`.
+    #[serde(default, serialize_with = "serialize_byte_size")]
+    pub min_send_rate: Option<ByteSize>,
+
+    /// Cap on total time spent draining unread client request bodies, passed
+    /// to pingora `set_total_drain_timeout`.
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub total_drain_timeout: Option<Duration>,
+
     /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,
 
@@ -1668,7 +1692,7 @@ pub struct ServerConf {
 /// Anything else is taken for a format as well, one with no placeholder in
 /// it: `access_log = "stdout"`, or a file path on its own, printed that
 /// very word once per request and logged nothing.
-fn validate_access_log(access_log: &str) -> Result<()> {
+fn validate_access_log(access_log: &str, example: &str) -> Result<()> {
     let is_preset = |value: &str| ACCESS_LOG_PRESETS.contains(&value);
     let format = match access_log.split_once(' ') {
         Some((_, format))
@@ -1684,10 +1708,92 @@ fn validate_access_log(access_log: &str) -> Result<()> {
     }
     Err(Error::Invalid {
         message: format!(
-            "access_log {access_log:?} logs nothing of the request: expected a format such as \"{{method}} {{uri}} {{status}}\", one of {}, or a file path followed by either",
+            "access_log {access_log:?} logs nothing of the request: expected a format such as {example:?}, one of {}, or a file path followed by either",
             ACCESS_LOG_PRESETS.join(", ")
         ),
     })
+}
+
+fn validate_inline_crl_pem(crl: &str) -> Result<()> {
+    let blocks = pingap_util::convert_pem(crl).map_err(|e| Error::Invalid {
+        message: format!("tls_client_crl is invalid: {e}"),
+    })?;
+    for block in blocks {
+        let crls =
+            rustls_pki_types::CertificateRevocationListDer::pem_slice_iter(
+                &block,
+            )
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Invalid {
+                message: format!("tls_client_crl is invalid: {e}"),
+            })?;
+        if crls.is_empty() {
+            return Err(Error::Invalid {
+                message: "tls_client_crl should contain X509 CRL PEM blocks"
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validates mTLS client authentication fields (`tls_client_ca`,
+/// `tls_client_auth`, `tls_client_crl`) against `global_certificates`.
+fn validate_tls_client_auth(
+    global_certificates: bool,
+    ca: Option<&str>,
+    auth: Option<&str>,
+    crl: Option<&str>,
+) -> Result<()> {
+    fn given(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+    let ca = given(ca);
+    let auth = given(auth);
+    let crl = given(crl);
+    let invalid = |message: &str| Error::Invalid {
+        message: message.to_string(),
+    };
+    match auth {
+        None | Some("require") | Some("optional") => {},
+        Some(_) => {
+            return Err(invalid(
+                "tls_client_auth should be require or optional",
+            ));
+        },
+    }
+    if auth.is_some() && ca.is_none() {
+        return Err(invalid("tls_client_auth needs tls_client_ca"));
+    }
+    if let Some(crl) = crl {
+        if ca.is_none() {
+            return Err(invalid("tls_client_crl needs tls_client_ca"));
+        }
+        if pingap_util::is_pem(crl) {
+            validate_inline_crl_pem(crl)?;
+        }
+    }
+    if ca.is_some() && !global_certificates {
+        return Err(invalid(
+            "tls_client_ca needs a TLS listener (global_certificates = true)",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ip_rule_list(field: &str, ips: Option<&[String]>) -> Result<()> {
+    let Some(ips) = ips else {
+        return Ok(());
+    };
+    let concrete: Vec<&str> = ips
+        .iter()
+        .map(String::as_str)
+        .filter(|item| !is_reference(item))
+        .collect();
+    IpRules::try_new(&concrete).map_err(|e| Error::Invalid {
+        message: format!("{field} invalid {e}"),
+    })?;
+    Ok(())
 }
 
 impl Validate for ServerConf {
@@ -1740,7 +1846,10 @@ impl ServerConf {
                 }
             }
         }
-        validate_access_log(self.access_log.as_deref().unwrap_or_default())?;
+        validate_access_log(
+            self.access_log.as_deref().unwrap_or_default(),
+            "{method} {uri} {status}",
+        )?;
 
         self.validate_h2()?;
         validate_tcp_keepalive(
@@ -1748,6 +1857,22 @@ impl ServerConf {
             self.tcp_interval,
             self.tcp_probe_count,
         )?;
+        validate_ip_rule_list("allow_ips", self.allow_ips.as_deref())?;
+        validate_ip_rule_list("deny_ips", self.deny_ips.as_deref())?;
+        if let Some(rate) = self.min_send_rate
+            && (rate.as_u64() == 0 || usize::try_from(rate.as_u64()).is_err())
+        {
+            return Err(Error::Invalid {
+                message: "min_send_rate should be between 1B and usize::MAX"
+                    .to_string(),
+            });
+        }
+        if self.total_drain_timeout.is_some_and(|d| d.is_zero()) {
+            return Err(Error::Invalid {
+                message: "total_drain_timeout should be greater than 0"
+                    .to_string(),
+            });
+        }
 
         self.validate_client_auth()?;
 
@@ -1782,30 +1907,12 @@ impl ServerConf {
     /// other direction - a server that looks protected and lets everyone
     /// in - so they are errors, not defaults.
     fn validate_client_auth(&self) -> Result<()> {
-        fn given(value: Option<&str>) -> Option<&str> {
-            value.map(str::trim).filter(|value| !value.is_empty())
-        }
-        let ca = given(self.tls_client_ca.as_deref());
-        let invalid = |message: &str| Error::Invalid {
-            message: message.to_string(),
-        };
-        match given(self.tls_client_auth.as_deref()) {
-            None | Some("require") | Some("optional") => {},
-            Some(_) => {
-                return Err(invalid(
-                    "tls_client_auth should be require or optional",
-                ));
-            },
-        }
-        if given(self.tls_client_auth.as_deref()).is_some() && ca.is_none() {
-            return Err(invalid("tls_client_auth needs tls_client_ca"));
-        }
-        if ca.is_some() && !self.global_certificates.unwrap_or_default() {
-            return Err(invalid(
-                "tls_client_ca needs a TLS listener (global_certificates = true)",
-            ));
-        }
-        Ok(())
+        validate_tls_client_auth(
+            self.global_certificates.unwrap_or_default(),
+            self.tls_client_ca.as_deref(),
+            self.tls_client_auth.as_deref(),
+            self.tls_client_crl.as_deref(),
+        )
     }
 
     /// The HTTP/2 knobs are forwarded to the h2 crate as SETTINGS, which
@@ -1935,6 +2042,45 @@ pub struct StreamConf {
     /// Read inbound PROXY protocol (v1 or v2) header before routing. Requires
     /// `basic.trusted_proxies` to be configured.
     pub proxy_protocol: Option<bool>,
+
+    /// Send outbound PROXY protocol header (`v1` or `v2`) when connecting to
+    /// the upstream backend.
+    pub send_proxy_protocol: Option<String>,
+
+    /// Access log format string or preset for L4 stream connection logging.
+    pub access_log: Option<String>,
+
+    /// Terminate TLS locally on this stream listener using globally configured
+    /// certificates.
+    pub global_certificates: Option<bool>,
+
+    /// OpenSSL cipher list for protocols before TLS 1.3.
+    /// Rejected at config validation under the rustls backend.
+    pub tls_cipher_list: Option<String>,
+
+    /// TLS 1.3 ciphersuites string (OpenSSL).
+    /// Rejected at config validation under the rustls backend.
+    pub tls_ciphersuites: Option<String>,
+
+    /// Minimum TLS version to accept (e.g. "tlsv1.2").
+    /// Rejected at config validation under the rustls backend.
+    pub tls_min_version: Option<String>,
+
+    /// Maximum TLS version to accept (e.g. "tlsv1.3").
+    /// Rejected at config validation under the rustls backend.
+    pub tls_max_version: Option<String>,
+
+    /// Client CA certificates (PEM path, base64, or inline PEM) for mTLS on
+    /// this stream listener. Needs `global_certificates = true`.
+    pub tls_client_ca: Option<String>,
+
+    /// Optional X.509 CRL(s) (PEM path, base64, or inline PEM) checked during
+    /// mTLS client verification. Needs `tls_client_ca`.
+    pub tls_client_crl: Option<String>,
+
+    /// mTLS client authentication mode (`require` or `optional`). Needs
+    /// `tls_client_ca`.
+    pub tls_client_auth: Option<String>,
 
     /// Upstream TCP connect timeout for this stream (overrides upstream setting
     /// when set).
@@ -2079,21 +2225,53 @@ impl StreamConf {
                 });
             }
         }
-        if let Some(ips) = &self.allow_ips {
-            IpRules::try_new(ips).map_err(|e| Error::Invalid {
-                message: format!("allow_ips invalid {e}"),
-            })?;
-        }
-        if let Some(ips) = &self.deny_ips {
-            IpRules::try_new(ips).map_err(|e| Error::Invalid {
-                message: format!("deny_ips invalid {e}"),
-            })?;
-        }
+        validate_ip_rule_list("allow_ips", self.allow_ips.as_deref())?;
+        validate_ip_rule_list("deny_ips", self.deny_ips.as_deref())?;
         validate_tcp_keepalive(
             self.tcp_idle,
             self.tcp_interval,
             self.tcp_probe_count,
         )
+    }
+
+    fn validate_tls_and_logging(&self) -> Result<()> {
+        validate_tls_client_auth(
+            self.global_certificates.unwrap_or_default(),
+            self.tls_client_ca.as_deref(),
+            self.tls_client_auth.as_deref(),
+            self.tls_client_crl.as_deref(),
+        )?;
+        let has_tls_options = [
+            self.tls_cipher_list.as_deref(),
+            self.tls_ciphersuites.as_deref(),
+            self.tls_min_version.as_deref(),
+            self.tls_max_version.as_deref(),
+        ]
+        .into_iter()
+        .any(|value| value.is_some_and(|s| !s.trim().is_empty()));
+        if !self.global_certificates.unwrap_or_default() && has_tls_options {
+            return Err(Error::Invalid {
+                message: "stream TLS options need global_certificates = true"
+                    .to_string(),
+            });
+        }
+        validate_access_log(
+            self.access_log.as_deref().unwrap_or_default(),
+            "{stream} {upstream} {result}",
+        )?;
+        if let Some(ver) = &self.send_proxy_protocol
+            && !ver.trim().is_empty()
+            && !is_reference(ver)
+            && pingap_core::ProxyProtocolVersion::parse(ver).is_none()
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "send_proxy_protocol {ver:?} should be one of {}",
+                    pingap_core::PROXY_PROTOCOL_VERSIONS.join(", ")
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Validates this stream entry, optionally checking referenced upstreams
@@ -2104,6 +2282,7 @@ impl StreamConf {
     ) -> Result<()> {
         validate_stream_listen_addrs(&self.addr)?;
         self.validate_targets(upstream_names)?;
+        self.validate_tls_and_logging()?;
         self.validate_limits()
     }
 }
@@ -3425,7 +3604,8 @@ impl PingapConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        BasicConf, LocationConf, PluginCategory, ServerConf, UpstreamConf,
+        BasicConf, LocationConf, PluginCategory, ServerConf, StreamConf,
+        UpstreamConf,
     };
     use super::{
         CATEGORY_BASIC, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
@@ -4734,6 +4914,85 @@ write_timeout = "1m"
             Some("Invalid error tls_client_ca needs a TLS listener (global_certificates = true)".to_string()),
             error("tls_client_ca = \"/etc/ca.pem\"")
         );
+
+        let crl_pem = "-----BEGIN X509 CRL-----\nMIIBpzCBkAIBATAKBggqhkjOPQQDAjAZMRcwFQYDVQQDDA5waW5nYXAgdGVzdCBj\nYhcNMjYxMDA3MDk0MzQyWhcNMzYxMDA0MDk0MzQyWjAiMCACAQEXDTI2MTAwNzA5\nNDM0MlowDDAKBgNVHRUEAwoBBKAOMAwGA1UdFAQFAgMBAAEwCgYIKoZIzj0EAwID\nSAAwRQIgG2y7nW6kA6b1E2s6a3c5m5j8h3p9y2d4e6f8g0h2i4kCIQD1k3n5p7r9\nt1v3x5z7b9d1f3h5j7l9n1p3r5t7v9x1zQ==\n-----END X509 CRL-----";
+        assert_eq!(
+            None,
+            error(&format!(
+                "{tls}tls_client_ca = \"/etc/ca.pem\"\ntls_client_crl = \"/etc/crl.pem\""
+            ))
+        );
+        assert_eq!(
+            None,
+            error(&format!(
+                "{tls}tls_client_ca = \"/etc/ca.pem\"\ntls_client_crl = {crl_pem:?}"
+            ))
+        );
+        assert_eq!(
+            Some(
+                "Invalid error tls_client_crl needs tls_client_ca".to_string()
+            ),
+            error(&format!("{tls}tls_client_crl = \"/etc/crl.pem\""))
+        );
+        let cert_not_crl =
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+        assert!(
+            error(&format!(
+                "{tls}tls_client_ca = \"/etc/ca.pem\"\ntls_client_crl = {cert_not_crl:?}"
+            ))
+            .unwrap_or_default()
+            .contains("X509 CRL")
+        );
+    }
+
+    #[test]
+    fn test_server_connection_security_fields() {
+        let conf: ServerConf = toml::from_str(
+            r#"
+addr = "127.0.0.1:443"
+global_certificates = true
+allow_ips = ["10.0.0.0/8", "$ENV:EXTRA_ALLOW_IP"]
+deny_ips = ["10.0.0.5"]
+min_send_rate = "64 KiB"
+total_drain_timeout = "5s"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            Some(vec![
+                "10.0.0.0/8".to_string(),
+                "$ENV:EXTRA_ALLOW_IP".to_string(),
+            ]),
+            conf.allow_ips
+        );
+        assert_eq!(Some(vec!["10.0.0.5".to_string()]), conf.deny_ips);
+        assert_eq!(Some(ByteSize::kib(64)), conf.min_send_rate);
+        assert_eq!(Some(Duration::from_secs(5)), conf.total_drain_timeout);
+        assert_eq!(true, conf.validate().is_ok());
+
+        let toml_out = toml::to_string(&conf).unwrap();
+        let restored: ServerConf = toml::from_str(&toml_out).unwrap();
+        assert_eq!(Some(ByteSize::kib(64)), restored.min_send_rate);
+        assert_eq!(Some(Duration::from_secs(5)), restored.total_drain_timeout);
+
+        for (extra, expected) in [
+            ("allow_ips = [\"not-an-ip\"]", "allow_ips invalid"),
+            ("deny_ips = [\"10.0.0/8\"]", "deny_ips invalid"),
+            ("min_send_rate = \"0 B\"", "min_send_rate should be between"),
+            (
+                "total_drain_timeout = \"0s\"",
+                "total_drain_timeout should be greater than 0",
+            ),
+        ] {
+            let err = toml::from_str::<ServerConf>(&format!(
+                "addr = \"127.0.0.1:80\"\n{extra}"
+            ))
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains(expected), "{extra}: {err}");
+        }
     }
 
     #[test]
@@ -5600,6 +5859,87 @@ deny_ips = ["10.0.0.5"]
                 err.contains(expected_substr),
                 "expected {expected_substr:?} in {err:?}"
             );
+        }
+    }
+
+    #[test]
+    fn test_stream_tls_access_log_and_send_proxy_protocol_validation() {
+        let ok_stream: StreamConf = toml::from_str(
+            r#"
+addr = "127.0.0.1:9443"
+upstream = "u"
+global_certificates = true
+tls_cipher_list = "ECDHE-RSA-AES128-GCM-SHA256"
+tls_ciphersuites = "TLS_AES_128_GCM_SHA256"
+tls_min_version = "tlsv1.2"
+tls_max_version = "tlsv1.3"
+tls_client_ca = "/etc/ca.pem"
+tls_client_crl = "/etc/crl.pem"
+tls_client_auth = "optional"
+access_log = "json"
+send_proxy_protocol = "v2"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(true), ok_stream.global_certificates);
+        assert_eq!(Some("v2".to_string()), ok_stream.send_proxy_protocol);
+        assert_eq!(Some("json".to_string()), ok_stream.access_log);
+        assert_eq!(true, ok_stream.validate().is_ok());
+
+        for (extra, expected) in [
+            (
+                "tls_min_version = \"tlsv1.2\"",
+                "stream TLS options need global_certificates = true",
+            ),
+            (
+                "tls_max_version = \"tlsv1.3\"",
+                "stream TLS options need global_certificates = true",
+            ),
+            (
+                "tls_cipher_list = \"HIGH\"",
+                "stream TLS options need global_certificates = true",
+            ),
+            (
+                "tls_ciphersuites = \"TLS_AES_128_GCM_SHA256\"",
+                "stream TLS options need global_certificates = true",
+            ),
+            (
+                "global_certificates = true\ntls_client_crl = \"/etc/crl.pem\"",
+                "tls_client_crl needs tls_client_ca",
+            ),
+            (
+                "tls_client_ca = \"/etc/ca.pem\"",
+                "tls_client_ca needs a TLS listener",
+            ),
+            (
+                "global_certificates = true\ntls_client_ca = \"/etc/ca.pem\"\ntls_client_auth = \"bad\"",
+                "tls_client_auth should be require or optional",
+            ),
+            ("access_log = \"stdout\"", "logs nothing of the request"),
+            (
+                "send_proxy_protocol = \"v3\"",
+                "send_proxy_protocol \"v3\" should be one of v1, v2",
+            ),
+        ] {
+            let stream: StreamConf = toml::from_str(&format!(
+                "addr = \"127.0.0.1:9443\"\nupstream = \"u\"\n{extra}"
+            ))
+            .unwrap();
+            let err = stream.validate().unwrap_err().to_string();
+            assert!(err.contains(expected), "{extra}: {err}");
+        }
+
+        // Empty / reference send_proxy_protocol and custom stream access_log pass.
+        for extra in [
+            "send_proxy_protocol = \"\"",
+            "send_proxy_protocol = \"$ENV:PP\"",
+            "access_log = \"/var/log/stream.log {stream} {upstream} {result}\"",
+        ] {
+            let stream: StreamConf = toml::from_str(&format!(
+                "addr = \"127.0.0.1:9443\"\nupstream = \"u\"\n{extra}"
+            ))
+            .unwrap();
+            assert_eq!(true, stream.validate().is_ok(), "{extra}");
         }
     }
 }

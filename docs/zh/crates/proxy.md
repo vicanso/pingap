@@ -114,6 +114,9 @@ proxy_protocol = true
 - 头里的目的地址（客户端连的那个地址）没有使用：`$server_addr` 和 `$server_port` 仍是本监听的。
 - **不带** TLS 的监听开了 `proxy_protocol` 时，该 server 不上报“被淘汰的上游连接空闲了多久”这项指标。
 - 收到的头本身不会转发给上游。上游配置 `send_proxy_protocol = "v1"` 或 `"v2"` 后，会为它建立的每条连接写一个自己的头，其中的客户端地址就是本 server 从收到的头里取得的地址：见 [upstream](upstream.md)。
+- **入站 PROXY protocol v2 TLV 解析**：当来自可信代理的 v2 头附带 TLV 扩展（`ALPN`、`AUTHORITY`、`UNIQUE_ID`、`NETNS`、`SSL` 子 TLV、`AWS` VPCE ID 或自定义 TLV；`NOOP` 会被忽略）时，Pingap 会把它们解析到当前连接上：
+  - 在 `proxy_set_headers` 与 [`request_headers`](../plugins/request_headers.md) 插件中可使用 `$proxy_protocol_alpn`、`$proxy_protocol_authority`、`$proxy_protocol_unique_id`、`$proxy_protocol_netns`、`$proxy_protocol_tls_version`、`$proxy_protocol_tls_cn`、`$proxy_protocol_tls_cipher`、`$proxy_protocol_aws_vpce_id`，以及按十六进制或十进制类型读取的 `$proxy_protocol_tlv_0x..`（如 `$proxy_protocol_tlv_0xE1`，返回可打印 ASCII 或 `0x<hex>`）。与 `$tls_client_*` 相同，当连接上没有对应 TLV 时会写入空值，避免客户端自带同名请求头伪造。
+  - 在 HTTP 访问日志中可使用 `{:proxy_protocol_alpn}`、`{:proxy_protocol_authority}`、`{:proxy_protocol_unique_id}`、`{:proxy_protocol_netns}`、`{:proxy_protocol_tls_version}`、`{:proxy_protocol_tls_cn}`、`{:proxy_protocol_tls_cipher}` 与 `{:proxy_protocol_aws_vpce_id}`（四层 stream 访问日志中对应 `{pp_*}`）。
 
 ### 客户端证书（双向 TLS）
 
@@ -152,8 +155,9 @@ proxy_set_headers = [
 
 - 作为请求头的值时，客户端没有证书的情况下前三项是**空值**，请求头照样会被设置：客户端自己带来的同名头会被替换掉，不会像是代理担保过一样传给上游。这说的是 `proxy_set_headers` 和 `request_headers` 插件的 `set_headers`，凡是上游会读这些头的 location 都要用它们设置。`proxy_add_headers`、`add_headers`、`set_headers_not_exists` 会保留客户端带来的值，这里不能用。
 - 证书属于连接：同一连接上的每个请求、HTTP/2 连接上的每个流，拿到的是同一张。
-- CA 在 server 启动时读取。修改 `tls_client_ca` 属于 server 的变更，需要重启（`--autorestart`），和它的其他 TLS 设置一样。不检查吊销列表：要在证书过期前把它挡在外面，请在上游或插件里按指纹或序列号拒绝。
-- 两种 TLS 后端都支持。`pingap -t` 会读取 CA，解析不了时报错。
+- CA 在 server 启动时读取。修改 `tls_client_ca` 或 `tls_client_crl` 属于 server 的变更，需要重启（`--autorestart`），和它的其他 TLS 设置一样。
+- **`tls_client_crl`**：支持 PEM 文件路径、base64 编码 PEM 或原始 PEM，包含一条或多条 X.509 证书吊销列表（需配合 `tls_client_ca`）。会在双向 TLS 握手期间检查吊销状态，OpenSSL（`CRL_CHECK`）与 rustls（`WebPkiClientVerifier` 终端证书吊销检查）两种后端均支持；无效或非 CRL 的 PEM 会在校验或启动时报错。
+- 两种 TLS 后端都支持。`pingap -t` 会读取 CA（以及内联 CRL），解析不了时报错。
 
 上游的中间响应（如 `103 Early Hints`）会原样转发给客户端。响应阶段的插件、访问日志与指标里的状态码、上游耗时都以最终响应为准；`101` 视为最终响应，因为它结束了 HTTP 交互。
 
@@ -227,6 +231,10 @@ tcp_interval = "1m"
 tcp_probe_count = 9
 downstream_read_timeout = "30s"
 downstream_write_timeout = "30s"
+min_send_rate = "1kb"
+total_drain_timeout = "10s"
+allow_ips = ["10.0.0.0/8"]
+deny_ips = ["192.0.2.0/24"]
 modules = ["grpc-web"]
 ```
 
@@ -242,6 +250,9 @@ modules = ["grpc-web"]
 - `ja4 = true` 为每个客户端计算 JA4 TLS 指纹，见 [JA4 指纹](#ja4-指纹)。需要 `global_certificates = true`，配置校验会检查。
 - `prometheus_metrics` 在本 server 上暴露 pull 端点；URL 值则配置 push 模式。pull 端点和 server 上的其他路径一样：先执行（按 host 和 path）匹配到的 location 的请求阶段插件，所以挂了 `basic_auth` 或 `ip_restriction` 的 location 下的 `/metrics` 受它们保护，该 location 上自己应答请求的插件（`directory`、`mock`、`redirect`）也会应答这个路径。端点本身没有认证：匹配不到任何 location 的请求会直接拿到指标。如果 server 上的 location 都限定了 `host`，换一个 `Host` 的请求就匹配不到它们，所以要让端点对所有请求都受保护，需要给这个路径配一个不限定 host 的 location。
 - `enable_server_timing` 添加由请求时序分解构建的 `Server-Timing` 响应头——便于诊断延迟来源。
+- `allow_ips` / `deny_ips` 在接入连接后、TLS 握手与 HTTP 解析前执行连接级 IP/CIDR 访问控制（`deny_ips` 优先于 `allow_ips`；来自 `basic.trusted_proxies` 且启用入站 `proxy_protocol` 时按真实客户端地址判定）。
+- `min_send_rate` 设置每秒向下游发送响应的最低速率（字节/秒，如 `"1kb"`），读取过慢导致低于该阈值的连接会被关闭（`set_min_send_rate`）。
+- `total_drain_timeout` 限制关闭或跳过前排空未读客户端请求体允许的最长总耗时（如 `"10s"`，`set_total_drain_timeout`）。
 - `error_template`（在 `[basic]` 下）替换内置 `error.html`。模板在 server 启动时解析一次，每次出错填入三个占位符：
 
   ```text
@@ -319,13 +330,16 @@ addr = "0.0.0.0:9443"
 upstream = "db_primary"        # 可选：用于非 TLS 或未匹配 SNI 的回退上游
 sni_routes = { "api.example.com" = "tls_a", "*.app.example.com" = "tls_a" }
 sni_read_timeout = "5s"
+# global_certificates = true   # 开启本地 TLS 终结与可选双向 TLS
+# access_log = "combined"      # 可配置的四层访问日志
+# send_proxy_protocol = "v2"   # 写出出站 PROXY protocol 头
 ```
 
-- **TLS SNI 免解密透传**：配置 `sni_routes` 后，Pingap 不持有任何 TLS 证书，仅在 `sni_read_timeout` 内预读客户端首包 TLS `ClientHello`（支持跨多 TLS Record 重组），经 `pingap_core::ja4::extract_sni` 提取 SNI 后按「精确域名（不区分大小写、去除末尾 `.`）> 最长泛域名（`*.domain`，不匹配根域名）> 可选默认 `upstream`」匹配目标上游，并在建连后原封不动重放已预读的字节。
+- **TLS SNI 透传与本地 TLS 终结**：未设置 `global_certificates` 而配置 `sni_routes` 时，Pingap 不持有任何 TLS 证书，仅在 `sni_read_timeout` 内预读客户端首包 TLS `ClientHello`（支持跨多 TLS Record 重组），经 `pingap_core::ja4::extract_sni` 提取 SNI 后按「精确域名（不区分大小写、去除末尾 `.`）> 最长泛域名（`*.domain`，不匹配根域名）> 可选默认 `upstream`」匹配目标上游，并在建连后原封不动重放已预读的字节。设置 `global_certificates = true` 后，监听器会改用 [pingap-certificate](certificate.md) 的动态证书存储本地终结 TLS（同时支持 OpenSSL 与 rustls）再将明文转发给上游，并支持 `tls_cipher_list`、`tls_ciphersuites`、`tls_min_version`、`tls_max_version`（仅 OpenSSL，`tls-rustls` 下校验拒绝）及双向 TLS（`tls_client_ca`、`tls_client_auth`、`tls_client_crl`）。
 - **纯 TCP 与半关闭**：未配置 `sni_routes`（或非 TLS 流量回退到默认 `upstream`）时直接建立双向转发，正确传递 TCP `FIN` 半关闭并在多地址上游间执行建连失败切换。
-- **PROXY protocol**：入站 `proxy_protocol = true` 仅从 `basic.trusted_proxies` 读取 v1/v2 头并先于 `allow_ips` / `deny_ips` 生效；若目标上游配置了 `send_proxy_protocol = "v1"` / `"v2"`，Pingap 会在重放预读字节之前写出携带真实客户端地址的代理协议头。
-- **热重载边界**：`upstream`、`sni_routes`、`proxy_protocol`、`connect_timeout`、`idle_timeout`、`sni_read_timeout`、`max_connections`、`allow_ips`、`deny_ips`、`remark` 可在 `--autoreload` 下平滑生效且不中断已有长连接；`addr`、`threads`、`reuse_port`、TCP socket 参数及新增/删除 stream 项需要重启（记录在 `left_for_restart`）。
-- **可观测性**：以 `pingap::stream_access` 输出结构化连接日志，并通过 Prometheus 导出 `pingap_stream_active_connections`、`pingap_stream_connections_total` 与 `pingap_stream_bytes_total` 指标。
+- **PROXY protocol**：入站 `proxy_protocol = true` 仅从 `basic.trusted_proxies` 读取 v1/v2 头（含 v2 TLV）并先于 `allow_ips` / `deny_ips` 生效；在 stream（或目标 upstream）上配置 `send_proxy_protocol = "v1"` / `"v2"` 时，Pingap 会在转发流字节前写出携带真实客户端地址的出站 PROXY protocol 头。
+- **热重载边界**：`upstream`、`sni_routes`、`proxy_protocol`、`connect_timeout`、`idle_timeout`、`sni_read_timeout`、`max_connections`、`allow_ips`、`deny_ips`、`remark` 可在 `--autoreload` 下平滑生效且不中断已有长连接；`addr`、`threads`、`reuse_port`、TCP socket 参数、TLS 监听设置（`global_certificates`、`tls_*`、`tls_client_*`）及新增/删除 stream 项需要重启（记录在 `left_for_restart`）。
+- **可观测性**：支持可配置的 `access_log`（预设 `combined` / `common` / `short` / `tiny` / `json` 与 `{stream}`、`{client_ip}`、`{client_addr}`、`{sni}`、`{upstream}`、`{backend}`、`{bytes_rx}`、`{bytes_tx}`、`{duration_ms}`、`{latency}`、`{result}`、`{tls_*}`、`{pp_*}` 等标签，见 [pingap-logger](logger.md#四层-stream-访问日志)），同时以 `pingap::stream_access` 输出结构化连接日志，并通过 Prometheus 导出 `pingap_stream_active_connections`、`pingap_stream_connections_total` 与 `pingap_stream_bytes_total` 指标。
 
 ## 每请求上下文
 

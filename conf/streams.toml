@@ -17,6 +17,28 @@
 # (requires `basic.trusted_proxies` to be configured).
 # proxy_protocol = true
 
+# Send outbound PROXY protocol header ("v1" or "v2") to the upstream backend.
+# send_proxy_protocol = "v2"
+
+# Stream access log preset ("combined", "common", "short", "tiny", "json") or
+# custom format, optionally prefixed by a log file path.
+# access_log = "combined"
+
+# Terminate TLS locally on this stream listener using globally configured
+# certificates (`[certificates.*]`) instead of TLS SNI passthrough.
+# global_certificates = true
+
+# Optional TLS settings (OpenSSL backend only; requires `global_certificates = true`).
+# tls_cipher_list = ""
+# tls_ciphersuites = ""
+# tls_min_version = "tlsv1.2"
+# tls_max_version = "tlsv1.3"
+
+# Mutual TLS client certificate verification (requires `global_certificates = true`).
+# tls_client_ca = "/opt/pingap/conf/client-ca.pem"
+# tls_client_crl = "/opt/pingap/conf/client-crl.pem"
+# tls_client_auth = "require"
+
 # Per-stream TCP connect timeout overriding the upstream default.
 # connect_timeout = "5s"
 

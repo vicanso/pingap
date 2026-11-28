@@ -121,6 +121,11 @@ locations = ["lo"]
 # this needs. Default `false`
 # proxy_protocol = true
 
+# Pre-TLS / connection-level client IP/CIDR allowlist and denylist (evaluated
+# after optional inbound `proxy_protocol`; `deny_ips` wins over `allow_ips`).
+# allow_ips = ["10.0.0.0/8", "192.168.0.0/16"]
+# deny_ips = ["192.0.2.0/24"]
+
 # Ask every client for a certificate and verify it against this CA (mutual
 # TLS): a PEM file path, base64-encoded PEM or raw PEM, with one or more
 # certificates. Needs `global_certificates = true`. What the certificate
@@ -128,6 +133,10 @@ locations = ["lo"]
 # `$tls_client_serial` and `$tls_client_verified` in headers, and with
 # `{:...}` in the access log. Default `none`
 # tls_client_ca = "/opt/pingap/conf/client-ca.pem"
+#
+# With `tls_client_ca`: optional X.509 CRL(s) (PEM text, file path, or
+# base64-encoded PEM) checked during mTLS client certificate verification.
+# tls_client_crl = "/opt/pingap/conf/client-crl.pem"
 #
 # With `tls_client_ca`: "require" (the default) ends the handshake of a
 # client that shows no certificate, "optional" lets it in. A certificate
@@ -180,6 +189,16 @@ locations = ["lo"]
 # How long to wait for the client while writing the response.
 # Default `none`
 # downstream_write_timeout = "30s"
+
+# Minimum downstream response send rate per second (`bytes/sec`). Connections
+# falling below this rate are closed.
+# Default `none`
+# min_send_rate = "64kib"
+
+# Maximum total duration spent draining unread client request bodies before
+# reusing or closing a connection.
+# Default `none`
+# total_drain_timeout = "5s"
 
 # TCP_USER_TIMEOUT of the accepted connections (Linux): how long data that
 # was sent may stay unacknowledged before the connection is closed.

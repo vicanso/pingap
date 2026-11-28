@@ -25,7 +25,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy compression retry_cache reload webhook abnormal_exit foreground proxy_protocol stream daemon restart restart_guard upgrade systemd"
+CASES="samples proxy compression retry_cache reload webhook abnormal_exit foreground proxy_protocol stream direction_d daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -1982,6 +1982,355 @@ EOT
     "$(python3 "$DIR/stream_client.py" tcp $tcp_stream still-up)"
   expect "moved L4 port is not bound before restart" 000 \
     "$(status "http://127.0.0.1:$moved_stream/")"
+}
+
+case_direction_d() {
+  if ! command -v openssl >/dev/null || ! command -v python3 >/dev/null; then
+    skip "openssl and python3 are required for case_direction_d"
+    return
+  fi
+  local stream_tls=$((PORT_BASE + 190)) stream_be=$((PORT_BASE + 191))
+  local http_tlv=$((PORT_BASE + 192)) http_tlv_be=$((PORT_BASE + 193))
+  local mtls_srv=$((PORT_BASE + 194)) mtls_be=$((PORT_BASE + 195))
+
+  mkdir -p "$DIR/ca/newcerts"
+  : >"$DIR/ca/index.txt"
+  printf '01\n' >"$DIR/ca/serial"
+  printf '01\n' >"$DIR/ca/crlnumber"
+  cat >"$DIR/ca/ca.cnf" <<EOT
+[ req ]
+distinguished_name = req_dn
+x509_extensions = v3_ca
+[ req_dn ]
+[ ca ]
+default_ca = CA_default
+[ CA_default ]
+dir = $DIR/ca
+database = \$dir/index.txt
+new_certs_dir = \$dir/newcerts
+certificate = \$dir/ca.crt
+private_key = \$dir/ca.key
+serial = \$dir/serial
+crlnumber = \$dir/crlnumber
+default_md = sha256
+default_days = 2
+default_crl_days = 2
+policy = policy_any
+x509_extensions = usr_cert
+[ policy_any ]
+commonName = supplied
+[ v3_ca ]
+subjectKeyIdentifier = hash
+basicConstraints = critical, CA:true
+keyUsage = critical, digitalSignature, cRLSign, keyCertSign
+[ usr_cert ]
+basicConstraints = CA:FALSE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+keyUsage = digitalSignature, keyEncipherment
+[ server_cert ]
+basicConstraints = CA:FALSE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+keyUsage = digitalSignature, keyEncipherment
+subjectAltName = DNS:stream.d.test,DNS:mtls.d.test
+EOT
+
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+    -keyout "$DIR/ca/ca.key" -out "$DIR/ca/ca.crt" \
+    -subj "/CN=Pingap-E2E-CA" -config "$DIR/ca/ca.cnf" -extensions v3_ca 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout "$DIR/ca/server.key" \
+    -out "$DIR/ca/server.csr" -subj "/CN=stream.d.test" 2>/dev/null
+  openssl ca -batch -config "$DIR/ca/ca.cnf" -extensions server_cert \
+    -in "$DIR/ca/server.csr" -out "$DIR/ca/server.crt" 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout "$DIR/ca/valid.key" \
+    -out "$DIR/ca/valid.csr" -subj "/CN=client-valid" 2>/dev/null
+  openssl ca -batch -config "$DIR/ca/ca.cnf" \
+    -in "$DIR/ca/valid.csr" -out "$DIR/ca/valid.crt" 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -keyout "$DIR/ca/revoked.key" \
+    -out "$DIR/ca/revoked.csr" -subj "/CN=client-revoked" 2>/dev/null
+  openssl ca -batch -config "$DIR/ca/ca.cnf" \
+    -in "$DIR/ca/revoked.csr" -out "$DIR/ca/revoked.crt" 2>/dev/null
+  openssl ca -batch -config "$DIR/ca/ca.cnf" -revoke "$DIR/ca/revoked.crt" 2>/dev/null
+  openssl ca -batch -config "$DIR/ca/ca.cnf" -gencrl -out "$DIR/ca/ca.crl.pem" 2>/dev/null
+
+  cat >"$DIR/pp2_tcp_backend.py" <<'PY'
+import socket, struct, sys, threading
+
+port = int(sys.argv[1])
+SIG = b"\r\n\r\n\0\r\nQUIT\n"
+
+def recv_exact(conn, n):
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            return bytes(buf)
+        buf.extend(chunk)
+    return bytes(buf)
+
+def handle(conn):
+    try:
+        head = recv_exact(conn, 16)
+        if len(head) < 16 or head[:12] != SIG or head[12] != 0x21 or head[13] != 0x11:
+            conn.sendall(b"NO_PP2")
+            return
+        alen = struct.unpack(">H", head[14:16])[0]
+        addr_buf = recv_exact(conn, alen)
+        src_ip = socket.inet_ntop(socket.AF_INET, addr_buf[:4])
+        msg = bytearray()
+        while not msg.endswith(b"\n"):
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            msg.extend(chunk)
+        conn.sendall(f"PP2_V2:{src_ip}:".encode() + bytes(msg))
+    finally:
+        conn.close()
+
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", port))
+srv.listen(32)
+while True:
+    c, _ = srv.accept()
+    threading.Thread(target=handle, args=(c,), daemon=True).start()
+PY
+
+  cat >"$DIR/http_hdr_echo.py" <<'PY'
+import json, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        hdrs = {k.lower(): v for k, v in self.headers.items()}
+        body = json.dumps(hdrs).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+
+  run_bg "$DIR/stream_be.out" python3 "$DIR/pp2_tcp_backend.py" $stream_be
+  run_bg "$DIR/http_tlv_be.out" python3 "$DIR/http_hdr_echo.py" $http_tlv_be
+  backend $mtls_be mtls_be
+  wait_port $stream_be || fail "pp2 tcp backend listens on $stream_be"
+  wait_port $http_tlv_be || fail "http header echo backend listens on $http_tlv_be"
+
+  basic_conf "$DIR/c" 'trusted_proxies = ["127.0.0.1"]'
+  cat >"$DIR/c/certificates.toml" <<EOT
+[certificates.d]
+domains = "stream.d.test,mtls.d.test"
+tls_cert = "$DIR/ca/server.crt"
+tls_key = "$DIR/ca/server.key"
+is_default = true
+EOT
+  cat >"$DIR/c/upstreams.toml" <<EOT
+[upstreams.stream_pp2_up]
+addrs = ["127.0.0.1:$stream_be"]
+
+[upstreams.http_tlv_up]
+addrs = ["127.0.0.1:$http_tlv_be"]
+
+[upstreams.mtls_up]
+addrs = ["127.0.0.1:$mtls_be"]
+EOT
+  cat >"$DIR/c/locations.toml" <<'EOT'
+[locations.pp2_tlv]
+upstream = "http_tlv_up"
+host = "tlv.d.test"
+path = "/"
+proxy_set_headers = [
+  "x-pp-alpn:$proxy_protocol_alpn",
+  "x-pp-authority:$proxy_protocol_authority",
+  "x-pp-uid:$proxy_protocol_unique_id",
+  "x-pp-vpce:$proxy_protocol_aws_vpce_id",
+  "x-pp-custom:$proxy_protocol_tlv_0xe1",
+]
+
+[locations.mtls_root]
+upstream = "mtls_up"
+path = "/"
+EOT
+  cat >"$DIR/c/servers.toml" <<EOT
+[servers.pp2_tlv]
+addr = "127.0.0.1:$http_tlv"
+proxy_protocol = true
+locations = ["pp2_tlv"]
+
+[servers.mtls_acl]
+addr = "127.0.0.1:$mtls_srv"
+global_certificates = true
+proxy_protocol = true
+tls_client_ca = "$DIR/ca/ca.crt"
+tls_client_crl = "$DIR/ca/ca.crl.pem"
+deny_ips = ["198.51.100.9"]
+locations = ["mtls_root"]
+EOT
+  cat >"$DIR/c/streams.toml" <<EOT
+[streams.tls_pp2]
+addr = "127.0.0.1:$stream_tls"
+upstream = "stream_pp2_up"
+global_certificates = true
+sni_routes = { "stream.d.test" = "stream_pp2_up" }
+send_proxy_protocol = "v2"
+access_log = "$DIR/stream_access.log?flush_timeout=100ms {\"stream\":\"{stream}\",\"sni\":\"{sni}\",\"upstream\":\"{upstream}\",\"tls_version\":\"{tls_version}\",\"tls_cipher\":\"{tls_cipher}\",\"result\":\"{result}\"}"
+idle_timeout = "10s"
+EOT
+
+  pingap "$DIR/pingap.log" -c "$DIR/c"
+  wait_port $stream_tls || fail "L4 TLS stream listens on $stream_tls"
+  wait_port $http_tlv || fail "HTTP PROXY v2 TLV server listens on $http_tlv"
+  wait_port $mtls_srv || fail "mTLS ACL server listens on $mtls_srv"
+
+  # 1. L4 TLS termination + send_proxy_protocol = "v2" + JSON stream access_log
+  expect "L4 TLS termination forwards PROXY v2 header and payload" "PP2_V2:127.0.0.1:hello-d" "$(
+    python3 - "$stream_tls" "$DIR/ca/ca.crt" <<'PY'
+import socket, ssl, sys
+port, ca = int(sys.argv[1]), sys.argv[2]
+ctx = ssl.create_default_context(cafile=ca)
+ctx.check_hostname = False
+with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+    with ctx.wrap_socket(raw, server_hostname="stream.d.test") as tls:
+        tls.sendall(b"hello-d\n")
+        out = bytearray()
+        while True:
+            b = tls.recv(4096)
+            if not b:
+                break
+            out.extend(b)
+print(out.decode().strip(), end="")
+PY
+  )"
+  wait_for 5 sh -c 'for f in "'"$DIR"'"/stream_access.log*; do [ -s "$f" ] && exit 0; done; exit 1'
+  expect "stream JSON access_log captures TLS + routing metadata" ok "$(
+    python3 - "$DIR" <<'PY'
+import glob, json, os, sys
+files = sorted(glob.glob(os.path.join(sys.argv[1], "stream_access.log*")))
+assert files, "no stream_access.log* file"
+with open(files[-1]) as f:
+    lines = [l.strip() for l in f if l.strip()]
+assert lines, f"empty {files[-1]}"
+doc = json.loads(lines[-1])
+assert doc["stream"] == "tls_pp2", doc
+assert doc["sni"] == "stream.d.test", doc
+assert doc["upstream"] == "stream_pp2_up", doc
+assert doc["result"] == "ok", doc
+assert doc["tls_version"] and doc["tls_version"] != "-", doc
+assert doc["tls_cipher"] and doc["tls_cipher"] != "-", doc
+print("ok")
+PY
+  )"
+
+  # 2. HTTP inbound PROXY v2 TLVs -> proxy_set_headers
+  expect "HTTP PROXY v2 TLVs inject upstream headers" ok "$(
+    python3 - "$http_tlv" <<'PY'
+import json, socket, struct, sys
+
+port = int(sys.argv[1])
+def tlv(t, v):
+    return bytes([t]) + struct.pack(">H", len(v)) + v
+
+addrs = socket.inet_aton("203.0.113.42") + socket.inet_aton("127.0.0.1") + struct.pack(">HH", 55555, port)
+tlvs = (
+    tlv(0x01, b"h2")
+    + tlv(0x02, b"tlv.d.test")
+    + tlv(0x05, b"uid-d-99")
+    + tlv(0xEA, b"\x01vpce-d-77")
+    + tlv(0xE1, b"tag-e1")
+)
+payload = addrs + tlvs
+pp2 = b"\r\n\r\n\0\r\nQUIT\n\x21\x11" + struct.pack(">H", len(payload)) + payload
+req = pp2 + b"GET /check HTTP/1.1\r\nHost: tlv.d.test\r\nConnection: close\r\n\r\n"
+
+with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+    s.sendall(req)
+    out = bytearray()
+    while True:
+        b = s.recv(4096)
+        if not b:
+            break
+        out.extend(b)
+raw_head, _, raw_body = out.partition(b"\r\n\r\n")
+assert b"200 OK" in raw_head, raw_head
+doc = json.loads(raw_body.decode())
+assert doc.get("x-pp-alpn") == "h2", doc
+assert doc.get("x-pp-authority") == "tlv.d.test", doc
+assert doc.get("x-pp-uid") == "uid-d-99", doc
+assert doc.get("x-pp-vpce") == "vpce-d-77", doc
+assert doc.get("x-pp-custom") == "tag-e1", doc
+print("ok")
+PY
+  )"
+
+  # 3a. mTLS with valid cert succeeds; revoked cert rejected under CRL
+  expect "mTLS valid client certificate succeeds" 200 "$(
+    python3 - "$mtls_srv" "$DIR/ca/ca.crt" "$DIR/ca/valid.crt" "$DIR/ca/valid.key" <<'PY'
+import socket, ssl, struct, sys
+
+port, ca, cert, key = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+addrs = socket.inet_aton("203.0.113.10") + socket.inet_aton("127.0.0.1") + struct.pack(">HH", 12345, port)
+pp2 = b"\r\n\r\n\0\r\nQUIT\n\x21\x11" + struct.pack(">H", len(addrs)) + addrs
+ctx = ssl.create_default_context(cafile=ca)
+ctx.check_hostname = False
+ctx.load_cert_chain(cert, key)
+with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+    raw.sendall(pp2)
+    with ctx.wrap_socket(raw, server_hostname="mtls.d.test") as tls:
+        tls.sendall(b"GET / HTTP/1.1\r\nHost: mtls.d.test\r\nConnection: close\r\n\r\n")
+        resp = tls.recv(4096).decode(errors="replace")
+print(resp.split(" ", 2)[1], end="")
+PY
+  )"
+  expect "mTLS CRL rejects revoked client certificate" rejected "$(
+    python3 - "$mtls_srv" "$DIR/ca/ca.crt" "$DIR/ca/revoked.crt" "$DIR/ca/revoked.key" <<'PY'
+import socket, ssl, struct, sys
+
+port, ca, cert, key = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+addrs = socket.inet_aton("203.0.113.10") + socket.inet_aton("127.0.0.1") + struct.pack(">HH", 12346, port)
+pp2 = b"\r\n\r\n\0\r\nQUIT\n\x21\x11" + struct.pack(">H", len(addrs)) + addrs
+ctx = ssl.create_default_context(cafile=ca)
+ctx.check_hostname = False
+ctx.load_cert_chain(cert, key)
+try:
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+        raw.sendall(pp2)
+        with ctx.wrap_socket(raw, server_hostname="mtls.d.test") as tls:
+            tls.sendall(b"GET / HTTP/1.1\r\nHost: mtls.d.test\r\nConnection: close\r\n\r\n")
+            data = tls.recv(4096)
+            print("unexpected:" + data.decode(errors="replace"), end="")
+except (ssl.SSLError, OSError):
+    print("rejected", end="")
+PY
+  )"
+
+  # 3b. Pre-TLS deny_ips closes connection before ServerHello
+  expect "pre-TLS deny_ips closes connection without ServerHello" eof_no_server_hello "$(
+    python3 - "$mtls_srv" <<'PY'
+import socket, struct, sys
+
+port = int(sys.argv[1])
+addrs = socket.inet_aton("198.51.100.9") + socket.inet_aton("127.0.0.1") + struct.pack(">HH", 22222, port)
+pp2 = b"\r\n\r\n\0\r\nQUIT\n\x21\x11" + struct.pack(">H", len(addrs)) + addrs
+# Minimal TLS 1.2 ClientHello record header + body
+client_hello = bytes.fromhex("160301002f0100002b0303" + "00"*32 + "000002002f01000000")
+with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+    s.sendall(pp2 + client_hello)
+    try:
+        data = s.recv(1024)
+    except ConnectionResetError:
+        data = b""
+if not data:
+    print("eof_no_server_hello", end="")
+else:
+    print(f"unexpected:{data[:16].hex()}", end="")
+PY
+  )"
 }
 
 # ---------------------------------------------------------------------------

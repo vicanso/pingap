@@ -80,6 +80,27 @@ What is on `main` and in no release yet.
   a client seen as `::ffff:192.168.1.7`. A prefix written as IPv4 is
   unchanged. A prefix shorter than 96 (`::/0`) still matches IPv6 only.
 
+### Servers & Streams
+
+- **New server, stream, and PROXY protocol options are opt-in.** Existing
+  configurations behave unchanged when unset:
+  - `[servers.*]` adds `tls_client_crl` (mTLS CRL verification across OpenSSL
+    and rustls), pre-TLS `allow_ips` / `deny_ips`, `min_send_rate`, and
+    `total_drain_timeout`.
+  - `[streams.*]` adds local TLS termination and mTLS (`global_certificates`,
+    `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version`, `tls_max_version`,
+    `tls_client_ca`, `tls_client_auth`, `tls_client_crl`), `access_log`
+    (presets `combined`/`common`/`short`/`tiny`/`json` and `{stream}`,
+    `{tls_*}`, `{pp_*}`, etc.), and `send_proxy_protocol` (`v1`/`v2`).
+    Under `tls-rustls`, stream `tls_cipher_list` / `tls_ciphersuites` /
+    `tls_min_version` / `tls_max_version` are rejected at config validation,
+    matching `[servers.*]`.
+  - Inbound PROXY protocol v2 headers expose `$proxy_protocol_*` /
+    `$proxy_protocol_tlv_0x..` in header rules and `{:proxy_protocol_*}` in
+    access logs. Like `$tls_client_*`, when a `$proxy_protocol_*` variable is
+    set on a header and no matching TLV is present on the connection, the
+    header is written empty instead of forwarding a client-supplied value.
+
 ### For users of the crates
 
 - **pingap-util**: `home_dir()` is new, and what `resolve_path` expands `~`
@@ -130,6 +151,12 @@ What is on `main` and in no release yet.
 - **pingap-core / pingap-logger**: `UpstreamInfo.address` is `Arc<str>` (like
   `location` and `name`), `OtelTracer::new_upstream_span` takes
   `impl Into<Cow<'static, str>>`, and `Parser` has `needs_latency`.
+  `ConnectionInfo` adds `proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvs>>`
+  and `CtxLogField` adds `ProxyProtocol*` variants; `pingap-logger` adds
+  `StreamLogContext`, `StreamLogParser`, and `StreamLogger`.
+- **pingap-certificate**: `TlsSettingParams` adds `client_crl: Option<String>`,
+  and `validate_streams_tls_for_backend` is exported alongside
+  `validate_servers_tls_for_backend`.
 
 ## From 0.15 to 0.16
 

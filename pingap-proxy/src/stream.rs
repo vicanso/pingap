@@ -21,19 +21,30 @@
 //! the SNI hostname without terminating TLS, selects the target upstream, and
 //! replays all peeked ClientHello bytes verbatim after connecting.
 
-use super::proxy_protocol;
-use super::{Error, LOG_TARGET};
+use super::proxy_protocol::{
+    self, IpAllowCheck, PreTls, ProxyProtocolTlvStore,
+};
+use super::{Error, LOG_TARGET, access_log_sink_key};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 use ahash::AHashMap;
 use async_trait::async_trait;
+use bstr::ByteSlice;
+use bytes::BytesMut;
+use pingap_certificate::{
+    CertificateProvider, GlobalCertificate, TlsSettingParams,
+};
 use pingap_config::StreamConf;
 use pingap_core::ja4::{
     ClientHelloRef, MAX_CLIENT_HELLO_SIZE, extract_sni, read_client_hello_ref,
 };
 use pingap_core::{
-    AddrStr, UpstreamInstance, is_trusted_proxy, new_proxy_protocol_header,
-    new_tcp_keepalive, now_ms, unix_socket_path,
+    AddrStr, ProxyProtocolTlvs, ProxyProtocolVersion, TlsClientCert,
+    TlsHandshakeInfo, UpstreamInstance, is_trusted_proxy,
+    new_proxy_protocol_header, new_tcp_keepalive, now_ms, unix_socket_path,
+};
+use pingap_logger::{
+    StreamLogContext, StreamLogger, parse_access_log_directive,
 };
 use pingap_performance::{stream_connection_close, stream_connection_open};
 use pingap_upstream::{TcpPeer, Upstream, UpstreamProvider};
@@ -43,8 +54,9 @@ use pingora::listeners::{ListenerConfig, TcpSocketOptions};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::l4::socket::SocketAddr as BackendAddr;
 use pingora::protocols::l4::stream::{L4BufferSettings, Stream as L4Stream};
-use pingora::protocols::{GetSocketDigest, Stream};
+use pingora::protocols::{GetSocketDigest, IO, Stream};
 use pingora::server::ShutdownWatch;
+use pingora::server::configuration::ServerConf as PingoraServerConf;
 use pingora::services::ServiceWithDependents;
 use pingora::services::listening::Service;
 use std::collections::BTreeMap;
@@ -56,6 +68,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 #[cfg(unix)]
 use tokio::net::UnixStream;
+use tokio::sync::mpsc::Sender;
 use tokio::time::{Instant as TokioInstant, timeout, timeout_at};
 use tracing::{debug, info, warn};
 
@@ -79,6 +92,10 @@ pub struct StreamRuntime {
     /// a broader one (`*.example.com`).
     sni_wildcards: WildcardSniRoutes,
     pub proxy_protocol: bool,
+    pub global_certificates: bool,
+    pub send_proxy_protocol: Option<ProxyProtocolVersion>,
+    pub access_logger: Option<Arc<StreamLogger>>,
+    pub access_log_to_application: bool,
     pub connect_timeout: Option<Duration>,
     pub idle_timeout: Option<Duration>,
     pub sni_read_timeout: Duration,
@@ -126,11 +143,49 @@ fn parse_ip_rules(
     })
 }
 
+fn parse_stream_send_proxy_protocol(
+    stream_name: &str,
+    raw: Option<&str>,
+) -> Result<Option<ProxyProtocolVersion>> {
+    let Some(raw) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    ProxyProtocolVersion::parse(raw)
+        .map(Some)
+        .ok_or_else(|| Error::Common {
+            category: "stream".to_string(),
+            message: format!(
+                "stream({stream_name}) send_proxy_protocol {raw:?} should be one of v1, v2"
+            ),
+        })
+}
+
+fn parse_stream_access_logger(
+    stream_name: &str,
+    access_log: Option<&String>,
+) -> Result<(Option<Arc<StreamLogger>>, bool)> {
+    let (format, target) = parse_access_log_directive(access_log);
+    let to_application = target.is_none();
+    let Some(format) = format else {
+        return Ok((None, to_application));
+    };
+    let logger =
+        StreamLogger::try_new(&format, target.as_deref()).map_err(|e| {
+            Error::Common {
+                category: "access_log".to_string(),
+                message: format!("stream({stream_name}) access_log: {e}"),
+            }
+        })?;
+    Ok((Some(Arc::new(logger)), to_application))
+}
+
 impl StreamRuntime {
     /// Builds a runtime stream policy from a [`StreamConf`].
     pub fn try_from_conf(name: &str, conf: &StreamConf) -> Result<Self> {
         let (sni_exact, sni_wildcards) =
             build_sni_tables(conf.sni_routes.as_ref());
+        let (access_logger, access_log_to_application) =
+            parse_stream_access_logger(name, conf.access_log.as_ref())?;
         Ok(Self {
             name: name.to_string(),
             default_upstream: conf
@@ -142,6 +197,13 @@ impl StreamRuntime {
             sni_exact,
             sni_wildcards,
             proxy_protocol: conf.proxy_protocol.unwrap_or(false),
+            global_certificates: conf.global_certificates.unwrap_or(false),
+            send_proxy_protocol: parse_stream_send_proxy_protocol(
+                name,
+                conf.send_proxy_protocol.as_deref(),
+            )?,
+            access_logger,
+            access_log_to_application,
             connect_timeout: conf.connect_timeout,
             idle_timeout: conf.idle_timeout,
             sni_read_timeout: conf
@@ -406,7 +468,9 @@ impl ConnectedUpstream {
     }
 }
 
-fn stream_addrs(stream: &L4Stream) -> (Option<SocketAddr>, Option<SocketAddr>) {
+fn stream_addrs<S: GetSocketDigest + ?Sized>(
+    stream: &S,
+) -> (Option<SocketAddr>, Option<SocketAddr>) {
     let Some(digest) = stream.get_socket_digest() else {
         return (None, None);
     };
@@ -451,7 +515,8 @@ async fn connect_and_prepare_peer(
         },
     };
 
-    if let Some(ver) = peer.send_proxy_protocol {
+    if let Some(ver) = runtime.send_proxy_protocol.or(peer.send_proxy_protocol)
+    {
         let header =
             new_proxy_protocol_header(ver, client_addr.zip(local_addr));
         if let Err(err) = conn.write_all_timed(header.as_slice(), dur).await {
@@ -484,6 +549,7 @@ async fn connect_and_prepare_peer(
 struct DialSuccess {
     stream: ConnectedUpstream,
     peer: TcpPeer,
+    connect_time_ms: u64,
     _processing: UpstreamProcessingGuard,
 }
 
@@ -517,6 +583,7 @@ async fn dial_upstream(
         if bump {
             processing.arm(upstream.clone());
         }
+        let connect_started = Instant::now();
         match connect_and_prepare_peer(
             upstream,
             runtime,
@@ -531,6 +598,8 @@ async fn dial_upstream(
                 return Ok(DialSuccess {
                     stream: conn,
                     peer,
+                    connect_time_ms: connect_started.elapsed().as_millis()
+                        as u64,
                     _processing: processing,
                 });
             },
@@ -631,8 +700,8 @@ fn classify_relay_result(res: std::io::Result<()>) -> &'static str {
     }
 }
 
-async fn relay_split_streams<UR, UW>(
-    down: L4Stream,
+async fn relay_split_streams<D, UR, UW>(
+    down: D,
     mut up_r: UR,
     mut up_w: UW,
     client_eof: bool,
@@ -641,6 +710,7 @@ async fn relay_split_streams<UR, UW>(
     rx_counter: &AtomicU64,
 ) -> &'static str
 where
+    D: AsyncRead + AsyncWrite + Unpin,
     UR: AsyncRead + Unpin,
     UW: AsyncWrite + Unpin,
 {
@@ -688,12 +758,44 @@ struct StreamSessionLog<'a> {
     sni: Option<&'a str>,
     upstream: &'a str,
     backend: &'a str,
+    connect_time_ms: Option<u64>,
     tx_bytes: u64,
     rx_bytes: u64,
     result: &'a str,
+    tls_version: Option<&'a str>,
+    tls_cipher: Option<&'a str>,
+    tls_client_cert: Option<&'a TlsClientCert>,
+    proxy_protocol_tlvs: Option<&'a ProxyProtocolTlvs>,
 }
 
-fn finish_stream_session(entry: StreamSessionLog<'_>) {
+fn write_stream_access_log(
+    logger_tx: Option<&Sender<BytesMut>>,
+    startup_sink_key: Option<&str>,
+    to_application: bool,
+    buf: BytesMut,
+) {
+    if (to_application && startup_sink_key.is_some()) || logger_tx.is_none() {
+        let msg = buf.as_bstr();
+        info!(target: STREAM_ACCESS_TARGET, "{msg}");
+        return;
+    }
+    let Some(sender) = logger_tx else {
+        return;
+    };
+    if let Err(tokio::sync::mpsc::error::TrySendError::Closed(buf)) =
+        sender.try_send(buf)
+    {
+        let msg = buf.as_bstr();
+        info!(target: STREAM_ACCESS_TARGET, "{msg}");
+    }
+}
+
+fn finish_stream_session(
+    runtime: Option<&StreamRuntime>,
+    logger_tx: Option<&Sender<BytesMut>>,
+    startup_sink_key: Option<&str>,
+    entry: StreamSessionLog<'_>,
+) {
     stream_connection_close(
         entry.stream,
         entry.upstream,
@@ -701,6 +803,49 @@ fn finish_stream_session(entry: StreamSessionLog<'_>) {
         entry.tx_bytes,
         entry.rx_bytes,
     );
+    if let Some(rt) = runtime
+        && let Some(stream_logger) = &rt.access_logger
+    {
+        let client_addr_str = entry
+            .client_addr
+            .map_or_else(|| "-".to_string(), |a| a.to_string());
+        let client_ip_str = entry.client_addr.map_or_else(
+            || "-".to_string(),
+            |a| a.ip().to_canonical().to_string(),
+        );
+        let upstream = if entry.upstream.is_empty() {
+            "-"
+        } else {
+            entry.upstream
+        };
+        let backend = (!entry.backend.is_empty()).then_some(entry.backend);
+        let log_ctx = StreamLogContext {
+            stream: entry.stream,
+            client_addr: &client_addr_str,
+            client_ip: &client_ip_str,
+            sni: entry.sni,
+            upstream,
+            backend,
+            bytes_rx: entry.rx_bytes,
+            bytes_tx: entry.tx_bytes,
+            duration: entry.started.elapsed(),
+            connect_time_ms: entry.connect_time_ms,
+            result: entry.result,
+            tls_version: entry.tls_version,
+            tls_cipher: entry.tls_cipher,
+            tls_client_cert: entry.tls_client_cert,
+            proxy_protocol_tlvs: entry.proxy_protocol_tlvs,
+        };
+        if let Some(line) = stream_logger.format_line(&log_ctx) {
+            write_stream_access_log(
+                logger_tx,
+                startup_sink_key,
+                rt.access_log_to_application,
+                line,
+            );
+        }
+        return;
+    }
     info!(
         target: STREAM_ACCESS_TARGET,
         stream = entry.stream,
@@ -726,13 +871,74 @@ fn finish_stream_session(entry: StreamSessionLog<'_>) {
     );
 }
 
-/// Pingora [`ServerApp`] serving a Layer 4 TCP / TLS SNI passthrough listener.
+/// Dependencies needed to construct and run a [`StreamServer`].
+#[derive(Clone)]
+pub struct StreamContext {
+    pub stream_provider: Arc<dyn StreamProvider>,
+    pub upstream_provider: Arc<dyn UpstreamProvider>,
+    pub certificate_provider: Arc<dyn CertificateProvider>,
+    pub server_conf: Arc<PingoraServerConf>,
+    pub logger: Option<Sender<BytesMut>>,
+}
+
+/// Pingora [`ServerApp`] serving a Layer 4 TCP / TLS (passthrough or terminated)
+/// listener.
 pub struct StreamApp {
     name: String,
     stream_provider: Arc<dyn StreamProvider>,
     upstream_provider: Arc<dyn UpstreamProvider>,
     active_connections: Arc<AtomicUsize>,
     is_trusted_proxy: fn(IpAddr) -> bool,
+    terminated_tls: bool,
+    proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvStore>>,
+    access_logger: Option<Sender<BytesMut>>,
+    startup_sink_key: Option<String>,
+}
+
+async fn relay_to_connected<D: AsyncRead + AsyncWrite + Unpin>(
+    down: D,
+    conn: ConnectedUpstream,
+    client_eof: bool,
+    idle_timeout: Option<Duration>,
+    tx_bytes: &AtomicU64,
+    rx_bytes: &AtomicU64,
+) -> &'static str {
+    match conn {
+        ConnectedUpstream::Tcp(up) => {
+            let (up_r, up_w) = up.into_split();
+            relay_split_streams(
+                down,
+                up_r,
+                up_w,
+                client_eof,
+                idle_timeout,
+                tx_bytes,
+                rx_bytes,
+            )
+            .await
+        },
+        #[cfg(unix)]
+        ConnectedUpstream::Unix(up) => {
+            let (up_r, up_w) = up.into_split();
+            relay_split_streams(
+                down,
+                up_r,
+                up_w,
+                client_eof,
+                idle_timeout,
+                tx_bytes,
+                rx_bytes,
+            )
+            .await
+        },
+    }
+}
+
+struct RelayParams<'a> {
+    client_addr: Option<SocketAddr>,
+    local_addr: Option<SocketAddr>,
+    peeked_bytes: &'a [u8],
+    client_eof: bool,
 }
 
 impl StreamApp {
@@ -748,6 +954,62 @@ impl StreamApp {
             upstream_provider,
             active_connections: Arc::new(AtomicUsize::new(0)),
             is_trusted_proxy,
+            terminated_tls: false,
+            proxy_protocol_tlvs: None,
+            access_logger: None,
+            startup_sink_key: None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_terminated_tls(mut self, enabled: bool) -> Self {
+        self.terminated_tls = enabled;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_proxy_protocol_tlvs(
+        mut self,
+        tlvs: Option<Arc<ProxyProtocolTlvStore>>,
+    ) -> Self {
+        self.proxy_protocol_tlvs = tlvs;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_access_logger(
+        mut self,
+        logger: Option<Sender<BytesMut>>,
+        startup_sink_key: Option<String>,
+    ) -> Self {
+        self.access_logger = logger;
+        self.startup_sink_key = startup_sink_key;
+        self
+    }
+
+    fn populate_terminated_tls_state(
+        &self,
+        stream: &dyn IO,
+        state: &mut StreamRunState,
+    ) {
+        if let Some(store) = &self.proxy_protocol_tlvs
+            && let Some(digest) = stream.get_socket_digest()
+        {
+            state.pp_tlvs = store.get(&digest);
+        }
+        if let Some(ssl) = stream.get_ssl_digest() {
+            state.tls_version = Some(ssl.version.to_string());
+            state.tls_cipher = Some(ssl.cipher.to_string());
+            if let Some(info) = ssl.extension.get::<TlsHandshakeInfo>() {
+                state.sni = info.server_name.as_deref().map(str::to_string);
+                state.tls_client_cert = info.client_cert.clone();
+            }
+        }
+        if state.sni.is_none() {
+            state.sni = state
+                .pp_tlvs
+                .as_deref()
+                .and_then(|tlvs| tlvs.authority.clone());
         }
     }
 
@@ -756,23 +1018,27 @@ impl StreamApp {
         down: &mut L4Stream,
         runtime: &StreamRuntime,
         client_addr: &mut Option<SocketAddr>,
+        state: &mut StreamRunState,
     ) -> std::result::Result<StreamPeek, &'static str> {
         let _ = down.set_nodelay();
         if runtime.proxy_protocol {
-            if let Err(err) = proxy_protocol::accept(
+            match proxy_protocol::accept_with_tlvs(
                 down,
                 proxy_protocol::TIMEOUTS,
                 self.is_trusted_proxy,
             )
             .await
             {
-                debug!(
-                    target: LOG_TARGET,
-                    stream = self.name,
-                    error = %err,
-                    "inbound proxy protocol header rejected"
-                );
-                return Err("proxy_protocol_error");
+                Ok(tlvs) => state.pp_tlvs = tlvs,
+                Err(err) => {
+                    debug!(
+                        target: LOG_TARGET,
+                        stream = self.name,
+                        error = %err,
+                        "inbound proxy protocol header rejected"
+                    );
+                    return Err("proxy_protocol_error");
+                },
             }
             (*client_addr, _) = stream_addrs(down);
         }
@@ -794,24 +1060,14 @@ impl StreamApp {
         Ok(peek)
     }
 
-    async fn relay_stream(
+    async fn connect_and_relay<D: AsyncRead + AsyncWrite + Unpin>(
         &self,
-        mut down: L4Stream,
+        down: D,
         runtime: &StreamRuntime,
         shutdown: &ShutdownWatch,
-        client_addr: &mut Option<SocketAddr>,
-        local_addr: Option<SocketAddr>,
+        params: RelayParams<'_>,
         state: &mut StreamRunState,
     ) -> &'static str {
-        let peek = match self
-            .read_inbound_preamble(&mut down, runtime, client_addr)
-            .await
-        {
-            Ok(peek) => peek,
-            Err(reason) => return reason,
-        };
-        state.sni.clone_from(&peek.sni);
-
         let Some(target) = runtime.resolve_upstream(state.sni.as_deref())
         else {
             return "no_route";
@@ -824,9 +1080,9 @@ impl StreamApp {
         let dial = match dial_upstream(
             &upstream,
             runtime,
-            *client_addr,
-            local_addr,
-            &peek.buf,
+            params.client_addr,
+            params.local_addr,
+            params.peeked_bytes,
             shutdown,
         )
         .await
@@ -836,48 +1092,92 @@ impl StreamApp {
         };
         state
             .tx_bytes
-            .fetch_add(peek.buf.len() as u64, Ordering::Relaxed);
+            .fetch_add(params.peeked_bytes.len() as u64, Ordering::Relaxed);
         state.backend.push_str(&dial.peer.addr_str);
+        state.connect_time_ms = Some(dial.connect_time_ms);
 
         let DialSuccess {
             stream: conn,
             peer: _peer,
+            connect_time_ms: _,
             _processing,
         } = dial;
-        match conn {
-            ConnectedUpstream::Tcp(up) => {
-                let (up_r, up_w) = up.into_split();
-                relay_split_streams(
-                    down,
-                    up_r,
-                    up_w,
-                    peek.client_eof,
-                    runtime.idle_timeout,
-                    &state.tx_bytes,
-                    &state.rx_bytes,
+        relay_to_connected(
+            down,
+            conn,
+            params.client_eof,
+            runtime.idle_timeout,
+            &state.tx_bytes,
+            &state.rx_bytes,
+        )
+        .await
+    }
+
+    async fn relay_stream(
+        &self,
+        stream: Stream,
+        runtime: &StreamRuntime,
+        shutdown: &ShutdownWatch,
+        client_addr: &mut Option<SocketAddr>,
+        local_addr: Option<SocketAddr>,
+        state: &mut StreamRunState,
+    ) -> &'static str {
+        if self.terminated_tls {
+            self.populate_terminated_tls_state(&*stream, state);
+            if let Some(peer) = *client_addr
+                && !runtime.is_ip_allowed(peer.ip())
+            {
+                return "ip_denied";
+            }
+            return self
+                .connect_and_relay(
+                    stream,
+                    runtime,
+                    shutdown,
+                    RelayParams {
+                        client_addr: *client_addr,
+                        local_addr,
+                        peeked_bytes: &[],
+                        client_eof: false,
+                    },
+                    state,
                 )
-                .await
-            },
-            #[cfg(unix)]
-            ConnectedUpstream::Unix(up) => {
-                let (up_r, up_w) = up.into_split();
-                relay_split_streams(
-                    down,
-                    up_r,
-                    up_w,
-                    peek.client_eof,
-                    runtime.idle_timeout,
-                    &state.tx_bytes,
-                    &state.rx_bytes,
-                )
-                .await
-            },
+                .await;
         }
+        let Ok(mut down) = stream.into_any().downcast::<L4Stream>() else {
+            return "relay_error";
+        };
+        let peek = match self
+            .read_inbound_preamble(&mut down, runtime, client_addr, state)
+            .await
+        {
+            Ok(peek) => peek,
+            Err(reason) => return reason,
+        };
+        state.sni = peek.sni.or_else(|| {
+            state
+                .pp_tlvs
+                .as_deref()
+                .and_then(|tlvs| tlvs.authority.clone())
+        });
+        self.connect_and_relay(
+            *down,
+            runtime,
+            shutdown,
+            RelayParams {
+                client_addr: *client_addr,
+                local_addr,
+                peeked_bytes: &peek.buf,
+                client_eof: peek.client_eof,
+            },
+            state,
+        )
+        .await
     }
 
     async fn handle_connection(
         &self,
-        stream: L4Stream,
+        stream: Stream,
         shutdown: &ShutdownWatch,
     ) {
         let started = Instant::now();
@@ -889,27 +1189,40 @@ impl StreamApp {
             );
             return;
         };
-        let (mut client_addr, local_addr) = stream_addrs(&stream);
+        let (mut client_addr, local_addr) = stream_addrs(&*stream);
+        let mut state = StreamRunState::default();
         let Some(_active_guard) = try_acquire_connection(
             &self.active_connections,
             runtime.max_connections,
         ) else {
-            finish_stream_session(StreamSessionLog {
-                stream: &self.name,
-                started,
-                client_addr,
-                sni: None,
-                upstream: "",
-                backend: "",
-                tx_bytes: 0,
-                rx_bytes: 0,
-                result: "max_connections",
-            });
+            if self.terminated_tls {
+                self.populate_terminated_tls_state(&*stream, &mut state);
+            }
+            finish_stream_session(
+                Some(&runtime),
+                self.access_logger.as_ref(),
+                self.startup_sink_key.as_deref(),
+                StreamSessionLog {
+                    stream: &self.name,
+                    started,
+                    client_addr,
+                    sni: state.sni.as_deref(),
+                    upstream: "",
+                    backend: "",
+                    connect_time_ms: None,
+                    tx_bytes: 0,
+                    rx_bytes: 0,
+                    result: "max_connections",
+                    tls_version: state.tls_version.as_deref(),
+                    tls_cipher: state.tls_cipher.as_deref(),
+                    tls_client_cert: state.tls_client_cert.as_deref(),
+                    proxy_protocol_tlvs: state.pp_tlvs.as_deref(),
+                },
+            );
             return;
         };
         stream_connection_open(&self.name);
 
-        let mut state = StreamRunState::default();
         let result = self
             .relay_stream(
                 stream,
@@ -921,17 +1234,27 @@ impl StreamApp {
             )
             .await;
 
-        finish_stream_session(StreamSessionLog {
-            stream: &self.name,
-            started,
-            client_addr,
-            sni: state.sni.as_deref(),
-            upstream: &state.upstream,
-            backend: &state.backend,
-            tx_bytes: state.tx_bytes.load(Ordering::Relaxed),
-            rx_bytes: state.rx_bytes.load(Ordering::Relaxed),
-            result,
-        });
+        finish_stream_session(
+            Some(&runtime),
+            self.access_logger.as_ref(),
+            self.startup_sink_key.as_deref(),
+            StreamSessionLog {
+                stream: &self.name,
+                started,
+                client_addr,
+                sni: state.sni.as_deref(),
+                upstream: &state.upstream,
+                backend: &state.backend,
+                connect_time_ms: state.connect_time_ms,
+                tx_bytes: state.tx_bytes.load(Ordering::Relaxed),
+                rx_bytes: state.rx_bytes.load(Ordering::Relaxed),
+                result,
+                tls_version: state.tls_version.as_deref(),
+                tls_cipher: state.tls_cipher.as_deref(),
+                tls_client_cert: state.tls_client_cert.as_deref(),
+                proxy_protocol_tlvs: state.pp_tlvs.as_deref(),
+            },
+        );
     }
 }
 
@@ -940,8 +1263,13 @@ struct StreamRunState {
     sni: Option<String>,
     upstream: String,
     backend: String,
+    connect_time_ms: Option<u64>,
     tx_bytes: AtomicU64,
     rx_bytes: AtomicU64,
+    tls_version: Option<String>,
+    tls_cipher: Option<String>,
+    tls_client_cert: Option<Arc<TlsClientCert>>,
+    pp_tlvs: Option<Arc<ProxyProtocolTlvs>>,
 }
 
 #[async_trait]
@@ -951,10 +1279,7 @@ impl ServerApp for StreamApp {
         stream: Stream,
         shutdown: &ShutdownWatch,
     ) -> Option<Stream> {
-        let Ok(l4) = stream.into_any().downcast::<L4Stream>() else {
-            return None;
-        };
-        self.handle_connection(*l4, shutdown).await;
+        self.handle_connection(stream, shutdown).await;
         None
     }
 }
@@ -983,14 +1308,32 @@ fn stream_socket_options(conf: &StreamConf) -> Option<TcpSocketOptions> {
     Some(opts)
 }
 
+fn make_stream_tls_settings(
+    tls: &(GlobalCertificate, TlsSettingParams),
+    server_conf: &Arc<PingoraServerConf>,
+) -> Result<pingora::listeners::tls::TlsSettings> {
+    let mut tls_settings =
+        tls.0.new_tls_settings(&tls.1).map_err(|e| Error::Common {
+            category: "tls".to_string(),
+            message: e.to_string(),
+        })?;
+    tls_settings.set_offload_threadpool_from_server_conf(server_conf);
+    Ok(tls_settings)
+}
+
 #[cfg(unix)]
 fn add_stream_unix_endpoint(
     service: &mut Service<StreamApp>,
     path: &str,
+    tls: Option<&(GlobalCertificate, TlsSettingParams)>,
+    server_conf: &Arc<PingoraServerConf>,
 ) -> Result<()> {
-    service.add_listener(
-        ListenerConfig::uds(path).l4_buffer(L4BufferSettings::unbuffered()),
-    );
+    let mut listener =
+        ListenerConfig::uds(path).l4_buffer(L4BufferSettings::unbuffered());
+    if let Some(tls) = tls {
+        listener = listener.tls(make_stream_tls_settings(tls, server_conf)?);
+    }
+    service.add_listener(listener);
     Ok(())
 }
 
@@ -998,6 +1341,8 @@ fn add_stream_unix_endpoint(
 fn add_stream_unix_endpoint(
     _service: &mut Service<StreamApp>,
     _path: &str,
+    _tls: Option<&(GlobalCertificate, TlsSettingParams)>,
+    _server_conf: &Arc<PingoraServerConf>,
 ) -> Result<()> {
     Err(Error::Common {
         category: "listen".to_string(),
@@ -1009,14 +1354,22 @@ fn add_stream_endpoint(
     service: &mut Service<StreamApp>,
     addr: &str,
     opts: Option<&TcpSocketOptions>,
+    tls: Option<&(GlobalCertificate, TlsSettingParams)>,
+    server_conf: &Arc<PingoraServerConf>,
 ) -> Result<()> {
     match unix_socket_path(addr) {
-        Ok(Some(path)) => add_stream_unix_endpoint(service, path),
+        Ok(Some(path)) => {
+            add_stream_unix_endpoint(service, path, tls, server_conf)
+        },
         Ok(None) => {
             let mut listener = ListenerConfig::tcp(addr)
                 .l4_buffer(L4BufferSettings::unbuffered());
             if let Some(opt) = opts {
                 listener = listener.tcp_socket_options(opt.clone());
+            }
+            if let Some(tls) = tls {
+                listener =
+                    listener.tls(make_stream_tls_settings(tls, server_conf)?);
             }
             service.add_listener(listener);
             Ok(())
@@ -1033,6 +1386,8 @@ fn add_stream_endpoint(
 pub struct StreamServer {
     name: String,
     conf: StreamConf,
+    certificate_provider: Arc<dyn CertificateProvider>,
+    server_conf: Arc<PingoraServerConf>,
     app: StreamApp,
 }
 
@@ -1042,13 +1397,28 @@ impl StreamServer {
     pub fn new(
         name: String,
         conf: StreamConf,
-        stream_provider: Arc<dyn StreamProvider>,
-        upstream_provider: Arc<dyn UpstreamProvider>,
+        ctx: StreamContext,
     ) -> Result<Self> {
-        let _ = StreamRuntime::try_from_conf(&name, &conf)?;
-        let app =
-            StreamApp::new(name.clone(), stream_provider, upstream_provider);
-        Ok(Self { name, conf, app })
+        let runtime = StreamRuntime::try_from_conf(&name, &conf)?;
+        let startup_sink_key = access_log_sink_key(conf.access_log.as_ref());
+        let proxy_protocol_tlvs = (runtime.global_certificates
+            && runtime.proxy_protocol)
+            .then(|| Arc::new(ProxyProtocolTlvStore::default()));
+        let app = StreamApp::new(
+            name.clone(),
+            ctx.stream_provider,
+            ctx.upstream_provider,
+        )
+        .with_terminated_tls(runtime.global_certificates)
+        .with_proxy_protocol_tlvs(proxy_protocol_tlvs)
+        .with_access_logger(ctx.logger, startup_sink_key);
+        Ok(Self {
+            name,
+            conf,
+            certificate_provider: ctx.certificate_provider,
+            server_conf: ctx.server_conf,
+            app,
+        })
     }
 
     /// Validates listener configuration without binding or starting sockets.
@@ -1081,12 +1451,35 @@ impl StreamServer {
             .threads
             .map(|value| if value == 0 { num_cpus::get() } else { value });
         let socket_opts = stream_socket_options(&self.conf);
+        let terminated_tls = self.app.terminated_tls;
+        let proxy_protocol = self.conf.proxy_protocol.unwrap_or(false);
+        let tls = terminated_tls.then(|| {
+            let dynamic_cert =
+                GlobalCertificate::new(self.certificate_provider.clone());
+            let params = TlsSettingParams {
+                server_name: self.name.clone(),
+                enabled_h2: false,
+                cipher_list: self.conf.tls_cipher_list.clone(),
+                cipher_suites: self.conf.tls_ciphersuites.clone(),
+                tls_min_version: self.conf.tls_min_version.clone(),
+                tls_max_version: self.conf.tls_max_version.clone(),
+                client_ca: self.conf.tls_client_ca.clone(),
+                client_crl: self.conf.tls_client_crl.clone(),
+                client_auth_optional: self
+                    .conf
+                    .tls_client_auth
+                    .as_deref()
+                    .is_some_and(|mode| mode.trim() == "optional"),
+            };
+            (dynamic_cert, params)
+        });
         if announce {
             info!(
                 target: LOG_TARGET,
                 name = self.name,
                 addr = self.conf.addr,
                 threads,
+                tls = terminated_tls,
                 has_sni_routes = self
                     .conf
                     .sni_routes
@@ -1095,11 +1488,33 @@ impl StreamServer {
                 "stream server is listening"
             );
         }
+        let stream_provider_for_acl = self.app.stream_provider.clone();
+        let tlvs_for_pre_tls = self.app.proxy_protocol_tlvs.clone();
+        let name_for_acl = self.name.clone();
         let mut service =
             Service::new(format!("Pingap Stream {}", self.name), self.app);
         service.threads = threads;
+        if terminated_tls {
+            let ip_checker: IpAllowCheck = Arc::new(move |ip| {
+                stream_provider_for_acl
+                    .get(&name_for_acl)
+                    .is_none_or(|rt| rt.is_ip_allowed(ip))
+            });
+            service.endpoints().set_pre_tls_callback(Arc::new(PreTls {
+                proxy_protocol,
+                tlvs: tlvs_for_pre_tls,
+                ip_checker: Some(ip_checker),
+                ja4: None,
+            }));
+        }
         for addr in addrs {
-            add_stream_endpoint(&mut service, addr, socket_opts.as_ref())?;
+            add_stream_endpoint(
+                &mut service,
+                addr,
+                socket_opts.as_ref(),
+                tls.as_ref(),
+                &self.server_conf,
+            )?;
         }
         Ok(service)
     }
@@ -1290,11 +1705,33 @@ mod tests {
         let srv = StreamServer::new(
             "tls".to_string(),
             conf,
-            StaticStreams::new("tls", &StreamConf::default()),
-            Arc::new(StaticUpstreams(AHashMap::new())),
+            StreamContext {
+                stream_provider: StaticStreams::new(
+                    "tls",
+                    &StreamConf::default(),
+                ),
+                upstream_provider: Arc::new(StaticUpstreams(AHashMap::new())),
+                certificate_provider: Arc::new(EmptyCerts),
+                server_conf: Arc::new(PingoraServerConf::default()),
+                logger: None,
+            },
         )
         .unwrap();
         assert_eq!(true, srv.build_service().is_ok());
+    }
+
+    struct EmptyCerts;
+    impl CertificateProvider for EmptyCerts {
+        fn get(
+            &self,
+            _sni: &str,
+        ) -> Option<Arc<pingap_certificate::TlsCertificate>> {
+            None
+        }
+        fn list(&self) -> Arc<pingap_certificate::DynamicCertificates> {
+            Arc::new(AHashMap::new())
+        }
+        fn store(&self, _data: pingap_certificate::DynamicCertificates) {}
     }
 
     #[cfg(unix)]
@@ -2045,5 +2482,156 @@ mod tests {
         let err = task.await.unwrap().unwrap_err();
         assert_eq!(std::io::ErrorKind::TimedOut, err.kind());
         assert_eq!(5, counter.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_stream_runtime_wave2_fields_and_tls_server_build() {
+        let mut conf = StreamConf {
+            addr: "127.0.0.1:0".to_string(),
+            upstream: Some("u1".to_string()),
+            global_certificates: Some(true),
+            send_proxy_protocol: Some("v2".to_string()),
+            access_log: Some("json".to_string()),
+            proxy_protocol: Some(true),
+            ..Default::default()
+        };
+        let rt = StreamRuntime::try_from_conf("tls-stream", &conf).unwrap();
+        assert_eq!(true, rt.global_certificates);
+        assert_eq!(Some(ProxyProtocolVersion::V2), rt.send_proxy_protocol);
+        assert_eq!(true, rt.access_logger.is_some());
+        assert_eq!(true, rt.access_log_to_application);
+
+        conf.send_proxy_protocol = Some("v3".to_string());
+        assert_eq!(
+            true,
+            StreamRuntime::try_from_conf("tls-stream", &conf).is_err()
+        );
+
+        conf.send_proxy_protocol = Some("v2".to_string());
+        let srv = StreamServer::new(
+            "tls-stream".to_string(),
+            conf.clone(),
+            StreamContext {
+                stream_provider: StaticStreams::new("tls-stream", &conf),
+                upstream_provider: Arc::new(StaticUpstreams(AHashMap::new())),
+                certificate_provider: Arc::new(EmptyCerts),
+                server_conf: Arc::new(PingoraServerConf::default()),
+                logger: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(true, srv.app.terminated_tls);
+        assert_eq!(true, srv.app.proxy_protocol_tlvs.is_some());
+        assert_eq!(true, srv.build_service().is_ok());
+
+        #[cfg(feature = "openssl")]
+        {
+            conf.tls_client_ca = Some("invalid-ca".to_string());
+            conf.tls_client_crl = Some("/nonexistent/crl.pem".to_string());
+            let bad = StreamServer::new(
+                "tls-stream".to_string(),
+                conf.clone(),
+                StreamContext {
+                    stream_provider: StaticStreams::new("tls-stream", &conf),
+                    upstream_provider: Arc::new(StaticUpstreams(
+                        AHashMap::new(),
+                    )),
+                    certificate_provider: Arc::new(EmptyCerts),
+                    server_conf: Arc::new(PingoraServerConf::default()),
+                    logger: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(true, bad.check().is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_stream_send_proxy_protocol_pp2_tlvs_and_json_access_log() {
+        let (up_a, _up_a_task) = spawn_tagged_tcp_echo(b"").await;
+        let (up_b, _up_b_task) = spawn_tagged_tcp_echo(b"WRONG").await;
+
+        let mut ups = AHashMap::new();
+        // Peer has no `send_proxy_protocol`; stream overrides it with "v2".
+        ups.insert(
+            "up_a".to_string(),
+            make_upstream("up_a", &[up_a.to_string()], None),
+        );
+        ups.insert(
+            "up_b".to_string(),
+            make_upstream("up_b", &[up_b.to_string()], None),
+        );
+
+        let mut sni_routes = BTreeMap::new();
+        sni_routes.insert("app.tlv.test".to_string(), "up_a".to_string());
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<BytesMut>(8);
+        let conf = StreamConf {
+            addr: "127.0.0.1:0".to_string(),
+            upstream: Some("up_b".to_string()),
+            sni_routes: Some(sni_routes),
+            proxy_protocol: Some(true),
+            send_proxy_protocol: Some("v2".to_string()),
+            access_log: Some("/tmp/stream-test.log {\"stream\":\"{stream}\",\"sni\":\"{sni}\",\"upstream\":\"{upstream}\",\"pp_authority\":\"{pp_authority}\",\"pp_unique_id\":\"{pp_unique_id}\",\"result\":\"{result}\"}".to_string()),
+            ..Default::default()
+        };
+        let sink_key = access_log_sink_key(conf.access_log.as_ref());
+        let mut app = StreamApp::new(
+            "pp-tlv-stream".to_string(),
+            StaticStreams::new("pp-tlv-stream", &conf),
+            Arc::new(StaticUpstreams(ups)),
+        )
+        .with_access_logger(Some(tx), sink_key);
+        app.is_trusted_proxy = |ip| ip.is_loopback();
+        let app = Arc::new(app);
+        let (proxy_addr, _stop) = spawn_stream_proxy(app);
+
+        // Craft inbound PROXY v2 header with AUTHORITY="app.tlv.test" + UNIQUE_ID="id-42"
+        // followed by plaintext payload (no TLS ClientHello -> SNI falls back to PP2 AUTHORITY).
+        let mut payload_addr = vec![192, 0, 2, 77, 198, 51, 100, 1];
+        payload_addr.extend_from_slice(&51234u16.to_be_bytes());
+        payload_addr.extend_from_slice(&443u16.to_be_bytes());
+        // PP2_TYPE_AUTHORITY (0x02) = "app.tlv.test"
+        payload_addr.push(pingap_core::PP2_TYPE_AUTHORITY);
+        payload_addr.extend_from_slice(&(12u16).to_be_bytes());
+        payload_addr.extend_from_slice(b"app.tlv.test");
+        // PP2_TYPE_UNIQUE_ID (0x05) = "id-42"
+        payload_addr.push(pingap_core::PP2_TYPE_UNIQUE_ID);
+        payload_addr.extend_from_slice(&(5u16).to_be_bytes());
+        payload_addr.extend_from_slice(b"id-42");
+
+        let mut pp2 = b"\r\n\r\n\0\r\nQUIT\n\x21\x11".to_vec();
+        pp2.extend_from_slice(&(payload_addr.len() as u16).to_be_bytes());
+        pp2.extend_from_slice(&payload_addr);
+        pp2.extend_from_slice(b"PING");
+
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client.write_all(&pp2).await.unwrap();
+        client.shutdown().await.unwrap();
+
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        // Echoed payload starts with outbound PROXY v2 header carrying client 192.0.2.77:51234, then PING.
+        assert_eq!(true, echoed.starts_with(b"\r\n\r\n\0\r\nQUIT\n\x21\x11"));
+        assert_eq!(true, echoed.ends_with(b"PING"));
+        let sig_pos = echoed.windows(4).position(|w| w == [192, 0, 2, 77]);
+        assert_eq!(true, sig_pos.is_some());
+
+        let log_line = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let log_str = String::from_utf8(log_line.to_vec()).unwrap();
+        for expected in [
+            r#""stream":"pp-tlv-stream""#,
+            r#""sni":"app.tlv.test""#,
+            r#""upstream":"up_a""#,
+            r#""pp_authority":"app.tlv.test""#,
+            r#""pp_unique_id":"id-42""#,
+            r#""result":"ok""#,
+        ] {
+            assert_eq!(true, log_str.contains(expected), "{log_str}");
+        }
     }
 }

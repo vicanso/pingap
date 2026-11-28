@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Ja4Fingerprint, Plugin, get_request_host, now_ms};
+use crate::{
+    Ja4Fingerprint, Plugin, ProxyProtocolTlvs, get_request_host, now_ms,
+};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -396,6 +398,9 @@ pub struct ConnectionInfo {
     /// against that CA: a certificate that does not verify ends the
     /// handshake. Shared by every request on the connection.
     pub tls_client_cert: Option<Arc<TlsClientCert>>,
+    /// TLVs extracted from an inbound PROXY protocol v2 header, if any.
+    /// Shared by every request on the connection.
+    pub proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvs>>,
     /// Indicates whether the connection was reused (e.g., HTTP keep-alive).
     pub reused: bool,
 }
@@ -1439,6 +1444,22 @@ pub enum CtxLogField {
     ServiceTime,
     /// [`Self::ServiceTime`], readably.
     ServiceTimeHuman,
+    /// `proxy_protocol_alpn`: ALPN from inbound PROXY protocol v2 TLV.
+    ProxyProtocolAlpn,
+    /// `proxy_protocol_authority`: authority/SNI from inbound PROXY protocol v2 TLV.
+    ProxyProtocolAuthority,
+    /// `proxy_protocol_unique_id`: unique connection ID from inbound PROXY protocol v2 TLV.
+    ProxyProtocolUniqueId,
+    /// `proxy_protocol_netns`: network namespace from inbound PROXY protocol v2 TLV.
+    ProxyProtocolNetns,
+    /// `proxy_protocol_tls_version`: TLS version from inbound PROXY protocol v2 SSL sub-TLV.
+    ProxyProtocolTlsVersion,
+    /// `proxy_protocol_tls_cn`: client certificate CN from inbound PROXY protocol v2 SSL sub-TLV.
+    ProxyProtocolTlsCn,
+    /// `proxy_protocol_tls_cipher`: TLS cipher from inbound PROXY protocol v2 SSL sub-TLV.
+    ProxyProtocolTlsCipher,
+    /// `proxy_protocol_aws_vpce_id`: AWS VPC Endpoint ID from inbound PROXY protocol v2 AWS TLV.
+    ProxyProtocolAwsVpceId,
 }
 
 /// Represents the state of a request/response cycle, tracking various metrics and properties
@@ -1880,6 +1901,15 @@ impl Ctx {
 
     /// Appends the value of `field` to the log buffer.
     pub fn append_log_field(&self, buf: &mut BytesMut, field: CtxLogField) {
+        fn append_pp_tlv<'a>(
+            buf: &mut BytesMut,
+            tlvs: Option<&'a ProxyProtocolTlvs>,
+            pick: impl FnOnce(&'a ProxyProtocolTlvs) -> Option<&'a str>,
+        ) {
+            if let Some(value) = tlvs.and_then(pick) {
+                buf.extend_from_slice(value.as_bytes());
+            }
+        }
         // A macro to simplify formatting and appending optional time values.
         macro_rules! append_time {
             // Append raw milliseconds.
@@ -2111,6 +2141,46 @@ impl Ctx {
             CtxLogField::ServiceTimeHuman => {
                 append_time!(Some(self.timing.elapsed().as_millis()), human)
             },
+            CtxLogField::ProxyProtocolAlpn => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.alpn.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolAuthority => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.authority.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolUniqueId => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.unique_id.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolNetns => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.netns.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolTlsVersion => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.tls_version.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolTlsCn => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.tls_cn.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolTlsCipher => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.tls_cipher.as_deref(),
+            ),
+            CtxLogField::ProxyProtocolAwsVpceId => append_pp_tlv(
+                buf,
+                self.conn.proxy_protocol_tlvs.as_deref(),
+                |tlvs| tlvs.aws_vpce_id.as_deref(),
+            ),
         }
     }
 
@@ -2794,6 +2864,29 @@ mod tests {
             ("ja4_ro", CtxLogField::Ja4Ro),
             ("compression_ratio", CtxLogField::CompressionRatio),
             ("service_time_human", CtxLogField::ServiceTimeHuman),
+            ("proxy_protocol_alpn", CtxLogField::ProxyProtocolAlpn),
+            (
+                "proxy_protocol_authority",
+                CtxLogField::ProxyProtocolAuthority,
+            ),
+            (
+                "proxy_protocol_unique_id",
+                CtxLogField::ProxyProtocolUniqueId,
+            ),
+            ("proxy_protocol_netns", CtxLogField::ProxyProtocolNetns),
+            (
+                "proxy_protocol_tls_version",
+                CtxLogField::ProxyProtocolTlsVersion,
+            ),
+            ("proxy_protocol_tls_cn", CtxLogField::ProxyProtocolTlsCn),
+            (
+                "proxy_protocol_tls_cipher",
+                CtxLogField::ProxyProtocolTlsCipher,
+            ),
+            (
+                "proxy_protocol_aws_vpce_id",
+                CtxLogField::ProxyProtocolAwsVpceId,
+            ),
         ] {
             assert_eq!(Ok(field), name.parse::<CtxLogField>(), "{name}");
             assert_eq!(name, field.to_string());
@@ -3591,5 +3684,51 @@ mod tests {
         assert_eq!(None, cache.stale_while_revalidate);
         assert_eq!(None, cache.use_stale);
         assert!(!cache.min_uses_blocked);
+    }
+
+    #[test]
+    fn test_proxy_protocol_tlv_log_fields() {
+        let mut ctx = Ctx::new();
+        let print = |ctx: &Ctx, key: &str| {
+            let mut buf = BytesMut::new();
+            ctx.append_log_value(&mut buf, key);
+            String::from_utf8_lossy(&buf).to_string()
+        };
+        for key in [
+            "proxy_protocol_alpn",
+            "proxy_protocol_authority",
+            "proxy_protocol_unique_id",
+            "proxy_protocol_netns",
+            "proxy_protocol_tls_version",
+            "proxy_protocol_tls_cn",
+            "proxy_protocol_tls_cipher",
+            "proxy_protocol_aws_vpce_id",
+        ] {
+            assert_eq!("", print(&ctx, key), "{key}");
+        }
+
+        ctx.conn.proxy_protocol_tlvs =
+            Some(Arc::new(crate::ProxyProtocolTlvs {
+                alpn: Some("h2".to_string()),
+                authority: Some("app.example.com".to_string()),
+                unique_id: Some("conn-42".to_string()),
+                netns: Some("prod".to_string()),
+                tls_version: Some("TLSv1.3".to_string()),
+                tls_cn: Some("client.example".to_string()),
+                tls_cipher: Some("TLS_AES_256_GCM_SHA384".to_string()),
+                aws_vpce_id: Some("vpce-1234".to_string()),
+                custom: vec![],
+            }));
+        assert_eq!("h2", print(&ctx, "proxy_protocol_alpn"));
+        assert_eq!("app.example.com", print(&ctx, "proxy_protocol_authority"));
+        assert_eq!("conn-42", print(&ctx, "proxy_protocol_unique_id"));
+        assert_eq!("prod", print(&ctx, "proxy_protocol_netns"));
+        assert_eq!("TLSv1.3", print(&ctx, "proxy_protocol_tls_version"));
+        assert_eq!("client.example", print(&ctx, "proxy_protocol_tls_cn"));
+        assert_eq!(
+            "TLS_AES_256_GCM_SHA384",
+            print(&ctx, "proxy_protocol_tls_cipher")
+        );
+        assert_eq!("vpce-1234", print(&ctx, "proxy_protocol_aws_vpce_id"));
     }
 }

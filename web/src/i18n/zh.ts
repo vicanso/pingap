@@ -646,6 +646,20 @@ export default {
     downstreamReadTimeoutPlaceholder: "输入客户端读超时(如30s)",
     downstreamWriteTimeout: "客户端写超时",
     downstreamWriteTimeoutPlaceholder: "输入客户端写超时(如10s)",
+    minSendRate: "最低发送速率",
+    minSendRatePlaceholder: "每秒最低响应发送速率(如 1kb)",
+    minSendRateTips:
+      "对读取过慢的客户端连接生效：发送速率持续低于该字节/秒阈值时关闭连接。",
+    totalDrainTimeout: "总排空超时",
+    totalDrainTimeoutPlaceholder: "排空未读请求体的最长总时间(如 10s)",
+    totalDrainTimeoutTips:
+      "限制排空未读完客户端请求体所允许的总耗时，超时后关闭连接。",
+    allowIps: "允许 IP / CIDR",
+    allowIpsPlaceholder: "输入允许访问的 IP 或 CIDR(如 10.0.0.0/8)",
+    denyIps: "拒绝 IP / CIDR",
+    denyIpsPlaceholder: "输入拒绝访问的 IP 或 CIDR(如 192.0.2.0/24)",
+    ipAclTips:
+      "在 TLS 握手前按连接客户端地址判定（来自可信代理且启用 PROXY Protocol 时取真实客户端 IP）。拒绝列表优先级高于允许列表。",
     reusePort: "启用SO_REUSEPORT",
     proxyProtocol: "PROXY protocol",
     proxyProtocolTips:
@@ -666,6 +680,11 @@ export default {
     tlsClientAuth: "客户端证书",
     tlsClientAuthTips:
       "require（配了客户端 CA 时的默认值）：没有证书的客户端握手失败；optional：放行。校验不通过的证书在两种模式下都会被拒绝。",
+    tlsClientCrl: "客户端证书吊销列表 (CRL)",
+    tlsClientCrlPlaceholder:
+      "输入用于校验已吊销客户端证书的 X.509 CRL（PEM、base64 或 PEM 文件路径）",
+    tlsClientCrlTips:
+      "在双向 TLS 校验时检查证书吊销列表，OpenSSL 与 rustls 构建均支持。需要配置客户端 CA。",
     tlsSettingsRustlsTips:
       "当前 rustls 构建不支持这些选项：固定提供 TLS 1.2/1.3 与 rustls 默认密码套件。请清空该值，或改用 openssl 构建。",
     tcpFastOpen: "tcp快速打开",
@@ -688,13 +707,15 @@ export default {
   stream: {
     title: "四层代理 (Stream)",
     description:
-      "配置原生四层 TCP 与基于 ClientHello SNI 的免解密 TLS 透传监听器",
+      "配置原生四层 TCP、基于 ClientHello SNI 的 TLS 透传与本地 TLS 终结监听器",
     add: "新增四层代理",
     summary_one: "已配置 {{count}} 个四层代理",
     summary_other: "已配置 {{count}} 个四层代理",
     empty: "还没有配置四层代理",
     sectionBasic: "基础",
     sectionRouting: "SNI 与上游路由",
+    sectionLogging: "日志",
+    sectionTls: "TLS",
     sectionLimits: "超时与访问控制",
     sectionTcp: "监听与 TCP 调优",
     name: "名称",
@@ -715,6 +736,38 @@ export default {
     proxyProtocol: "读取入站 PROXY Protocol",
     proxyProtocolTips:
       "从 basic.trusted_proxies 发来的连接上读取 v1/v2 PROXY Protocol 头获取真实客户端地址，用于 IP ACL 与出站透传。",
+    sendProxyProtocol: "发送出站 PROXY Protocol",
+    sendProxyProtocolTips:
+      "在转发流数据之前向所选后端写入携带客户端真实地址的 v1 或 v2 PROXY Protocol 头。",
+    accessLog: "访问日志格式化",
+    accessLogPlaceholder:
+      "预设（combined、common、short、tiny、json）或带输出目标的自定义格式",
+    accessLogTips:
+      "支持预设或自定义标签（如 {stream}、{client_ip}、{sni}、{upstream}、{backend}、{bytes_rx}、{bytes_tx}、{duration_ms}、{result}、{tls_*}、{pp_*}）。可在前面加文件路径、stdout、stderr 或 syslog:// URL（及 ?skip、min_status、min_latency、sample、keep 等参数）。",
+    globalCertificates: "终结 TLS（使用全局证书）",
+    globalCertificatesTips:
+      "使用 Pingap 动态证书库在本监听器上本地终结 TLS，再将明文流转发给上游。",
+    tlsCipherList: "tls密码套件列表",
+    tlsCipherListPlaceholder: "输入tls密码套件列表，早于tls1.3版本认证使用",
+    tlsCiphersuites: "tls密码套件列表",
+    tlsCiphersuitesPlaceholder: "输入tls密码套件列表，用于tls1.3版本认证使用",
+    tlsMinVersion: "最低tls版本",
+    tlsMaxVersion: "最高tls版本",
+    tlsSettingsRustlsTips:
+      "当前 rustls 构建不支持这些选项：固定提供 TLS 1.2/1.3 与 rustls 默认密码套件。请清空该值，或改用 openssl 构建。",
+    tlsClientCa: "客户端 CA",
+    tlsClientCaPlaceholder:
+      "输入用于校验客户端证书的 CA（PEM、base64 或 PEM 文件路径）",
+    tlsClientCaTips:
+      "在四层 TLS 握手时要求客户端出示证书（双向 TLS）。需要开启终结 TLS。",
+    tlsClientAuth: "客户端证书",
+    tlsClientAuthTips:
+      "require（配了客户端 CA 时的默认值）：没有证书的客户端握手失败；optional：放行。校验不通过的证书在两种模式下都会被拒绝。",
+    tlsClientCrl: "客户端证书吊销列表 (CRL)",
+    tlsClientCrlPlaceholder:
+      "输入用于校验已吊销客户端证书的 X.509 CRL（PEM、base64 或 PEM 文件路径）",
+    tlsClientCrlTips:
+      "在四层双向 TLS 校验时检查证书吊销列表，OpenSSL 与 rustls 构建均支持。需要配置客户端 CA。",
     connectTimeout: "建连超时",
     connectTimeoutPlaceholder: "覆盖上游默认 TCP 建连超时(如 5s)",
     idleTimeout: "空闲超时",

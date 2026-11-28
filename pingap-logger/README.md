@@ -163,6 +163,14 @@ The same keys work in header values as `:<context_key>`, for example
 | `ja4_r` | `JA4_r`: the sorted cipher and extension lists instead of their hashes |
 | `ja4_o` | `JA4_o`: hashed over the lists in the order the client sent them |
 | `ja4_ro` | `JA4_ro`: the lists in the order sent, unhashed; every other form can be computed from it |
+| `proxy_protocol_alpn` | ALPN protocol from an inbound PROXY protocol v2 `ALPN` TLV (`0x01`) |
+| `proxy_protocol_authority` | Authority / SNI hostname from an inbound PROXY protocol v2 `AUTHORITY` TLV (`0x02`) |
+| `proxy_protocol_unique_id` | Connection unique ID from an inbound PROXY protocol v2 `UNIQUE_ID` TLV (`0x05`; printable ASCII or lowercase hex) |
+| `proxy_protocol_netns` | Network namespace path from an inbound PROXY protocol v2 `NETNS` TLV (`0x30`) |
+| `proxy_protocol_tls_version` | Client TLS version from an inbound PROXY protocol v2 `SSL` sub-TLV (`0x21`) |
+| `proxy_protocol_tls_cn` | Client certificate CN from an inbound PROXY protocol v2 `SSL` sub-TLV (`0x22`) |
+| `proxy_protocol_tls_cipher` | Client TLS cipher from an inbound PROXY protocol v2 `SSL` sub-TLV (`0x23`) |
+| `proxy_protocol_aws_vpce_id` | AWS VPC Endpoint ID from an inbound PROXY protocol v2 AWS TLV (`0xEA`, subtype `0x01`) |
 | `upstream_addr` | Address of the upstream backend |
 | `upstream_name` | Name of the upstream the request went to: the location's, one a plugin chose, or its `fallback_upstream` |
 | `upstream_status` | Status the upstream answered with, `-` when there was none |
@@ -382,6 +390,39 @@ be read, leaves the field empty. The same value can be sent upstream with
 `format` writes straight into one pre-sized buffer: the timestamps are
 rendered digit by digit rather than through an intermediate `String`, and the
 per-line cost is the fields themselves.
+
+#### Layer 4 Stream Access Logging
+
+`[streams.*]` listeners support `access_log` using the same destination syntax (`<path>?...`, `stdout`, `stderr`, `syslog://...`, or the application log when no destination is given) and the same preset names (`combined`, `common`, `short`, `tiny`, `json`) or custom `{tags}` / JSON object formats:
+
+```toml
+[streams.tls_mux]
+addr = "0.0.0.0:9443"
+global_certificates = true
+sni_routes = { "api.example.com" = "tls_a" }
+access_log = "/var/log/pingap/stream-access.log?rolling=daily&min_latency=100ms json"
+```
+
+Predefined stream presets:
+
+```text
+combined  {client_ip} [{when}] {stream} "{sni}" -> {upstream} ({backend}) {result} rx={bytes_rx} tx={bytes_tx} {latency}
+common    {client_ip} [{when}] {stream} {upstream} {result} {bytes_rx} {bytes_tx} {duration_ms}
+short     {client_ip} {stream} {upstream} {result} {bytes_rx}/{bytes_tx} {duration_ms}ms
+tiny      {stream} {upstream} {result} {duration_ms}ms
+json      {"when":{when},"stream":{stream},"client_ip":{client_ip},"client_addr":{client_addr},"sni":{sni},"upstream":{upstream},"backend":{backend},"result":{result},"bytes_rx":{bytes_rx},"bytes_tx":{bytes_tx},"duration_ms":{duration_ms},...}
+```
+
+(`json` also appends `connect_time_ms`, `tls_version`, `tls_cipher`, `tls_client_subject`, `tls_client_serial`, `pp_alpn`, `pp_authority`, `pp_unique_id`, `pp_netns`, `pp_aws_vpce_id`, `name`, and `labels` when non-empty.)
+
+Supported stream tags:
+
+- **Connection & transfer:** `{stream}`, `{client_ip}`, `{client_addr}` (alias `{remote_addr}`), `{sni}`, `{upstream}`, `{backend}` (alias `{upstream_addr}`), `{bytes_rx}`, `{bytes_tx}`, `{size}` (`bytes_rx + bytes_tx`), `{duration_ms}`, `{latency}`, `{connect_time}`, `{result}` (alias `{status}`).
+- **Local TLS / mTLS (`global_certificates = true`):** `{tls_version}`, `{tls_cipher}`, `{tls_client_subject}`, `{tls_client_fingerprint}`, `{tls_client_serial}`, `{tls_client_verified}`.
+- **Inbound PROXY protocol v2 TLVs:** `{pp_alpn}`, `{pp_authority}`, `{pp_unique_id}`, `{pp_netns}`, `{pp_tls_version}`, `{pp_tls_cn}`, `{pp_tls_cipher}`, `{pp_aws_vpce_id}`.
+- **Timestamps & deployment:** `{when}`, `{when_utc_iso}`, `{when_unix}`, `{$hostname}`, `{$name}`, `{$label:<key>}`, `{$<VARIABLE>}`.
+
+On destination filters, `skip` matches the stream name or SNI, and `min_status` maps `result == "ok"` to `200`, ACL/rejected results to `403`, and other failures to `500`, so `min_status`, `min_latency`, `sample`, `rolling`, `keep`, `channel_buffer`, and `flush_timeout` work just as on HTTP servers.
 
 ## Configuration
 

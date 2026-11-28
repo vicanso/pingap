@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::{Error, Result, TLS_BACKEND};
-use pingap_config::{CertificateConf, ServerConf};
+use pingap_config::{CertificateConf, ServerConf, StreamConf};
 use std::collections::HashMap;
 #[cfg(feature = "tls-rustls")]
 use std::sync::Once;
@@ -39,41 +39,54 @@ fn non_empty(value: Option<&str>) -> bool {
     value.is_some_and(|s| !s.is_empty())
 }
 
-/// Rejects per-server TLS version / cipher settings that the active backend
-/// cannot honour.
-///
-/// Under OpenSSL every setting is applied, so this is a no-op. Under rustls
-/// pingora fixes TLS 1.2 + 1.3 with rustls' default cipher suites; leaving
-/// the fields set used to only warn at listen time, which made
-/// misconfiguration easy to miss. Config validation (startup, `--test`,
-/// auto-restart) now fails instead.
-pub fn validate_servers_tls_for_backend(
-    servers: &HashMap<String, ServerConf>,
-) -> Result<()> {
+fn collect_unsupported_tls_fields(
+    tls_cipher_list: Option<&str>,
+    tls_ciphersuites: Option<&str>,
+    tls_min_version: Option<&str>,
+    tls_max_version: Option<&str>,
+) -> Vec<&'static str> {
+    [
+        ("tls_cipher_list", tls_cipher_list),
+        ("tls_ciphersuites", tls_ciphersuites),
+        ("tls_min_version", tls_min_version),
+        ("tls_max_version", tls_max_version),
+    ]
+    .into_iter()
+    .filter_map(|(field, value)| non_empty(value).then_some(field))
+    .collect()
+}
+
+fn validate_tls_fields_for_backend<'a, I>(kind: &str, entries: I) -> Result<()>
+where
+    I: IntoIterator<
+        Item = (
+            &'a str,
+            (
+                Option<&'a str>,
+                Option<&'a str>,
+                Option<&'a str>,
+                Option<&'a str>,
+            ),
+        ),
+    >,
+{
     if TLS_BACKEND != "rustls" {
         return Ok(());
     }
 
     let mut problems = Vec::new();
-    for (name, server) in servers {
-        let mut set = Vec::new();
-        if non_empty(server.tls_cipher_list.as_deref()) {
-            set.push("tls_cipher_list");
-        }
-        if non_empty(server.tls_ciphersuites.as_deref()) {
-            set.push("tls_ciphersuites");
-        }
-        if non_empty(server.tls_min_version.as_deref()) {
-            set.push("tls_min_version");
-        }
-        if non_empty(server.tls_max_version.as_deref()) {
-            set.push("tls_max_version");
-        }
+    for (name, (cipher_list, ciphersuites, min_ver, max_ver)) in entries {
+        let set = collect_unsupported_tls_fields(
+            cipher_list,
+            ciphersuites,
+            min_ver,
+            max_ver,
+        );
         if set.is_empty() {
             continue;
         }
         problems.push(format!(
-            "server `{name}` sets {} which the rustls backend does not support \
+            "{kind} `{name}` sets {} which the rustls backend does not support \
              (TLS is fixed to 1.2/1.3 with rustls default cipher suites); \
              remove them or build with the openssl feature",
             set.join(", ")
@@ -88,6 +101,56 @@ pub fn validate_servers_tls_for_backend(
             message: problems.join("; "),
         })
     }
+}
+
+/// Rejects per-server TLS version / cipher settings that the active backend
+/// cannot honour.
+///
+/// Under OpenSSL every setting is applied, so this is a no-op. Under rustls
+/// pingora fixes TLS 1.2 + 1.3 with rustls' default cipher suites; leaving
+/// the fields set used to only warn at listen time, which made
+/// misconfiguration easy to miss. Config validation (startup, `--test`,
+/// auto-restart) now fails instead.
+pub fn validate_servers_tls_for_backend(
+    servers: &HashMap<String, ServerConf>,
+) -> Result<()> {
+    validate_tls_fields_for_backend(
+        "server",
+        servers.iter().map(|(name, server)| {
+            (
+                name.as_str(),
+                (
+                    server.tls_cipher_list.as_deref(),
+                    server.tls_ciphersuites.as_deref(),
+                    server.tls_min_version.as_deref(),
+                    server.tls_max_version.as_deref(),
+                ),
+            )
+        }),
+    )
+}
+
+/// Rejects per-stream TLS version / cipher settings that the active backend
+/// cannot honour.
+///
+/// Shares the same rustls limitation as [`validate_servers_tls_for_backend`].
+pub fn validate_streams_tls_for_backend(
+    streams: &HashMap<String, StreamConf>,
+) -> Result<()> {
+    validate_tls_fields_for_backend(
+        "stream",
+        streams.iter().map(|(name, stream)| {
+            (
+                name.as_str(),
+                (
+                    stream.tls_cipher_list.as_deref(),
+                    stream.tls_ciphersuites.as_deref(),
+                    stream.tls_min_version.as_deref(),
+                    stream.tls_max_version.as_deref(),
+                ),
+            )
+        }),
+    )
 }
 
 /// Rejects certificate ACME settings that the active TLS backend cannot honour.
@@ -128,9 +191,10 @@ pub fn validate_certificates_tls_for_backend(
 mod tests {
     use super::{
         install_default_crypto_provider, validate_servers_tls_for_backend,
+        validate_streams_tls_for_backend,
     };
     use crate::TLS_BACKEND;
-    use pingap_config::ServerConf;
+    use pingap_config::{ServerConf, StreamConf};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -212,6 +276,32 @@ mod tests {
             let err =
                 result.expect_err("rustls must reject tls_alpn_challenge");
             assert!(err.to_string().contains("tls_alpn_challenge"));
+        } else {
+            assert_eq!(true, result.is_ok());
+        }
+    }
+
+    #[test]
+    fn validate_stream_tls_settings_match_backend() {
+        let mut streams = HashMap::new();
+        streams.insert(
+            "tls_gw".to_string(),
+            StreamConf {
+                addr: "127.0.0.1:9443".to_string(),
+                upstream: Some("u".to_string()),
+                global_certificates: Some(true),
+                tls_min_version: Some("tlsv1.2".to_string()),
+                tls_ciphersuites: Some("TLS_AES_128_GCM_SHA256".to_string()),
+                ..Default::default()
+            },
+        );
+        let result = validate_streams_tls_for_backend(&streams);
+        if TLS_BACKEND == "rustls" {
+            let err = result.expect_err("rustls must reject stream tls_*");
+            let message = err.to_string();
+            assert!(message.contains("stream `tls_gw`"), "{message}");
+            assert!(message.contains("tls_min_version"), "{message}");
+            assert!(message.contains("tls_ciphersuites"), "{message}");
         } else {
             assert_eq!(true, result.is_ok());
         }

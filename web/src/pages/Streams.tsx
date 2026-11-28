@@ -1,5 +1,6 @@
 import React from "react";
 import { LoadingPage } from "@/components/loading";
+import useBasicState from "@/states/basic";
 import useConfigState, { Stream } from "@/states/config";
 import { formatBytes, useTrafficState } from "@/states/traffic";
 import { ExForm, ExFormItem } from "@/components/ex-form";
@@ -66,6 +67,10 @@ export default function Streams() {
   const [trafficData, trafficInitialized, fetchTraffic] = useTrafficState(
     useShallow((state) => [state.data, state.initialized, state.fetch]),
   );
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+  // rustls fixes TLS 1.2/1.3 + default suites; cipher/version fields are
+  // rejected at config validation, so the form shows them read-only.
+  const rustlsBackend = basicInfo.features.includes("rustls");
 
   React.useEffect(() => {
     if (!initialized) {
@@ -225,6 +230,8 @@ export default function Streams() {
   const sec = {
     basic: streamI18n("sectionBasic"),
     routing: streamI18n("sectionRouting"),
+    logging: streamI18n("sectionLogging"),
+    tls: streamI18n("sectionTls"),
     limits: streamI18n("sectionLimits"),
     tcp: streamI18n("sectionTcp"),
   };
@@ -278,6 +285,125 @@ export default function Streams() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
+    },
+    {
+      name: "send_proxy_protocol",
+      section: sec.routing,
+      label: streamI18n("sendProxyProtocol"),
+      placeholder: "",
+      tips: streamI18n("sendProxyProtocolTips"),
+      defaultValue: streamConfig.send_proxy_protocol || "",
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["v1", "v2"], false, true),
+    },
+    {
+      name: "access_log",
+      section: sec.logging,
+      label: streamI18n("accessLog"),
+      placeholder: streamI18n("accessLogPlaceholder"),
+      tips: streamI18n("accessLogTips"),
+      defaultValue: streamConfig.access_log,
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "global_certificates",
+      section: sec.tls,
+      label: streamI18n("globalCertificates"),
+      placeholder: "",
+      tips: streamI18n("globalCertificatesTips"),
+      defaultValue: streamConfig.global_certificates,
+      span: 6,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
+      name: "tls_cipher_list",
+      section: sec.tls,
+      label: streamI18n("tlsCipherList"),
+      placeholder: streamI18n("tlsCipherListPlaceholder"),
+      defaultValue: streamConfig.tls_cipher_list,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? streamI18n("tlsSettingsRustlsTips") : undefined,
+    },
+    {
+      name: "tls_ciphersuites",
+      section: sec.tls,
+      label: streamI18n("tlsCiphersuites"),
+      placeholder: streamI18n("tlsCiphersuitesPlaceholder"),
+      defaultValue: streamConfig.tls_ciphersuites,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? streamI18n("tlsSettingsRustlsTips") : undefined,
+    },
+    {
+      name: "tls_min_version",
+      section: sec.tls,
+      label: streamI18n("tlsMinVersion"),
+      placeholder: "",
+      defaultValue: streamConfig.tls_min_version,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? streamI18n("tlsSettingsRustlsTips") : undefined,
+    },
+    {
+      name: "tls_max_version",
+      section: sec.tls,
+      label: streamI18n("tlsMaxVersion"),
+      placeholder: "",
+      defaultValue: streamConfig.tls_max_version,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
+      readOnly: rustlsBackend,
+      tips: rustlsBackend ? streamI18n("tlsSettingsRustlsTips") : undefined,
+    },
+    {
+      name: "tls_client_ca",
+      section: sec.tls,
+      label: streamI18n("tlsClientCa"),
+      placeholder: streamI18n("tlsClientCaPlaceholder"),
+      defaultValue: streamConfig.tls_client_ca,
+      span: 4,
+      category: ExFormItemCategory.TEXTAREA,
+      rows: Math.min(
+        20,
+        Math.max(3, (streamConfig.tls_client_ca || "").split("\n").length),
+      ),
+      nullAsEmpty: true,
+      tips: streamI18n("tlsClientCaTips"),
+    },
+    {
+      name: "tls_client_auth",
+      section: sec.tls,
+      label: streamI18n("tlsClientAuth"),
+      placeholder: "",
+      defaultValue: streamConfig.tls_client_auth || "",
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newStringOptions(["require", "optional"], false, true),
+      tips: streamI18n("tlsClientAuthTips"),
+    },
+    {
+      name: "tls_client_crl",
+      section: sec.tls,
+      label: streamI18n("tlsClientCrl"),
+      placeholder: streamI18n("tlsClientCrlPlaceholder"),
+      defaultValue: streamConfig.tls_client_crl,
+      span: 6,
+      category: ExFormItemCategory.TEXTAREA,
+      rows: Math.min(
+        20,
+        Math.max(3, (streamConfig.tls_client_crl || "").split("\n").length),
+      ),
+      nullAsEmpty: true,
+      tips: streamI18n("tlsClientCrlTips"),
     },
     {
       name: "includes",
@@ -436,7 +562,7 @@ export default function Streams() {
 
   const defaultShow = sortIntoSections(
     items,
-    [sec.basic, sec.routing, sec.limits, sec.tcp],
+    [sec.basic, sec.routing, sec.logging, sec.tls, sec.limits, sec.tcp],
     [sec.basic, sec.routing],
   );
 
@@ -558,6 +684,12 @@ export default function Streams() {
           }
           if (data.upstream === "") {
             data.upstream = null;
+          }
+          if (data.send_proxy_protocol === "") {
+            data.send_proxy_protocol = null;
+          }
+          if (data.tls_client_auth === "") {
+            data.tls_client_auth = null;
           }
           omitEmptyArrayString(data);
           await update("stream", name, data);

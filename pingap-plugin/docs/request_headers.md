@@ -59,6 +59,10 @@ A value that is one of these, and nothing else, is replaced:
 | `$ja4` | The client's JA4 TLS fingerprint, on a server with `ja4 = true` |
 | `$tls_server_name` | The SNI the client sent in the TLS handshake (empty when none was sent or on plain HTTP) |
 | `$tls_client_subject` / `$tls_client_fingerprint` / `$tls_client_serial` / `$tls_client_verified` | The certificate the client showed, on a server with [`tls_client_ca`](../../pingap-proxy/README.md#client-certificates-mutual-tls): its subject, SHA-256 and serial number, and `true` / `false` for whether there is one. Without a certificate the first three are empty, and the header is set all the same |
+| `$proxy_protocol_alpn` / `$proxy_protocol_authority` / `$proxy_protocol_unique_id` / `$proxy_protocol_netns` | Inbound [PROXY protocol](../../pingap-proxy/README.md#proxy-protocol) v2 TLVs (`ALPN`, `AUTHORITY`, `UNIQUE_ID` as printable ASCII or lowercase hex, `NETNS`). Empty when absent, overwriting any client-sent value |
+| `$proxy_protocol_tls_version` / `$proxy_protocol_tls_cn` / `$proxy_protocol_tls_cipher` | Inbound PROXY protocol v2 `SSL` sub-TLVs (`version`, client cert `CN`, `cipher`). Empty when absent |
+| `$proxy_protocol_aws_vpce_id` | AWS VPC Endpoint ID from an inbound PROXY protocol v2 `0xEA` (`0x01`) TLV. Empty when absent |
+| `$proxy_protocol_tlv_<type>` | Inbound PROXY protocol v2 TLV by hex (`0x..`) or decimal type ID (e.g. `$proxy_protocol_tlv_0xE1`), as printable ASCII or `0x<hex>`. Empty when absent |
 | `$proxy_add_x_forwarded_for` | Existing `X-Forwarded-For` plus the client address |
 | `$http_<name>` | Value of request header `<name>`; underscores stand for dashes, so `$http_user_agent` reads `User-Agent` |
 | `$<NAME>` | Environment variable `NAME` |

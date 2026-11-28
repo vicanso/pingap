@@ -139,6 +139,14 @@ let parser = Parser::from(format);
 | `ja4_r` | `JA4_r`：排序后的密码套件与扩展列表本身，而非哈希 |
 | `ja4_o` | `JA4_o`：按客户端发送顺序的列表计算哈希 |
 | `ja4_ro` | `JA4_ro`：按发送顺序的列表，不做哈希；其他形式都能由它算出 |
+| `proxy_protocol_alpn` | 来自入站 PROXY protocol v2 `ALPN` TLV（`0x01`）的 ALPN 协议 |
+| `proxy_protocol_authority` | 来自入站 PROXY protocol v2 `AUTHORITY` TLV（`0x02`）的 Authority / SNI 主机名 |
+| `proxy_protocol_unique_id` | 来自入站 PROXY protocol v2 `UNIQUE_ID` TLV（`0x05`）的连接唯一 ID（可打印 ASCII 或小写十六进制） |
+| `proxy_protocol_netns` | 来自入站 PROXY protocol v2 `NETNS` TLV（`0x30`）的网络命名空间路径 |
+| `proxy_protocol_tls_version` | 来自入站 PROXY protocol v2 `SSL` 子 TLV（`0x21`）的客户端 TLS 版本 |
+| `proxy_protocol_tls_cn` | 来自入站 PROXY protocol v2 `SSL` 子 TLV（`0x22`）的客户端证书 CN |
+| `proxy_protocol_tls_cipher` | 来自入站 PROXY protocol v2 `SSL` 子 TLV（`0x23`）的客户端 TLS 密码套件 |
+| `proxy_protocol_aws_vpce_id` | 来自入站 PROXY protocol v2 AWS TLV（`0xEA`，子类型 `0x01`）的 AWS VPC Endpoint ID |
 | `upstream_addr` | 上游后端地址 |
 | `upstream_name` | 请求最终发往的上游名称：location 的上游、插件选定的上游，或者它的 `fallback_upstream` |
 | `upstream_status` | 上游返回的状态码，没有时为 `-` |
@@ -294,6 +302,39 @@ access_log = "/var/log/pingap/access.log {client_ip} {method} {uri} {status} {la
 `{:ja4}` 用于分组与匹配。哈希无法反推原始值，如需留存供日后分析，可再加上 `{:ja4_ro}`。没有指纹的连接（明文 HTTP，或 ClientHello 无法读取）该字段为空。同一个值可以通过 `proxy_set_headers = ["X-JA4: $ja4"]` 发给上游，见 [pingap-proxy](proxy.md#ja4-指纹)。
 
 `format` 直接写入一个预估大小的缓冲区：时间戳逐位写出而不经过中间 `String`，每行的开销只剩字段本身。
+
+#### 四层 Stream 访问日志
+
+`[streams.*]` 监听器支持通过 `access_log` 配置连接级访问日志，采用与 HTTP server 相同的输出目标语法（`<路径>?...`、`stdout`、`stderr`、`syslog://...`，不写目标时写入应用日志）以及预设名（`combined`、`common`、`short`、`tiny`、`json`）或自定义 `{标签}` / JSON 对象模板：
+
+```toml
+[streams.tls_mux]
+addr = "0.0.0.0:9443"
+global_certificates = true
+sni_routes = { "api.example.com" = "tls_a" }
+access_log = "/var/log/pingap/stream-access.log?rolling=daily&min_latency=100ms json"
+```
+
+预定义四层格式：
+
+```text
+combined  {client_ip} [{when}] {stream} "{sni}" -> {upstream} ({backend}) {result} rx={bytes_rx} tx={bytes_tx} {latency}
+common    {client_ip} [{when}] {stream} {upstream} {result} {bytes_rx} {bytes_tx} {duration_ms}
+short     {client_ip} {stream} {upstream} {result} {bytes_rx}/{bytes_tx} {duration_ms}ms
+tiny      {stream} {upstream} {result} {duration_ms}ms
+json      {"when":{when},"stream":{stream},"client_ip":{client_ip},"client_addr":{client_addr},"sni":{sni},"upstream":{upstream},"backend":{backend},"result":{result},"bytes_rx":{bytes_rx},"bytes_tx":{bytes_tx},"duration_ms":{duration_ms},...}
+```
+
+（`json` 在非空时还会附带 `connect_time_ms`、`tls_version`、`tls_cipher`、`tls_client_subject`、`tls_client_serial`、`pp_alpn`、`pp_authority`、`pp_unique_id`、`pp_netns`、`pp_aws_vpce_id` 以及 `[basic]` 中的 `name`、`labels`。）
+
+支持的四层标签：
+
+- **连接与转发：** `{stream}`、`{client_ip}`、`{client_addr}`（别名 `{remote_addr}`）、`{sni}`、`{upstream}`、`{backend}`（别名 `{upstream_addr}`）、`{bytes_rx}`、`{bytes_tx}`、`{size}`（`bytes_rx + bytes_tx`）、`{duration_ms}`、`{latency}`、`{connect_time}`、`{result}`（别名 `{status}`）。
+- **本地 TLS / 双向 TLS（`global_certificates = true`）：** `{tls_version}`、`{tls_cipher}`、`{tls_client_subject}`、`{tls_client_fingerprint}`、`{tls_client_serial}`、`{tls_client_verified}`。
+- **入站 PROXY protocol v2 TLV：** `{pp_alpn}`、`{pp_authority}`、`{pp_unique_id}`、`{pp_netns}`、`{pp_tls_version}`、`{pp_tls_cn}`、`{pp_tls_cipher}`、`{pp_aws_vpce_id}`。
+- **时间与部署标识：** `{when}`、`{when_utc_iso}`、`{when_unix}`、`{$hostname}`、`{$name}`、`{$label:<key>}`、`{$<VARIABLE>}`。
+
+目标过滤参数中，`skip` 匹配 stream 名称或 SNI；`min_status` 将 `result == "ok"` 映射为 `200`，ACL/拒绝结果映射为 `403`，其他错误映射为 `500`，因此 `min_status`、`min_latency`、`sample`、`rolling`、`keep`、`channel_buffer` 与 `flush_timeout` 的用法与 HTTP server 一致。
 
 ## 配置
 

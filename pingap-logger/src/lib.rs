@@ -21,6 +21,7 @@ mod access;
 mod async_logger;
 mod file_appender;
 mod filter;
+mod stream_access;
 #[cfg(unix)]
 mod syslog;
 mod target;
@@ -89,6 +90,7 @@ pub use access::*;
 pub use async_logger::*;
 pub use file_appender::LogFiles;
 pub use filter::AccessLogFilter;
+pub use stream_access::*;
 pub use writer::*;
 
 #[cfg(test)]

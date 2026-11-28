@@ -176,6 +176,25 @@ proxy_protocol = true
   `send_proxy_protocol = "v1"` or `"v2"` writes one of its own for each
   connection it opens, with the client address this server took from the
   header: see [pingap-upstream](../pingap-upstream/README.md).
+- **Inbound PROXY protocol v2 TLVs**: When a v2 header from a trusted proxy
+  carries TLV extensions (`ALPN`, `AUTHORITY`, `UNIQUE_ID`, `NETNS`, `SSL`
+  sub-TLVs, `AWS` VPCE ID, or custom TLVs; `NOOP` is ignored), Pingap parses
+  them onto the connection:
+  - In `proxy_set_headers` and the
+    [`request_headers`](../pingap-plugin/docs/request_headers.md) plugin, read
+    `$proxy_protocol_alpn`, `$proxy_protocol_authority`,
+    `$proxy_protocol_unique_id`, `$proxy_protocol_netns`,
+    `$proxy_protocol_tls_version`, `$proxy_protocol_tls_cn`,
+    `$proxy_protocol_tls_cipher`, `$proxy_protocol_aws_vpce_id`, or
+    `$proxy_protocol_tlv_0x..` (hex or decimal type ID, e.g.
+    `$proxy_protocol_tlv_0xE1`, returning printable ASCII or `0x<hex>`). Like
+    `$tls_client_*`, when no matching TLV is present on the connection, the
+    header is set to an empty value so client-sent headers cannot spoof it.
+  - In HTTP access logs, use `{:proxy_protocol_alpn}`,
+    `{:proxy_protocol_authority}`, `{:proxy_protocol_unique_id}`,
+    `{:proxy_protocol_netns}`, `{:proxy_protocol_tls_version}`,
+    `{:proxy_protocol_tls_cn}`, `{:proxy_protocol_tls_cipher}`, and
+    `{:proxy_protocol_aws_vpce_id}` (and `{pp_*}` in L4 stream access logs).
 
 ### Client certificates (mutual TLS)
 
@@ -225,12 +244,16 @@ its own.
   keep what the client sent, so they are not the ones to use here.
 - The certificate is the connection's: every request on it, and every stream
   of an HTTP/2 connection, has the same one.
-- The CA is read when the server starts. A changed `tls_client_ca` is a change
-  of the server, which takes a restart (`--autorestart`), like its other TLS
-  settings. Revocation lists are not checked: to shut a certificate out before
-  it expires, refuse its fingerprint or serial in the upstream or a plugin.
-- Both TLS backends do this. `pingap -t` reads the CA and reports one that
-  does not parse.
+- The CA is read when the server starts. A changed `tls_client_ca` or
+  `tls_client_crl` is a change of the server, which takes a restart
+  (`--autorestart`), like its other TLS settings.
+- **`tls_client_crl`**: Accepts a PEM file path, base64-encoded PEM, or raw
+  PEM containing one or more X.509 certificate revocation lists (requires
+  `tls_client_ca`). Checked during the mTLS handshake on both OpenSSL
+  (`CRL_CHECK`) and rustls (`WebPkiClientVerifier` end-entity revocation
+  check); invalid or non-CRL PEMs fail validation / startup.
+- Both TLS backends do this. `pingap -t` reads the CA and reports one (or an
+  inline CRL) that does not parse.
 
 An interim response from the upstream, such as `103 Early Hints`, is passed on
 to the client as it is. The response plugins, the status in the access log and
@@ -346,6 +369,10 @@ tcp_interval = "1m"
 tcp_probe_count = 9
 downstream_read_timeout = "30s"
 downstream_write_timeout = "30s"
+min_send_rate = "1kb"
+total_drain_timeout = "10s"
+allow_ips = ["10.0.0.0/8"]
+deny_ips = ["192.0.2.0/24"]
 modules = ["grpc-web"]
 ```
 
@@ -415,6 +442,16 @@ Notes on a few of these:
   the endpoint is to be guarded for all of them.
 - `enable_server_timing` adds a `Server-Timing` response header built from the
   request's timing breakdown — useful when diagnosing where latency comes from.
+- `allow_ips` / `deny_ips` enforce connection-level IP/CIDR access control at
+  connection accept, before the TLS handshake or HTTP parsing (`deny_ips` takes
+  precedence over `allow_ips`; evaluated against the client address from
+  inbound `proxy_protocol` when enabled from `basic.trusted_proxies`).
+- `min_send_rate` sets a minimum downstream response send rate per second
+  (`bytes/sec`, e.g. `"1kb"`) so slow-reading clients that fall below it are
+  closed (`set_min_send_rate`).
+- `total_drain_timeout` caps the total time spent draining unread client
+  request bodies before closing the connection (e.g. `"10s"`,
+  `set_total_drain_timeout`).
 - `error_template` (under `[basic]`) replaces the built-in `error.html`. The
   template is parsed once when the server starts, and three placeholders are
   filled in per error:
@@ -524,13 +561,16 @@ addr = "0.0.0.0:9443"
 upstream = "db_primary"        # optional fallback for non-TLS / unmatched SNI
 sni_routes = { "api.example.com" = "tls_a", "*.app.example.com" = "tls_a" }
 sni_read_timeout = "5s"
+# global_certificates = true   # enable local TLS termination & optional mTLS
+# access_log = "combined"      # configurable stream access log
+# send_proxy_protocol = "v2"   # write outbound PROXY protocol header
 ```
 
-- **TLS SNI passthrough without termination**: When `sni_routes` is configured, Pingap peeks the TLS `ClientHello` up to `sni_read_timeout`, extracts SNI via `pingap_core::ja4::extract_sni` (supporting multi-record ClientHello reassembly), selects an upstream (exact case-insensitive match with trailing dot stripped > longest `*.domain` single-label wildcard > optional `upstream` fallback), and forwards all peeked bytes verbatim. Wildcard rules never match the bare apex domain.
+- **TLS SNI passthrough vs. local TLS termination**: When `sni_routes` is configured without `global_certificates`, Pingap peeks the TLS `ClientHello` up to `sni_read_timeout`, extracts SNI via `pingap_core::ja4::extract_sni` (supporting multi-record ClientHello reassembly), selects an upstream (exact case-insensitive match with trailing dot stripped > longest `*.domain` single-label wildcard > optional `upstream` fallback), and forwards all peeked bytes verbatim. Wildcard rules never match the bare apex domain. Setting `global_certificates = true` switches the listener to terminate TLS locally using [pingap-certificate](../pingap-certificate/README.md) (both OpenSSL and rustls), forwarding plaintext to the selected upstream; it supports `tls_cipher_list`, `tls_ciphersuites`, `tls_min_version`, `tls_max_version` (OpenSSL only; rejected on `tls-rustls`), and mTLS (`tls_client_ca`, `tls_client_auth`, `tls_client_crl`).
 - **Plain TCP & half-close**: When no `sni_routes` are set (or when peeking non-TLS bytes with a fallback `upstream`), traffic streams directly via `tokio::io::copy`-style bidirectional relay with TCP `FIN` half-close propagation and multi-address connect failover.
-- **PROXY protocol**: Inbound `proxy_protocol = true` parses HAProxy v1/v2 only from `basic.trusted_proxies` before evaluating `allow_ips` / `deny_ips`; outbound `send_proxy_protocol = "v1"` / `"v2"` on the target upstream writes a fresh header carrying the resolved client address ahead of any peeked bytes.
-- **Hot reload boundary**: `upstream`, `sni_routes`, `proxy_protocol`, `connect_timeout`, `idle_timeout`, `sni_read_timeout`, `max_connections`, `allow_ips`, `deny_ips`, and `remark` update live on `--autoreload` without interrupting established connections; `addr`, `threads`, `reuse_port`, socket tuning, and added/removed streams require a restart (`left_for_restart`).
-- **Observability**: Emits structured `tracing` events on target `pingap::stream_access` and exports `pingap_stream_active_connections`, `pingap_stream_connections_total`, and `pingap_stream_bytes_total` Prometheus metrics.
+- **PROXY protocol**: Inbound `proxy_protocol = true` parses HAProxy v1/v2 only from `basic.trusted_proxies` (including v2 TLVs) before evaluating `allow_ips` / `deny_ips`; outbound `send_proxy_protocol = "v1"` / `"v2"` on the stream (or on the target upstream) writes a fresh header carrying the resolved client address ahead of forwarded stream bytes.
+- **Hot reload boundary**: `upstream`, `sni_routes`, `proxy_protocol`, `connect_timeout`, `idle_timeout`, `sni_read_timeout`, `max_connections`, `allow_ips`, `deny_ips`, and `remark` update live on `--autoreload` without interrupting established connections; `addr`, `threads`, `reuse_port`, socket tuning, TLS listener settings (`global_certificates`, `tls_*`, `tls_client_*`), and added/removed streams require a restart (`left_for_restart`).
+- **Observability**: Supports configurable `access_log` (presets `combined` / `common` / `short` / `tiny` / `json` and tags `{stream}`, `{client_ip}`, `{client_addr}`, `{sni}`, `{upstream}`, `{backend}`, `{bytes_rx}`, `{bytes_tx}`, `{duration_ms}`, `{latency}`, `{result}`, `{tls_*}`, `{pp_*}`; see [pingap-logger](../pingap-logger/README.md#layer-4-stream-access-logging)), emits structured `tracing` events on target `pingap::stream_access`, and exports `pingap_stream_active_connections`, `pingap_stream_connections_total`, and `pingap_stream_bytes_total` Prometheus metrics.
 
 ## Per-request context
 

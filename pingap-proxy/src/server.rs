@@ -20,7 +20,9 @@ use super::tracing::{
 use super::{ErrorTemplate, LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
 use crate::ja4::{Ja4Collector, Ja4Store};
-use crate::proxy_protocol::{PreTls, ProxyProtocolApp};
+use crate::proxy_protocol::{
+    IpAllowCheck, PreTls, ProxyProtocolApp, ProxyProtocolTlvStore,
+};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -37,6 +39,7 @@ use pingap_core::BackgroundTask;
 use pingap_core::HttpResponse;
 use pingap_core::LocationInstance;
 use pingap_core::PluginProvider;
+use pingap_core::ProxyProtocolTlvs;
 use pingap_core::new_internal_error;
 use pingap_core::{
     CompressionStat, Ctx, PluginStep, RequestPluginResult,
@@ -57,6 +60,7 @@ use pingap_performance::{
 };
 use pingap_performance::{accept_request, end_request};
 use pingap_upstream::{PeerAttempt, Upstream, UpstreamProvider};
+use pingap_util::IpRules;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
@@ -89,6 +93,7 @@ use pingora::upstreams::peer::{HttpPeer, Peer};
 use scopeguard::defer;
 use snafu::Snafu;
 use std::any::Any;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -145,9 +150,12 @@ fn is_interim_response(status: StatusCode) -> bool {
 /// connection; its presence is the whole message.
 struct KeepaliveReuse;
 
-/// Carried across reused HTTP/1 TLS connections when JA4 is enabled so the
-/// next request restores the fingerprint without locking `Ja4Store`.
-struct KeepaliveReuseWithJa4(Arc<pingap_core::Ja4Fingerprint>);
+/// Carried across reused HTTP/1 connections so the next request restores
+/// pre-TLS fingerprints / PROXY v2 TLVs without locking the stores.
+struct KeepaliveReuseState {
+    ja4: Option<Arc<pingap_core::Ja4Fingerprint>>,
+    proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvs>>,
+}
 
 /// Request counters for one [`Server`], isolated onto their own cache line
 /// so per-request atomic increments/decrements do not false-share with
@@ -227,9 +235,46 @@ pub struct ServerRuntime {
     pub downstream_write_timeout: Option<Duration>,
     /// Serve HTTP/1.1 pipelined requests sequentially on a keep-alive connection
     pub h1_pipelining: bool,
+    /// Client IPs or CIDR ranges allowed before TLS/HTTP handling
+    pub allow_ips: Option<IpRules>,
+    /// Client IPs or CIDR ranges denied before TLS/HTTP handling
+    pub deny_ips: Option<IpRules>,
+    /// Minimum downstream send rate in bytes per second
+    pub min_send_rate: Option<usize>,
+    /// Maximum total time spent draining a downstream response
+    pub total_drain_timeout: Option<Duration>,
+}
+
+fn parse_server_ip_rules(
+    server_name: &str,
+    label: &str,
+    list: Option<&Vec<String>>,
+) -> Result<Option<IpRules>> {
+    let Some(list) = list.filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    IpRules::try_new(list).map(Some).map_err(|e| Error::Common {
+        category: label.to_string(),
+        message: format!("server({server_name}) {label}: {e}"),
+    })
 }
 
 impl ServerRuntime {
+    /// Returns whether `ip` is allowed by this server's deny/allow IP lists.
+    #[inline]
+    pub fn is_ip_allowed(&self, ip: IpAddr) -> bool {
+        let ip = ip.to_canonical();
+        if let Some(deny) = &self.deny_ips
+            && deny.is_match_addr(&ip)
+        {
+            return false;
+        }
+        if let Some(allow) = &self.allow_ips {
+            return allow.is_match_addr(&ip);
+        }
+        true
+    }
+
     /// Validates and builds a [`ServerRuntime`] snapshot from `conf`.
     pub fn try_from_conf(conf: &ServerConf) -> Result<Self> {
         let (access_log, access_log_path) =
@@ -264,6 +309,18 @@ impl ServerRuntime {
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
             h1_pipelining: conf.h1_pipelining,
+            allow_ips: parse_server_ip_rules(
+                &conf.name,
+                "allow_ips",
+                conf.allow_ips.as_ref(),
+            )?,
+            deny_ips: parse_server_ip_rules(
+                &conf.name,
+                "deny_ips",
+                conf.deny_ips.as_ref(),
+            )?,
+            min_send_rate: conf.min_send_rate,
+            total_drain_timeout: conf.total_drain_timeout,
         })
     }
 }
@@ -366,6 +423,9 @@ pub struct Server {
     /// Whether a client without a certificate is let in all the same.
     tls_client_auth_optional: bool,
 
+    /// PEM path or inline CRL checked against client certificates.
+    tls_client_crl: Option<String>,
+
     /// Whether HTTP/2 protocol is enabled
     enabled_h2: bool,
     /// Downstream HTTP/2 SETTINGS overrides, None = pingora's bounded defaults
@@ -391,6 +451,9 @@ pub struct Server {
     /// Whether the listeners read the PROXY protocol header of a
     /// trusted proxy for the address of the client.
     proxy_protocol: bool,
+
+    /// Decoded inbound PROXY protocol v2 TLVs keyed by connection digest.
+    proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvStore>>,
 
     /// TCP socket configuration options (keepalive, TCP fastopen etc)
     tcp_socket_options: Option<TcpSocketOptions>,
@@ -453,6 +516,8 @@ struct ListenerParams {
     tls: TlsSettingParams,
     ja4: Option<Arc<Ja4Store>>,
     proxy_protocol: bool,
+    proxy_protocol_tlvs: Option<Arc<ProxyProtocolTlvStore>>,
+    ip_checker: Option<IpAllowCheck>,
 }
 
 impl ListenerParams {
@@ -472,6 +537,8 @@ impl ListenerParams {
             tls,
             ja4,
             proxy_protocol,
+            proxy_protocol_tlvs,
+            ip_checker,
         } = self;
         let is_tls = dynamic_cert.is_some();
         lb.threads = threads;
@@ -479,7 +546,9 @@ impl ListenerParams {
         // backends share, and it only ever runs on TLS listeners: the
         // PROXY protocol header of a listener without TLS is read by
         // `ProxyProtocolApp`, and config validation rejects `ja4` without
-        // TLS.
+        // TLS. On TLS listeners we attach `PreTls` unconditionally so
+        // pre-TLS IP allow/deny rules (including hot-reloaded rules) always
+        // run before ClientHello/ServerHello.
         if ja4.is_some() && !is_tls {
             warn!(
                 target: LOG_TARGET,
@@ -487,9 +556,11 @@ impl ListenerParams {
                 "ja4 needs a TLS listener, not collecting it"
             );
         }
-        if is_tls && (ja4.is_some() || proxy_protocol) {
+        if is_tls {
             lb.endpoints().set_pre_tls_callback(Arc::new(PreTls {
                 proxy_protocol,
+                tlvs: proxy_protocol_tlvs,
+                ip_checker,
                 ja4: ja4.map(Ja4Collector::new),
             }));
         }
@@ -884,11 +955,15 @@ impl Server {
             tls_max_version: conf.tls_max_version.clone(),
             tls_client_ca: conf.tls_client_ca.clone(),
             tls_client_auth_optional: conf.tls_client_auth_optional,
+            tls_client_crl: conf.tls_client_crl.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
             ja4: conf.ja4.then(|| Arc::new(Ja4Store::default())),
             proxy_protocol: conf.proxy_protocol,
+            proxy_protocol_tlvs: conf
+                .proxy_protocol
+                .then(|| Arc::new(ProxyProtocolTlvStore::default())),
             enabled_h2: conf.enabled_h2,
             h2_max_concurrent_streams: conf.h2_max_concurrent_streams,
             h2_max_header_list_size: conf.h2_max_header_list_size,
@@ -1069,6 +1144,9 @@ impl Server {
         }
         let h2_options = self.new_h2_options();
         let http_server_options = self.http_server_options(is_tls);
+        let runtime_for_acl = self.runtime.clone();
+        let ip_checker: IpAllowCheck =
+            Arc::new(move |ip| runtime_for_acl.load().is_ip_allowed(ip));
         let listeners = ListenerParams {
             name: name.clone(),
             addr,
@@ -1083,10 +1161,13 @@ impl Server {
                 tls_min_version: self.tls_min_version.clone(),
                 tls_max_version: self.tls_max_version.clone(),
                 client_ca: self.tls_client_ca.clone(),
+                client_crl: self.tls_client_crl.clone(),
                 client_auth_optional: self.tls_client_auth_optional,
             },
             ja4: self.ja4.clone(),
             proxy_protocol: self.proxy_protocol,
+            proxy_protocol_tlvs: self.proxy_protocol_tlvs.clone(),
+            ip_checker: Some(ip_checker.clone()),
         };
         const SERVICE_NAME: &str = "Pingora HTTP Proxy Service";
         // A listener without TLS that reads the PROXY protocol: pingora
@@ -1096,13 +1177,14 @@ impl Server {
         // is the report of how long evicted upstream connections had been
         // idle (see below).
         if self.proxy_protocol && !is_tls {
+            let proxy_protocol_tlvs = self.proxy_protocol_tlvs.clone();
             let mut http_logic = http_proxy(&conf, self);
             http_logic.server_options = Some(http_server_options);
             http_logic.h2_options = h2_options;
-            let mut lb = Service::new(
-                SERVICE_NAME.to_string(),
-                ProxyProtocolApp::new(http_logic),
-            );
+            let app = ProxyProtocolApp::new(http_logic)
+                .with_tlvs(proxy_protocol_tlvs)
+                .with_ip_checker(Some(ip_checker));
+            let mut lb = Service::new(SERVICE_NAME.to_string(), app);
             listeners.add_to(&mut lb, &conf)?;
             return Ok(ServerServices { lb: Box::new(lb) });
         }
@@ -1171,6 +1253,10 @@ impl Server {
     ) {
         session.set_read_timeout(runtime.downstream_read_timeout);
         session.set_write_timeout(runtime.downstream_write_timeout);
+        session.as_mut().set_min_send_rate(runtime.min_send_rate);
+        session
+            .as_mut()
+            .set_total_drain_timeout(runtime.total_drain_timeout);
 
         if let Some(stream) = session.stream() {
             ctx.conn.id = stream.id() as usize;
@@ -1203,6 +1289,12 @@ impl Server {
                     })
             {
                 ctx.timing.tls_handshake = Some(handshake as i32);
+            }
+            if ctx.conn.proxy_protocol_tlvs.is_none()
+                && let Some(store) = &self.proxy_protocol_tlvs
+                && let Some(socket_digest) = &digest.socket_digest
+            {
+                ctx.conn.proxy_protocol_tlvs = store.get(socket_digest);
             }
             if digest.ssl_digest.is_some() {
                 ctx.conn.tls_cipher = digest_detail.tls_cipher;
@@ -2205,6 +2297,21 @@ impl ProxyHttp for Server {
         if let Some(prom) = &self.prometheus {
             prom.on_request_start();
         }
+        // Plain HTTP listeners without PROXY protocol do not run `PreTls` or
+        // `ProxyProtocolApp`; enforce (and hot-reload) client IP rules before
+        // parsing/routing, closing disallowed connections without a body.
+        if ctx.conn.tls_version.is_none()
+            && let Some(peer_ip) = session
+                .client_addr()
+                .and_then(|addr| addr.as_inet())
+                .map(|addr| addr.ip().to_canonical())
+            && !runtime.is_ip_allowed(peer_ip)
+        {
+            session.set_keepalive(None);
+            return Err(pingora::Error::new_down(
+                pingora::ErrorType::ConnectionClosed,
+            ));
+        }
         // Before anything goes by the path: see `has_routable_target`.
         if !has_routable_target(session.req_header()) {
             return Err(new_internal_error(
@@ -2454,10 +2561,13 @@ impl ProxyHttp for Server {
         _session: &Session,
         ctx: &Self::CTX,
     ) -> Option<Box<dyn Any + Send + Sync>> {
-        match &ctx.conn.ja4 {
-            Some(ja4) => Some(Box::new(KeepaliveReuseWithJa4(ja4.clone()))),
-            None => Some(Box::new(KeepaliveReuse)),
+        if ctx.conn.ja4.is_some() || ctx.conn.proxy_protocol_tlvs.is_some() {
+            return Some(Box::new(KeepaliveReuseState {
+                ja4: ctx.conn.ja4.clone(),
+                proxy_protocol_tlvs: ctx.conn.proxy_protocol_tlvs.clone(),
+            }));
         }
+        Some(Box::new(KeepaliveReuse))
     }
 
     /// The exact HTTP/1 keepalive signal. It replaces the "connection older
@@ -2471,8 +2581,9 @@ impl ProxyHttp for Server {
         prev_ctx: Box<dyn Any + Send + Sync>,
     ) {
         ctx.conn.reused = true;
-        if let Ok(with_ja4) = prev_ctx.downcast::<KeepaliveReuseWithJa4>() {
-            ctx.conn.ja4 = Some(with_ja4.0);
+        if let Ok(state) = prev_ctx.downcast::<KeepaliveReuseState>() {
+            ctx.conn.ja4 = state.ja4;
+            ctx.conn.proxy_protocol_tlvs = state.proxy_protocol_tlvs;
         }
     }
 
@@ -7047,6 +7158,10 @@ addr = "127.0.0.1:6188"
                 downstream_read_timeout: current.downstream_read_timeout,
                 downstream_write_timeout: current.downstream_write_timeout,
                 h1_pipelining: current.h1_pipelining,
+                allow_ips: current.allow_ips.clone(),
+                deny_ips: current.deny_ips.clone(),
+                min_send_rate: current.min_send_rate,
+                total_drain_timeout: current.total_drain_timeout,
             };
             f(&mut next);
             self.runtime.store(Arc::new(next));
@@ -8079,6 +8194,176 @@ addr = "127.0.0.1:6188"
             try_reload_server_runtime("unregistered-server", &base_conf)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_server_runtime_ip_acl_and_rate_drain_config() {
+        let mut conf = ServerConf {
+            name: "acl-rate-test".to_string(),
+            allow_ips: Some(vec!["10.0.0.0/8".to_string()]),
+            deny_ips: Some(vec!["10.0.0.99".to_string()]),
+            min_send_rate: Some(4096),
+            total_drain_timeout: Some(Duration::from_secs(9)),
+            ..Default::default()
+        };
+        let rt = ServerRuntime::try_from_conf(&conf).unwrap();
+        assert_eq!(true, rt.is_ip_allowed("10.0.0.5".parse().unwrap()));
+        assert_eq!(false, rt.is_ip_allowed("10.0.0.99".parse().unwrap()));
+        assert_eq!(false, rt.is_ip_allowed("192.168.1.1".parse().unwrap()));
+        // IPv4-mapped IPv6 address canonicalizes cleanly.
+        assert_eq!(true, rt.is_ip_allowed("::ffff:10.0.0.5".parse().unwrap()));
+        assert_eq!(Some(4096), rt.min_send_rate);
+        assert_eq!(Some(Duration::from_secs(9)), rt.total_drain_timeout);
+
+        conf.allow_ips = Some(vec!["not-an-ip".to_string()]);
+        assert_eq!(true, ServerRuntime::try_from_conf(&conf).is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_server_proxy_protocol_tlvs_reuse_and_plain_http_acl_hot_reload()
+     {
+        use pingora::protocols::GetSocketDigest;
+        use std::os::unix::io::AsRawFd;
+        use tokio::net::{TcpListener, TcpStream};
+
+        struct Cleanup(&'static str);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                SERVER_REGISTRY.write().remove(self.0);
+            }
+        }
+        const SERVER_NAME: &str = "acl-tlv-live-test";
+        let _cleanup = Cleanup(SERVER_NAME);
+
+        let dir = tempfile::tempdir().unwrap();
+        let toml = TEST_TOML
+            .replace("proxy_protocol = false", "proxy_protocol = true");
+        let mut server = new_server_from(&toml, None);
+        server.name = SERVER_NAME.to_string();
+        if server.proxy_protocol_tlvs.is_none() {
+            server.proxy_protocol_tlvs =
+                Some(Arc::new(ProxyProtocolTlvStore::default()));
+        }
+        let store = server.proxy_protocol_tlvs.clone().unwrap();
+
+        let _ = dir;
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        let config_manager = Arc::new(
+            new_file_config_manager(&file.path().to_string_lossy()).unwrap(),
+        );
+        let mut base_conf = ServerConf {
+            name: SERVER_NAME.to_string(),
+            addr: "127.0.0.1:0".to_string(),
+            proxy_protocol: true,
+            allow_ips: Some(vec!["127.0.0.1".to_string()]),
+            min_send_rate: Some(1024),
+            total_drain_timeout: Some(Duration::from_secs(4)),
+            ..Default::default()
+        };
+        let run_ctx = AppContext {
+            logger: server.access_logger.clone(),
+            config_manager,
+            server_locations_provider: server.server_locations_provider.clone(),
+            location_provider: server.location_provider.clone(),
+            upstream_provider: server.upstream_provider.clone(),
+            plugin_provider: server.plugin_provider.clone(),
+            certificate_provider: server.certificate_provider.clone(),
+        };
+        let _services = Server::new(&base_conf, run_ctx)
+            .unwrap()
+            .run(Arc::new(configuration::ServerConf::default()))
+            .unwrap();
+        server.runtime = SERVER_REGISTRY
+            .read()
+            .get(SERVER_NAME)
+            .unwrap()
+            .runtime
+            .clone();
+
+        // Real connected socket gives Session a SocketDigest without TLS (`ssl_digest = None`).
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client,
+            b"GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let (sock, _) = listener.accept().await.unwrap();
+        let mut l4 = pingora::protocols::l4::stream::Stream::from(sock);
+        let digest = Arc::new(pingora::protocols::SocketDigest::from_raw_fd(
+            l4.as_raw_fd(),
+        ));
+        l4.set_socket_digest(pingora::protocols::SocketDigest::from_raw_fd(
+            l4.as_raw_fd(),
+        ));
+        let real_digest = l4.get_socket_digest().unwrap();
+        drop(digest);
+        let expected_tlvs = Arc::new(pingap_core::ProxyProtocolTlvs {
+            authority: Some("pp.example.com".to_string()),
+            aws_vpce_id: Some("vpce-abc".to_string()),
+            ..Default::default()
+        });
+        store.insert(&real_digest, expected_tlvs.clone());
+
+        let mut session = Session::new_h1(Box::new(l4));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        assert_eq!(
+            true,
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .is_ok()
+        );
+        assert_eq!(Some(expected_tlvs.clone()), ctx.conn.proxy_protocol_tlvs);
+
+        // Verify persist_connection_context + on_connection_reuse carry TLVs across keepalive.
+        let persisted =
+            server.persist_connection_context(&session, &ctx).unwrap();
+        let mut reused_ctx = Ctx::default();
+        server.on_connection_reuse(&mut session, &mut reused_ctx, persisted);
+        assert_eq!(true, reused_ctx.conn.reused);
+        assert_eq!(Some(expected_tlvs), reused_ctx.conn.proxy_protocol_tlvs);
+
+        // Hot-reload deny_ips to block 127.0.0.1; plain-HTTP early_request_filter rejects cleanly.
+        base_conf.deny_ips = Some(vec!["127.0.0.1".to_string()]);
+        base_conf.min_send_rate = Some(2048);
+        base_conf.total_drain_timeout = Some(Duration::from_secs(7));
+        assert_eq!(
+            true,
+            try_reload_server_runtime(SERVER_NAME, &base_conf).unwrap()
+        );
+        assert_eq!(Some(2048), server.runtime.load().min_send_rate);
+        assert_eq!(
+            Some(Duration::from_secs(7)),
+            server.runtime.load().total_drain_timeout
+        );
+
+        let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+        let mut client2 = TcpStream::connect(addr2).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client2,
+            b"GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        let (sock2, _) = listener2.accept().await.unwrap();
+        let mut l4_2 = pingora::protocols::l4::stream::Stream::from(sock2);
+        l4_2.set_socket_digest(pingora::protocols::SocketDigest::from_raw_fd(
+            l4_2.as_raw_fd(),
+        ));
+        let mut session2 = Session::new_h1(Box::new(l4_2));
+        session2.read_request().await.unwrap();
+        let mut ctx2 = Ctx::default();
+        let err = server
+            .early_request_filter(&mut session2, &mut ctx2)
+            .await
+            .unwrap_err();
+        assert_eq!(pingora::ErrorType::ConnectionClosed, *err.etype());
     }
 
     #[tokio::test]

@@ -43,6 +43,7 @@ use pingap_certificate::{
     install_default_crypto_provider, new_certificate_validity_service,
     new_ocsp_stapling_service, new_self_signed_certificate_validity_service,
     validate_certificates_tls_for_backend, validate_servers_tls_for_backend,
+    validate_streams_tls_for_backend,
 };
 use pingap_config::PingapConfig;
 use pingap_config::{ConfigManager, ETCD_PROTOCOL};
@@ -974,6 +975,32 @@ fn handle_import_args(args: &Args) -> Result<bool, Box<dyn Error>> {
     Ok(true)
 }
 
+fn start_access_logger(
+    access_log: Option<&String>,
+    my_server: &mut pingora::server::Server,
+    application_log_paths: &mut Vec<pingap_logger::LogFiles>,
+) -> Result<Option<tokio::sync::mpsc::Sender<BytesMut>>, Box<dyn Error>> {
+    let (log_format, log_path) = parse_access_log_directive(access_log);
+    if let Some(log_path) = log_path {
+        let r = new_access_logger(&log_path);
+        let (tx, task) = r.recv()??;
+        if let Some(files) = task.get_log_files() {
+            application_log_paths.push(files);
+        }
+        my_server.add_service(background_service("access_logger", task));
+        Ok(Some(tx))
+    } else if log_format.is_some() {
+        // No destination: the lines go to the application log, and
+        // through a task as well, so that the thread a request ends
+        // on does not write them there itself.
+        let (tx, task) = pingap_logger::new_application_logger();
+        my_server.add_service(background_service("access_logger", task));
+        Ok(Some(tx))
+    } else {
+        Ok(None)
+    }
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -1170,6 +1197,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Reject per-server TLS version/cipher settings the active backend cannot
     // apply (rustls fixes 1.2/1.3 + default suites). Must run for `--test` too.
     validate_servers_tls_for_backend(&config.servers)?;
+    validate_streams_tls_for_backend(&config.streams)?;
     validate_certificates_tls_for_backend(&config.certificates)?;
     plugin::validate_plugin_references(&config)?;
     // Install aws-lc-rs before ACME / any other rustls user can race to install
@@ -1535,27 +1563,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for server_conf in server_conf_list {
         let listen_80_port = listens_on_port_80(&server_conf.addr);
-        let (log_format, log_path) =
-            parse_access_log_directive(server_conf.access_log.as_ref());
-
-        let access_logger = if let Some(log_path) = log_path {
-            let r = new_access_logger(&log_path);
-            let (tx, task) = r.recv()??;
-            if let Some(files) = task.get_log_files() {
-                application_log_paths.push(files);
-            }
-            my_server.add_service(background_service("access_logger", task));
-            Some(tx)
-        } else if log_format.is_some() {
-            // No destination: the lines go to the application log, and
-            // through a task as well, so that the thread a request ends
-            // on does not write them there itself.
-            let (tx, task) = pingap_logger::new_application_logger();
-            my_server.add_service(background_service("access_logger", task));
-            Some(tx)
-        } else {
-            None
-        };
+        let access_logger = start_access_logger(
+            server_conf.access_log.as_ref(),
+            &mut my_server,
+            &mut application_log_paths,
+        )?;
         let ctx = AppContext {
             server_locations_provider: new_server_locations_provider(),
             location_provider: new_location_provider(),
@@ -1583,11 +1595,26 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     for (name, stream_conf) in config.streams.iter() {
+        let stream_logger = start_access_logger(
+            stream_conf.access_log.as_ref(),
+            &mut my_server,
+            &mut application_log_paths,
+        )?;
+        streams::record_stream_startup_sink(
+            name,
+            stream_conf.access_log.as_ref(),
+        );
+        let ctx = pingap_proxy::StreamContext {
+            stream_provider: new_stream_provider(),
+            upstream_provider: new_upstream_provider(),
+            certificate_provider: certificate_provider.clone(),
+            server_conf: my_server.configuration.clone(),
+            logger: stream_logger,
+        };
         let stream_server = pingap_proxy::StreamServer::new(
             name.clone(),
             stream_conf.clone(),
-            new_stream_provider(),
-            new_upstream_provider(),
+            ctx,
         )?;
         my_server
             .add_boxed_service(stream_server.build_service()?)

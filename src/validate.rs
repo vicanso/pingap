@@ -27,7 +27,7 @@ use crate::plugin;
 use async_trait::async_trait;
 use pingap_certificate::{
     TlsCertificate, validate_certificates_tls_for_backend,
-    validate_servers_tls_for_backend,
+    validate_servers_tls_for_backend, validate_streams_tls_for_backend,
 };
 use pingap_config::{
     ConfigManager, MissingReference, PingapConfig, PingapTomlConfig, PluginConf,
@@ -523,17 +523,27 @@ pub fn validate_servers(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
 }
 
 /// Builds each configured L4 stream listener (runtime rules + listener
-/// addresses/options) without binding sockets or publishing them.
+/// addresses/options/TLS) without binding sockets or publishing them.
 pub fn validate_streams(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    if config.streams.is_empty() {
+        return Ok(());
+    }
+    let server_conf =
+        Arc::new(pingora::server::configuration::ServerConf::default());
+    let stream_provider = crate::streams::new_stream_provider();
+    let upstream_provider = crate::upstreams::new_upstream_provider();
+    let certificate_provider = crate::certificates::new_certificate_provider();
     for (name, stream_conf) in config.streams.iter() {
-        pingap_proxy::StreamServer::new(
-            name.clone(),
-            stream_conf.clone(),
-            crate::streams::new_stream_provider(),
-            crate::upstreams::new_upstream_provider(),
-        )
-        .and_then(|server| server.check())
-        .map_err(|e| format!("stream \"{name}\" is invalid: {e}"))?;
+        let ctx = pingap_proxy::StreamContext {
+            stream_provider: stream_provider.clone(),
+            upstream_provider: upstream_provider.clone(),
+            certificate_provider: certificate_provider.clone(),
+            server_conf: server_conf.clone(),
+            logger: None,
+        };
+        pingap_proxy::StreamServer::new(name.clone(), stream_conf.clone(), ctx)
+            .and_then(|server| server.check())
+            .map_err(|e| format!("stream \"{name}\" is invalid: {e}"))?;
     }
     Ok(())
 }
@@ -589,6 +599,7 @@ fn validate_stored_as(
     refuse_build_keys(&keys_of_other_builds(&config, BUILD_FEATURES), strict)?;
     plugin::validate_plugin_references(&config)?;
     validate_servers_tls_for_backend(&config.servers)?;
+    validate_streams_tls_for_backend(&config.streams)?;
     validate_certificates_tls_for_backend(&config.certificates)?;
     pingap_cache::dry_run(|| validate_built(&config))
 }

@@ -1989,4 +1989,66 @@ retry_status_codes = "502,503,504,429"
             config.locations["api"].retry_status_codes
         );
     }
+
+    #[test]
+    fn test_server_and_stream_direction_d_hcl_roundtrip() {
+        let toml_input = r#"
+[upstreams.backend]
+addrs = ["127.0.0.1:8080"]
+
+[locations.api]
+upstream = "backend"
+path = "/api"
+
+[servers.web]
+addr = "0.0.0.0:443"
+locations = ["api"]
+global_certificates = true
+tls_client_ca = "/etc/ca.pem"
+tls_client_crl = "/etc/crl.pem"
+tls_client_auth = "optional"
+allow_ips = ["10.0.0.0/8"]
+deny_ips = ["10.0.0.5"]
+min_send_rate = "64 KiB"
+total_drain_timeout = "5s"
+
+[streams.tls_gw]
+addr = "0.0.0.0:9443"
+upstream = "backend"
+global_certificates = true
+tls_cipher_list = "ECDHE-RSA-AES128-GCM-SHA256"
+tls_ciphersuites = "TLS_AES_128_GCM_SHA256"
+tls_min_version = "tlsv1.2"
+tls_max_version = "tlsv1.3"
+tls_client_ca = "/etc/ca.pem"
+tls_client_crl = "/etc/crl.pem"
+tls_client_auth = "require"
+access_log = "combined"
+send_proxy_protocol = "v2"
+allow_ips = ["192.168.0.0/16"]
+deny_ips = ["192.168.1.99"]
+"#;
+        let hcl_str = convert_toml_to_hcl(toml_input).unwrap();
+        let toml_roundtrip = convert_hcl_to_toml(&hcl_str).unwrap();
+        let config =
+            convert_pingap_config(toml_roundtrip.as_bytes(), false).unwrap();
+        config.validate().unwrap();
+
+        let web = &config.servers["web"];
+        assert_eq!(Some("/etc/crl.pem".to_string()), web.tls_client_crl);
+        assert_eq!(Some(vec!["10.0.0.0/8".to_string()]), web.allow_ips);
+        assert_eq!(Some(vec!["10.0.0.5".to_string()]), web.deny_ips);
+        assert_eq!(Some(bytesize::ByteSize::kib(64)), web.min_send_rate);
+        assert_eq!(
+            Some(std::time::Duration::from_secs(5)),
+            web.total_drain_timeout
+        );
+
+        let stream = &config.streams["tls_gw"];
+        assert_eq!(Some(true), stream.global_certificates);
+        assert_eq!(Some("/etc/crl.pem".to_string()), stream.tls_client_crl);
+        assert_eq!(Some("require".to_string()), stream.tls_client_auth);
+        assert_eq!(Some("combined".to_string()), stream.access_log);
+        assert_eq!(Some("v2".to_string()), stream.send_proxy_protocol);
+    }
 }

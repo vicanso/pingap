@@ -56,6 +56,15 @@ const TLS_CLIENT_SUBJECT_TAG: &[u8] = b"$tls_client_subject";
 const TLS_CLIENT_FINGERPRINT_TAG: &[u8] = b"$tls_client_fingerprint";
 const TLS_CLIENT_SERIAL_TAG: &[u8] = b"$tls_client_serial";
 const TLS_CLIENT_VERIFIED_TAG: &[u8] = b"$tls_client_verified";
+const PROXY_PROTOCOL_ALPN_TAG: &[u8] = b"$proxy_protocol_alpn";
+const PROXY_PROTOCOL_AUTHORITY_TAG: &[u8] = b"$proxy_protocol_authority";
+const PROXY_PROTOCOL_UNIQUE_ID_TAG: &[u8] = b"$proxy_protocol_unique_id";
+const PROXY_PROTOCOL_NETNS_TAG: &[u8] = b"$proxy_protocol_netns";
+const PROXY_PROTOCOL_TLS_VERSION_TAG: &[u8] = b"$proxy_protocol_tls_version";
+const PROXY_PROTOCOL_TLS_CN_TAG: &[u8] = b"$proxy_protocol_tls_cn";
+const PROXY_PROTOCOL_TLS_CIPHER_TAG: &[u8] = b"$proxy_protocol_tls_cipher";
+const PROXY_PROTOCOL_AWS_VPCE_ID_TAG: &[u8] = b"$proxy_protocol_aws_vpce_id";
+const PROXY_PROTOCOL_TLV_PREFIX: &[u8] = b"$proxy_protocol_tlv_";
 
 // Define static HeaderValues for HTTP and HTTPS schemes to avoid re-creation.
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
@@ -252,7 +261,7 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
     if buf == HOST_NAME_TAG {
         return HeaderValue::from_str(get_hostname()).unwrap_or(value);
     }
-    let request_tags: [&[u8]; 18] = [
+    let request_tags: [&[u8]; 26] = [
         HOST_TAG,
         SCHEME_TAG,
         REMOTE_ADDR_TAG,
@@ -271,8 +280,19 @@ pub fn resolve_static_header_value(value: HeaderValue) -> HeaderValue {
         TLS_CLIENT_FINGERPRINT_TAG,
         TLS_CLIENT_SERIAL_TAG,
         TLS_CLIENT_VERIFIED_TAG,
+        PROXY_PROTOCOL_ALPN_TAG,
+        PROXY_PROTOCOL_AUTHORITY_TAG,
+        PROXY_PROTOCOL_UNIQUE_ID_TAG,
+        PROXY_PROTOCOL_NETNS_TAG,
+        PROXY_PROTOCOL_TLS_VERSION_TAG,
+        PROXY_PROTOCOL_TLS_CN_TAG,
+        PROXY_PROTOCOL_TLS_CIPHER_TAG,
+        PROXY_PROTOCOL_AWS_VPCE_ID_TAG,
     ];
-    if request_tags.contains(&buf) || buf.starts_with(b"$http_") {
+    if request_tags.contains(&buf)
+        || buf.starts_with(b"$http_")
+        || buf.starts_with(PROXY_PROTOCOL_TLV_PREFIX)
+    {
         return value;
     }
     let Ok(name) = std::str::from_utf8(&buf[1..]) else {
@@ -295,6 +315,36 @@ fn tls_client_value(
         .as_deref()
         .and_then(|cert| HeaderValue::from_str(field(cert)).ok())
         .unwrap_or_else(|| HeaderValue::from_static(""))
+}
+
+/// One field of the inbound PROXY protocol v2 TLVs as a header value: empty
+/// when absent or invalid as a header value so client-spoofed headers never pass.
+fn proxy_protocol_value<'a>(
+    ctx: &'a Ctx,
+    field: impl FnOnce(&'a crate::ProxyProtocolTlvs) -> Option<&'a str>,
+) -> HeaderValue {
+    ctx.conn
+        .proxy_protocol_tlvs
+        .as_deref()
+        .and_then(field)
+        .and_then(|val| HeaderValue::from_str(val).ok())
+        .unwrap_or_else(|| HeaderValue::from_static(""))
+}
+
+fn parse_tlv_type_bytes(suffix: &[u8]) -> Option<u8> {
+    let text = std::str::from_utf8(suffix).ok()?;
+    if let Some(hex) =
+        text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
+    {
+        if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        return u8::from_str_radix(hex, 16).ok();
+    }
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<u8>().ok()
 }
 
 /// Processes a `HeaderValue` that may contain a special dynamic variable (e.g., `$host`).
@@ -412,6 +462,34 @@ pub fn convert_header_value(
                 "false"
             },
         )),
+        PROXY_PROTOCOL_ALPN_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.alpn.as_deref()))
+        },
+        PROXY_PROTOCOL_AUTHORITY_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.authority.as_deref()))
+        },
+        PROXY_PROTOCOL_UNIQUE_ID_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.unique_id.as_deref()))
+        },
+        PROXY_PROTOCOL_NETNS_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.netns.as_deref()))
+        },
+        PROXY_PROTOCOL_TLS_VERSION_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| {
+                tlvs.tls_version.as_deref()
+            }))
+        },
+        PROXY_PROTOCOL_TLS_CN_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.tls_cn.as_deref()))
+        },
+        PROXY_PROTOCOL_TLS_CIPHER_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| tlvs.tls_cipher.as_deref()))
+        },
+        PROXY_PROTOCOL_AWS_VPCE_ID_TAG => {
+            Some(proxy_protocol_value(ctx, |tlvs| {
+                tlvs.aws_vpce_id.as_deref()
+            }))
+        },
         // The port that goes with the scheme above: the one the proxy
         // names, or the default of the scheme it names. Without either it
         // is the port of this listener, as it has always been.
@@ -500,12 +578,25 @@ fn handle_special_headers(
     session: &Session,
     ctx: &Ctx,
 ) -> Option<HeaderValue> {
-    // Handle variables that reference other request headers, like `$http_user_agent`.
+    // Handle variables that reference request headers, like `$http_user_agent`.
     if let Some(name) = buf.strip_prefix(b"$http_") {
         let key = std::str::from_utf8(name).ok()?;
         // nginx spelling: `$http_user_agent` names `User-Agent`. Header names
         // never contain underscores, so mapping them is unambiguous.
         return lookup_http_header_var(session.req_header(), key).cloned();
+    }
+    // Handle arbitrary PROXY protocol v2 TLV lookups (`$proxy_protocol_tlv_0xEA` / `_234`).
+    if let Some(suffix) = buf.strip_prefix(PROXY_PROTOCOL_TLV_PREFIX) {
+        let value = parse_tlv_type_bytes(suffix)
+            .and_then(|tlv_type| {
+                ctx.conn
+                    .proxy_protocol_tlvs
+                    .as_deref()
+                    .and_then(|tlvs| tlvs.get_tlv_string(tlv_type))
+            })
+            .and_then(|val| HeaderValue::from_str(val.as_ref()).ok())
+            .unwrap_or_else(|| HeaderValue::from_static(""));
+        return Some(value);
     }
     // Handle variables that reference environment variables, like `$PATH`.
     if buf.starts_with(b"$") {
@@ -2479,5 +2570,131 @@ mod tests {
         let mut req = RequestHeader::build("GET", b"/path", None).unwrap();
         remove_query_from_header(&mut req, "key").unwrap();
         assert_eq!(req.uri.to_string(), "/path");
+    }
+
+    #[tokio::test]
+    async fn test_proxy_protocol_header_values() {
+        let session = new_test_session(&["Host: pingap.io"], "/").await;
+        let value = |ctx: &Ctx, tag: &str| {
+            convert_header_value(
+                &HeaderValue::from_str(tag).unwrap(),
+                &session,
+                ctx,
+            )
+            .map(|v| v.to_str().unwrap().to_string())
+        };
+
+        let mut ctx = Ctx::default();
+        for tag in [
+            "$proxy_protocol_alpn",
+            "$proxy_protocol_authority",
+            "$proxy_protocol_unique_id",
+            "$proxy_protocol_netns",
+            "$proxy_protocol_tls_version",
+            "$proxy_protocol_tls_cn",
+            "$proxy_protocol_tls_cipher",
+            "$proxy_protocol_aws_vpce_id",
+            "$proxy_protocol_tlv_0xe1",
+            "$proxy_protocol_tlv_226",
+            "$proxy_protocol_tlv_invalid",
+        ] {
+            assert_eq!(Some("".to_string()), value(&ctx, tag), "{tag}");
+            assert_eq!(
+                tag,
+                resolve_static_header_value(
+                    HeaderValue::from_str(tag).unwrap()
+                )
+                .to_str()
+                .unwrap(),
+                "{tag}"
+            );
+        }
+
+        ctx.conn.proxy_protocol_tlvs =
+            Some(Arc::new(crate::ProxyProtocolTlvs {
+                alpn: Some("h2".to_string()),
+                authority: Some("app.example.com".to_string()),
+                unique_id: Some("uid-99".to_string()),
+                netns: Some("blue".to_string()),
+                tls_version: Some("TLSv1.3".to_string()),
+                tls_cn: Some("device-1".to_string()),
+                tls_cipher: Some("TLS_AES_128_GCM_SHA256".to_string()),
+                aws_vpce_id: Some("vpce-abc123".to_string()),
+                custom: vec![
+                    (0xE1, b"ascii-val".to_vec()),
+                    (0xE2, vec![0x01, 0xFE]),
+                    (0xE3, b"bad\nval".to_vec()),
+                ],
+            }));
+
+        assert_eq!(Some("h2".to_string()), value(&ctx, "$proxy_protocol_alpn"));
+        assert_eq!(
+            Some("app.example.com".to_string()),
+            value(&ctx, "$proxy_protocol_authority")
+        );
+        assert_eq!(
+            Some("uid-99".to_string()),
+            value(&ctx, "$proxy_protocol_unique_id")
+        );
+        assert_eq!(
+            Some("blue".to_string()),
+            value(&ctx, "$proxy_protocol_netns")
+        );
+        assert_eq!(
+            Some("TLSv1.3".to_string()),
+            value(&ctx, "$proxy_protocol_tls_version")
+        );
+        assert_eq!(
+            Some("device-1".to_string()),
+            value(&ctx, "$proxy_protocol_tls_cn")
+        );
+        assert_eq!(
+            Some("TLS_AES_128_GCM_SHA256".to_string()),
+            value(&ctx, "$proxy_protocol_tls_cipher")
+        );
+        assert_eq!(
+            Some("vpce-abc123".to_string()),
+            value(&ctx, "$proxy_protocol_aws_vpce_id")
+        );
+        assert_eq!(
+            Some("ascii-val".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_0xe1")
+        );
+        assert_eq!(
+            Some("ascii-val".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_225")
+        );
+        assert_eq!(
+            Some("0x01fe".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_0xE2")
+        );
+        assert_eq!(
+            Some("0x01fe".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_226")
+        );
+        assert_eq!(
+            Some("0x6261640a76616c".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_0xe3")
+        );
+        assert_eq!(
+            Some("vpce-abc123".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_0xEA")
+        );
+        assert_eq!(
+            Some("vpce-abc123".to_string()),
+            value(&ctx, ":proxy_protocol_aws_vpce_id")
+        );
+
+        // Invalid HeaderValue bytes in a decoded UTF-8 TLV coerce to `""`.
+        ctx.conn.proxy_protocol_tlvs =
+            Some(Arc::new(crate::ProxyProtocolTlvs {
+                alpn: Some("bad\nval".to_string()),
+                ..Default::default()
+            }));
+        assert_eq!(Some("".to_string()), value(&ctx, "$proxy_protocol_alpn"));
+        assert_eq!(
+            Some("".to_string()),
+            value(&ctx, "$proxy_protocol_tlv_0x01")
+        );
     }
 }

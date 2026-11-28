@@ -1263,4 +1263,54 @@ retry_status_codes = "502,503,504,429"
             config.locations["api"].retry_status_codes
         );
     }
+
+    #[test]
+    fn test_server_and_stream_direction_d_kdl_roundtrip() {
+        let toml_input = r#"
+[upstreams.backend]
+addrs = ["127.0.0.1:8080"]
+
+[locations.api]
+upstream = "backend"
+path = "/api"
+
+[servers.web]
+addr = "0.0.0.0:443"
+locations = ["api"]
+global_certificates = true
+tls_client_ca = "/etc/ca.pem"
+tls_client_crl = "/etc/crl.pem"
+tls_client_auth = "optional"
+allow_ips = ["10.0.0.0/8"]
+deny_ips = ["10.0.0.5"]
+min_send_rate = "64 KiB"
+total_drain_timeout = "5s"
+
+[streams.tls_gw]
+addr = "0.0.0.0:9443"
+upstream = "backend"
+global_certificates = true
+tls_cipher_list = "ECDHE-RSA-AES128-GCM-SHA256"
+tls_ciphersuites = "TLS_AES_128_GCM_SHA256"
+tls_min_version = "tlsv1.2"
+tls_max_version = "tlsv1.3"
+tls_client_ca = "/etc/ca.pem"
+tls_client_crl = "/etc/crl.pem"
+tls_client_auth = "require"
+access_log = "combined"
+send_proxy_protocol = "v2"
+allow_ips = ["192.168.0.0/16"]
+deny_ips = ["192.168.1.99"]
+"#;
+        let kdl_str = convert_toml_to_kdl(toml_input).unwrap();
+        let toml_roundtrip = convert_kdl_to_toml(&kdl_str).unwrap();
+        let orig: TomlValue = toml::from_str(toml_input).unwrap();
+        let rt: TomlValue = toml::from_str(&toml_roundtrip).unwrap();
+        assert_eq!(orig, rt);
+
+        let config =
+            crate::convert_pingap_config(toml_roundtrip.as_bytes(), false)
+                .unwrap();
+        config.validate().unwrap();
+    }
 }

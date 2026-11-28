@@ -46,6 +46,10 @@ location 可以用 `proxy_set_headers`、`proxy_add_headers` 为上游设置和�
 | `$ja4` | 客户端的 JA4 TLS 指纹，需要 server 开启 `ja4 = true` |
 | `$tls_server_name` | 客户端在 TLS 握手中发送的 SNI（未发送或明文 HTTP 时为空值） |
 | `$tls_client_subject` / `$tls_client_fingerprint` / `$tls_client_serial` / `$tls_client_verified` | 配了 [`tls_client_ca`](../crates/proxy.md#客户端证书-双向-tls) 的 server 上客户端出示的证书：subject、SHA-256、序列号，以及有没有出示证书（`true` / `false`）。没有证书时前三项是空值，请求头照样会被设置 |
+| `$proxy_protocol_alpn` / `$proxy_protocol_authority` / `$proxy_protocol_unique_id` / `$proxy_protocol_netns` | 入站 [PROXY protocol](../crates/proxy.md#proxy-protocol) v2 TLV 字段（`ALPN`、`AUTHORITY`、可打印 ASCII 或小写十六进制的 `UNIQUE_ID`、`NETNS`）。连接上没有时为空值，照样设置并覆盖客户端自带值 |
+| `$proxy_protocol_tls_version` / `$proxy_protocol_tls_cn` / `$proxy_protocol_tls_cipher` | 入站 PROXY protocol v2 `SSL` 子 TLV（`version`、客户端证书 `CN`、`cipher`）。没有时为空值 |
+| `$proxy_protocol_aws_vpce_id` | 入站 PROXY protocol v2 `0xEA`（`0x01`）TLV 中的 AWS VPC Endpoint ID。没有时为空值 |
+| `$proxy_protocol_tlv_<type>` | 按十六进制（`0x..`）或十进制类型号读取的入站 PROXY protocol v2 TLV（如 `$proxy_protocol_tlv_0xE1`），返回可打印 ASCII 或 `0x<hex>`。没有时为空值 |
 | `$proxy_add_x_forwarded_for` | 已有的 `X-Forwarded-For` 加上客户端地址 |
 | `$http_<name>` | 请求头 `<name>` 的值；下划线代表连字符，`$http_user_agent` 读取的是 `User-Agent` |
 | `$<NAME>` | 环境变量 `NAME` |

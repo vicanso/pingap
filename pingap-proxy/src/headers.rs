@@ -163,4 +163,103 @@ mod tests {
             header.headers.get("x-trace-id").unwrap().to_str().unwrap()
         );
     }
+
+    #[tokio::test]
+    async fn test_set_append_proxy_protocol_tlv_headers() {
+        let session = new_session().await;
+        let mut ctx = Ctx::default();
+        ctx.conn.proxy_protocol_tlvs =
+            Some(Arc::new(pingap_core::ProxyProtocolTlvs {
+                alpn: Some("h2".to_string()),
+                authority: Some("app.example.com".to_string()),
+                unique_id: Some("conn-123".to_string()),
+                netns: Some("ns-prod".to_string()),
+                tls_version: Some("TLSv1.3".to_string()),
+                tls_cn: Some("client.example".to_string()),
+                tls_cipher: Some("TLS_AES_128_GCM_SHA256".to_string()),
+                aws_vpce_id: Some("vpce-12345".to_string()),
+                custom: vec![(0xE1, b"custom-tag".to_vec())],
+            }));
+        let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+        let location = Arc::new(
+            Location::new(
+                "test-pp-tlvs",
+                &LocationConf {
+                    proxy_set_headers: Some(vec![
+                        "x-pp-alpn:$proxy_protocol_alpn".to_string(),
+                        "x-pp-authority:$proxy_protocol_authority".to_string(),
+                        "x-pp-unique-id:$proxy_protocol_unique_id".to_string(),
+                        "x-pp-netns:$proxy_protocol_netns".to_string(),
+                        "x-pp-tls-ver:$proxy_protocol_tls_version".to_string(),
+                        "x-pp-tls-cn:$proxy_protocol_tls_cn".to_string(),
+                        "x-pp-tls-cipher:$proxy_protocol_tls_cipher"
+                            .to_string(),
+                        "x-pp-vpce:$proxy_protocol_aws_vpce_id".to_string(),
+                        "x-pp-custom:$proxy_protocol_tlv_0xe1".to_string(),
+                    ]),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        ctx.upstream.location_instance = Some(location);
+        set_append_proxy_headers(&session, &ctx, &mut header);
+
+        assert_eq!(
+            "h2",
+            header.headers.get("x-pp-alpn").unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            "app.example.com",
+            header
+                .headers
+                .get("x-pp-authority")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "conn-123",
+            header
+                .headers
+                .get("x-pp-unique-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "ns-prod",
+            header.headers.get("x-pp-netns").unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            "TLSv1.3",
+            header
+                .headers
+                .get("x-pp-tls-ver")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "client.example",
+            header.headers.get("x-pp-tls-cn").unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            "TLS_AES_128_GCM_SHA256",
+            header
+                .headers
+                .get("x-pp-tls-cipher")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "vpce-12345",
+            header.headers.get("x-pp-vpce").unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            "custom-tag",
+            header.headers.get("x-pp-custom").unwrap().to_str().unwrap()
+        );
+    }
 }

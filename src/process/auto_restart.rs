@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use pingap_certificate::{
     validate_certificates_tls_for_backend, validate_servers_tls_for_backend,
+    validate_streams_tls_for_backend,
 };
 use pingap_config::{
     CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_STREAM, CATEGORY_UPSTREAM,
@@ -637,6 +638,7 @@ pub(crate) async fn apply_runtime_config(
 }
 
 fn merge_stream_runtime_fields(
+    name: &str,
     target: &mut StreamConf,
     source: &StreamConf,
 ) -> bool {
@@ -644,6 +646,18 @@ fn merge_stream_runtime_fields(
     target.upstream.clone_from(&source.upstream);
     target.sni_routes.clone_from(&source.sni_routes);
     target.proxy_protocol = source.proxy_protocol;
+    target
+        .send_proxy_protocol
+        .clone_from(&source.send_proxy_protocol);
+    if target.access_log != source.access_log
+        && crate::streams::can_hot_reload_stream_access_log(
+            name,
+            target.access_log.as_ref(),
+            source.access_log.as_ref(),
+        )
+    {
+        target.access_log.clone_from(&source.access_log);
+    }
     target.connect_timeout = source.connect_timeout;
     target.idle_timeout = source.idle_timeout;
     target.sni_read_timeout = source.sni_read_timeout;
@@ -661,7 +675,7 @@ fn merge_hot_reload_streams(
     let mut changed = false;
     for (name, new_stream) in new_streams.iter() {
         if let Some(clone_stream) = hot_reload_streams.get_mut(name)
-            && merge_stream_runtime_fields(clone_stream, new_stream)
+            && merge_stream_runtime_fields(name, clone_stream, new_stream)
         {
             changed = true;
         }
@@ -705,6 +719,26 @@ fn merge_server_runtime_fields(
         any_changed = true;
         runtime_changed = true;
     }
+    if target.allow_ips != source.allow_ips {
+        target.allow_ips.clone_from(&source.allow_ips);
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.deny_ips != source.deny_ips {
+        target.deny_ips.clone_from(&source.deny_ips);
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.min_send_rate != source.min_send_rate {
+        target.min_send_rate = source.min_send_rate;
+        any_changed = true;
+        runtime_changed = true;
+    }
+    if target.total_drain_timeout != source.total_drain_timeout {
+        target.total_drain_timeout = source.total_drain_timeout;
+        any_changed = true;
+        runtime_changed = true;
+    }
     if target.access_log != source.access_log
         && pingap_proxy::can_hot_reload_server_access_log(
             name,
@@ -729,6 +763,10 @@ fn restore_server_runtime_fields(
     target.downstream_read_timeout = source.downstream_read_timeout;
     target.downstream_write_timeout = source.downstream_write_timeout;
     target.h1_pipelining = source.h1_pipelining;
+    target.allow_ips.clone_from(&source.allow_ips);
+    target.deny_ips.clone_from(&source.deny_ips);
+    target.min_send_rate = source.min_send_rate;
+    target.total_drain_timeout = source.total_drain_timeout;
     target.access_log.clone_from(&source.access_log);
 }
 
@@ -897,6 +935,8 @@ async fn apply_config_without_restart(
     tokio::task::spawn_blocking(move || {
         checked.validate().map_err(|e| e.to_string())?;
         validate_servers_tls_for_backend(&checked.servers)
+            .map_err(|e| e.to_string())?;
+        validate_streams_tls_for_backend(&checked.streams)
             .map_err(|e| e.to_string())?;
         validate_certificates_tls_for_backend(&checked.certificates)
             .map_err(|e| e.to_string())?;
@@ -2139,6 +2179,8 @@ addr = "127.0.0.1:9443"
 upstream = "tcp_b"
 sni_routes = { "a.test" = "tcp_b", "*.b.test" = "tcp_a" }
 proxy_protocol = true
+send_proxy_protocol = "v2"
+access_log = "json"
 connect_timeout = "2s"
 idle_timeout = "30s"
 sni_read_timeout = "3s"
@@ -2160,6 +2202,41 @@ remark = "hot updated"
         assert_eq!(
             Vec::<String>::new(),
             super::left_for_restart(&reloaded, &wanted_runtime)
+        );
+
+        // Stream TLS termination / CRL changes require a restart.
+        let wanted_tls = load(
+            r#"
+[basic]
+trusted_proxies = ["10.0.0.0/8"]
+
+[upstreams.tcp_a]
+addrs = ["127.0.0.1:9001"]
+
+[streams.mux]
+addr = "127.0.0.1:9443"
+upstream = "tcp_a"
+global_certificates = true
+tls_client_ca = "/tmp/ca.pem"
+tls_client_crl = "/tmp/crl.pem"
+"#,
+        );
+        let mut reloaded_tls = running.clone();
+        super::merge_hot_reload_streams(
+            &mut reloaded_tls.streams,
+            &wanted_tls.streams,
+        );
+        let left_tls =
+            super::left_for_restart(&reloaded_tls, &wanted_tls).join("\n");
+        assert_eq!(
+            true,
+            left_tls.contains("global_certificates = true"),
+            "{left_tls}"
+        );
+        assert_eq!(
+            true,
+            left_tls.contains("tls_client_crl = \"/tmp/crl.pem\""),
+            "{left_tls}"
         );
 
         // Listener-level changes and added/removed streams remain for restart.
@@ -2568,6 +2645,15 @@ locations = ["api"]
 
         // 1. Hot-reloadable runtime fields + basic.error_template + sink-compatible
         // access_log format/filter changes leave nothing for restart.
+        let parsed_rate = test_pingap_config(
+            r#"
+[servers.web]
+addr = "127.0.0.1:18180"
+min_send_rate = "4096B"
+"#,
+        )
+        .servers["web"]
+            .min_send_rate;
         let mut runtime_updated = base.clone();
         runtime_updated.basic.error_template =
             Some(r#"{"error":"{{content}}"}"#.to_string());
@@ -2578,6 +2664,10 @@ locations = ["api"]
             web.downstream_write_timeout =
                 Some(std::time::Duration::from_secs(15));
             web.h1_pipelining = Some(true);
+            web.allow_ips = Some(vec!["127.0.0.0/8".to_string()]);
+            web.deny_ips = Some(vec!["127.0.0.9".to_string()]);
+            web.min_send_rate = parsed_rate;
+            web.total_drain_timeout = Some(std::time::Duration::from_secs(12));
             web.remark = Some("updated remark".to_string());
             web.access_log = Some(access_a_new_filter.clone());
         }
@@ -2611,6 +2701,19 @@ locations = ["api"]
             current.servers["web"].downstream_write_timeout
         );
         assert_eq!(Some(true), current.servers["web"].h1_pipelining);
+        assert_eq!(
+            Some(vec!["127.0.0.0/8".to_string()]),
+            current.servers["web"].allow_ips
+        );
+        assert_eq!(
+            Some(vec!["127.0.0.9".to_string()]),
+            current.servers["web"].deny_ips
+        );
+        assert_eq!(parsed_rate, current.servers["web"].min_send_rate);
+        assert_eq!(
+            Some(std::time::Duration::from_secs(12)),
+            current.servers["web"].total_drain_timeout
+        );
         assert_eq!(
             Some("updated remark".to_string()),
             current.servers["web"].remark

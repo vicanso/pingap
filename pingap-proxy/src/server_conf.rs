@@ -64,6 +64,15 @@ pub struct ServerConf {
     /// let in (`tls_client_auth = "optional"`).
     pub tls_client_auth_optional: bool,
 
+    /// CRL file checked against client certificates.
+    pub tls_client_crl: Option<String>,
+
+    /// Client IP addresses or CIDR ranges allowed before TLS/HTTP handling.
+    pub allow_ips: Option<Vec<String>>,
+
+    /// Client IP addresses or CIDR ranges denied before TLS/HTTP handling.
+    pub deny_ips: Option<Vec<String>>,
+
     // Number of worker threads for handling connections
     // None means use system default
     pub threads: Option<usize>,
@@ -137,6 +146,12 @@ pub struct ServerConf {
 
     // downstream write timeout
     pub downstream_write_timeout: Option<Duration>,
+
+    /// Minimum downstream send rate in bytes per second.
+    pub min_send_rate: Option<usize>,
+
+    /// Maximum total time spent draining a downstream response.
+    pub total_drain_timeout: Option<Duration>,
 }
 
 impl fmt::Display for ServerConf {
@@ -314,6 +329,12 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
                 .tls_client_auth
                 .as_deref()
                 .is_some_and(|mode| mode.trim() == "optional"),
+            tls_client_crl: item
+                .tls_client_crl
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
+            allow_ips: item.allow_ips.clone(),
+            deny_ips: item.deny_ips.clone(),
             addr: item.addr,
             access_log: item.access_log,
             locations: item.locations.unwrap_or_default(),
@@ -348,6 +369,10 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             error_template,
             downstream_read_timeout: item.downstream_read_timeout,
             downstream_write_timeout: item.downstream_write_timeout,
+            min_send_rate: item
+                .min_send_rate
+                .map(|v| usize::try_from(v.as_u64()).unwrap_or(usize::MAX)),
+            total_drain_timeout: item.total_drain_timeout,
         });
     }
 
