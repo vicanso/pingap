@@ -3,9 +3,48 @@ import { random } from "@/helpers/util";
 import { create } from "zustand";
 
 export interface CertificateInfo {
+  domains?: string[];
+  acme?: string | null;
   not_after: number;
   not_before: number;
+  issuer?: string;
+  issuer_cn?: string;
+  is_ca?: boolean;
+  ocsp_stapling?: boolean;
+  ocsp_stapled?: boolean;
+  chain_count?: number;
+  renewal_days?: number;
 }
+
+export interface ConfigDiffResult {
+  valid: boolean;
+  updated_categories: string[];
+  diff: string[];
+  restart_required?: boolean;
+  left_for_restart?: string[];
+  restart_unsupported: string;
+}
+
+export interface ConfigSnapshotItem {
+  id: string;
+  created_at: number;
+  source: string;
+  remark: string;
+  hash: string;
+  lines: number;
+  toml: string;
+}
+
+class DryRunCaptured extends Error {
+  result: ConfigDiffResult;
+
+  constructor(result: ConfigDiffResult) {
+    super("dry_run_captured");
+    this.result = result;
+  }
+}
+
+let dryRunActive = false;
 
 export interface Upstream {
   addrs: string[];
@@ -328,6 +367,7 @@ interface ConfigState {
   originalToml: string;
   fullToml: string;
   hcl: string;
+  kdl: string;
   initialized: boolean;
   version: string;
   fetch: () => Promise<Config>;
@@ -337,7 +377,19 @@ interface ConfigState {
     name: string,
     data: Record<string, unknown>,
   ) => Promise<void>;
-  importToml: (data: string) => Promise<void>;
+  captureDryRun: (
+    runSave: () => Promise<void>,
+  ) => Promise<ConfigDiffResult | null>;
+  previewImportDiff: (
+    data: string,
+    format?: "toml" | "hcl" | "kdl",
+  ) => Promise<ConfigDiffResult>;
+  importToml: (
+    data: string,
+    format?: "toml" | "hcl" | "kdl",
+  ) => Promise<void>;
+  getSnapshots: () => Promise<ConfigSnapshotItem[]>;
+  createSnapshot: (remark?: string) => Promise<ConfigSnapshotItem>;
   createQuickSite: (payload: QuickSitePayload) => Promise<QuickSiteResult>;
   applyPluginPreset: (
     payload: ApplyPluginPresetPayload,
@@ -356,6 +408,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   fullToml: "",
   originalToml: "",
   hcl: "",
+  kdl: "",
   version: random(),
   initialized: false,
   fetch: async () => {
@@ -370,12 +423,14 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     const { data } = await request.get<{
       full: string;
       hcl: string;
+      kdl: string;
       original: string;
     }>("/configs/full");
     set({
-      fullToml: data.full,
-      originalToml: data.original,
-      hcl: data.hcl,
+      fullToml: data.full || "",
+      originalToml: data.original || "",
+      hcl: data.hcl || "",
+      kdl: data.kdl || "",
     });
     return;
   },
@@ -391,14 +446,66 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       }
       updateData[key] = data[key];
     });
-    await request.post(`/configs/${category}/${name}`, updateData);
+    const encodedCategory = encodeURIComponent(category);
+    const encodedName = encodeURIComponent(name);
+    if (dryRunActive) {
+      const { data: diffResult } = await request.post<ConfigDiffResult>(
+        `/configs/${encodedCategory}/${encodedName}?dry_run=1`,
+        updateData,
+      );
+      throw new DryRunCaptured(diffResult);
+    }
+    await request.post(`/configs/${encodedCategory}/${encodedName}`, updateData);
     await get().fetch();
     set({
       version: random(),
     });
   },
-  importToml: async (data: string) => {
-    await request.post(`/configs/import`, data);
+  captureDryRun: async (runSave: () => Promise<void>) => {
+    dryRunActive = true;
+    try {
+      await runSave();
+      return null;
+    } catch (err) {
+      if (err instanceof DryRunCaptured) {
+        return err.result;
+      }
+      throw err;
+    } finally {
+      dryRunActive = false;
+    }
+  },
+  previewImportDiff: async (
+    data: string,
+    format?: "toml" | "hcl" | "kdl",
+  ) => {
+    const url = format ? `/configs/diff?format=${format}` : "/configs/diff";
+    const { data: diffResult } = await request.post<ConfigDiffResult>(
+      url,
+      data,
+    );
+    return diffResult;
+  },
+  importToml: async (data: string, format?: "toml" | "hcl" | "kdl") => {
+    const url = format ? `/configs/import?format=${format}` : "/configs/import";
+    await request.post(url, data);
+    await get().fetch();
+    set({
+      version: random(),
+    });
+  },
+  getSnapshots: async () => {
+    const { data } = await request.get<{ snapshots?: ConfigSnapshotItem[] }>(
+      "/configs/snapshots",
+    );
+    return data.snapshots || [];
+  },
+  createSnapshot: async (remark?: string) => {
+    const { data } = await request.post<ConfigSnapshotItem>(
+      "/configs/snapshots",
+      { remark },
+    );
+    return data;
   },
   createQuickSite: async (payload: QuickSitePayload) => {
     const { data } = await request.post<QuickSiteResult>(

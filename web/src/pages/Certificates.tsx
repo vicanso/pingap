@@ -1,9 +1,6 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
-import useConfigState, {
-  Certificate,
-  CertificateInfo,
-} from "@/states/config";
+import useConfigState, { Certificate, CertificateInfo } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -11,7 +8,8 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { omitEmptyArrayString } from "@/helpers/util";
+import { daysUntil, omitEmptyArrayString } from "@/helpers/util";
+import { cn } from "@/lib/utils";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
@@ -44,6 +42,63 @@ function formatExpiry(notAfter: number) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+type CertificateI18nFn = (
+  key: string,
+  options?: Record<string, unknown>,
+) => string;
+
+function getExpiryStatus(notAfter: number, certificateI18n: CertificateI18nFn) {
+  const days = daysUntil(notAfter);
+  if (days < 0) {
+    return {
+      text: certificateI18n("statusExpired", { days: Math.abs(days) }),
+      tone: "destructive" as const,
+    };
+  }
+  if (days === 0) {
+    return {
+      text: certificateI18n("statusExpiresToday"),
+      tone: "destructive" as const,
+    };
+  }
+  if (days <= 7) {
+    return {
+      text: certificateI18n("statusExpiring", { days }),
+      tone: "destructive" as const,
+    };
+  }
+  if (days <= 30) {
+    return {
+      text: certificateI18n("statusExpiring", { days }),
+      tone: "warn" as const,
+    };
+  }
+  return {
+    text: certificateI18n("statusValid", { days }),
+    tone: "ok" as const,
+  };
+}
+
+function renderExpiryStatus(
+  notAfter: number,
+  certificateI18n: CertificateI18nFn,
+) {
+  const { text, tone } = getExpiryStatus(notAfter, certificateI18n);
+  return (
+    <span
+      className={cn(
+        "figure inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+        tone === "destructive" && "bg-destructive/10 text-destructive",
+        tone === "warn" && "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+        tone === "ok" &&
+          "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      )}
+    >
+      {text}
+    </span>
+  );
+}
+
 export default function Certificates() {
   const certificateI18n = useI18n("certificate");
   const i18n = useI18n();
@@ -60,9 +115,7 @@ export default function Certificates() {
         state.getCertificateInfos,
       ]),
     );
-  const [infos, setInfos] = React.useState<Record<string, CertificateInfo>>(
-    {},
-  );
+  const [infos, setInfos] = React.useState<Record<string, CertificateInfo>>({});
   React.useEffect(() => {
     if (!initialized) {
       return;
@@ -85,16 +138,39 @@ export default function Certificates() {
   if (!currentCertificate) {
     const values = config.certificates || {};
     const hasDomains = certificates.some((name) =>
-      Boolean(values[name]?.domains),
+      Boolean(values[name]?.domains || infos[name]?.domains?.length),
+    );
+    const hasIssuer = certificates.some((name) =>
+      Boolean(infos[name]?.issuer_cn || infos[name]?.issuer),
     );
     const hasAcme = certificates.some((name) => Boolean(values[name]?.acme));
-    const hasExpiry = certificates.some((name) => Boolean(infos[name]?.not_after));
+    const hasExpiry = certificates.some((name) =>
+      Boolean(infos[name]?.not_after),
+    );
     const columns: ConfigEntityColumn<Certificate>[] = [];
     if (hasDomains) {
       columns.push({
         key: "domains",
         label: certificateI18n("domains"),
-        render: (value) => <EntityText value={value?.domains} />,
+        render: (value, name) => (
+          <EntityText
+            value={value?.domains || infos[name]?.domains?.join(", ")}
+          />
+        ),
+      });
+    }
+    if (hasIssuer) {
+      columns.push({
+        key: "issuer",
+        label: certificateI18n("issuer"),
+        render: (_value, name) => {
+          const info = infos[name];
+          const label = info?.issuer_cn || info?.issuer;
+          if (!label) {
+            return <EntityText />;
+          }
+          return <span title={info?.issuer}>{label}</span>;
+        },
       });
     }
     if (hasExpiry) {
@@ -102,11 +178,31 @@ export default function Certificates() {
         key: "expires",
         label: certificateI18n("expires"),
         render: (_value, name) => {
-          const notAfter = infos[name]?.not_after;
+          const info = infos[name];
+          const notAfter = info?.not_after;
+          if (!notAfter) {
+            return <EntityText />;
+          }
           return (
-            <EntityText
-              value={notAfter ? formatExpiry(notAfter) : undefined}
-            />
+            <div className="flex items-center gap-1.5">
+              <span>{formatExpiry(notAfter)}</span>
+              {renderExpiryStatus(notAfter, certificateI18n)}
+              {info?.ocsp_stapled ? (
+                <span
+                  title={certificateI18n("ocspStapled")}
+                  className="inline-flex shrink-0 items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
+                >
+                  OCSP
+                </span>
+              ) : info?.ocsp_stapling ? (
+                <span
+                  title={certificateI18n("ocspEnabled")}
+                  className="inline-flex shrink-0 items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                >
+                  OCSP
+                </span>
+              ) : null}
+            </div>
           );
         },
       });
@@ -442,11 +538,48 @@ export default function Certificates() {
               mono: true,
             },
             {
-              label: certificateI18n("expires"),
-              value: info?.not_after
-                ? formatExpiry(info.not_after)
+              label: certificateI18n("sanDomains"),
+              value: info?.domains?.length
+                ? info.domains.join(", ")
                 : undefined,
               mono: true,
+            },
+            {
+              label: certificateI18n("issuer"),
+              value:
+                info?.issuer_cn || info?.issuer ? (
+                  <span title={info.issuer}>
+                    {info.issuer_cn || info.issuer}
+                  </span>
+                ) : undefined,
+            },
+            {
+              label: certificateI18n("validFrom"),
+              value: info?.not_before
+                ? formatExpiry(info.not_before)
+                : undefined,
+              mono: true,
+            },
+            {
+              label: certificateI18n("expires"),
+              value: info?.not_after
+                ? `${formatExpiry(info.not_after)} (${getExpiryStatus(info.not_after, certificateI18n).text})`
+                : undefined,
+              mono: true,
+            },
+            {
+              label: certificateI18n("ocspStapling"),
+              value: info?.ocsp_stapled
+                ? certificateI18n("ocspStapled")
+                : info?.ocsp_stapling
+                  ? certificateI18n("ocspEnabled")
+                  : undefined,
+            },
+            {
+              label: certificateI18n("chainCerts"),
+              value: info?.chain_count
+                ? certificateI18n("chainCount", { count: info.chain_count })
+                : undefined,
             },
             {
               label: certificateI18n("acme"),
@@ -473,9 +606,7 @@ export default function Certificates() {
         items={items}
         schema={schema}
         defaultShow={defaultShow}
-        onRemove={
-          currentCertificate === newCertificate ? undefined : onRemove
-        }
+        onRemove={currentCertificate === newCertificate ? undefined : onRemove}
         onSave={async (value) => {
           let name = currentCertificate;
           if (name === newCertificate) {

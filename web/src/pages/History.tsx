@@ -1,5 +1,8 @@
 import useBasicState from "@/states/basic";
-import useConfigState, { History } from "@/states/config";
+import useConfigState, {
+  type ConfigDiffResult,
+  type History,
+} from "@/states/config";
 import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "@/i18n";
 import {
@@ -26,6 +29,7 @@ import {
   ClipboardCopy,
   History as HistoryIcon,
   Inbox,
+  LoaderCircle,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
@@ -37,7 +41,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
   Tooltip,
@@ -45,20 +48,29 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ConfigDiffDialog } from "@/components/config-diff-dialog";
 
 export default function HistoryPage(props: {
   category: string;
   name: string;
   onRestore: (data: Record<string, unknown>) => Promise<void>;
 }) {
-  const [getHistory] = useConfigState(
-    useShallow((state) => [state.getHistory]),
+  const [getHistory, captureDryRun] = useConfigState(
+    useShallow((state) => [state.getHistory, state.captureDryRun]),
   );
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
   const [fetching, setFetching] = React.useState(false);
   const [history, setHistory] = React.useState<History[]>([]);
   const [open, setOpen] = React.useState(false);
   const [copiedAt, setCopiedAt] = React.useState<number | null>(null);
+  const [previewingAt, setPreviewingAt] = React.useState<number | null>(null);
+  const [restoring, setRestoring] = React.useState(false);
+  const [pendingItem, setPendingItem] = React.useState<History | null>(null);
+  const [diffResult, setDiffResult] = React.useState<ConfigDiffResult | null>(
+    null,
+  );
+  const [diffOpen, setDiffOpen] = React.useState(false);
+  const [fallbackConfirmOpen, setFallbackConfirmOpen] = React.useState(false);
   const copyTimerRef = React.useRef<number | null>(null);
   React.useEffect(() => {
     return () => {
@@ -88,12 +100,43 @@ export default function HistoryPage(props: {
     }
   };
   const handleRestore = async (data: Record<string, unknown>) => {
+    if (restoring) {
+      return;
+    }
+    setRestoring(true);
     try {
       await props.onRestore(data);
       toast.success(historyI18n("restoreSuccess"));
+      setDiffOpen(false);
+      setFallbackConfirmOpen(false);
+      setPendingItem(null);
       setOpen(false);
     } catch (err) {
       toast.error(formatError(err));
+    } finally {
+      setRestoring(false);
+    }
+  };
+  const handlePreviewRestore = async (item: History) => {
+    if (previewingAt !== null || restoring) {
+      return;
+    }
+    setPreviewingAt(item.created_at);
+    try {
+      const result = await captureDryRun(() => props.onRestore(item.data));
+      setPendingItem(item);
+      if (result) {
+        setDiffResult(result);
+        setDiffOpen(true);
+      } else {
+        setFallbackConfirmOpen(true);
+      }
+    } catch (err) {
+      toast.error(t("diffDialog.previewFail"), {
+        description: formatError(err),
+      });
+    } finally {
+      setPreviewingAt(null);
     }
   };
   const handleCopyJson = async (createdAt: number, jsonText: string) => {
@@ -115,6 +158,7 @@ export default function HistoryPage(props: {
     const date = new Date(item.created_at * 1000).toLocaleString();
     const jsonText = JSON.stringify(item.data, null, 2);
     const isCopied = copiedAt === item.created_at;
+    const isPreviewing = previewingAt === item.created_at;
     return (
       <Item key={item.created_at} variant="outline" className="bg-card">
         <ItemHeader className="flex items-center justify-between gap-2 text-[13px] font-medium">
@@ -148,91 +192,122 @@ export default function HistoryPage(props: {
         </ItemContent>
         {!basicInfo.read_only && (
           <ItemFooter>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full cursor-pointer"
-                >
-                  {historyI18n("restore")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {historyI18n("restoreConfirmTitle")}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {historyI18n("restoreConfirmDescription")}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel className="cursor-pointer">
-                    {t("cancel")}
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    className="cursor-pointer"
-                    onClick={() => {
-                      handleRestore(item.data);
-                    }}
-                  >
-                    {t("confirm")}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full cursor-pointer"
+              disabled={previewingAt !== null || restoring}
+              onClick={() => {
+                void handlePreviewRestore(item);
+              }}
+            >
+              {isPreviewing && (
+                <LoaderCircle className="mr-2 size-3.5 animate-spin" />
+              )}
+              {historyI18n("restore")}
+            </Button>
           </ItemFooter>
         )}
       </Item>
     );
   });
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <SheetTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
-                aria-label={historyI18n("title")}
-                onClick={() => {
-                  fetchHistory();
-                }}
-              >
-                <HistoryIcon className="size-4" />
-              </Button>
-            </SheetTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{historyI18n("title")}</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-      <SheetContent className="flex flex-col !p-0">
-        <div className="shrink-0 border-b border-border px-6 py-5">
-          <SheetHeader>
-            <SheetTitle>{historyI18n("title")}</SheetTitle>
-            <SheetDescription>{historyI18n("description")}</SheetDescription>
-          </SheetHeader>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          <div className="grid auto-rows-min gap-4 pb-4">
-            {fetching && <Loading className="mt-2" />}
-            {!fetching && items.length === 0 && (
-              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-4 py-12 text-center">
-                <div className="mb-3 flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  <Inbox className="size-5" strokeWidth={1.8} />
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {historyI18n("noHistory")}
-                </p>
-              </div>
-            )}
-            {!fetching && items}
+    <>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SheetTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
+                  aria-label={historyI18n("title")}
+                  onClick={() => {
+                    fetchHistory();
+                  }}
+                >
+                  <HistoryIcon className="size-4" />
+                </Button>
+              </SheetTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {historyI18n("title")}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <SheetContent className="flex flex-col !p-0">
+          <div className="shrink-0 border-b border-border px-6 py-5">
+            <SheetHeader>
+              <SheetTitle>{historyI18n("title")}</SheetTitle>
+              <SheetDescription>{historyI18n("description")}</SheetDescription>
+            </SheetHeader>
           </div>
-        </div>
-      </SheetContent>
-    </Sheet>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <div className="grid auto-rows-min gap-4 pb-4">
+              {fetching && <Loading className="mt-2" />}
+              {!fetching && items.length === 0 && (
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-4 py-12 text-center">
+                  <div className="mb-3 flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <Inbox className="size-5" strokeWidth={1.8} />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {historyI18n("noHistory")}
+                  </p>
+                </div>
+              )}
+              {!fetching && items}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <ConfigDiffDialog
+        open={diffOpen}
+        onOpenChange={setDiffOpen}
+        result={diffResult}
+        title={historyI18n("restoreConfirmTitle")}
+        description={historyI18n("restoreConfirmDescription")}
+        confirmLabel={t("diffDialog.confirmRestore")}
+        applying={restoring}
+        onConfirm={async () => {
+          if (pendingItem) {
+            await handleRestore(pendingItem.data);
+          }
+        }}
+      />
+
+      <AlertDialog
+        open={fallbackConfirmOpen}
+        onOpenChange={setFallbackConfirmOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {historyI18n("restoreConfirmTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {historyI18n("restoreConfirmDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="cursor-pointer" disabled={restoring}>
+              {t("cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="cursor-pointer"
+              disabled={restoring}
+              onClick={() => {
+                if (pendingItem) {
+                  void handleRestore(pendingItem.data);
+                }
+              }}
+            >
+              {t("confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

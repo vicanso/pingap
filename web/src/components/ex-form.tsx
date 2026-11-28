@@ -4,7 +4,10 @@ import {
   FoldVertical,
   CircleHelp,
   RotateCcw,
+  GitCompare,
 } from "lucide-react";
+import { ConfigDiffDialog } from "@/components/config-diff-dialog";
+import useConfigState, { type ConfigDiffResult } from "@/states/config";
 import { PluginCategoryPicker } from "@/components/plugin-category-picker";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -197,6 +200,12 @@ export function ExForm({
 
   const [showCount, setShowCount] = React.useState(showCountDefaultValue);
   const [processing, setProcessing] = React.useState(false);
+  const [previewing, setPreviewing] = React.useState(false);
+  const [diffOpen, setDiffOpen] = React.useState(false);
+  const [diffResult, setDiffResult] = React.useState<ConfigDiffResult | null>(
+    null,
+  );
+  const captureDryRun = useConfigState((state) => state.captureDryRun);
   const [updatedValues, setUpdatedValues] = React.useState(
     {} as Record<string, unknown>,
   );
@@ -272,15 +281,19 @@ export function ExForm({
         nextLocation.pathname + nextLocation.search,
   );
 
-  // 2. Define a submit handler.
-  async function onSubmit() {
-    if (!onSave || processing) {
-      return;
-    }
-    let data = Object.assign({}, updatedValues);
+  const buildPayload = () => {
     if (!onlyModified) {
-      data = Object.assign({}, originalValues, updatedValues);
+      return Object.assign({}, originalValues, updatedValues);
     }
+    return Object.assign({}, updatedValues);
+  };
+
+  // 2. Define a submit handler.
+  async function onSubmit(): Promise<boolean> {
+    if (!onSave || processing) {
+      return false;
+    }
+    const data = buildPayload();
     setProcessing(true);
     leavingOnPurpose.current = true;
     try {
@@ -289,13 +302,42 @@ export function ExForm({
       toast(t("saveSuccessTitle"), {
         description: t("saveSuccessDescription"),
       });
+      return true;
     } catch (err) {
       toast(t("saveConfigFail"), {
         description: formatError(err),
       });
+      return false;
     } finally {
       leavingOnPurpose.current = false;
       setProcessing(false);
+    }
+  }
+
+  async function handlePreviewDiff() {
+    if (!onSave || processing || previewing) {
+      return;
+    }
+    const valid = await form.trigger();
+    if (!valid) {
+      return;
+    }
+    const data = buildPayload();
+    setPreviewing(true);
+    try {
+      const result = await captureDryRun(() => onSave(data));
+      if (result) {
+        setDiffResult(result);
+        setDiffOpen(true);
+      } else {
+        await onSubmit();
+      }
+    } catch (err) {
+      toast(t("diffDialog.previewFail"), {
+        description: formatError(err),
+      });
+    } finally {
+      setPreviewing(false);
     }
   }
 
@@ -791,7 +833,7 @@ export function ExForm({
                   type="button"
                   variant="outline"
                   className="cursor-pointer"
-                  disabled={processing}
+                  disabled={processing || previewing}
                   onClick={() => {
                     form.reset(defaultValues);
                     setUpdatedValues({});
@@ -804,11 +846,33 @@ export function ExForm({
                   {t("formControls.reset")}
                 </Button>
               )}
+              {onSave && !readOnly && updatedCount > 0 && category && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="cursor-pointer"
+                  disabled={processing || previewing}
+                  onClick={() => {
+                    void handlePreviewDiff();
+                  }}
+                >
+                  {previewing ? (
+                    <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
+                  ) : (
+                    <GitCompare className="mr-1.5 size-3.5" />
+                  )}
+                  {t("diffDialog.previewButton")}
+                </Button>
+              )}
               {onSave && !readOnly && (
                 <Button
                   className="min-w-[120px] cursor-pointer"
                   type="submit"
-                  disabled={updatedCount === 0 && !allowSave}
+                  disabled={
+                    (updatedCount === 0 && !allowSave) ||
+                    processing ||
+                    previewing
+                  }
                 >
                   {processing && (
                     <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
@@ -895,6 +959,20 @@ export function ExForm({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <ConfigDiffDialog
+          open={diffOpen}
+          onOpenChange={setDiffOpen}
+          result={diffResult}
+          confirmLabel={t("diffDialog.confirmSave")}
+          applying={processing}
+          onConfirm={async () => {
+            const ok = await onSubmit();
+            if (ok) {
+              setDiffOpen(false);
+            }
+          }}
+        />
       </Form>
     </TooltipProvider>
   );

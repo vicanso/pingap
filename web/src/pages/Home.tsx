@@ -212,13 +212,14 @@ export default function Home() {
   if (config.certificates) {
     listify(config.certificates, (name, value) => {
       const info = certificateInfos[name];
-      const state = info ? certificateState(info.not_after) : undefined;
+      const hasExpiry = Boolean(info?.not_after);
+      const state = hasExpiry ? certificateState(info.not_after) : undefined;
       certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
-        value: info
+        value: hasExpiry
           ? homeI18n("expiresOn", { date: formatDate(info.not_after) })
-          : value.domains || "",
+          : value.domains || info?.domains?.join(", ") || "",
         valueTone: state?.tone,
         valueTitle: state?.message,
       });
@@ -400,7 +401,11 @@ export default function Home() {
     });
   });
   Object.keys(certificateInfos).forEach((name) => {
-    const state = certificateState(certificateInfos[name].not_after);
+    const notAfter = certificateInfos[name]?.not_after;
+    if (!notAfter) {
+      return;
+    }
+    const state = certificateState(notAfter);
     if (!state) {
       return;
     }

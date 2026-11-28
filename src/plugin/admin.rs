@@ -62,11 +62,11 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error, info, warn};
@@ -601,33 +601,132 @@ struct CertificateInfo<'a> {
     not_after: i64,
     not_before: i64,
     issuer: &'a str,
+    issuer_cn: String,
+    is_ca: bool,
+    ocsp_stapling: bool,
+    ocsp_stapled: bool,
+    chain_count: usize,
+    renewal_days: i64,
 }
 
-impl<'a> From<&'a pingap_certificate::Certificate> for CertificateInfo<'a> {
-    fn from(certificate: &'a pingap_certificate::Certificate) -> Self {
-        Self {
-            domains: &certificate.domains,
-            acme: certificate.acme.as_deref(),
-            not_after: certificate.not_after,
-            not_before: certificate.not_before,
-            issuer: &certificate.issuer,
-        }
+fn extract_issuer_cn(info: &pingap_certificate::Certificate) -> String {
+    let cn = info.get_issuer_common_name();
+    if !cn.is_empty() {
+        return cn;
     }
+    if let Some(org) = info.issuer.split(',').find_map(|part| {
+        part.trim().strip_prefix("O=").filter(|v| !v.is_empty())
+    }) {
+        return org.to_string();
+    }
+    info.issuer.clone()
 }
 
 /// How many versions of an entry the history shows.
 const MAX_HISTORY_VERSIONS: usize = 20;
 
+/// How many full-config snapshots are kept in memory per config manager.
+const MAX_CONFIG_SNAPSHOTS: usize = 20;
+const MAX_SNAPSHOT_MANAGERS: usize = 64;
+static SNAPSHOT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct ConfigSnapshotItem {
+    id: String,
+    created_at: u64,
+    source: String,
+    remark: String,
+    hash: String,
+    lines: usize,
+    toml: String,
+}
+
+struct SnapshotBucket {
+    owner: Weak<ConfigManager>,
+    items: VecDeque<ConfigSnapshotItem>,
+}
+
+static CONFIG_SNAPSHOTS: LazyLock<RwLock<HashMap<usize, SnapshotBucket>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+#[derive(Serialize)]
+struct SnapshotsResponse {
+    snapshots: Vec<ConfigSnapshotItem>,
+}
+
+#[derive(Deserialize, Default)]
+struct CreateSnapshotRequest {
+    remark: Option<String>,
+}
+
+fn render_pretty_toml(conf: &PingapTomlConfig) -> Option<String> {
+    let raw = toml::to_string_pretty(conf).ok()?;
+    Some(pingap_util::toml_omit_empty_value(&raw).unwrap_or(raw))
+}
+
+fn mask_snapshot_toml(raw_toml: &str) -> String {
+    let Ok(parsed) = PingapTomlConfig::from_toml(raw_toml) else {
+        return String::new();
+    };
+    let Ok(conf) = parsed.to_pingap_config(false) else {
+        return String::new();
+    };
+    let masked = pingap_config::mask_pingap_config(&conf);
+    let Ok(raw) = toml::to_string_pretty(&masked) else {
+        return String::new();
+    };
+    pingap_util::toml_omit_empty_value(&raw).unwrap_or(raw)
+}
+
+fn snapshot_bucket_mut<'a>(
+    guard: &'a mut HashMap<usize, SnapshotBucket>,
+    manager: &Arc<ConfigManager>,
+) -> &'a mut SnapshotBucket {
+    guard.retain(|_, bucket| bucket.owner.strong_count() > 0);
+    let manager_key = Arc::as_ptr(manager) as usize;
+    if !guard.contains_key(&manager_key)
+        && guard.len() >= MAX_SNAPSHOT_MANAGERS
+        && let Some(&evict_key) = guard.keys().next()
+    {
+        guard.remove(&evict_key);
+    }
+    guard.entry(manager_key).or_insert_with(|| SnapshotBucket {
+        owner: Arc::downgrade(manager),
+        items: VecDeque::new(),
+    })
+}
+
 /// What `/certificates` answers with: the loaded certificates by name.
 fn certificate_infos(
     certificates: &pingap_certificate::DynamicCertificates,
 ) -> HashMap<&String, CertificateInfo<'_>> {
+    let now = pingap_core::now_sec() as i64;
     certificates
         .iter()
         .filter_map(|(name, certificate)| {
             let info = certificate.info.as_ref()?;
             let name = certificate.name.as_ref().unwrap_or(name);
-            Some((name, CertificateInfo::from(info)))
+            let ocsp_stapled = certificate
+                .certificate
+                .as_ref()
+                .is_some_and(|loaded| loaded.has_staple(now));
+            Some((
+                name,
+                CertificateInfo {
+                    domains: &info.domains,
+                    acme: info.acme.as_deref(),
+                    not_after: info.not_after,
+                    not_before: info.not_before,
+                    issuer: &info.issuer,
+                    issuer_cn: extract_issuer_cn(info),
+                    is_ca: certificate.is_ca,
+                    ocsp_stapling: certificate.ocsp.is_some(),
+                    ocsp_stapled,
+                    chain_count: certificate.chain_certificates.len(),
+                    renewal_days: info.renewal_margin(certificate.buffer_days)
+                        / 86_400,
+                },
+            ))
         })
         .collect()
 }
@@ -822,11 +921,118 @@ impl AdminServe {
         })?;
         Ok(config)
     }
+    fn record_snapshot_from_toml(
+        &self,
+        stored: &PingapTomlConfig,
+        source: &str,
+        remark: &str,
+        dedup_auto: bool,
+    ) -> Option<ConfigSnapshotItem> {
+        if stored_toml_is_empty(stored) {
+            return None;
+        }
+        let canonical_toml = render_pretty_toml(stored)?;
+        let digest =
+            Sha256::digest(canonical_toml.as_bytes()).encode_hex::<String>();
+        let hash = digest.get(..12).unwrap_or(&digest).to_string();
+
+        let mut guard = CONFIG_SNAPSHOTS.write();
+        let bucket = snapshot_bucket_mut(&mut guard, &self.manager);
+        if dedup_auto
+            && let Some(front) = bucket.items.front()
+            && front.source != "manual"
+            && front.hash == hash
+        {
+            return Some(front.clone());
+        }
+        let created_at = pingap_core::now_sec();
+        let seq = SNAPSHOT_SEQ.fetch_add(1, Ordering::Relaxed);
+        let item = ConfigSnapshotItem {
+            id: format!("{created_at}-{seq}"),
+            created_at,
+            source: source.to_string(),
+            remark: remark.to_string(),
+            hash,
+            lines: canonical_toml.lines().count(),
+            toml: canonical_toml,
+        };
+        bucket.items.push_front(item.clone());
+        bucket.items.truncate(MAX_CONFIG_SNAPSHOTS);
+        Some(item)
+    }
+
+    async fn record_config_snapshot(
+        &self,
+        source: &str,
+        remark: &str,
+        dedup_auto: bool,
+    ) -> Option<ConfigSnapshotItem> {
+        let stored = self.manager.load_all().await.ok()?;
+        self.record_snapshot_from_toml(&stored, source, remark, dedup_auto)
+    }
+
+    fn list_config_snapshots(
+        &self,
+        read_only: bool,
+    ) -> Vec<ConfigSnapshotItem> {
+        let manager_key = Arc::as_ptr(&self.manager) as usize;
+        let guard = CONFIG_SNAPSHOTS.read();
+        let Some(bucket) = guard.get(&manager_key) else {
+            return Vec::new();
+        };
+        if bucket.owner.strong_count() == 0 {
+            return Vec::new();
+        }
+        bucket
+            .items
+            .iter()
+            .map(|item| {
+                if read_only {
+                    ConfigSnapshotItem {
+                        toml: mask_snapshot_toml(&item.toml),
+                        ..item.clone()
+                    }
+                } else {
+                    item.clone()
+                }
+            })
+            .collect()
+    }
+
+    async fn create_snapshot(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<HttpResponse> {
+        let buf = get_request_body(session).await?;
+        let req: CreateSnapshotRequest =
+            if buf.iter().all(u8::is_ascii_whitespace) {
+                CreateSnapshotRequest::default()
+            } else {
+                serde_json::from_slice(&buf)
+                    .map_err(|e| pingap_core::new_internal_error(400, e))?
+            };
+        let remark = req.remark.as_deref().map(str::trim).unwrap_or("");
+        let Some(item) =
+            self.record_config_snapshot("manual", remark, false).await
+        else {
+            return Err(pingap_core::new_internal_error(
+                400,
+                "no stored configuration available for snapshot",
+            ));
+        };
+        HttpResponse::try_from_json(&item)
+    }
+
     async fn get_config(
         &self,
         category: &str,
         read_only: bool,
     ) -> pingora::Result<HttpResponse> {
+        if category == "snapshots" {
+            return HttpResponse::try_from_json(&SnapshotsResponse {
+                snapshots: self.list_config_snapshots(read_only),
+            });
+        }
         let conf = self.load_config(false).await?;
         let conf = if read_only {
             pingap_config::mask_pingap_config(&conf)
@@ -885,10 +1091,25 @@ impl AdminServe {
         let category = Category::from_str(category)
             .map_err(|e| pingap_core::new_internal_error(400, e))?;
         let basic = category == Category::Basic;
+        let cat_section = format_category(&category).to_string();
+        let pre_snapshot = self.manager.load_all().await.ok();
         self.manager.delete(category, name).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
             pingap_core::new_internal_error(400, e)
         })?;
+        if let Some(stored) = pre_snapshot {
+            let remark = if name.is_empty() {
+                cat_section
+            } else {
+                format!("{cat_section}/{name}")
+            };
+            self.record_snapshot_from_toml(
+                &stored,
+                "before_delete",
+                &remark,
+                true,
+            );
+        }
         if basic {
             crate::validate::apply_stored_trusted_proxies(&self.manager).await;
         }
@@ -946,6 +1167,12 @@ impl AdminServe {
         // regex that does not compile, or a plugin option of the wrong
         // type, used to be stored; every reload after that failed, and so
         // did the next start.
+        let pre_snapshot = self.manager.load_all().await.ok();
+        let remark = if name.is_empty() {
+            category.to_string()
+        } else {
+            format!("{}/{}", format_category(&category), name)
+        };
         self.manager
             .update_checked(
                 category,
@@ -958,6 +1185,14 @@ impl AdminServe {
                 error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                 pingap_core::new_internal_error(400, e)
             })?;
+        if let Some(stored) = pre_snapshot {
+            self.record_snapshot_from_toml(
+                &stored,
+                "before_update",
+                &remark,
+                true,
+            );
+        }
 
         Ok(None)
     }
@@ -967,10 +1202,15 @@ impl AdminServe {
         stored_toml: PingapTomlConfig,
         candidate_toml: PingapTomlConfig,
     ) -> pingora::Result<HttpResponse> {
+        struct DiffPreview {
+            updated_categories: Vec<String>,
+            diff: Vec<String>,
+            left_for_restart: Vec<String>,
+        }
         let fallback_current = self.manager.get_current_config();
         let has_running = self.manager.current_config_hash().is_some();
-        let (mut updated_categories, diff) = tokio::task::spawn_blocking(
-            move || -> std::result::Result<(Vec<String>, Vec<String>), String> {
+        let mut preview = tokio::task::spawn_blocking(
+            move || -> std::result::Result<DiffPreview, String> {
                 pingap_cache::dry_run(|| {
                     crate::validate::validate_stored(&candidate_toml)
                         .map_err(|e| e.to_string())?;
@@ -989,7 +1229,16 @@ impl AdminServe {
                                     fallback_current.as_ref().clone()
                                 })
                         };
-                    Ok(current.diff(&candidate))
+                    let (updated_categories, diff) = current.diff(&candidate);
+                    let left_for_restart =
+                        crate::process::preview_left_for_restart(
+                            &current, &candidate,
+                        );
+                    Ok(DiffPreview {
+                        updated_categories,
+                        diff,
+                        left_for_restart,
+                    })
                 })
             },
         )
@@ -997,15 +1246,18 @@ impl AdminServe {
         .map_err(|e| pingap_core::new_internal_error(400, e))?
         .map_err(|e| pingap_core::new_internal_error(400, e))?;
 
-        updated_categories.sort();
+        let restart_required = !preview.left_for_restart.is_empty();
+        preview.updated_categories.sort();
         let restart_unsupported = no_restart()
             .map(|obstacle| obstacle.code().to_string())
             .unwrap_or_default();
 
         HttpResponse::try_from_json(&ConfigDiffResponse {
             valid: true,
-            updated_categories,
-            diff,
+            updated_categories: preview.updated_categories,
+            diff: preview.diff,
+            restart_required,
+            left_for_restart: preview.left_for_restart,
             restart_unsupported,
         })
     }
@@ -1182,10 +1434,19 @@ impl AdminServe {
         .await
         .map_err(|e| refuse(e.to_string()))?
         .map_err(refuse)?;
+        let pre_snapshot = self.manager.load_all().await.ok();
         self.manager.save_all(&config).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
+        if let Some(stored) = pre_snapshot {
+            self.record_snapshot_from_toml(
+                &stored,
+                "before_import",
+                "import",
+                true,
+            );
+        }
         crate::validate::apply_stored_trusted_proxies(&self.manager).await;
 
         Ok(HttpResponse::no_content())
@@ -1210,6 +1471,7 @@ impl AdminServe {
             .load_all()
             .await
             .map_err(|e| refuse(e.to_string()))?;
+        let pre_snapshot = config.clone();
         let resp = apply_quick_site(&mut config, &req).map_err(refuse)?;
         let config = tokio::task::spawn_blocking(move || {
             crate::validate::validate_stored(&config)
@@ -1227,6 +1489,13 @@ impl AdminServe {
             );
             pingap_core::new_internal_error(400, e)
         })?;
+        let remark = format!("quick-site/{}", req.name);
+        self.record_snapshot_from_toml(
+            &pre_snapshot,
+            "before_quick_site",
+            &remark,
+            true,
+        );
         crate::validate::apply_stored_trusted_proxies(&self.manager).await;
 
         HttpResponse::try_from_json_status(&resp, StatusCode::CREATED)
@@ -1252,6 +1521,7 @@ impl AdminServe {
             .load_all()
             .await
             .map_err(|e| refuse(e.to_string()))?;
+        let pre_snapshot = config.clone();
         let resp = apply_plugin_preset(&mut config, &req).map_err(refuse)?;
         let config = tokio::task::spawn_blocking(move || {
             crate::validate::validate_stored(&config)
@@ -1269,6 +1539,12 @@ impl AdminServe {
             );
             pingap_core::new_internal_error(400, e)
         })?;
+        self.record_snapshot_from_toml(
+            &pre_snapshot,
+            "before_preset",
+            "plugin-preset",
+            true,
+        );
         crate::validate::apply_stored_trusted_proxies(&self.manager).await;
 
         HttpResponse::try_from_json_status(&resp, StatusCode::OK)
@@ -1893,6 +2169,8 @@ struct ConfigDiffResponse {
     valid: bool,
     updated_categories: Vec<String>,
     diff: Vec<String>,
+    restart_required: bool,
+    left_for_restart: Vec<String>,
     restart_unsupported: String,
 }
 
@@ -2219,6 +2497,8 @@ async fn handle_request_admin(
                     plugin.create_quick_site(session).await
                 } else if category == "apply-plugin-preset" {
                     plugin.apply_plugin_preset(session).await
+                } else if category == "snapshots" {
+                    plugin.create_snapshot(session).await
                 } else if params.len() < 4 {
                     Err(pingap_core::new_internal_error(
                         400,
@@ -3320,10 +3600,148 @@ mod tests {
                     "not_after": 1_900_000_000_i64,
                     "not_before": 1_800_000_000_i64,
                     "issuer": "C=US, O=Let's Encrypt, CN=E5",
+                    "issuer_cn": "E5",
+                    "is_ca": false,
+                    "ocsp_stapling": false,
+                    "ocsp_stapled": false,
+                    "chain_count": 0,
+                    "renewal_days": 14,
                 }
             }),
             listed
         );
+    }
+
+    #[test]
+    fn test_certificate_infos_enriched_telemetry() {
+        use pingap_certificate::rcgen::{
+            BasicConstraints, CertificateParams, CustomExtension,
+            DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+        };
+
+        // 1. Issuer CN extraction: CN preferred, fallback to O=, fallback to raw issuer.
+        let mut certs = pingap_certificate::DynamicCertificates::new();
+        certs.insert(
+            "org_only".to_string(),
+            Arc::new(pingap_certificate::TlsCertificate {
+                name: Some("org_only".to_string()),
+                is_ca: true,
+                buffer_days: 5,
+                info: Some(pingap_certificate::Certificate {
+                    domains: vec!["ca.example.com".to_string()],
+                    not_after: 1_900_000_000,
+                    not_before: 1_800_000_000,
+                    issuer: "C=US, O=Example Corp".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+        certs.insert(
+            "raw_only".to_string(),
+            Arc::new(pingap_certificate::TlsCertificate {
+                name: Some("raw_only".to_string()),
+                info: Some(pingap_certificate::Certificate {
+                    domains: vec!["raw.example.com".to_string()],
+                    not_after: 1_900_000_000,
+                    not_before: 1_800_000_000,
+                    issuer: "OU=Internal Unit".to_string(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+
+        // 2. Real leaf + CA chain with OCSP AIA extension & active staple.
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params =
+            CertificateParams::new(vec!["ca.test".to_string()]).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let mut ca_dn = DistinguishedName::new();
+        ca_dn.push(DnType::OrganizationName, "Pingap Test CA");
+        ca_dn.push(DnType::CommonName, "Pingap Root E1");
+        ca_params.distinguished_name = ca_dn;
+        let ca_cert = ca_params.clone().self_signed(&ca_key).unwrap();
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let leaf_key = KeyPair::generate().unwrap();
+        let mut leaf_params =
+            CertificateParams::new(vec!["ocsp.example.com".to_string()])
+                .unwrap();
+        // AuthorityInfoAccessSyntax: SEQUENCE { SEQUENCE { OID id-ad-ocsp, [6] "http://ocsp.test" } }
+        let mut aia_uri = Vec::from([0x86_u8, 16_u8]);
+        aia_uri.extend_from_slice(b"http://ocsp.test");
+        let mut access_desc = Vec::from([
+            0x30_u8,
+            (10 + aia_uri.len()) as u8,
+            0x06,
+            0x08,
+            0x2b,
+            0x06,
+            0x01,
+            0x05,
+            0x05,
+            0x07,
+            0x30,
+            0x01,
+        ]);
+        access_desc.extend_from_slice(&aia_uri);
+        let mut aia_der = Vec::from([0x30_u8, access_desc.len() as u8]);
+        aia_der.extend_from_slice(&access_desc);
+        leaf_params
+            .custom_extensions
+            .push(CustomExtension::from_oid_content(
+                &[1, 3, 6, 1, 5, 5, 7, 1, 1],
+                aia_der,
+            ));
+        let leaf_cert = leaf_params.signed_by(&leaf_key, &issuer).unwrap();
+
+        let conf = pingap_config::CertificateConf {
+            tls_cert: Some(format!("{}\n{}", leaf_cert.pem(), ca_cert.pem())),
+            tls_key: Some(leaf_key.serialize_pem()),
+            ocsp_stapling: Some(true),
+            buffer_days: Some(7),
+            ..Default::default()
+        };
+        let mut tls_cert =
+            pingap_certificate::TlsCertificate::try_from(&conf).unwrap();
+        tls_cert.name = Some("ocsp_site".to_string());
+        let future = pingap_core::now_sec() as i64 + 3600;
+        tls_cert
+            .certificate
+            .as_ref()
+            .unwrap()
+            .set_staple(Some((vec![0x30, 0x03, 0x0a, 0x01, 0x00], future)));
+        certs.insert("ocsp.example.com".to_string(), Arc::new(tls_cert));
+
+        let listed = serde_json::to_value(certificate_infos(&certs)).unwrap();
+        assert_eq!("Example Corp", listed["org_only"]["issuer_cn"]);
+        assert_eq!(true, listed["org_only"]["is_ca"]);
+        assert_eq!(5, listed["org_only"]["renewal_days"]);
+        assert_eq!(false, listed["org_only"]["ocsp_stapling"]);
+        assert_eq!(false, listed["org_only"]["ocsp_stapled"]);
+
+        assert_eq!("OU=Internal Unit", listed["raw_only"]["issuer_cn"]);
+        assert_eq!(false, listed["raw_only"]["is_ca"]);
+        assert_eq!(14, listed["raw_only"]["renewal_days"]);
+
+        assert_eq!("Pingap Root E1", listed["ocsp_site"]["issuer_cn"]);
+        assert_eq!(false, listed["ocsp_site"]["is_ca"]);
+        assert_eq!(true, listed["ocsp_site"]["ocsp_stapling"]);
+        assert_eq!(true, listed["ocsp_site"]["ocsp_stapled"]);
+        assert_eq!(1, listed["ocsp_site"]["chain_count"]);
+        assert_eq!(7, listed["ocsp_site"]["renewal_days"]);
+
+        // Expired staple flips ocsp_stapled back to false while ocsp_stapling remains true.
+        certs["ocsp.example.com"]
+            .certificate
+            .as_ref()
+            .unwrap()
+            .set_staple(Some((vec![0x30], pingap_core::now_sec() as i64 - 10)));
+        let listed_expired =
+            serde_json::to_value(certificate_infos(&certs)).unwrap();
+        assert_eq!(true, listed_expired["ocsp_site"]["ocsp_stapling"]);
+        assert_eq!(false, listed_expired["ocsp_site"]["ocsp_stapled"]);
     }
 
     /// Mounted under a prefix: the prefix is removed on a segment boundary.
@@ -5314,5 +5732,371 @@ location "l1" {
         assert_eq!(200, code, "{body}");
         assert_eq!(true, body.contains("upstream:u_kdl"), "{body}");
         assert_eq!(stored_before, std::fs::read_to_string(&file).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_admin_diff_reports_restart_required_and_left_for_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        let base = r#"[basic]
+name = "pingap"
+threads = 2
+log_level = "info"
+
+[upstreams.u1]
+addrs = ["127.0.0.1:5000"]
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+
+[locations.l2]
+upstream = "u1"
+path = "/v2"
+
+[servers.main]
+addr = "127.0.0.1:18080"
+locations = ["l1"]
+"#;
+        std::fs::write(&file, base).unwrap();
+        let (admin, _) = new_admin_on(&file, "");
+
+        // 1. Hot-reloadable changes (server.locations + upstream.addrs + log_level):
+        // restart_required == false and left_for_restart == [].
+        let (code, body) = post(
+            &admin,
+            "/api/configs/server/main?dry_run=1",
+            r#"{"addr":"127.0.0.1:18080","locations":["l1","l2"]}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(false, resp["restart_required"].as_bool().unwrap());
+        assert_eq!(
+            true,
+            resp["left_for_restart"].as_array().unwrap().is_empty()
+        );
+
+        let (code, body) = post(
+            &admin,
+            "/api/configs/upstream/u1?dry_run=1",
+            r#"{"addrs":["127.0.0.1:5001"]}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(false, resp["restart_required"].as_bool().unwrap());
+        assert_eq!(
+            true,
+            resp["left_for_restart"].as_array().unwrap().is_empty()
+        );
+
+        // 2. Listener addr change via dry_run: restart_required == true.
+        let (code, body) = post(
+            &admin,
+            "/api/configs/server/main?dry_run=1",
+            r#"{"addr":"127.0.0.1:18081","locations":["l1"]}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(true, resp["restart_required"].as_bool().unwrap());
+        let left = resp["left_for_restart"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(true, left.contains("127.0.0.1:18081"), "{left}");
+
+        // 3. Full diff with threads + basic.sentry secret: restart_required == true
+        // and secrets remain masked in both diff and left_for_restart.
+        let candidate = r#"[basic]
+name = "pingap"
+threads = 4
+log_level = "debug"
+sentry = "https://super-secret-dsn-key@sentry.io/42"
+
+[upstreams.u1]
+addrs = ["127.0.0.1:5001"]
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+
+[locations.l2]
+upstream = "u1"
+path = "/v2"
+
+[servers.main]
+addr = "127.0.0.1:18082"
+locations = ["l1", "l2"]
+"#;
+        let (code, body) = post(&admin, "/api/configs/diff", candidate).await;
+        assert_eq!(200, code, "{body}");
+        assert_eq!(false, body.contains("super-secret-dsn-key"), "{body}");
+        let resp: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(true, resp["restart_required"].as_bool().unwrap());
+        let left = resp["left_for_restart"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(true, left.contains("threads = 4"), "{left}");
+        assert_eq!(true, left.contains("127.0.0.1:18082"), "{left}");
+        assert_eq!(false, left.contains("log_level"), "{left}");
+        assert_eq!(false, left.contains("upstream:u1"), "{left}");
+    }
+
+    #[tokio::test]
+    async fn test_admin_config_snapshots_lifecycle_dedup_eviction_and_masking()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pingap.toml");
+        std::fs::write(&file, "").unwrap();
+
+        let b64 = pingap_util::base64_encode;
+        let (admin, manager) = new_admin_on(
+            &file,
+            &format!(
+                "authorizations = [\"{}\"]\nreadonly_authorizations = [\"{}\"]",
+                b64("alice:pw-a"),
+                b64("bob:pw-b"),
+            ),
+        );
+        let rw_auth = signed("alice", "pw-a");
+        let ro_auth = signed("bob", "pw-b");
+
+        let req_with = async |method: &str,
+                              path: &str,
+                              auth: &str,
+                              body: &str| {
+            let req = format!(
+                "{method} {path} HTTP/1.1\r\nAuthorization: {auth}\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            answer(&admin, "127.0.0.1:3018", &req).await
+        };
+
+        // 1. Empty stored config cannot create a manual snapshot.
+        let (code, _) = req_with(
+            "POST",
+            "/api/configs/snapshots",
+            &rw_auth,
+            r#"{"remark":"empty"}"#,
+        )
+        .await;
+        assert_eq!(400, code);
+
+        // Write initial config containing a secret so masking can also be verified.
+        let initial = r#"[basic]
+name = "pingap"
+webhook_secret = "wh-snap-secret"
+
+[upstreams.u1]
+addrs = ["127.0.0.1:5000"]
+
+[locations.l1]
+upstream = "u1"
+path = "/api"
+
+[plugins.jwt_auth]
+category = "jwt"
+secret = "jwt-snap-secret"
+header = "Authorization"
+"#;
+        std::fs::write(&file, initial).unwrap();
+
+        // 2. Manual snapshot with remark + empty-body manual snapshot.
+        let (code, body) = req_with(
+            "POST",
+            "/api/configs/snapshots",
+            &rw_auth,
+            r#"{"remark":"baseline"}"#,
+        )
+        .await;
+        assert_eq!(200, code, "{body}");
+        let snap1: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!("manual", snap1["source"]);
+        assert_eq!("baseline", snap1["remark"]);
+        assert_eq!(12, snap1["hash"].as_str().unwrap().len());
+        assert!(snap1["lines"].as_u64().unwrap() > 0);
+        assert!(snap1["toml"].as_str().unwrap().contains("jwt-snap-secret"));
+
+        // Readonly cannot POST /api/configs/snapshots.
+        let (ro_post, _) =
+            req_with("POST", "/api/configs/snapshots", &ro_auth, "").await;
+        assert_eq!(403, ro_post);
+
+        // 3. Invalid update must not record a spurious before_update snapshot.
+        let (bad_upd, _) = req_with(
+            "POST",
+            "/api/configs/location/bad_loc",
+            &rw_auth,
+            r#"{"upstream":"missing_up"}"#,
+        )
+        .await;
+        assert_eq!(400, bad_upd);
+
+        // Valid update after manual snapshot creates before_update (preserving both).
+        let (ok_upd, _) = req_with(
+            "POST",
+            "/api/configs/upstream/u1",
+            &rw_auth,
+            r#"{"addrs":["127.0.0.1:5001"]}"#,
+        )
+        .await;
+        assert_eq!(204, ok_upd);
+
+        // Auto-snapshot deduplication: repeating identical update_config (when stored config
+        // is unchanged and front is already before_update with identical hash) does not duplicate.
+        let (ok_upd2, _) = req_with(
+            "POST",
+            "/api/configs/upstream/u1",
+            &rw_auth,
+            r#"{"addrs":["127.0.0.1:5001"]}"#,
+        )
+        .await;
+        assert_eq!(204, ok_upd2);
+
+        let (get_rw_code, get_rw_body) =
+            req_with("GET", "/api/configs/snapshots", &rw_auth, "").await;
+        assert_eq!(200, get_rw_code, "{get_rw_body}");
+        let rw_snaps: serde_json::Value =
+            serde_json::from_str(&get_rw_body).unwrap();
+        let rw_arr = rw_snaps["snapshots"].as_array().unwrap();
+        // Second update saw stored config with u1=5001 (hash H2 != H1), so
+        // let's perform one more identical update on u1=5001 to verify front dedup!
+        assert_eq!(3, rw_arr.len());
+        let (ok_upd3, _) = req_with(
+            "POST",
+            "/api/configs/upstream/u1",
+            &rw_auth,
+            r#"{"addrs":["127.0.0.1:5001"]}"#,
+        )
+        .await;
+        assert_eq!(204, ok_upd3);
+        let (_, get_rw_body2) =
+            req_with("GET", "/api/configs/snapshots", &rw_auth, "").await;
+        let rw_snaps2: serde_json::Value =
+            serde_json::from_str(&get_rw_body2).unwrap();
+        let rw_arr2 = rw_snaps2["snapshots"].as_array().unwrap();
+        assert_eq!(3, rw_arr2.len(), "identical auto-snapshot should dedup");
+        assert_eq!("before_update", rw_arr2[0]["source"]);
+        assert_eq!("upstreams/u1", rw_arr2[0]["remark"]);
+        assert_eq!("before_update", rw_arr2[1]["source"]);
+        assert_eq!("manual", rw_arr2[2]["source"]);
+        assert_eq!("baseline", rw_arr2[2]["remark"]);
+
+        // 4. Readonly GET /api/configs/snapshots masks secrets while RW sees raw.
+        let (get_ro_code, get_ro_body) =
+            req_with("GET", "/api/configs/snapshots", &ro_auth, "").await;
+        assert_eq!(200, get_ro_code, "{get_ro_body}");
+        assert_eq!(false, get_ro_body.contains("jwt-snap-secret"));
+        assert_eq!(false, get_ro_body.contains("wh-snap-secret"));
+        assert_eq!(true, get_ro_body.contains("crc32:"));
+
+        // 5. Auto-snapshots also fire before delete, quick-site, preset, and import.
+        // Mutate u1 to 5002 first so the pre-quick-site config differs from front (5001).
+        let (code, _) = req_with(
+            "POST",
+            "/api/configs/upstream/u1",
+            &rw_auth,
+            r#"{"addrs":["127.0.0.1:5002"]}"#,
+        )
+        .await;
+        assert_eq!(204, code);
+        let (code, _) = req_with(
+            "POST",
+            "/api/configs/quick-site",
+            &rw_auth,
+            r#"{"name":"qs","upstreams":["127.0.0.1:6001"],"addr":"127.0.0.1:18099"}"#,
+        )
+        .await;
+        assert_eq!(201, code);
+        let (code, _) = req_with(
+            "POST",
+            "/api/configs/apply-plugin-preset",
+            &rw_auth,
+            r#"{"plugins":[{"name":"sec-hdr","config":{"category":"response_headers","preset":"security"}}],"locations":["l1"]}"#,
+        )
+        .await;
+        assert_eq!(200, code);
+        let (code, _) =
+            req_with("DELETE", "/api/configs/server/qs", &rw_auth, "").await;
+        assert_eq!(204, code);
+        let (code, _) = req_with(
+            "POST",
+            "/api/configs/import",
+            &rw_auth,
+            snap1["toml"].as_str().unwrap(),
+        )
+        .await;
+        assert_eq!(204, code);
+        // Stored config rolled back to initial u1 port 5000.
+        let restored = manager
+            .load_all()
+            .await
+            .unwrap()
+            .to_pingap_config(false)
+            .unwrap();
+        assert_eq!(
+            vec!["127.0.0.1:5000".to_string()],
+            restored.upstreams["u1"].addrs
+        );
+
+        let (_, after_ops) =
+            req_with("GET", "/api/configs/snapshots", &rw_auth, "").await;
+        let after_json: serde_json::Value =
+            serde_json::from_str(&after_ops).unwrap();
+        let sources: Vec<&str> = after_json["snapshots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["source"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            vec![
+                "before_import",
+                "before_delete",
+                "before_preset",
+                "before_quick_site",
+                "before_update",
+                "before_update",
+                "manual",
+            ],
+            sources
+        );
+
+        // 6. Empty-body manual snapshot succeeds, and ring capacity is bounded at 20.
+        let (code, empty_body_snap) =
+            req_with("POST", "/api/configs/snapshots", &rw_auth, "").await;
+        assert_eq!(200, code, "{empty_body_snap}");
+        let empty_snap_json: serde_json::Value =
+            serde_json::from_str(&empty_body_snap).unwrap();
+        assert_eq!("manual", empty_snap_json["source"]);
+        assert_eq!("", empty_snap_json["remark"]);
+
+        for idx in 0..25 {
+            let (code, _) = req_with(
+                "POST",
+                "/api/configs/snapshots",
+                &rw_auth,
+                &format!(r#"{{"remark":"ring-{idx}"}}"#),
+            )
+            .await;
+            assert_eq!(200, code);
+        }
+        let (_, ring_body) =
+            req_with("GET", "/api/configs/snapshots", &rw_auth, "").await;
+        let ring_json: serde_json::Value =
+            serde_json::from_str(&ring_body).unwrap();
+        let ring_arr = ring_json["snapshots"].as_array().unwrap();
+        assert_eq!(super::MAX_CONFIG_SNAPSHOTS, ring_arr.len());
+        assert_eq!("ring-24", ring_arr[0]["remark"]);
+        assert_eq!("ring-5", ring_arr[19]["remark"]);
     }
 }

@@ -1,36 +1,11 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import request from "@/helpers/request";
+import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { goToLogin, UPSTREAMS } from "@/routers";
+import { goToLogin, STREAMS, UPSTREAMS } from "@/routers";
 import { Sparkline, TimeChart } from "@/components/time-chart";
-
-interface UpstreamTraffic {
-  requests: number[];
-  errors: number[];
-  /** The requests that got a response header: what the wait is of. */
-  latency_count: number[];
-  latency_avg: number[];
-  latency_max: number[];
-}
-
-/** What `/api/traffic` answers: one value per bucket, the oldest first. */
-interface Traffic {
-  interval: number;
-  time: number[];
-  requests: number[];
-  status_2xx: number[];
-  status_3xx: number[];
-  status_4xx: number[];
-  status_5xx: number[];
-  /** The requests the latency is of: not the upgraded connections. */
-  latency_count: number[];
-  latency_avg: number[];
-  latency_p95: number[];
-  latency_max: number[];
-  upstreams: Record<string, UpstreamTraffic>;
-}
+import { formatBytes, useTrafficState } from "@/states/traffic";
 
 /** The buckets of the last minute: six of ten seconds. */
 const RECENT = 6;
@@ -67,7 +42,9 @@ const weighted = (averages: number[], counts: number[]) => {
  */
 export function TrafficPanel() {
   const homeI18n = useI18n("home");
-  const [traffic, setTraffic] = React.useState<Traffic | null>(null);
+  const [traffic, fetchTraffic] = useTrafficState(
+    useShallow((state) => [state.data, state.fetch]),
+  );
 
   React.useEffect(() => {
     let stopped = false;
@@ -78,21 +55,14 @@ export function TrafficPanel() {
       if (stopped || document.hidden) {
         return;
       }
-      request
-        .get<Traffic>("/traffic")
-        .then(({ data }) => {
-          if (!stopped) {
-            setTraffic(data);
-          }
-        })
-        .catch((err: { status?: number }) => {
-          if (err?.status === 401) {
-            stopped = true;
-            goToLogin();
-          }
-          // Anything else - an older process without the endpoint - leaves
-          // the panel out rather than showing an error on the home page.
-        });
+      fetchTraffic().catch((err: { status?: number }) => {
+        if (err?.status === 401) {
+          stopped = true;
+          goToLogin();
+        }
+        // Anything else - an older process without the endpoint - leaves
+        // the panel out rather than showing an error on the home page.
+      });
     };
     refresh();
     const timer = setInterval(refresh, 10_000);
@@ -102,36 +72,129 @@ export function TrafficPanel() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, []);
+  }, [fetchTraffic]);
 
-  if (!traffic || traffic.time.length < 2) {
+  if (!traffic) {
     return null;
   }
+
+  const evictions = traffic.cache_memory_evictions ?? 0;
+  const streamEntries = Object.entries(traffic.streams || {})
+    .map(([name, summary]) => ({
+      name,
+      ...summary,
+    }))
+    .sort(
+      (a, b) =>
+        b.active_connections - a.active_connections ||
+        b.connections_total - a.connections_total ||
+        a.name.localeCompare(b.name),
+    );
+
+  if (
+    traffic.time.length < 2 &&
+    streamEntries.length === 0 &&
+    evictions === 0
+  ) {
+    return null;
+  }
+
   // The bucket under way is left out: half a bucket reads as a drop.
-  const end = traffic.time.length - 1;
+  const end = Math.max(0, traffic.time.length - 1);
   const done = (values: number[]) => values.slice(0, end);
   const recent = (values: number[]) => done(values).slice(-RECENT);
   const perSecond = (values: number[]) =>
     done(values).map((value) => value / traffic.interval);
   const times = done(traffic.time);
   const seconds = RECENT * traffic.interval;
+  const total = sum(done(traffic.requests));
+  const hasHttpTraffic = traffic.time.length >= 2 && total > 0;
 
   const header = (
     <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
-      <h2 className="region-label">{homeI18n("traffic")}</h2>
+      <div className="flex flex-wrap items-baseline gap-2.5">
+        <h2 className="region-label">{homeI18n("traffic")}</h2>
+        {evictions > 0 && (
+          <span
+            title={homeI18n("cacheEvictionsHint", { count: evictions })}
+            className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11.5px] text-amber-700 dark:text-amber-300"
+          >
+            <span>{homeI18n("cacheEvictions")}</span>
+            <span className="figure font-medium">
+              {evictions.toLocaleString()}
+            </span>
+          </span>
+        )}
+      </div>
       <span className="text-[12px] text-muted-foreground">
         {homeI18n("trafficWindow")}
       </span>
     </div>
   );
 
-  if (sum(done(traffic.requests)) === 0) {
+  const streamsTable = streamEntries.length > 0 && (
+    <div className="overflow-x-auto border-t border-border">
+      <table className="w-full text-[12.5px]">
+        <thead>
+          <tr className="text-left text-[12px] text-muted-foreground">
+            <th className="px-4 py-2 font-normal sm:px-5">
+              {homeI18n("trafficStreams")}
+            </th>
+            <th className="px-3 py-2 text-right font-normal">
+              {homeI18n("trafficStreamActive")}
+            </th>
+            <th className="px-3 py-2 text-right font-normal">
+              {homeI18n("trafficStreamTotal")}
+            </th>
+            <th className="px-3 py-2 text-right font-normal">
+              {homeI18n("trafficStreamRx")}
+            </th>
+            <th className="px-4 py-2 text-right font-normal sm:px-5">
+              {homeI18n("trafficStreamTx")}
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-subtle">
+          {streamEntries.map((stream) => (
+            <tr
+              key={stream.name}
+              className="transition-colors hover:bg-accent/40"
+            >
+              <td className="px-4 py-2.5 sm:px-5">
+                <Link
+                  to={`${STREAMS}?name=${encodeURIComponent(stream.name)}`}
+                  className="machine font-medium text-card-foreground hover:text-primary hover:underline"
+                >
+                  {stream.name}
+                </Link>
+              </td>
+              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                {stream.active_connections.toLocaleString()}
+              </td>
+              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                {stream.connections_total.toLocaleString()}
+              </td>
+              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                {formatBytes(stream.rx_bytes)}
+              </td>
+              <td className="figure px-4 py-2.5 text-right text-secondary-foreground sm:px-5">
+                {formatBytes(stream.tx_bytes)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  if (!hasHttpTraffic) {
     return (
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
         {header}
         <p className="px-4 py-3.5 text-[13px] text-muted-foreground sm:px-5">
           {homeI18n("noTraffic")}
         </p>
+        {streamsTable}
       </section>
     );
   }
@@ -320,6 +383,7 @@ export function TrafficPanel() {
           </table>
         </div>
       )}
+      {streamsTable}
       <p className="border-t border-border px-4 py-2 text-[12px] text-muted-foreground sm:px-5">
         {homeI18n("trafficNote")}
       </p>

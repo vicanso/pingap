@@ -1,5 +1,7 @@
+import React from "react";
 import { LoadingPage } from "@/components/loading";
 import useConfigState, { Stream } from "@/states/config";
+import { formatBytes, useTrafficState } from "@/states/traffic";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { sortIntoSections } from "@/components/ex-form-sections";
 import { z } from "zod";
@@ -17,7 +19,7 @@ import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
 import { ConfigEntitySummary } from "@/components/config-entity-summary";
-import { STREAMS } from "@/routers";
+import { goToLogin, STREAMS } from "@/routers";
 
 function getStreamConfig(
   name: string,
@@ -61,6 +63,35 @@ export default function Streams() {
         state.getIncludeOptions,
       ]),
     );
+  const [trafficData, trafficInitialized, fetchTraffic] = useTrafficState(
+    useShallow((state) => [state.data, state.initialized, state.fetch]),
+  );
+
+  React.useEffect(() => {
+    if (!initialized) {
+      return;
+    }
+    let stopped = false;
+    const refresh = () => {
+      if (stopped || document.hidden) {
+        return;
+      }
+      fetchTraffic().catch((err: { status?: number }) => {
+        if (err?.status === 401) {
+          stopped = true;
+          goToLogin();
+        }
+      });
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [initialized, fetchTraffic]);
 
   if (!initialized) {
     return <LoadingPage />;
@@ -119,6 +150,63 @@ export default function Streams() {
                 },
               ]
             : []),
+          {
+            key: "active_connections",
+            label: streamI18n("activeConns"),
+            className: "figure text-right",
+            render: (_value, name) => {
+              if (!trafficInitialized) {
+                return <EntityText />;
+              }
+              const metrics = trafficData?.streams?.[name];
+              return (
+                <EntityText
+                  value={(metrics?.active_connections ?? 0).toLocaleString()}
+                />
+              );
+            },
+          },
+          {
+            key: "connections_total",
+            label: streamI18n("totalConns"),
+            className: "figure text-right",
+            render: (_value, name) => {
+              if (!trafficInitialized) {
+                return <EntityText />;
+              }
+              const metrics = trafficData?.streams?.[name];
+              return (
+                <EntityText
+                  value={(metrics?.connections_total ?? 0).toLocaleString()}
+                />
+              );
+            },
+          },
+          {
+            key: "traffic_transferred",
+            label: streamI18n("trafficTransferred"),
+            className: "figure text-right",
+            render: (_value, name) => {
+              if (!trafficInitialized) {
+                return <EntityText />;
+              }
+              const metrics = trafficData?.streams?.[name];
+              return (
+                <EntityText
+                  value={
+                    metrics &&
+                    (metrics.connections_total > 0 ||
+                      metrics.rx_bytes > 0 ||
+                      metrics.tx_bytes > 0)
+                      ? `${formatBytes(metrics.rx_bytes)} / ${formatBytes(metrics.tx_bytes)}`
+                      : metrics
+                        ? "0 B"
+                        : undefined
+                  }
+                />
+              );
+            },
+          },
         ]}
       />
     );
@@ -368,6 +456,8 @@ export default function Streams() {
     });
   };
 
+  const streamMetrics = trafficData?.streams?.[currentStream];
+
   return (
     <PageShell
       title={streamI18n("title")}
@@ -414,6 +504,34 @@ export default function Streams() {
                   : streamConfig.threads != null
                     ? streamConfig.threads
                     : undefined,
+            },
+            {
+              label: streamI18n("activeConns"),
+              value: trafficInitialized ? (
+                <span className="figure">
+                  {(streamMetrics?.active_connections ?? 0).toLocaleString()}
+                </span>
+              ) : undefined,
+            },
+            {
+              label: streamI18n("totalConns"),
+              value: trafficInitialized ? (
+                <span className="figure">
+                  {(streamMetrics?.connections_total ?? 0).toLocaleString()}
+                </span>
+              ) : undefined,
+            },
+            {
+              label: streamI18n("trafficTransferred"),
+              value:
+                trafficInitialized && streamMetrics
+                  ? streamMetrics.connections_total > 0 ||
+                    streamMetrics.rx_bytes > 0 ||
+                    streamMetrics.tx_bytes > 0
+                    ? `${formatBytes(streamMetrics.rx_bytes)} / ${formatBytes(streamMetrics.tx_bytes)}`
+                    : "0 B"
+                  : undefined,
+              mono: true,
             },
           ]}
         />

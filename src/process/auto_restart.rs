@@ -400,6 +400,76 @@ fn left_for_restart(
     reloaded.diff(&wanted).1
 }
 
+/// Copies the `basic` configuration fields that can be hot-reloaded without
+/// touching any global state (such as the active webhook sender).
+fn copy_hot_reload_basic(
+    target: &mut pingap_config::BasicConf,
+    source: &pingap_config::BasicConf,
+) {
+    target.webhook.clone_from(&source.webhook);
+    target.webhook_type.clone_from(&source.webhook_type);
+    target
+        .webhook_notifications
+        .clone_from(&source.webhook_notifications);
+    target.webhook_batch_window = source.webhook_batch_window;
+    target.webhook_batch_max_events = source.webhook_batch_max_events;
+    target
+        .webhook_min_level
+        .clone_from(&source.webhook_min_level);
+    target.webhook_headers.clone_from(&source.webhook_headers);
+    target.webhook_secret.clone_from(&source.webhook_secret);
+    target.webhook_template.clone_from(&source.webhook_template);
+    target.webhook_retries = source.webhook_retries;
+    target.log_level.clone_from(&source.log_level);
+    target.trusted_proxies.clone_from(&source.trusted_proxies);
+    target.error_template.clone_from(&source.error_template);
+}
+
+/// Pure, side-effect-free preview of which changes between `current` and
+/// `wanted` cannot be hot-reloaded and therefore require a process restart.
+pub fn preview_left_for_restart(
+    current: &PingapConfig,
+    wanted: &PingapConfig,
+) -> Vec<String> {
+    let mut simulated = current.clone();
+    simulated
+        .referenced
+        .extend(wanted.referenced.iter().cloned());
+    copy_hot_reload_basic(&mut simulated.basic, &wanted.basic);
+
+    for (name, server) in wanted.servers.iter() {
+        if let Some(sim_srv) = simulated.servers.get_mut(name) {
+            sim_srv.locations.clone_from(&server.locations);
+            let _ = merge_server_runtime_fields(name, sim_srv, server);
+        }
+    }
+    let _ = merge_hot_reload_streams(&mut simulated.streams, &wanted.streams);
+
+    simulated.upstreams.clone_from(&wanted.upstreams);
+    simulated.locations.clone_from(&wanted.locations);
+    simulated.plugins.clone_from(&wanted.plugins);
+    simulated.storages.clone_from(&wanted.storages);
+
+    let certs = merge_certificates(
+        &current.certificates,
+        &wanted.certificates,
+        AcmeHere {
+            orders: ACME_ORDERS.load(Ordering::Relaxed),
+            http_listener: HTTP_CHALLENGE_LISTENER.load(Ordering::Relaxed),
+        },
+    );
+    simulated.certificates = certs.merged;
+
+    let mut left = left_for_restart(&simulated, wanted);
+    if !certs.left.is_empty() {
+        left.push(format!(
+            "certificate({}): HTTP-01 challenge requires a port 80 listener (restart needed)",
+            certs.left.join(",")
+        ));
+    }
+    left
+}
+
 /// Says what a reload left for a restart, in a process that never
 /// restarts by itself (`--autoreload`): somebody has to do it, and until
 /// then the process goes on with what it was started with. Such a change
@@ -2677,5 +2747,96 @@ locations = ["api"]
         let snap = pingap_performance::stream_metrics_snapshot();
         assert_eq!(true, snap.active.iter().any(|(s, _)| s == &keep_name));
         assert_eq!(false, snap.active.iter().any(|(s, _)| s == &gone_name));
+    }
+
+    #[tokio::test]
+    async fn test_preview_left_for_restart_is_pure_and_accurate() {
+        let _lock = APPLY_CONFIG_TEST_LOCK.lock().await;
+        let _reset = GlobalTestReset;
+        super::set_acme_here(true, false);
+
+        let base = test_pingap_config(
+            r#"
+[basic]
+threads = 2
+log_level = "info"
+trusted_proxies = ["10.0.0.0/8"]
+webhook = "https://hook.test/base"
+
+[upstreams.api]
+addrs = ["127.0.0.1:9000"]
+
+[locations.api]
+upstream = "api"
+path = "/api"
+
+[servers.web]
+addr = "127.0.0.1:18080"
+locations = ["api"]
+
+[streams.tcp]
+addr = "127.0.0.1:19000"
+upstream = "api"
+"#,
+        );
+
+        // Hot-reloadable changes across basic, server runtime/locations,
+        // stream runtime, upstreams, locations, plugins, and storages leave nothing.
+        let mut hot = base.clone();
+        hot.basic.log_level = Some("debug".to_string());
+        hot.basic.trusted_proxies = Some(vec!["192.168.0.0/16".to_string()]);
+        hot.basic.error_template = Some("err:{{content}}".to_string());
+        hot.basic.webhook = Some("https://hook.test/updated".to_string());
+        hot.basic.webhook_secret = Some("secret-updated".to_string());
+        hot.upstreams.get_mut("api").unwrap().addrs =
+            vec!["127.0.0.1:9001".to_string()];
+        hot.locations.get_mut("api").unwrap().path = Some("/v2".to_string());
+        if let Some(web) = hot.servers.get_mut("web") {
+            web.enable_server_timing = Some(true);
+            web.remark = Some("hot remark".to_string());
+        }
+        if let Some(tcp) = hot.streams.get_mut("tcp") {
+            tcp.remark = Some("hot stream".to_string());
+            tcp.idle_timeout = Some(std::time::Duration::from_secs(30));
+        }
+        let left = super::preview_left_for_restart(&base, &hot);
+        assert_eq!(Vec::<String>::new(), left);
+
+        // Listener addr, threads, and unanswered ACME http-01 certs require restart.
+        let mut restart_needed = hot.clone();
+        restart_needed.basic.threads = Some(4);
+        restart_needed.servers.get_mut("web").unwrap().addr =
+            "127.0.0.1:18081".to_string();
+        restart_needed.streams.get_mut("tcp").unwrap().addr =
+            "127.0.0.1:19001".to_string();
+        restart_needed.certificates.insert(
+            "acme_http".to_string(),
+            CertificateConf {
+                domains: Some("example.com".to_string()),
+                acme: Some("lets_encrypt".to_string()),
+                ..Default::default()
+            },
+        );
+        let left = super::preview_left_for_restart(&base, &restart_needed);
+        let joined = left.join("\n");
+        assert_eq!(true, joined.contains("threads = 4"), "{joined}");
+        assert_eq!(true, joined.contains("127.0.0.1:18081"), "{joined}");
+        assert_eq!(true, joined.contains("127.0.0.1:19001"), "{joined}");
+        assert_eq!(
+            true,
+            joined.contains("certificate(acme_http): HTTP-01 challenge requires a port 80 listener"),
+            "{joined}"
+        );
+
+        // Once port-80 listener exists, ACME http-01 no longer flags restart.
+        super::set_acme_here(true, true);
+        let left_with_80 =
+            super::preview_left_for_restart(&base, &restart_needed);
+        assert_eq!(
+            false,
+            left_with_80
+                .iter()
+                .any(|line| line.contains("HTTP-01 challenge"))
+        );
     }
 }

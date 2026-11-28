@@ -306,6 +306,125 @@ case_proxy() {
     expect "which does not validate" 0 "$(printf '%s' "$strict" | grep -c 'Validate config success')"
     ;;
   esac
+
+  # Full config response includes non-empty KDL, and /api/traffic exposes streams & cache_memory_evictions.
+  local full_json base_toml traffic_json diff_up_json diff_srv_json
+  full_json=$(body "http://127.0.0.1:$admin/api/configs/full")
+  expect "GET /api/configs/full returns non-empty kdl" ok "$(
+    python3 - "$full_json" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+kdl = data.get("kdl", "")
+assert kdl.strip() and 'server "main"' in kdl and 'upstream "b1"' in kdl, f"bad kdl: {kdl!r}"
+print("ok")
+PY
+  )"
+  base_toml=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["original"])' "$full_json")
+
+  traffic_json=$(body "http://127.0.0.1:$admin/api/traffic")
+  expect "GET /api/traffic exposes streams and cache_memory_evictions" ok "$(
+    python3 - "$traffic_json" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+assert isinstance(data.get("streams"), dict), f"missing streams: {data}"
+assert isinstance(data.get("cache_memory_evictions"), int), f"missing cache_memory_evictions: {data}"
+print("ok")
+PY
+  )"
+
+  # POST /api/configs/diff distinguishes hot-reloadable upstream edits from listener addr restarts.
+  diff_up_json=$(python3 - "$base_toml" "$up" <<'PY' | curl -s -m 8 -X POST --data-binary @- "http://127.0.0.1:$admin/api/configs/diff"
+import sys
+toml_text = sys.argv[1]
+up_port = sys.argv[2]
+print(toml_text.replace(f'addrs = ["127.0.0.1:{up_port}"]', f'addrs = ["127.0.0.1:{up_port}"]\nremark = "diff-only"'))
+PY
+  )
+  expect "POST /api/configs/diff marks upstream-only edit as hot-reloadable" ok "$(
+    python3 - "$diff_up_json" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+assert data.get("valid") is True, data
+assert data.get("restart_required") is False, data
+assert data.get("left_for_restart") == [], data
+assert any("upstream:b1" in line for line in data.get("diff", [])), data
+print("ok")
+PY
+  )"
+
+  local diff_moved=$((PORT_BASE + 13))
+  diff_srv_json=$(python3 - "$base_toml" "$proxy" "$diff_moved" <<'PY' | curl -s -m 8 -X POST --data-binary @- "http://127.0.0.1:$admin/api/configs/diff"
+import sys
+toml_text, old_p, new_p = sys.argv[1], sys.argv[2], sys.argv[3]
+print(toml_text.replace(f'127.0.0.1:{old_p}', f'127.0.0.1:{new_p}'))
+PY
+  )
+  expect "POST /api/configs/diff marks server addr change as restart_required" ok "$(
+    python3 - "$diff_srv_json" "$diff_moved" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+moved = sys.argv[2]
+assert data.get("valid") is True, data
+assert data.get("restart_required") is True, data
+left = "\n".join(data.get("left_for_restart", []))
+assert moved in left, data
+print("ok")
+PY
+  )"
+
+  # Manual snapshot + automatic before_update snapshot + rollback via /api/configs/import.
+  local snap_resp upd_code snaps_json rollback_toml imp_code
+  snap_resp=$(curl -s -m 8 -X POST -w '\n%{http_code}' -H 'Content-Type: application/json' \
+    -d '{"remark":"e2e-manual"}' "http://127.0.0.1:$admin/api/configs/snapshots")
+  expect "POST /api/configs/snapshots creates manual snapshot" ok "$(
+    python3 - "$snap_resp" <<'PY'
+import json, sys
+body, code = sys.argv[1].rsplit("\n", 1)
+assert code == "200", (code, body)
+item = json.loads(body)
+assert item.get("source") == "manual", item
+assert item.get("remark") == "e2e-manual", item
+assert item.get("toml"), item
+print("ok")
+PY
+  )"
+
+  upd_code=$(status -X POST -H 'Content-Type: application/json' \
+    -d "{\"addrs\":[\"127.0.0.1:$up\"],\"remark\":\"e2e-mutated\"}" \
+    "http://127.0.0.1:$admin/api/configs/upstream/b1")
+  expect "POST /api/configs/upstream/b1 updates upstream" 204 "$upd_code"
+  expect "GET /api/configs/upstream sees e2e-mutated" e2e-mutated "$(
+    body "http://127.0.0.1:$admin/api/configs/upstream" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["b1"].get("remark",""))' 2>/dev/null
+  )"
+
+  snaps_json=$(body "http://127.0.0.1:$admin/api/configs/snapshots")
+  expect "GET /api/configs/snapshots contains both before_update and manual" ok "$(
+    python3 - "$snaps_json" <<'PY'
+import json, sys
+snaps = json.loads(sys.argv[1]).get("snapshots", [])
+sources = [s.get("source") for s in snaps]
+assert "before_update" in sources and "manual" in sources, snaps
+assert any(s.get("source") == "manual" and s.get("remark") == "e2e-manual" for s in snaps), snaps
+print("ok")
+PY
+  )"
+
+  rollback_toml=$(python3 - "$snaps_json" <<'PY'
+import json, sys
+snaps = json.loads(sys.argv[1]).get("snapshots", [])
+manual = next(s for s in snaps if s.get("source") == "manual" and s.get("remark") == "e2e-manual")
+print(manual["toml"], end="")
+PY
+  )
+  imp_code=$(printf '%s' "$rollback_toml" | curl -s -o /dev/null -m 8 -w '%{http_code}' -X POST --data-binary @- "http://127.0.0.1:$admin/api/configs/import")
+  expect "POST /api/configs/import rolls back to manual snapshot" 204 "$imp_code"
+  expect "after rollback, upstream remark is cleared" "" "$(
+    body "http://127.0.0.1:$admin/api/configs/upstream" |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["b1"].get("remark") or "")' 2>/dev/null
+  )"
+  expect "GET through proxy still returns 200 after rollback" 200 \
+    "$(status "http://127.0.0.1:$proxy/hello?a=1")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1622,6 +1741,7 @@ case_stream() {
   local tcp_stream=$((PORT_BASE + 162)) tls_stream=$((PORT_BASE + 163))
   local moved_stream=$((PORT_BASE + 164)) tcp_up=$((PORT_BASE + 165))
   local tls_a_up=$((PORT_BASE + 166)) tls_b_up=$((PORT_BASE + 167))
+  local stream_admin=$((PORT_BASE + 168))
 
   backend $http_up http
 
@@ -1788,11 +1908,12 @@ sni_read_timeout = "3s"
 idle_timeout = "10s"
 EOT
 
-  pingap "$DIR/pingap.log" -c "$DIR/c" --autoreload
+  pingap "$DIR/pingap.log" -c "$DIR/c" --autoreload --admin "127.0.0.1:$stream_admin"
   local pid=$LAST_PID
   wait_port $http_proxy || fail "L7 http listens on $http_proxy"
   wait_port $tcp_stream || fail "L4 tcp_plain listens on $tcp_stream"
   wait_port $tls_stream || fail "L4 tls_mux listens on $tls_stream"
+  wait_port $stream_admin || fail "L4 admin listens on $stream_admin"
 
   expect "L7 HTTP proxy runs alongside L4 streams" 200 \
     "$(status "http://127.0.0.1:$http_proxy/")"
@@ -1806,6 +1927,17 @@ EOT
     "$(python3 "$DIR/stream_client.py" tls $tls_stream app.beta.sni.test "$DIR/ca.pem" hello-b)"
   expect "L4 non-TLS fallback on SNI listener" "PLAIN:raw-fallback" \
     "$(python3 "$DIR/stream_client.py" tcp $tls_stream raw-fallback)"
+  expect "GET /api/traffic reports live L4 stream counters" ok "$(
+    python3 - "$(body "http://127.0.0.1:$stream_admin/api/traffic")" <<'PY'
+import json, sys
+streams = json.loads(sys.argv[1]).get("streams", {})
+for name, min_conns in [("tcp_plain", 2), ("tls_mux", 3)]:
+    s = streams.get(name) or {}
+    assert s.get("connections_total", 0) >= min_conns, (name, streams)
+    assert s.get("rx_bytes", 0) > 0 and s.get("tx_bytes", 0) > 0, (name, streams)
+print("ok")
+PY
+  )"
 
   # Live hot reload of SNI routing table without process restart
   cat >"$DIR/streams.next" <<EOT
