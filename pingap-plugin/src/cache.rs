@@ -13,22 +13,25 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf,
+    get_str_slice_conf,
 };
+use ahash::{AHashMap, RandomState};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use fancy_regex::Regex;
 use http::header::{CACHE_CONTROL, PRAGMA};
-use http::{HeaderName, Method, StatusCode};
+use http::{HeaderName, HeaderValue, Method, StatusCode};
 use pingap_cache::{
     CachePurgeEntry, CachePurgeEvent, HttpCache, broadcast_purge,
-    new_cache_backend,
+    new_cache_backend, parse_cache_tag_headers,
 };
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    CacheQueryRule, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
-    ensure_verified_client_ip, get_cache_key, normalize_path,
+    CacheInfo, CacheQueryRule, CacheUseStale, Ctx, HttpResponse, Plugin,
+    PluginStep, RequestPluginResult, ensure_verified_client_ip, get_cache_key,
+    get_request_host, normalize_path, push_cache_key_host,
 };
 use pingap_util::{IpRules, parse_duration};
 use pingora::cache::CacheOptionOverrides;
@@ -37,9 +40,11 @@ use pingora::cache::eviction::lru::Manager;
 use pingora::cache::key::CacheHashKey;
 use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
+use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -49,6 +54,113 @@ use std::time::Duration;
 use tracing::{debug, error};
 
 type Result<T> = std::result::Result<T, Error>;
+
+const MIN_USES_SHARDS: usize = 16;
+const MIN_USES_SHARD_CAP: usize = 4096;
+
+static HEADER_CACHE_TAG: HeaderName = HeaderName::from_static("cache-tag");
+static HEADER_X_CACHE_TAG: HeaderName = HeaderName::from_static("x-cache-tag");
+static HEADER_X_PURGED_COUNT: HeaderName =
+    HeaderName::from_static("x-purged-count");
+
+#[derive(Clone, Copy)]
+struct MinUsesEntry {
+    count: u32,
+    seq: u64,
+}
+
+#[derive(Default)]
+struct MinUsesShardInner {
+    entries: AHashMap<u64, MinUsesEntry>,
+    next_seq: u64,
+}
+
+impl MinUsesShardInner {
+    fn evict_oldest_half(&mut self, max_per_shard: usize) {
+        let evict_count = (max_per_shard / 2).max(1);
+        if self.entries.len() < evict_count {
+            return;
+        }
+        let mut seqs: Vec<u64> =
+            self.entries.values().map(|entry| entry.seq).collect();
+        if seqs.len() < evict_count {
+            return;
+        }
+        let (_, pivot, _) = seqs.select_nth_unstable(evict_count - 1);
+        let cutoff = *pivot;
+        self.entries.retain(|_, entry| entry.seq > cutoff);
+    }
+
+    fn record(&mut self, key: u64, max_per_shard: usize) -> u32 {
+        self.next_seq = self.next_seq.saturating_add(1);
+        let seq = self.next_seq;
+        if let Some(entry) = self.entries.get_mut(&key) {
+            entry.count = entry.count.saturating_add(1);
+            entry.seq = seq;
+            return entry.count;
+        }
+        if self.entries.len() >= max_per_shard {
+            self.evict_oldest_half(max_per_shard);
+        }
+        self.entries.insert(key, MinUsesEntry { count: 1, seq });
+        1
+    }
+}
+
+#[repr(align(128))]
+#[derive(Default)]
+struct MinUsesShard {
+    inner: parking_lot::Mutex<MinUsesShardInner>,
+}
+
+struct MinUsesTracker {
+    shards: [MinUsesShard; MIN_USES_SHARDS],
+    hasher: RandomState,
+    max_per_shard: usize,
+}
+
+impl Default for MinUsesTracker {
+    fn default() -> Self {
+        Self::with_shard_cap(MIN_USES_SHARD_CAP)
+    }
+}
+
+impl MinUsesTracker {
+    fn with_shard_cap(max_per_shard: usize) -> Self {
+        Self {
+            shards: std::array::from_fn(|_| MinUsesShard::default()),
+            hasher: RandomState::new(),
+            max_per_shard: max_per_shard.max(1),
+        }
+    }
+
+    fn hash_key(
+        &self,
+        namespace: &str,
+        host: &str,
+        path: &str,
+        settled_query: &str,
+    ) -> u64 {
+        let mut h = self.hasher.build_hasher();
+        for part in [namespace, host, path, settled_query] {
+            h.write_usize(part.len());
+            h.write(part.as_bytes());
+        }
+        h.finish()
+    }
+
+    fn increment(
+        &self,
+        namespace: &str,
+        host: &str,
+        path: &str,
+        settled_query: &str,
+    ) -> u32 {
+        let key = self.hash_key(namespace, host, path, settled_query);
+        let shard = &self.shards[(key as usize) % MIN_USES_SHARDS];
+        shard.inner.lock().record(key, self.max_per_shard)
+    }
+}
 
 // Singleton instances using OnceCell for thread-safe lazy initialization
 // Predictor: Determines if a response should be cached based on patterns/rules
@@ -83,6 +195,8 @@ pub struct Cache {
     // How many times a request waiting on the cache lock re-checks the
     // cache before giving up; None keeps pingora's default of 2
     lock_retries: Option<usize>,
+    // Maximum duration a waiting reader waits for a cache lock before giving up.
+    lock_timeout: Option<Duration>,
     // Backend storage implementation for the HTTP cache
     http_cache: &'static HttpCache,
     // Maximum size in bytes for individual cached files
@@ -90,6 +204,16 @@ pub struct Cache {
     // Optional maximum time a cache entry can live
     // Overrides Cache-Control headers if set
     max_ttl: Option<Duration>,
+    /// Maximum duration past expiry a stale response may be served on upstream error.
+    stale_if_error: Option<Duration>,
+    /// Maximum duration past expiry a stale response may be served while revalidating.
+    stale_while_revalidate: Option<Duration>,
+    /// Conditions under which stale cached responses may be served.
+    use_stale: Option<CacheUseStale>,
+    /// Minimum request count before storing responses into cache.
+    min_uses: Option<u16>,
+    /// Per-key request counter used when `min_uses` is enabled.
+    min_uses_tracker: Option<MinUsesTracker>,
     // Optional namespace for cache isolation
     // Useful for multi-tenant systems or separating different types of cached content
     namespace: Option<String>,
@@ -250,6 +374,79 @@ fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
     PREDICTOR.get_or_init(|| Predictor::new(128, None))
 }
 
+fn invalid_cache_conf(message: impl Into<String>) -> Error {
+    Error::Invalid {
+        category: PluginCategory::Cache.to_string(),
+        message: message.into(),
+    }
+}
+
+fn parse_optional_duration(
+    value: &PluginConf,
+    key: &str,
+) -> Result<Option<Duration>> {
+    let raw = get_str_conf(value, key);
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    parse_duration(&raw)
+        .map(Some)
+        .map_err(|e| invalid_cache_conf(format!("{key}: {e}")))
+}
+
+fn parse_positive_duration(
+    value: &PluginConf,
+    key: &str,
+) -> Result<Option<Duration>> {
+    let Some(duration) = parse_optional_duration(value, key)? else {
+        return Ok(None);
+    };
+    if duration.is_zero() {
+        return Err(invalid_cache_conf(format!(
+            "{key} must be greater than zero"
+        )));
+    }
+    Ok(Some(duration))
+}
+
+fn parse_min_uses(value: &PluginConf) -> Result<Option<u16>> {
+    if value.get("min_uses").is_none() {
+        return Ok(None);
+    }
+    let raw = get_int_conf(value, "min_uses");
+    let min_uses = u16::try_from(raw)
+        .ok()
+        .filter(|n| (1..=1000).contains(n))
+        .ok_or_else(|| {
+        invalid_cache_conf("min_uses must be an integer between 1 and 1000")
+    })?;
+    Ok(Some(min_uses))
+}
+
+fn format_key_host(header: &RequestHeader) -> Cow<'_, str> {
+    let raw = get_request_host(header).unwrap_or_default();
+    let is_plain = raw.bytes().all(|byte| {
+        matches!(
+            byte,
+            b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_' | b':' | b'[' | b']'
+        )
+    });
+    if is_plain {
+        return Cow::Borrowed(raw);
+    }
+    let mut normalized = String::with_capacity(raw.len());
+    push_cache_key_host(&mut normalized, raw);
+    Cow::Owned(normalized)
+}
+
+fn purge_count_response(count: usize) -> HttpResponse {
+    let mut resp = HttpResponse::no_content();
+    resp.headers
+        .get_or_insert_with(Vec::new)
+        .push((HEADER_X_PURGED_COUNT.clone(), HeaderValue::from(count)));
+    resp
+}
+
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
 
@@ -288,23 +485,21 @@ impl TryFrom<&PluginConf> for Cache {
 
         let lock = get_str_conf(value, "lock");
         let lock = if !lock.is_empty() {
-            parse_duration(&lock).map_err(|e| Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: e.to_string(),
-            })?
+            parse_duration(&lock)
+                .map_err(|e| invalid_cache_conf(e.to_string()))?
         } else {
             Duration::from_secs(1)
         };
+        let lock_age = parse_positive_duration(value, "lock_age")?;
+        let lock_timeout = parse_positive_duration(value, "lock_timeout")?;
 
         let lock_retries = if value.get("lock_retries").is_some() {
-            let retries =
-                usize::try_from(crate::get_int_conf(value, "lock_retries"))
-                    .map_err(|_| Error::Invalid {
-                        category: PluginCategory::Cache.to_string(),
-                        message:
-                            "lock_retries should be a non-negative integer"
-                                .to_string(),
-                    })?;
+            let retries = usize::try_from(get_int_conf(value, "lock_retries"))
+                .map_err(|_| {
+                    invalid_cache_conf(
+                        "lock_retries should be a non-negative integer",
+                    )
+                })?;
             Some(retries)
         } else {
             None
@@ -312,13 +507,22 @@ impl TryFrom<&PluginConf> for Cache {
 
         let max_ttl = get_str_conf(value, "max_ttl");
         let max_ttl = if !max_ttl.is_empty() {
-            Some(parse_duration(&max_ttl).map_err(|e| Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: e.to_string(),
-            })?)
+            Some(
+                parse_duration(&max_ttl)
+                    .map_err(|e| invalid_cache_conf(e.to_string()))?,
+            )
         } else {
             None
         };
+        let stale_if_error = parse_optional_duration(value, "stale_if_error")?;
+        let stale_while_revalidate =
+            parse_optional_duration(value, "stale_while_revalidate")?;
+        let use_stale_tokens = get_str_slice_conf(value, "use_stale");
+        let use_stale = CacheUseStale::parse_tokens(
+            use_stale_tokens.iter().map(String::as_str),
+        )
+        .map_err(invalid_cache_conf)?;
+        let min_uses = parse_min_uses(value)?;
 
         let max_file_size = get_str_conf(value, "max_file_size");
         let max_file_size = if !max_file_size.is_empty() {
@@ -506,9 +710,15 @@ impl TryFrom<&PluginConf> for Cache {
             plugin_step: PluginStep::Request,
             eviction,
             predictor: predictor.then(get_predictor),
-            lock: get_cache_lock(lock),
+            lock: get_cache_lock(lock_age.unwrap_or(lock)),
             lock_retries,
+            lock_timeout,
             max_ttl,
+            stale_if_error,
+            stale_while_revalidate,
+            use_stale,
+            min_uses,
+            min_uses_tracker: min_uses.map(|_| MinUsesTracker::default()),
             max_file_size: max_file_size.as_u64() as usize,
             namespace,
             headers,
@@ -546,14 +756,206 @@ impl Cache {
     ///
     /// # Logging
     /// Logs debug information about the cache plugin creation
-    /// Per-request overrides for pingora's cache lock. Only the retry
-    /// budget is configurable, and only when the plugin sets it; otherwise
-    /// pingora keeps its defaults.
+    /// Per-request overrides for pingora's cache lock (`max_lock_retries` and
+    /// `wait_timeout`). Returns `None` when neither is configured so pingora
+    /// keeps its defaults.
     fn cache_option_overrides(&self) -> Option<CacheOptionOverrides> {
-        let retries = self.lock_retries?;
+        if self.lock_retries.is_none() && self.lock_timeout.is_none() {
+            return None;
+        }
         let mut overrides = CacheOptionOverrides::default();
-        overrides.max_lock_retries = Some(retries);
+        overrides.max_lock_retries = self.lock_retries;
+        overrides.wait_timeout = self.lock_timeout;
         Some(overrides)
+    }
+
+    async fn handle_tag_purge(
+        &self,
+        tags: &[String],
+    ) -> pingora::Result<HttpResponse> {
+        let ns = self.namespace.as_deref().unwrap_or("");
+        let purged = self.http_cache.purge_by_tags(Some(ns), tags).await?;
+        let count = purged.len();
+        if self.cluster_purge && !purged.is_empty() {
+            broadcast_purge(CachePurgeEvent::entries(
+                self.http_cache.directory.clone(),
+                purged,
+            ));
+        }
+        Ok(purge_count_response(count))
+    }
+
+    async fn handle_namespace_purge(&self) -> pingora::Result<HttpResponse> {
+        let Some(namespace) = &self.namespace else {
+            return Ok(HttpResponse {
+                status: StatusCode::NOT_IMPLEMENTED,
+                body: Bytes::from_static(
+                    b"namespace purge requires the namespace option",
+                ),
+                ..Default::default()
+            });
+        };
+        let result = self.http_cache.purge_namespace(namespace).await?;
+        let Some(stats) = result else {
+            return Ok(HttpResponse {
+                status: StatusCode::NOT_IMPLEMENTED,
+                body: Bytes::from_static(
+                    b"namespace purge is not supported by the memory cache backend",
+                ),
+                ..Default::default()
+            });
+        };
+        if self.cluster_purge {
+            broadcast_purge(CachePurgeEvent::namespace(
+                self.http_cache.directory.clone(),
+                namespace.clone(),
+            ));
+        }
+        Ok(HttpResponse::text(format!(
+            "purged: {}, fail: {}",
+            stats.success, stats.fail
+        )))
+    }
+
+    async fn handle_prefix_purge(
+        &self,
+        req_header: &RequestHeader,
+        path: &str,
+    ) -> pingora::Result<HttpResponse> {
+        let prefix = &path[..path.len() - 1];
+        let host = format_key_host(req_header);
+        let host_and_prefix = format!("{host}{prefix}");
+        let ns = self.namespace.as_deref().unwrap_or("");
+        let purged = self
+            .http_cache
+            .purge_by_prefix(ns, &host_and_prefix)
+            .await?;
+        let count = purged.len();
+        if self.cluster_purge && !purged.is_empty() {
+            broadcast_purge(CachePurgeEvent::entries(
+                self.http_cache.directory.clone(),
+                purged,
+            ));
+        }
+        Ok(purge_count_response(count))
+    }
+
+    async fn handle_exact_purge(
+        &self,
+        session: &Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<HttpResponse> {
+        // Cached GET and HEAD responses are separate entries (the method
+        // is part of the key); purge both so a HEAD variant cannot keep
+        // answering for a url that was just purged.
+        //
+        // And one entry for each coding or image format another plugin
+        // makes a part of the key. This request names the url and no
+        // coding: with its own key alone it removed the entry no
+        // browser asks for, and the compressed ones went on being
+        // served.
+        let mut purged_entries = Vec::new();
+        for keys in ctx.cache_key_alternatives() {
+            if let Some(cache_info) = ctx.cache.as_mut() {
+                cache_info.keys = Some(keys);
+            }
+            for method in [Method::GET, Method::HEAD] {
+                let key =
+                    get_cache_key(ctx, method.as_ref(), session.req_header());
+                let combined = key.combined();
+                let namespace = key.user_tag();
+                self.http_cache.remove(&combined, namespace).await?;
+                if self.cluster_purge {
+                    purged_entries.push(CachePurgeEntry {
+                        key: combined,
+                        namespace: namespace.to_string(),
+                    });
+                }
+            }
+        }
+        if self.cluster_purge && !purged_entries.is_empty() {
+            broadcast_purge(CachePurgeEvent::entries(
+                self.http_cache.directory.clone(),
+                purged_entries,
+            ));
+        }
+        Ok(HttpResponse::no_content())
+    }
+
+    async fn handle_purge_request(
+        &self,
+        session: &Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<HttpResponse> {
+        // Not the plain client ip: without trusted proxies that is
+        // whatever `X-Forwarded-For` says.
+        let ip = ensure_verified_client_ip(session, ctx);
+        let found = match self.purge_ip_rules.is_match(ip) {
+            Ok(matched) => matched,
+            Err(e) => return Ok(HttpResponse::bad_request(e.to_string())),
+        };
+        if !found {
+            return Ok(HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                body: Bytes::from_static(b"Forbidden, ip is not allowed"),
+                ..Default::default()
+            });
+        }
+
+        let req_header = session.req_header();
+        let has_tag_header = req_header.headers.contains_key(&HEADER_CACHE_TAG)
+            || req_header.headers.contains_key(&HEADER_X_CACHE_TAG);
+        if has_tag_header {
+            let tags = parse_cache_tag_headers(
+                req_header.headers.get_all(&HEADER_CACHE_TAG).iter().chain(
+                    req_header.headers.get_all(&HEADER_X_CACHE_TAG).iter(),
+                ),
+            );
+            return self.handle_tag_purge(&tags).await;
+        }
+
+        let path = req_header.uri.path();
+        if path == "/*" {
+            return self.handle_namespace_purge().await;
+        }
+        if path.len() > 2 && path.ends_with('*') {
+            return self.handle_prefix_purge(req_header, path).await;
+        }
+        self.handle_exact_purge(session, ctx).await
+    }
+
+    fn apply_cache_info_options(
+        &self,
+        req_header: &RequestHeader,
+        cache_info: &mut CacheInfo,
+        revalidate: bool,
+    ) {
+        cache_info.max_ttl = self.max_ttl;
+        cache_info.check_cache_control = self.check_cache_control;
+        cache_info.vary_headers = self.vary_headers.clone();
+        cache_info.default_ttl = self.default_ttl;
+        cache_info.status_ttl = self.status_ttl.clone();
+        cache_info.revalidate = revalidate;
+        cache_info.stale_if_error = self.stale_if_error;
+        cache_info.stale_while_revalidate = self.stale_while_revalidate;
+        cache_info.use_stale = self.use_stale;
+        if let (Some(min_uses), Some(tracker)) =
+            (self.min_uses, &self.min_uses_tracker)
+        {
+            let host = format_key_host(req_header);
+            let raw_query = req_header.uri.query().unwrap_or_default();
+            let settled_query = match &self.query_rule {
+                Some(rule) => Cow::Owned(rule.key_query(raw_query)),
+                None => Cow::Borrowed(raw_query),
+            };
+            let count = tracker.increment(
+                self.namespace.as_deref().unwrap_or(""),
+                &host,
+                req_header.uri.path(),
+                &settled_query,
+            );
+            cache_info.min_uses_blocked = count < u32::from(min_uses);
+        }
     }
 
     pub fn new(params: &PluginConf) -> Result<Self> {
@@ -703,114 +1105,17 @@ impl Plugin for Cache {
 
         // Handle PURGE requests with IP-based access control
         if is_purge {
-            // Not the plain client ip: without trusted proxies that is
-            // whatever `X-Forwarded-For` says.
-            let ip = ensure_verified_client_ip(session, ctx);
-            let found = match self.purge_ip_rules.is_match(ip) {
-                Ok(matched) => matched,
-                Err(e) => {
-                    return Ok(RequestPluginResult::Respond(
-                        HttpResponse::bad_request(e.to_string()),
-                    ));
-                },
-            };
-            if !found {
-                return Ok(RequestPluginResult::Respond(HttpResponse {
-                    status: StatusCode::FORBIDDEN,
-                    body: Bytes::from_static(b"Forbidden, ip is not allowed"),
-                    ..Default::default()
-                }));
-            }
-
-            // `PURGE /*` empties the whole namespace. Anything else purges
-            // exactly the requested uri.
-            if session.req_header().uri.path() == "/*" {
-                let Some(namespace) = &self.namespace else {
-                    return Ok(RequestPluginResult::Respond(HttpResponse {
-                        status: StatusCode::NOT_IMPLEMENTED,
-                        body: Bytes::from_static(
-                            b"namespace purge requires the namespace option",
-                        ),
-                        ..Default::default()
-                    }));
-                };
-                let result =
-                    self.http_cache.cache.purge_namespace(namespace).await?;
-                let Some(stats) = result else {
-                    return Ok(RequestPluginResult::Respond(HttpResponse {
-                        status: StatusCode::NOT_IMPLEMENTED,
-                        body: Bytes::from_static(
-                            b"namespace purge is not supported by the memory cache backend",
-                        ),
-                        ..Default::default()
-                    }));
-                };
-                if self.cluster_purge {
-                    broadcast_purge(CachePurgeEvent::namespace(
-                        self.http_cache.directory.clone(),
-                        namespace.clone(),
-                    ));
-                }
-                return Ok(RequestPluginResult::Respond(HttpResponse::text(
-                    format!("purged: {}, fail: {}", stats.success, stats.fail),
-                )));
-            }
-
-            // Cached GET and HEAD responses are separate entries (the method
-            // is part of the key); purge both so a HEAD variant cannot keep
-            // answering for a url that was just purged.
-            //
-            // And one entry for each coding or image format another plugin
-            // makes a part of the key. This request names the url and no
-            // coding: with its own key alone it removed the entry no
-            // browser asks for, and the compressed ones went on being
-            // served.
-            let mut purged_entries = Vec::new();
-            for keys in ctx.cache_key_alternatives() {
-                if let Some(cache_info) = ctx.cache.as_mut() {
-                    cache_info.keys = Some(keys);
-                }
-                for method in [Method::GET, Method::HEAD] {
-                    let key = get_cache_key(
-                        ctx,
-                        method.as_ref(),
-                        session.req_header(),
-                    );
-                    let combined = key.combined();
-                    let namespace = key.user_tag();
-                    self.http_cache
-                        .cache
-                        .remove(&combined, namespace.as_bytes())
-                        .await?;
-                    if self.cluster_purge {
-                        purged_entries.push(CachePurgeEntry {
-                            key: combined,
-                            namespace: namespace.to_string(),
-                        });
-                    }
-                }
-            }
-            if self.cluster_purge && !purged_entries.is_empty() {
-                broadcast_purge(CachePurgeEvent::entries(
-                    self.http_cache.directory.clone(),
-                    purged_entries,
-                ));
-            }
-            return Ok(
-                RequestPluginResult::Respond(HttpResponse::no_content()),
-            );
+            return Ok(RequestPluginResult::Respond(
+                self.handle_purge_request(session, ctx).await?,
+            ));
         }
 
         // Configure cache settings for this request
         let revalidate =
             self.respect_client_no_cache && wants_fresh(session.req_header());
+        let req_header = session.req_header();
         if let Some(cache_info) = &mut ctx.cache {
-            cache_info.max_ttl = self.max_ttl;
-            cache_info.check_cache_control = self.check_cache_control;
-            cache_info.vary_headers = self.vary_headers.clone();
-            cache_info.default_ttl = self.default_ttl;
-            cache_info.status_ttl = self.status_ttl.clone();
-            cache_info.revalidate = revalidate;
+            self.apply_cache_info_options(req_header, cache_info, revalidate);
         }
 
         // Enable caching for this session with configured components
@@ -1851,6 +2156,444 @@ purge_ip_list = ["127.0.0.1"]
                 namespace: "cluster-ns".to_string()
             },
             events[1].action
+        );
+    }
+
+    async fn purge_with_headers(
+        cache: &Cache,
+        path: &str,
+        headers: &str,
+    ) -> HttpResponse {
+        let input_header = format!("PURGE {path} HTTP/1.1\r\n{headers}\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some("127.0.0.1".into());
+        let result = cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("purge must respond");
+        };
+        resp
+    }
+
+    fn header_value(resp: &HttpResponse, name: &str) -> Option<String> {
+        resp.headers.as_ref().and_then(|list| {
+            list.iter()
+                .find(|(k, _)| k.as_str() == name)
+                .and_then(|(_, v)| v.to_str().ok())
+                .map(str::to_string)
+        })
+    }
+
+    #[tokio::test]
+    async fn test_cache_new_stale_lock_and_min_uses_options() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("no-create");
+        for bad in [
+            "lock_age = \"0s\"",
+            "lock_timeout = \"0s\"",
+            "stale_if_error = \"soon\"",
+            "stale_while_revalidate = \"soon\"",
+            "use_stale = [\"error\", \"bogus\"]",
+            "min_uses = 0",
+            "min_uses = -1",
+            "min_uses = 1001",
+            "min_uses = \"2\"",
+        ] {
+            let err = Cache::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    "directory = \"{}\"\n{bad}",
+                    dir.display()
+                ))
+                .unwrap(),
+            );
+            assert!(err.is_err(), "{bad} should fail");
+            assert!(!dir.exists(), "{bad} should fail before directory init");
+        }
+
+        // Unset keeps all defaults intact.
+        let defaults =
+            Cache::try_from(&toml::from_str::<PluginConf>("").unwrap())
+                .unwrap();
+        assert!(defaults.cache_option_overrides().is_none());
+        assert!(defaults.stale_if_error.is_none());
+        assert!(defaults.stale_while_revalidate.is_none());
+        assert!(defaults.use_stale.is_none());
+        assert!(defaults.min_uses.is_none());
+
+        // lock = "0s" with lock_age unset disables lock; lock_age overrides lock.
+        let no_lock = Cache::try_from(
+            &toml::from_str::<PluginConf>("lock = \"0s\"").unwrap(),
+        )
+        .unwrap();
+        assert!(no_lock.lock.is_none());
+
+        let configured = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+lock = "0s"
+lock_age = "5s"
+lock_timeout = "2s"
+stale_if_error = "1m"
+stale_while_revalidate = "30s"
+use_stale = ["error", "timeout", "updating", "http_502", "503"]
+min_uses = 1
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(configured.lock.is_some());
+        let overrides = configured.cache_option_overrides().unwrap();
+        assert_eq!(Some(Duration::from_secs(2)), overrides.wait_timeout);
+        assert_eq!(None, overrides.max_lock_retries);
+        assert_eq!(Some(Duration::from_secs(60)), configured.stale_if_error);
+        assert_eq!(
+            Some(Duration::from_secs(30)),
+            configured.stale_while_revalidate
+        );
+        let expected_stale = CacheUseStale::ERROR
+            | CacheUseStale::TIMEOUT
+            | CacheUseStale::UPDATING
+            | CacheUseStale::HTTP_502
+            | CacheUseStale::HTTP_503;
+        assert_eq!(Some(expected_stale), configured.use_stale);
+        assert_eq!(Some(1), configured.min_uses);
+
+        // Single-string use_stale also works, and handle_request populates Ctx.
+        let str_stale = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                "use_stale = \"error, 404\"\nstale_if_error = \"15s\"\nstale_while_revalidate = \"5s\"",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mock_io = Builder::new().read(b"GET /x HTTP/1.1\r\n\r\n").build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        str_stale
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let info = ctx.cache.unwrap();
+        assert_eq!(Some(Duration::from_secs(15)), info.stale_if_error);
+        assert_eq!(Some(Duration::from_secs(5)), info.stale_while_revalidate);
+        assert_eq!(
+            Some(CacheUseStale::ERROR | CacheUseStale::HTTP_404),
+            info.use_stale
+        );
+        assert!(!info.min_uses_blocked);
+    }
+
+    #[tokio::test]
+    async fn test_min_uses_tracker_and_query_settlement() {
+        let tracker = MinUsesTracker::with_shard_cap(4);
+        let shard0_keys: Vec<String> = (0..1000)
+            .map(|i| format!("/p/{i:04}"))
+            .filter(|p| {
+                (tracker.hash_key("ns", "a.com", p, "") as usize)
+                    .is_multiple_of(MIN_USES_SHARDS)
+            })
+            .take(5)
+            .collect();
+        assert_eq!(5, shard0_keys.len());
+        for p in &shard0_keys {
+            assert_eq!(1, tracker.increment("ns", "a.com", p, ""));
+        }
+        // Oldest 2 evicted when 5th inserted into cap-4 shard; newer entries retain counts.
+        assert_eq!(1, tracker.increment("ns", "a.com", &shard0_keys[0], ""));
+        assert_eq!(2, tracker.increment("ns", "a.com", &shard0_keys[4], ""));
+
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "min-uses-ns"
+ignore_query = ["utm_source"]
+min_uses = 3
+purge_ip_list = ["127.0.0.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let hit = async |target: &str, host: &str| {
+            let input =
+                format!("GET {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+            cache
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+            ctx.cache.unwrap().min_uses_blocked
+        };
+
+        // Host case/port and ignored query parameters normalize into one counter.
+        assert_eq!(
+            true,
+            hit("/item?a=1&utm_source=x", "Example.COM:8080").await
+        );
+        assert_eq!(true, hit("/item?utm_source=y&a=1", "example.com").await);
+        assert_eq!(false, hit("/item?a=1", "example.com").await);
+        assert_eq!(false, hit("/item?a=1", "example.com").await);
+
+        // Different path starts its own counter at 1 (< 3).
+        assert_eq!(true, hit("/other?a=1", "example.com").await);
+
+        // PURGE does not increment MinUsesTracker.
+        let resp =
+            purge_with_headers(&cache, "/new-item", "Host: example.com\r\n")
+                .await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        assert_eq!(true, hit("/new-item", "example.com").await);
+    }
+
+    #[tokio::test]
+    async fn test_purge_prefix_and_cache_tag_with_cluster_broadcast() {
+        use pingap_cache::{
+            CachePurgeAction, CachePurgeBroadcaster, set_purge_broadcaster,
+        };
+        use pingora::cache::{CacheKey, CacheMeta, Storage};
+        use std::time::SystemTime;
+
+        let _lock = BROADCASTER_TEST_LOCK.lock().await;
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_purge_broadcaster(None);
+            }
+        }
+        let _reset = Reset;
+
+        struct Recorder {
+            directory: Option<String>,
+            events: std::sync::Mutex<Vec<CachePurgeEvent>>,
+        }
+        impl CachePurgeBroadcaster for Recorder {
+            fn broadcast(&self, event: CachePurgeEvent) {
+                if event.directory != self.directory {
+                    return;
+                }
+                if let Ok(mut guard) = self.events.lock() {
+                    guard.push(event);
+                }
+            }
+        }
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let conf = format!(
+            r###"
+directory = "{}"
+namespace = "p-ns"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            dir.path().to_string_lossy()
+        );
+        let cache =
+            Cache::try_from(&toml::from_str::<PluginConf>(&conf).unwrap())
+                .unwrap();
+
+        let recorder = Arc::new(Recorder {
+            directory: cache.http_cache.directory.clone(),
+            events: std::sync::Mutex::new(Vec::new()),
+        });
+        set_purge_broadcaster(Some(recorder.clone()));
+
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let now = SystemTime::now();
+        let seed_miss = async |primary: &str, ns: &str, tag: Option<&str>| {
+            let key = CacheKey::new(primary, ns);
+            let mut resp =
+                pingora::http::ResponseHeader::build(200, None).unwrap();
+            if let Some(tag) = tag {
+                resp.insert_header("cache-tag", tag).unwrap();
+            }
+            let meta =
+                CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+            let mut miss = cache
+                .http_cache
+                .get_miss_handler(&key, &meta, &span)
+                .await
+                .unwrap();
+            miss.write_body(Bytes::from_static(b"cached-body"), true)
+                .await
+                .unwrap();
+            miss.finish().await.unwrap();
+            key
+        };
+
+        let k_blog_1 =
+            seed_miss("p-nsGET:a.com/blog/1", "p-ns", Some("news, home")).await;
+        let k_blog_gz =
+            seed_miss("p-nsgzip:GET:a.com/blog/2", "p-ns", Some("news")).await;
+        let k_sub_host =
+            seed_miss("p-nsGET:sub.a.com/blog/1", "p-ns", Some("news")).await;
+        let k_other_host =
+            seed_miss("p-nsGET:b.com/blog/1", "p-ns", Some("other-tag")).await;
+        let k_static =
+            seed_miss("p-nsGET:a.com/static/app.js", "p-ns", Some("assets"))
+                .await;
+
+        // Cold pre-restart file on disk (written directly to FileCache, absent from meta_index).
+        let k_cold = CacheKey::new("p-nsGET:a.com/cold/item", "p-ns");
+        let mut cold_resp =
+            pingora::http::ResponseHeader::build(200, None).unwrap();
+        cold_resp.insert_header("cache-tag", "cold-tag").unwrap();
+        let cold_meta =
+            CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, cold_resp);
+        let (cm0, cm1) = cold_meta.serialize().unwrap();
+        cache
+            .http_cache
+            .cache
+            .put(
+                &k_cold.combined(),
+                b"p-ns",
+                pingap_cache::CacheObject {
+                    meta: (Bytes::from(cm0), Bytes::from(cm1)),
+                    body: Bytes::from(vec![9u8; 80_000]),
+                },
+            )
+            .await
+            .unwrap();
+
+        // 1. Prefix purge isolates hosts.
+        let resp =
+            purge_with_headers(&cache, "/blog/*", "Host: A.COM:8443\r\n").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        assert_eq!(
+            Some("2".to_string()),
+            header_value(&resp, "x-purged-count")
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_blog_1, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_blog_gz, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_sub_host, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_other_host, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_static, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // 2. Empty Cache-Tag header does NOT fall through to `PURGE /*`.
+        let resp = purge_with_headers(&cache, "/*", "Cache-Tag:  , \r\n").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        assert_eq!(
+            Some("0".to_string()),
+            header_value(&resp, "x-purged-count")
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_static, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // 3. Cache-Tag & X-Cache-Tag purge both indexed and cold disk entries.
+        let resp = purge_with_headers(
+            &cache,
+            "/",
+            "Cache-Tag: assets\r\nX-Cache-Tag: cold-tag\r\n",
+        )
+        .await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+        assert_eq!(
+            Some("2".to_string()),
+            header_value(&resp, "x-purged-count")
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_static, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .http_cache
+                .cache
+                .get(&k_cold.combined(), b"p-ns")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_sub_host, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // 4. `PURGE /*` without tag header remains a full namespace purge.
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::OK, resp.status);
+        assert!(
+            cache
+                .http_cache
+                .lookup(&k_sub_host, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let events = recorder.events.lock().unwrap();
+        assert_eq!(3, events.len());
+        assert!(matches!(
+            &events[0].action,
+            CachePurgeAction::Entries { entries } if entries.len() == 2
+        ));
+        assert!(matches!(
+            &events[1].action,
+            CachePurgeAction::Entries { entries } if entries.len() == 2
+        ));
+        assert_eq!(
+            CachePurgeAction::Namespace {
+                namespace: "p-ns".to_string()
+            },
+            events[2].action
         );
     }
 }

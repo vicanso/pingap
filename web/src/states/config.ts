@@ -16,6 +16,7 @@ export interface Upstream {
   dns_search?: string;
   algo?: string;
   fail_open?: boolean;
+  slow_start?: string;
   sni?: string;
   alpn?: string;
   max_h2_streams?: number;
@@ -66,6 +67,7 @@ export interface Location {
   proxy_add_headers?: string[];
   max_retries?: number;
   max_retry_window?: string;
+  retry_status_codes?: string;
   connection_timeout?: string;
   read_timeout?: string;
   write_timeout?: string;

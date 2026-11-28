@@ -63,8 +63,8 @@ use pingora::cache::filters::resp_cacheable;
 use pingora::cache::key::{CacheHashKey, HashBinary};
 use pingora::cache::storage::HitHandler;
 use pingora::cache::{
-    CacheKey, CacheMeta, CacheMetaDefaults, ForcedFreshness, NoCacheReason,
-    RespCacheable, VarianceBuilder,
+    CacheKey, CacheMeta, ForcedFreshness, NoCacheReason, RespCacheable,
+    VarianceBuilder,
 };
 #[cfg(feature = "tracing")]
 use pingora::connectors::ConnectorOptions;
@@ -614,21 +614,57 @@ impl ListenerParams {
     }
 }
 
-/// How long a response that names no lifetime of its own stays fresh: one
-/// second, and only for the statuses RFC 9110 section 15.1 lists as
-/// heuristically cacheable. Anything else - a 5xx, a 302, a 401 - is only
-/// stored when the origin asks for it, so one client's error is not
-/// replayed to the next.
-fn default_fresh_duration(status: StatusCode) -> Option<Duration> {
-    match status.as_u16() {
-        200 | 203 | 204 | 206 | 300 | 301 | 308 | 404 | 405 | 410 | 414
-        | 501 => Some(Duration::from_secs(1)),
-        _ => None,
-    }
+/// Whether an upstream HTTP response `status` should trigger a retry on
+/// another backend under `retry_status_codes`.
+fn should_retry_upstream_status(
+    session: &Session,
+    ctx: &Ctx,
+    status: StatusCode,
+) -> bool {
+    session.subrequest_ctx.is_none()
+        && session.response_written().is_none()
+        && session.req_header().method.is_idempotent()
+        && !session.as_ref().retry_buffer_truncated()
+        && ctx
+            .upstream
+            .location_instance
+            .as_ref()
+            .is_some_and(|loc| loc.should_retry_status(status.as_u16()))
+        && ctx
+            .upstream
+            .max_retry_window
+            .is_none_or(|w| ctx.timing.created_at.elapsed() <= w)
+        && ctx.upstream.retries < ctx.upstream.max_retries.unwrap_or(1)
 }
 
-const META_DEFAULTS: CacheMetaDefaults =
-    CacheMetaDefaults::new(default_fresh_duration, 0, 1);
+/// Returns an upstream HTTP status error (without retry) when a non-`5xx`
+/// response should be replaced by a cached stale entry under `use_stale`.
+fn stale_error_for_non_5xx(
+    session: &Session,
+    ctx: &Ctx,
+    status: StatusCode,
+) -> Option<pingora::BError> {
+    if status.is_server_error()
+        || !session.cache.enabled()
+        || !session.cache.can_serve_stale_error()
+        || session.response_written().is_some()
+    {
+        return None;
+    }
+    let allows = ctx
+        .cache
+        .as_ref()
+        .and_then(|c| c.use_stale)
+        .is_some_and(|u| u.allows_status(status.as_u16()));
+    allows.then(|| {
+        pingora::Error::create(
+            pingora::ErrorType::HTTPStatus(status.as_u16()),
+            pingora::ErrorSource::Upstream,
+            None,
+            None,
+        )
+    })
+}
 
 /// Whether an origin response's `Vary` names `*`, checked without building
 /// the lowercased name list.
@@ -1950,6 +1986,7 @@ fn enforce_proxy_retry_budget(
     ctx: &mut Ctx,
     e: &mut pingora::Error,
     connection_only: bool,
+    retrying_status: bool,
 ) {
     if !e.retry() {
         return;
@@ -1965,7 +2002,12 @@ fn enforce_proxy_retry_budget(
     if connection_only {
         return;
     }
-    if let Some(max_retries) = ctx.upstream.max_retries {
+    let max_retries = if retrying_status {
+        Some(ctx.upstream.max_retries.unwrap_or(1))
+    } else {
+        ctx.upstream.max_retries
+    };
+    if let Some(max_retries) = max_retries {
         if ctx.upstream.retries < max_retries {
             ctx.upstream.retries += 1;
         } else {
@@ -2288,10 +2330,14 @@ impl ProxyHttp for Server {
             )
         };
         let location = ctx.upstream.location_instance.clone();
-        let fallback = location
-            .as_ref()
-            .map(|location| location.fallback_upstream().to_string())
-            .filter(|name| !name.is_empty());
+        let fallback = if ctx.upstream.status_retried {
+            None
+        } else {
+            location
+                .as_ref()
+                .map(|location| location.fallback_upstream().to_string())
+                .filter(|name| !name.is_empty())
+        };
         // Told by an upstream being recorded already, not by `retries`:
         // that only counts failed connects, and a retry after a reused
         // connection went stale came here looking like a first attempt.
@@ -2484,6 +2530,8 @@ impl ProxyHttp for Server {
         // cache that is answered in place of the error is not to keep
         // the client on the backend that has just failed.
         ctx.upstream.sticky_cookie = None;
+        let retrying_status =
+            std::mem::replace(&mut ctx.state.retrying_status, false);
         // A pooled connection the backend had already closed. That says
         // nothing about its health, whether the request is retried (a GET)
         // or not (a POST), so it is read before the retry is decided.
@@ -2498,7 +2546,8 @@ impl ProxyHttp for Server {
         }
         // Not once a response header arrived either, `on_response` has
         // counted that request.
-        if !stale_connection
+        if !retrying_status
+            && !stale_connection
             && e.esource() == &pingora::ErrorSource::Upstream
             && ctx.upstream.status.is_none()
             && let Some(upstream_instance) = &ctx.upstream.upstream_instance
@@ -2510,14 +2559,20 @@ impl ProxyHttp for Server {
         // that the backend is retiring (`GOAWAY`, a stream it refuses)
         // or that has to be HTTP/1.1 after all. The backend is as good
         // as it was, and by a hash it is where the request belongs.
-        let connection_only = stale_connection
-            || matches!(
-                e.etype(),
-                pingora::ErrorType::H2Error
-                    | pingora::ErrorType::H2Downgrade
-                    | pingora::ErrorType::InvalidH2
-            );
-        enforce_proxy_retry_budget(ctx, &mut e, connection_only);
+        let connection_only = !retrying_status
+            && (stale_connection
+                || matches!(
+                    e.etype(),
+                    pingora::ErrorType::H2Error
+                        | pingora::ErrorType::H2Downgrade
+                        | pingora::ErrorType::InvalidH2
+                ));
+        enforce_proxy_retry_budget(
+            ctx,
+            &mut e,
+            connection_only,
+            retrying_status,
+        );
         if e.retry() && !connection_only {
             remember_failed_backend(ctx);
         }
@@ -2552,6 +2607,7 @@ impl ProxyHttp for Server {
         // whatever its method.
         let may_fall_back = within_window
             && !ctx.upstream.fallback
+            && !ctx.upstream.status_retried
             && ctx.upstream.location_instance.as_ref().is_some_and(
                 |location| !location.fallback_upstream().is_empty(),
             );
@@ -2697,35 +2753,28 @@ impl ProxyHttp for Server {
         ctx: &mut Self::CTX,
         error: Option<&pingora::Error>,
     ) -> bool {
-        match error {
-            Some(error) => {
-                let stale = error.esource() == &pingora::ErrorSource::Upstream;
-                // The stale response goes out in place of what a backend
-                // failed to give: the cookie of a `sticky` upstream is
-                // not to keep the client on that backend. A connection
-                // that failed has dropped it already; a `5xx` comes here
-                // straight from the response header, past every filter.
-                if stale {
-                    ctx.upstream.sticky_cookie = None;
-                    // That `5xx` is the one error pingora itself makes
-                    // of a status, and its stale answer the one whose
-                    // end goes unsaid: see `cached_body_ends_unsaid`.
-                    ctx.state.stale_for_status = matches!(
-                        error.etype(),
-                        pingora::ErrorType::HTTPStatus(_)
-                    );
-                }
-                stale
-            },
-            // Pingora 0.9 serializes the background subrequest as HTTP/1
-            // text. An HTTP/2 request line cannot be parsed back, which
-            // leaves its write lock dangling. Let the HTTP/2 lock holder
-            // revalidate in foreground until Pingora fixes that path.
-            // Tracked upstream: https://github.com/cloudflare/pingora/issues/1033
-            None => {
-                !(session.is_http2() && session.cache.is_cache_lock_writer())
-            },
+        let use_stale = ctx.cache.as_ref().and_then(|c| c.use_stale);
+        let is_h2_writer =
+            session.is_http2() && session.cache.is_cache_lock_writer();
+        let stale = crate::cache::error_matches_use_stale(
+            use_stale,
+            error,
+            is_h2_writer,
+        );
+        if stale && let Some(err) = error {
+            // The stale response goes out in place of what a backend
+            // failed to give: the cookie of a `sticky` upstream is
+            // not to keep the client on that backend. A connection
+            // that failed has dropped it already; a `5xx` (or other
+            // status allowed by `use_stale`) comes here straight from
+            // the response header, past every filter.
+            ctx.upstream.sticky_cookie = None;
+            // That status error is the one whose end goes unsaid when
+            // served via `ServeFromCache`: see `cached_body_ends_unsaid`.
+            ctx.state.stale_for_status =
+                matches!(err.etype(), pingora::ErrorType::HTTPStatus(_));
         }
+        stale
     }
 
     /// Determines if and how responses should be cached.
@@ -2742,6 +2791,10 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<RespCacheable> {
         debug!(target: LOG_TARGET, "--> response cache filter");
         defer!(debug!(target: LOG_TARGET, "<-- response cache filter"););
+
+        if ctx.cache.as_ref().is_some_and(|c| c.min_uses_blocked) {
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Deferred));
+        }
 
         // RFC 9111 §4.1: `Vary: *` never matches a later request, so the
         // response cannot be reused; pingora does not check this itself.
@@ -2760,10 +2813,21 @@ impl ProxyHttp for Server {
             )));
         }
 
-        let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
-            (false, None), // ctx.cache is None
-            |c| (c.check_cache_control, c.max_ttl),
-        );
+        let (
+            check_cache_control,
+            max_ttl,
+            stale_while_revalidate,
+            stale_if_error,
+        ) = ctx.cache.as_ref().map_or((false, None, None, None), |c| {
+            (
+                c.check_cache_control,
+                c.max_ttl,
+                c.stale_while_revalidate,
+                c.stale_if_error,
+            )
+        });
+        let defaults =
+            crate::cache::meta_defaults(stale_while_revalidate, stale_if_error);
         // The lifetimes the plugin gives a response that names none.
         let own_ttl = ctx.cache.as_ref().and_then(|c| {
             (c.default_ttl.is_some() || c.status_ttl.is_some())
@@ -2825,16 +2889,16 @@ impl ProxyHttp for Server {
                         resp.status,
                         default_ttl,
                         status_ttl.as_deref().map(Vec::as_slice),
-                        default_fresh_duration,
+                        crate::cache::default_fresh_duration,
                     ),
-                    &META_DEFAULTS,
+                    &defaults,
                 ),
                 max_ttl,
             ));
         }
 
         Ok(crate::cache::limit_freshness(
-            resp_cacheable(cc.as_ref(), resp.clone(), false, &META_DEFAULTS),
+            resp_cacheable(cc.as_ref(), resp.clone(), false, &defaults),
             max_ttl,
         ))
     }
@@ -2943,6 +3007,39 @@ impl ProxyHttp for Server {
         if is_interim_response(upstream_response.status) {
             return Ok(());
         }
+        if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
+            upstream_instance
+                .on_response(&ctx.upstream.address, upstream_response.status);
+        }
+        ctx.upstream.status = Some(upstream_response.status);
+
+        if should_retry_upstream_status(session, ctx, upstream_response.status)
+        {
+            ctx.upstream.status_retried = true;
+            ctx.state.retrying_status = true;
+            #[cfg(feature = "tracing")]
+            finish_otel_upstream_span(ctx, true);
+            ctx.timing.upstream_processing = None;
+            ctx.timing.upstream_first_body = None;
+            let mut err = pingora::Error::explain(
+                pingora::ErrorType::HTTPStatus(
+                    upstream_response.status.as_u16(),
+                ),
+                "retryable upstream status",
+            );
+            err.as_up();
+            err.set_retry(true);
+            return Err(err);
+        }
+
+        if let Some(err) =
+            stale_error_for_non_5xx(session, ctx, upstream_response.status)
+        {
+            #[cfg(feature = "tracing")]
+            finish_otel_upstream_span(ctx, true);
+            return Err(err);
+        }
+
         // A plugin may stop the response here, for the proxy to answer
         // in its place (`error_page` with `intercept`). The upstream has
         // answered all the same: its status, its timing and the count of
@@ -2954,7 +3051,6 @@ impl ProxyHttp for Server {
             ctx,
             upstream_response,
         );
-        ctx.upstream.status = Some(upstream_response.status);
 
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);
@@ -2967,11 +3063,6 @@ impl ProxyHttp for Server {
             &ctx.timing.created_at,
             &ctx.timing.upstream_processing,
         );
-
-        if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
-            upstream_instance
-                .on_response(&ctx.upstream.address, upstream_response.status);
-        }
 
         // A response that is answered by the location's page is not one
         // the cache will keep, and the requests that wait for it at the
@@ -7988,5 +8079,538 @@ addr = "127.0.0.1:6188"
             try_reload_server_runtime("unregistered-server", &base_conf)
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_should_retry_upstream_status() {
+        let toml = TEST_TOML.replace(
+            "upstream = \"charts\"",
+            "upstream = \"charts\"\nretry_status_codes = \"502,503\"\nmax_retries = 2",
+        );
+        let server = new_server_from(&toml, None);
+        let loc = server.location_provider.get("lo").unwrap();
+
+        let make_session = async |raw: &str| {
+            let mock_io = Builder::new().read(raw.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            session
+        };
+
+        let make_ctx = |loc: Arc<Location>,
+                        retries: u8,
+                        max_retries: Option<u8>,
+                        window: Option<Duration>| Ctx {
+            upstream: UpstreamInfo {
+                location_instance: Some(loc),
+                retries,
+                max_retries,
+                max_retry_window: window,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Idempotent methods match configured codes within budget; others do not.
+        for method in ["GET", "HEAD", "PUT", "DELETE"] {
+            let session = make_session(&format!(
+                "{method} /x HTTP/1.1\r\nHost: a\r\n\r\n"
+            ))
+            .await;
+            let ctx = make_ctx(loc.clone(), 0, Some(2), None);
+            assert!(
+                should_retry_upstream_status(
+                    &session,
+                    &ctx,
+                    StatusCode::BAD_GATEWAY
+                ),
+                "{method} 502"
+            );
+            assert!(
+                should_retry_upstream_status(
+                    &session,
+                    &ctx,
+                    StatusCode::SERVICE_UNAVAILABLE
+                ),
+                "{method} 503"
+            );
+            assert!(
+                !should_retry_upstream_status(
+                    &session,
+                    &ctx,
+                    StatusCode::INTERNAL_SERVER_ERROR
+                ),
+                "{method} 500"
+            );
+        }
+
+        // POST is non-idempotent and never retried by status.
+        let post_session = make_session(
+            "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n\r\n",
+        )
+        .await;
+        let ctx = make_ctx(loc.clone(), 0, Some(2), None);
+        assert!(!should_retry_upstream_status(
+            &post_session,
+            &ctx,
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+
+        // Budget exhaustion: `max_retries = None` defaults to 1, `Some(0)` disables,
+        // `Some(2)` permits retries 0 and 1 and stops at 2.
+        let get_session =
+            make_session("GET /x HTTP/1.1\r\nHost: a\r\n\r\n").await;
+        assert!(should_retry_upstream_status(
+            &get_session,
+            &make_ctx(loc.clone(), 0, None, None),
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(!should_retry_upstream_status(
+            &get_session,
+            &make_ctx(loc.clone(), 1, None, None),
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(!should_retry_upstream_status(
+            &get_session,
+            &make_ctx(loc.clone(), 0, Some(0), None),
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(should_retry_upstream_status(
+            &get_session,
+            &make_ctx(loc.clone(), 1, Some(2), None),
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(!should_retry_upstream_status(
+            &get_session,
+            &make_ctx(loc.clone(), 2, Some(2), None),
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+
+        // Expired retry window stops retries.
+        let mut expired_ctx =
+            make_ctx(loc.clone(), 0, Some(2), Some(Duration::from_millis(5)));
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        assert!(!should_retry_upstream_status(
+            &get_session,
+            &expired_ctx,
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        expired_ctx.upstream.max_retry_window = None;
+
+        // Subrequests never retry by status.
+        let mut sub_session =
+            make_session("GET /x HTTP/1.1\r\nHost: a\r\n\r\n").await;
+        sub_session.subrequest_ctx =
+            Some(Box::new(pingora::proxy::subrequest::Ctx::builder().build()));
+        assert!(!should_retry_upstream_status(
+            &sub_session,
+            &expired_ctx,
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+
+        // Once downstream response headers are written, status retry stops.
+        let (mut written_session, _client) =
+            new_duplex_session("GET /x HTTP/1.1\r\nHost: a\r\n\r\n").await;
+        let hdr = ResponseHeader::build(200, None).unwrap();
+        written_session
+            .as_mut()
+            .write_response_header(Box::new(hdr))
+            .await
+            .unwrap();
+        assert!(!should_retry_upstream_status(
+            &written_session,
+            &expired_ctx,
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_upstream_status_retry_flow_and_no_fallback_spillover() {
+        use pingap_core::UpstreamInstance;
+        use pingora::upstreams::peer::{HttpPeer, Peer};
+
+        #[derive(Default)]
+        struct Recorder {
+            responses: std::sync::Mutex<Vec<(String, u16)>>,
+            failures: AtomicUsize,
+        }
+        impl UpstreamInstance for Recorder {
+            fn on_transport_failure(&self, _address: &str) {
+                self.failures.fetch_add(1, Ordering::Relaxed);
+            }
+            fn on_response(&self, address: &str, status: StatusCode) {
+                self.responses
+                    .lock()
+                    .unwrap()
+                    .push((address.to_string(), status.as_u16()));
+            }
+            fn completed(&self) -> i32 {
+                0
+            }
+        }
+        struct CountRespPlugin(Arc<AtomicUsize>);
+        impl Plugin for CountRespPlugin {
+            fn handle_upstream_response(
+                &self,
+                _session: &mut Session,
+                _ctx: &mut Ctx,
+                _upstream_response: &mut ResponseHeader,
+            ) -> pingora::Result<ResponsePluginResult> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(ResponsePluginResult::Unchanged)
+            }
+        }
+
+        // Two backends in `charts`, plus `fallback_upstream = "diving"`.
+        let toml = TEST_TOML
+            .replace(
+                "addrs = [\"127.0.0.1:5000\"]",
+                "addrs = [\"127.0.0.1:5000\", \"127.0.0.1:5002\"]",
+            )
+            .replace(
+                "upstream = \"charts\"",
+                "upstream = \"charts\"\nfallback_upstream = \"diving\"\nretry_status_codes = \"502,503\"\nmax_retries = 1",
+            );
+        let plugin_calls = Arc::new(AtomicUsize::new(0));
+        let server = new_server_from(
+            &toml,
+            Some(Arc::new(CountingPluginProvider {
+                plugin: Arc::new(CountRespPlugin(plugin_calls.clone())),
+            })),
+        );
+        let (mut session, _client) = new_duplex_session(
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n",
+        )
+        .await;
+        let mut ctx = Ctx::default();
+        server
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+
+        let peer1 = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        let addr1 = peer1.address().to_string();
+        let recorder = Arc::new(Recorder::default());
+        ctx.upstream.upstream_instance = Some(recorder.clone());
+        ctx.timing.upstream_processing =
+            Some(get_start_time(&ctx.timing.created_at));
+        ctx.timing.upstream_first_body = ctx.timing.upstream_processing;
+
+        // Attempt 1 returns 503 -> retried, plugin skipped, `on_response` recorded.
+        let mut resp503 = ResponseHeader::build(503, None).unwrap();
+        let err = server
+            .upstream_response_filter(&mut session, &mut resp503, &mut ctx)
+            .await
+            .unwrap_err();
+        assert_eq!(&pingora::ErrorSource::Upstream, err.esource());
+        assert_eq!(&pingora::ErrorType::HTTPStatus(503), err.etype());
+        assert!(err.retry());
+        assert!(ctx.upstream.status_retried);
+        assert!(ctx.state.retrying_status);
+        assert_eq!(Some(StatusCode::SERVICE_UNAVAILABLE), ctx.upstream.status);
+        assert_eq!(None, ctx.state.status);
+        assert_eq!(None, ctx.timing.upstream_processing);
+        assert_eq!(None, ctx.timing.upstream_first_body);
+        assert_eq!(0, plugin_calls.load(Ordering::Relaxed));
+        assert_eq!(
+            vec![(addr1.clone(), 503)],
+            *recorder.responses.lock().unwrap()
+        );
+
+        // `error_while_proxy` consumes `retrying_status`, skips `on_transport_failure`,
+        // spends 1 budget slot, and remembers `addr1` as failed.
+        let err = server.error_while_proxy(
+            &peer1,
+            &mut session,
+            err,
+            &mut ctx,
+            false,
+        );
+        assert!(err.retry());
+        assert!(!ctx.state.retrying_status);
+        assert_eq!(1, ctx.upstream.retries);
+        assert_eq!(0, recorder.failures.load(Ordering::Relaxed));
+        assert_eq!(vec![addr1.clone()], ctx.upstream.failed_addresses);
+
+        // `upstream_peer` must pick the other `charts` backend, NEVER `diving` fallback.
+        let peer2 = server.upstream_peer(&mut session, &mut ctx).await.unwrap();
+        let addr2 = peer2.address().to_string();
+        assert_ne!(addr1, addr2);
+        assert_ne!("127.0.0.1:5001", addr2);
+        assert!(!ctx.upstream.fallback);
+        assert_eq!("charts", &*ctx.upstream.name);
+
+        // Attempt 2 returns 200 -> plugin runs once, final `ctx.state.status` is 200.
+        ctx.timing.upstream_processing =
+            Some(get_start_time(&ctx.timing.created_at));
+        let mut resp200 = ResponseHeader::build(200, None).unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut resp200, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(Some(StatusCode::OK), ctx.state.status);
+        assert_eq!(Some(StatusCode::OK), ctx.upstream.status);
+        assert_eq!(2, plugin_calls.load(Ordering::Relaxed));
+
+        // Even with a single backend in `charts` + `fallback_upstream = "diving"`,
+        // `status_retried` prevents spillover to `diving`!
+        let single_toml = TEST_TOML.replace(
+            "upstream = \"charts\"",
+            "upstream = \"charts\"\nfallback_upstream = \"diving\"\nretry_status_codes = \"503\"",
+        );
+        let single_server = new_server_from(&single_toml, None);
+        let (mut s_single, _c_single) = new_duplex_session(
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: a\r\n\r\n",
+        )
+        .await;
+        let mut ctx_single = Ctx::default();
+        single_server
+            .early_request_filter(&mut s_single, &mut ctx_single)
+            .await
+            .unwrap();
+        let p1 = single_server
+            .upstream_peer(&mut s_single, &mut ctx_single)
+            .await
+            .unwrap();
+        let mut r503 = ResponseHeader::build(503, None).unwrap();
+        let e_status = single_server
+            .upstream_response_filter(&mut s_single, &mut r503, &mut ctx_single)
+            .await
+            .unwrap_err();
+        let e_status = single_server.error_while_proxy(
+            &p1,
+            &mut s_single,
+            e_status,
+            &mut ctx_single,
+            false,
+        );
+        assert!(e_status.retry());
+        assert_eq!(1, ctx_single.upstream.retries);
+        let p2 = single_server
+            .upstream_peer(&mut s_single, &mut ctx_single)
+            .await
+            .unwrap();
+        assert_eq!("127.0.0.1:5000", p2.address().to_string());
+        assert!(!ctx_single.upstream.fallback);
+        assert_eq!("charts", &*ctx_single.upstream.name);
+
+        // Attempt 2 also returning 503 exhausts default budget (1) and passes 503 through.
+        single_server
+            .upstream_response_filter(&mut s_single, &mut r503, &mut ctx_single)
+            .await
+            .unwrap();
+        assert_eq!(
+            Some(StatusCode::SERVICE_UNAVAILABLE),
+            ctx_single.state.status
+        );
+
+        // Direct `error_while_proxy` budget check when `retrying_status = true` and exhausted.
+        let mut exhausted_ctx = Ctx::default();
+        exhausted_ctx.upstream.address = "127.0.0.1:5000".into();
+        exhausted_ctx.upstream.retries = 1;
+        exhausted_ctx.state.retrying_status = true;
+        let mut forced = pingora::Error::explain(
+            pingora::ErrorType::HTTPStatus(503),
+            "retryable upstream status",
+        );
+        forced.as_up();
+        forced.set_retry(true);
+        let peer_dummy = HttpPeer::new("127.0.0.1:5000", false, String::new());
+        let out_err = single_server.error_while_proxy(
+            &peer_dummy,
+            &mut s_single,
+            forced,
+            &mut exhausted_ctx,
+            false,
+        );
+        assert!(!out_err.retry());
+        assert!(!exhausted_ctx.state.retrying_status);
+        assert!(exhausted_ctx.upstream.failed_addresses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_min_uses_and_stale_defaults_in_response_cache_filter() {
+        let server = new_server();
+        let mock_io = Builder::new()
+            .read(b"GET /vicanso/pingap HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut resp = ResponseHeader::build_no_case(200, None).unwrap();
+        resp.append_header("Cache-Control", "max-age=60").unwrap();
+
+        // `min_uses_blocked = true` returns `Uncacheable(NoCacheReason::Deferred)`.
+        let blocked = server
+            .response_cache_filter(
+                &session,
+                &resp,
+                &mut Ctx {
+                    cache: Some(Box::new(CacheInfo {
+                        min_uses_blocked: true,
+                        stale_if_error: Some(Duration::from_secs(90)),
+                        stale_while_revalidate: Some(Duration::from_secs(45)),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            blocked,
+            RespCacheable::Uncacheable(NoCacheReason::Deferred)
+        ));
+
+        // `min_uses_blocked = false` stores with dynamic `stale_*` defaults when
+        // origin omits those directives (for both `Cache-Control` and `default_ttl`).
+        let stored_cc = server
+            .response_cache_filter(
+                &session,
+                &resp,
+                &mut Ctx {
+                    cache: Some(Box::new(CacheInfo {
+                        min_uses_blocked: false,
+                        stale_if_error: Some(Duration::from_secs(90)),
+                        stale_while_revalidate: Some(Duration::from_secs(45)),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap_meta();
+        assert_eq!(45, stored_cc.stale_while_revalidate_sec());
+        assert_eq!(90, stored_cc.stale_if_error_sec());
+
+        let bare_resp = ResponseHeader::build_no_case(200, None).unwrap();
+        let stored_own = server
+            .response_cache_filter(
+                &session,
+                &bare_resp,
+                &mut Ctx {
+                    cache: Some(Box::new(CacheInfo {
+                        default_ttl: Some(Duration::from_secs(5)),
+                        stale_if_error: Some(Duration::from_secs(75)),
+                        stale_while_revalidate: Some(Duration::from_secs(25)),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .unwrap_meta();
+        assert_eq!(25, stored_own.stale_while_revalidate_sec());
+        assert_eq!(75, stored_own.stale_if_error_sec());
+    }
+
+    #[tokio::test]
+    async fn test_should_serve_stale_use_stale_and_non_5xx_interception() {
+        use pingap_core::CacheUseStale;
+        use pingora::cache::{CacheMeta, HitStatus, MemCache, Storage};
+
+        static MEM_CACHE: LazyLock<MemCache> = LazyLock::new(MemCache::new);
+
+        let server = new_server();
+        let (mut session, _client) =
+            new_duplex_session("GET /items/1 HTTP/1.1\r\nHost: a.test\r\n\r\n")
+                .await;
+
+        let upstream_status = |code: u16| {
+            pingora::Error::create(
+                pingora::ErrorType::HTTPStatus(code),
+                pingora::ErrorSource::Upstream,
+                None,
+                None,
+            )
+        };
+
+        // Updating and error mask checks via `Server::should_serve_stale`.
+        let mut ctx = Ctx {
+            cache: Some(Box::new(CacheInfo {
+                use_stale: Some(
+                    CacheUseStale::ERROR
+                        | CacheUseStale::HTTP_503
+                        | CacheUseStale::HTTP_429,
+                ),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        assert!(!server.should_serve_stale(&mut session, &mut ctx, None));
+        assert!(server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&pingora::Error::new_up(pingora::ErrorType::ConnectRefused))
+        ));
+        assert!(!server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&pingora::Error::new_up(pingora::ErrorType::ReadTimedout))
+        ));
+        assert!(server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&upstream_status(503))
+        ));
+        assert!(ctx.state.stale_for_status);
+        ctx.state.stale_for_status = false;
+        assert!(server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&upstream_status(429))
+        ));
+        assert!(ctx.state.stale_for_status);
+        assert!(!server.should_serve_stale(
+            &mut session,
+            &mut ctx,
+            Some(&upstream_status(502))
+        ));
+
+        // Seed an expired cache entry with `stale_if_error = 60s` so
+        // `session.cache.can_serve_stale_error()` is true.
+        let key = CacheKey::new("GET:a.test/items/1", "");
+        let now = SystemTime::now();
+        let fresh_until = now.checked_sub(Duration::from_secs(5)).unwrap();
+        let cached_resp = ResponseHeader::build(200, None).unwrap();
+        let meta = CacheMeta::new(fresh_until, now, 0, 60, cached_resp);
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let mut miss = MEM_CACHE
+            .get_miss_handler(&key, &meta, &span)
+            .await
+            .unwrap();
+        miss.write_body(Bytes::from_static(b"stale-body"), true)
+            .await
+            .unwrap();
+        miss.finish().await.unwrap();
+        let (found_meta, hit_handler) =
+            MEM_CACHE.lookup(&key, &span).await.unwrap().unwrap();
+
+        session.cache.enable(&*MEM_CACHE, None, None, None, None);
+        session.cache.set_cache_key(key);
+        session
+            .cache
+            .cache_found(found_meta, hit_handler, HitStatus::Expired);
+        assert!(session.cache.can_serve_stale_error());
+
+        // `429` allowed by `use_stale` intercepts before plugins and returns
+        // non-retryable upstream HTTPStatus(429) error for `handle_stale_if_error`.
+        let mut resp429 = ResponseHeader::build(429, None).unwrap();
+        let err = server
+            .upstream_response_filter(&mut session, &mut resp429, &mut ctx)
+            .await
+            .unwrap_err();
+        assert_eq!(&pingora::ErrorSource::Upstream, err.esource());
+        assert_eq!(&pingora::ErrorType::HTTPStatus(429), err.etype());
+        assert!(!err.retry());
+        assert_eq!(Some(StatusCode::TOO_MANY_REQUESTS), ctx.upstream.status);
+        assert_eq!(None, ctx.state.status);
+
+        // `403` NOT in `use_stale` proceeds normally.
+        let mut resp403 = ResponseHeader::build(403, None).unwrap();
+        server
+            .upstream_response_filter(&mut session, &mut resp403, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(Some(StatusCode::FORBIDDEN), ctx.state.status);
     }
 }

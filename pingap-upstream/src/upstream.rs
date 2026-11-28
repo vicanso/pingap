@@ -25,6 +25,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytesize::ByteSize;
+use dashmap::mapref::entry::Entry;
 use dashmap::{DashMap, DashSet};
 use derive_more::Debug;
 use futures_util::FutureExt;
@@ -74,7 +75,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{BuildHasher, DefaultHasher, Hash, Hasher, RandomState};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, error};
@@ -129,17 +132,260 @@ const CONSISTENT_SELECT_STEPS_PER_BACKEND: usize = 16;
 /// Choices (P2C) on the normal healthy path instead of scanning all backends.
 const P2C_BACKEND_THRESHOLD: usize = 32;
 
+const SLOW_START_FULL_BPS: u64 = 10_000;
+const SLOW_START_MIN_BPS: u64 = 1_000;
+const SLOW_START_RANGE_BPS: u64 = SLOW_START_FULL_BPS - SLOW_START_MIN_BPS;
+
+#[derive(Debug)]
+struct SlowStartBackend {
+    was_down: AtomicBool,
+    /// `0` = warm; non-zero = `offset_ms.max(1)` from `SlowStart::epoch`.
+    recovered_at_ms: AtomicU64,
+    seq: AtomicU64,
+}
+
+impl SlowStartBackend {
+    fn warm() -> Self {
+        Self {
+            was_down: AtomicBool::new(false),
+            recovered_at_ms: AtomicU64::new(0),
+            seq: AtomicU64::new(0),
+        }
+    }
+
+    fn down() -> Self {
+        Self {
+            was_down: AtomicBool::new(true),
+            recovered_at_ms: AtomicU64::new(0),
+            seq: AtomicU64::new(0),
+        }
+    }
+
+    fn warming(recovered_at_ms: u64) -> Self {
+        Self {
+            was_down: AtomicBool::new(false),
+            recovered_at_ms: AtomicU64::new(recovered_at_ms),
+            seq: AtomicU64::new(0),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SlowStart {
+    duration_ms: u64,
+    epoch: Instant,
+    states: DashMap<BackendAddr, Arc<SlowStartBackend>>,
+}
+
+impl SlowStart {
+    fn new(duration: Duration) -> Self {
+        let duration_ms = u64::try_from(duration.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        Self {
+            duration_ms,
+            epoch: Instant::now(),
+            states: DashMap::new(),
+        }
+    }
+
+    #[inline]
+    fn now_offset_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    #[inline]
+    fn ramp_bps_for_state(
+        state: &SlowStartBackend,
+        duration_ms: u64,
+        epoch: &Instant,
+    ) -> u64 {
+        let recovered_at = state.recovered_at_ms.load(Ordering::Relaxed);
+        if recovered_at == 0 {
+            return SLOW_START_FULL_BPS;
+        }
+        let now_ms =
+            u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let elapsed_ms = now_ms.saturating_sub(recovered_at);
+        if elapsed_ms >= duration_ms {
+            let _ = state.recovered_at_ms.compare_exchange(
+                recovered_at,
+                0,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
+            return SLOW_START_FULL_BPS;
+        }
+        SLOW_START_MIN_BPS
+            + (u128::from(SLOW_START_RANGE_BPS) * u128::from(elapsed_ms)
+                / u128::from(duration_ms)) as u64
+    }
+
+    #[inline]
+    fn ramp_bps(&self, addr: &BackendAddr) -> u64 {
+        let Some(state) = self.states.get(addr) else {
+            return SLOW_START_FULL_BPS;
+        };
+        Self::ramp_bps_for_state(&state, self.duration_ms, &self.epoch)
+    }
+
+    #[inline]
+    fn allow_admission(&self, addr: &BackendAddr) -> bool {
+        let Some(state) = self.states.get(addr) else {
+            return true;
+        };
+        let bps =
+            Self::ramp_bps_for_state(&state, self.duration_ms, &self.epoch);
+        if bps >= SLOW_START_FULL_BPS {
+            return true;
+        }
+        let s = state.seq.fetch_add(1, Ordering::Relaxed);
+        let cur =
+            u128::from(s) * u128::from(bps) / u128::from(SLOW_START_FULL_BPS);
+        let next = (u128::from(s) + 1) * u128::from(bps)
+            / u128::from(SLOW_START_FULL_BPS);
+        next > cur
+    }
+
+    fn record_initial_healthy(&self, addr: &BackendAddr) {
+        if let Some(state) = self.states.get(addr) {
+            state.was_down.store(false, Ordering::Release);
+            state.recovered_at_ms.store(0, Ordering::Release);
+            return;
+        }
+        self.states
+            .entry(addr.clone())
+            .and_modify(|state| {
+                state.was_down.store(false, Ordering::Release);
+                state.recovered_at_ms.store(0, Ordering::Release);
+            })
+            .or_insert_with(|| Arc::new(SlowStartBackend::warm()));
+    }
+
+    fn mark_down(&self, addr: &BackendAddr) {
+        if let Some(state) = self.states.get(addr) {
+            state.was_down.store(true, Ordering::Release);
+            state.recovered_at_ms.store(0, Ordering::Release);
+            return;
+        }
+        self.states
+            .entry(addr.clone())
+            .and_modify(|state| {
+                state.was_down.store(true, Ordering::Release);
+                state.recovered_at_ms.store(0, Ordering::Release);
+            })
+            .or_insert_with(|| Arc::new(SlowStartBackend::down()));
+    }
+
+    fn on_check_pass(&self, addr: &BackendAddr) {
+        if let Some(state) = self.states.get(addr) {
+            if state.was_down.swap(false, Ordering::AcqRel) {
+                state
+                    .recovered_at_ms
+                    .store(self.now_offset_ms().max(1), Ordering::Release);
+            }
+            return;
+        }
+        let start = self.now_offset_ms().max(1);
+        match self.states.entry(addr.clone()) {
+            Entry::Occupied(entry) => {
+                if entry.get().was_down.swap(false, Ordering::AcqRel) {
+                    entry.get().recovered_at_ms.store(start, Ordering::Release);
+                }
+            },
+            Entry::Vacant(entry) => {
+                entry.insert(Arc::new(SlowStartBackend::warming(start)));
+            },
+        }
+    }
+
+    fn note_recovered(&self, addr: &BackendAddr) {
+        let start = self.now_offset_ms().max(1);
+        if let Some(state) = self.states.get(addr) {
+            state.was_down.store(false, Ordering::Release);
+            state.recovered_at_ms.store(start, Ordering::Release);
+            return;
+        }
+        self.states
+            .entry(addr.clone())
+            .and_modify(|state| {
+                state.was_down.store(false, Ordering::Release);
+                state.recovered_at_ms.store(start, Ordering::Release);
+            })
+            .or_insert_with(|| Arc::new(SlowStartBackend::warming(start)));
+    }
+}
+
+struct SlowStartHealthCheck {
+    inner: Box<dyn pingora::lb::health_check::HealthCheck + Send + Sync>,
+    first_round: Arc<FirstRound>,
+    slow_start: Arc<SlowStart>,
+}
+
+#[async_trait]
+impl pingora::lb::health_check::HealthCheck for SlowStartHealthCheck {
+    async fn check(&self, target: &Backend) -> pingora::Result<()> {
+        let is_first_round = self.first_round.is_active();
+        let result = self.inner.check(target).await;
+        match (is_first_round, result.is_ok()) {
+            (true, true) => {
+                self.slow_start.record_initial_healthy(&target.addr)
+            },
+            (_, false) => self.slow_start.mark_down(&target.addr),
+            (false, true) => self.slow_start.on_check_pass(&target.addr),
+        }
+        result
+    }
+
+    async fn health_status_change(&self, target: &Backend, healthy: bool) {
+        if !healthy {
+            self.slow_start.mark_down(&target.addr);
+        } else if !self.first_round.is_active() {
+            self.slow_start.note_recovered(&target.addr);
+        }
+        self.inner.health_status_change(target, healthy).await;
+    }
+
+    fn backend_summary(&self, target: &Backend) -> String {
+        self.inner.backend_summary(target)
+    }
+
+    fn health_threshold(&self, success: bool) -> usize {
+        self.inner.health_threshold(success)
+    }
+}
+
+fn parse_backend_addr(address: &str) -> Option<BackendAddr> {
+    if let Ok(inet) = address.parse::<SocketAddr>() {
+        return Some(BackendAddr::Inet(inet));
+    }
+    #[cfg(unix)]
+    {
+        let path = address.strip_prefix("unix:").unwrap_or(address);
+        if let Ok(unix) = std::os::unix::net::SocketAddr::from_pathname(path) {
+            return Some(BackendAddr::Unix(unix));
+        }
+    }
+    None
+}
+
 #[inline]
-fn weighted_load(counts: &InflightCounts, backend: &Backend) -> (u64, u64) {
+fn weighted_load(
+    counts: &InflightCounts,
+    backend: &Backend,
+    slow_start: Option<&SlowStart>,
+) -> (u64, u64) {
+    let bps =
+        slow_start.map_or(SLOW_START_FULL_BPS, |ss| ss.ramp_bps(&backend.addr));
     (
         u64::from(counts.load(backend)),
-        backend.weight.max(1) as u64,
+        (backend.weight.max(1) as u64 * bps).max(1),
     )
 }
 
 #[inline]
 fn is_less_loaded(a: (u64, u64), b: (u64, u64)) -> bool {
-    a.0 * b.1 < b.0 * a.1
+    u128::from(a.0) * u128::from(b.1) < u128::from(b.0) * u128::from(a.1)
 }
 
 /// The requests in flight on each backend of an upstream that chooses
@@ -458,6 +704,10 @@ pub struct Upstream {
     /// during it one failed check is enough to mark a backend unhealthy.
     first_round: Arc<FirstRound>,
 
+    /// Backend slow-start state, present when `slow_start` is configured.
+    #[debug("slow_start")]
+    slow_start: Option<Arc<SlowStart>>,
+
     /// Cached `Arc<str>` per backend socket address for zero-allocation lookup.
     #[debug(skip)]
     address_cache: BackendAddressCache,
@@ -492,6 +742,7 @@ fn update_health_check_params<S>(
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
     first_round: &Arc<FirstRound>,
+    slow_start: Option<Arc<SlowStart>>,
     client_cert_key: Option<Arc<CertKey>>,
 ) -> Result<LoadBalancer<S>>
 where
@@ -541,10 +792,16 @@ where
     })?;
     // Configure health checking
     lb.parallel_health_check = health_check_conf.parallel_check;
-    lb.set_health_check(Box::new(FirstRoundHealthCheck::new(
-        hc,
-        first_round.clone(),
-    )));
+    let mut hc: Box<dyn pingora::lb::health_check::HealthCheck + Send + Sync> =
+        Box::new(FirstRoundHealthCheck::new(hc, first_round.clone()));
+    if let Some(slow_start) = slow_start {
+        hc = Box::new(SlowStartHealthCheck {
+            inner: hc,
+            first_round: first_round.clone(),
+            slow_start,
+        });
+    }
+    lb.set_health_check(hc);
     lb.update_frequency = update_frequency;
     lb.health_check_frequency = Some(health_check_conf.check_frequency);
     Ok(lb)
@@ -563,6 +820,7 @@ fn new_load_balancer(
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
     first_round: &Arc<FirstRound>,
+    slow_start: Option<Arc<SlowStart>>,
     client_cert_key: Option<Arc<CertKey>>,
 ) -> Result<SelectionLb> {
     // Determine the service discovery method
@@ -635,6 +893,7 @@ fn new_load_balancer(
                 conf,
                 sender,
                 first_round,
+                slow_start,
                 client_cert_key,
             )?;
             Ok(SelectionLb::RoundRobin(lb))
@@ -662,6 +921,7 @@ fn new_load_balancer(
                 conf,
                 sender,
                 first_round,
+                slow_start,
                 client_cert_key,
             )?;
             Ok(SelectionLb::RoundRobin(lb))
@@ -680,6 +940,7 @@ fn new_load_balancer(
                 conf,
                 sender,
                 first_round,
+                None,
                 client_cert_key,
             )?;
             Ok(SelectionLb::Consistent { lb, hash })
@@ -1223,6 +1484,10 @@ impl Upstream {
         sender: Option<Arc<NotificationSender>>,
     ) -> Result<Self> {
         let first_round = Arc::new(FirstRound::new());
+        let slow_start = conf
+            .slow_start
+            .filter(|duration| !duration.is_zero())
+            .map(|duration| Arc::new(SlowStart::new(duration)));
         // Before the checks are made: an `https` one presents it too.
         let client_cert_key = new_client_cert(conf)?;
         let lb = new_load_balancer(
@@ -1230,6 +1495,7 @@ impl Upstream {
             conf,
             sender,
             &first_round,
+            slow_start.clone(),
             client_cert_key.clone(),
         )?;
         let key = conf.hash_key();
@@ -1370,6 +1636,7 @@ impl Upstream {
             },
             circuit_breaker_states,
             first_round,
+            slow_start,
             address_cache: BackendAddressCache::default(),
         };
         debug!(
@@ -1385,6 +1652,13 @@ impl Upstream {
     #[inline]
     pub fn address_of(&self, addr: &BackendAddr) -> Arc<str> {
         self.address_cache.of(addr)
+    }
+
+    #[inline]
+    fn allow_slow_start_admission(&self, backend: &Backend) -> bool {
+        self.slow_start
+            .as_ref()
+            .is_none_or(|slow_start| slow_start.allow_admission(&backend.addr))
     }
 
     #[inline]
@@ -1437,7 +1711,9 @@ impl Upstream {
         S: BackendSelection + 'static,
         S::Iter: BackendIter,
     {
-        if let Some(backend) = self.select_able(lb, key, &max_steps, failed) {
+        if let Some(backend) =
+            self.select_able(lb, key, &max_steps, failed, !by_key)
+        {
             return Some(backend);
         }
         if !self.fail_open {
@@ -1455,20 +1731,26 @@ impl Upstream {
         key: &[u8],
         max_steps: &impl Fn(usize) -> usize,
         failed: &[String],
+        use_slow_start: bool,
     ) -> Option<Backend>
     where
         S: BackendSelection + 'static,
         S::Iter: BackendIter,
     {
         if !failed.is_empty()
-            && let Some(backend) =
-                self.select_accepted(lb, key, max_steps, |backend| {
+            && let Some(backend) = self.select_accepted(
+                lb,
+                key,
+                max_steps,
+                |backend| {
                     !has_failed_cached(&self.address_cache, backend, failed)
-                })
+                },
+                use_slow_start,
+            )
         {
             return Some(backend);
         }
-        self.select_accepted(lb, key, max_steps, |_| true)
+        self.select_accepted(lb, key, max_steps, |_| true, use_slow_start)
     }
 
     /// What `fail_open` falls back on: a backend whatever its health.
@@ -1514,24 +1796,17 @@ impl Upstream {
         .or_else(|| lb.select_with(key, steps, |_, _| true))
     }
 
-    /// The selection of [`Self::select_backend`] among the backends that
-    /// `allow` lets through.
-    fn select_accepted<S>(
+    fn select_accepted_pass<S>(
         &self,
         lb: &LoadBalancer<S>,
         key: &[u8],
         max_steps: &impl Fn(usize) -> usize,
-        allow: impl Fn(&Backend) -> bool,
+        accept: &impl Fn(&Backend, bool) -> bool,
     ) -> Option<Backend>
     where
         S: BackendSelection + 'static,
         S::Iter: BackendIter,
     {
-        // Asked of the circuit breaker last: a breaker that is half open
-        // counts each backend it lets through as a probe.
-        let accept = |backend: &Backend, healthy: bool| {
-            allow(backend) && self.accept_backend(backend, healthy)
-        };
         if let Some(backend) = lb.select_with(key, FAST_SELECT_STEPS, accept) {
             return Some(backend);
         }
@@ -1554,6 +1829,49 @@ impl Upstream {
         set.iter()
             .find(|backend| accept(backend, backends.ready(backend)))
             .cloned()
+    }
+
+    /// The selection of [`Self::select_backend`] among the backends that
+    /// `allow` lets through.
+    fn select_accepted<S>(
+        &self,
+        lb: &LoadBalancer<S>,
+        key: &[u8],
+        max_steps: &impl Fn(usize) -> usize,
+        allow: impl Fn(&Backend) -> bool,
+        use_slow_start: bool,
+    ) -> Option<Backend>
+    where
+        S: BackendSelection + 'static,
+        S::Iter: BackendIter,
+    {
+        if use_slow_start && let Some(slow_start) = &self.slow_start {
+            let skipped_by_slow_start = std::cell::Cell::new(false);
+            let accept_warming = |backend: &Backend, healthy: bool| {
+                if !healthy || !allow(backend) {
+                    return false;
+                }
+                if !slow_start.allow_admission(&backend.addr) {
+                    skipped_by_slow_start.set(true);
+                    return false;
+                }
+                self.accept_backend(backend, healthy)
+            };
+            if let Some(backend) =
+                self.select_accepted_pass(lb, key, max_steps, &accept_warming)
+            {
+                return Some(backend);
+            }
+            if !skipped_by_slow_start.get() {
+                return None;
+            }
+        }
+        // Asked of the circuit breaker last: a breaker that is half open
+        // counts each backend it lets through as a probe.
+        let accept = |backend: &Backend, healthy: bool| {
+            allow(backend) && self.accept_backend(backend, healthy)
+        };
+        self.select_accepted_pass(lb, key, max_steps, &accept)
     }
 
     /// The backend the client's cookie names, while that one can take
@@ -1593,7 +1911,8 @@ impl Upstream {
             }
         }
         let max_steps = |count: usize| count + 1;
-        let backend = match self.select_able(lb, b"", &max_steps, failed) {
+        let backend = match self.select_able(lb, b"", &max_steps, failed, true)
+        {
             Some(backend) => backend,
             None if !self.fail_open => return None,
             // `fail_open` and no backend that can take the request: one
@@ -1630,16 +1949,25 @@ impl Upstream {
         lb: &LoadBalancer<RoundRobin>,
         counts: &InflightCounts,
     ) -> Option<Backend> {
-        let first =
-            lb.select_with(b"", FAST_SELECT_STEPS, |_, health| health)?;
-        let first_load = weighted_load(counts, &first);
+        let slow_start = self.slow_start.as_deref();
+        let first = lb
+            .select_with(b"", FAST_SELECT_STEPS, |b, health| {
+                health && self.allow_slow_start_admission(b)
+            })
+            .or_else(|| {
+                lb.select_with(b"", FAST_SELECT_STEPS, |_, health| health)
+            })?;
+        let first_load = weighted_load(counts, &first, slow_start);
         let best = if first_load.0 == 0 {
             first
         } else if let Some(second) =
             lb.select_with(b"", FAST_SELECT_STEPS, |b, health| {
-                health && b != &first
+                health && b != &first && self.allow_slow_start_admission(b)
             })
-            && is_less_loaded(weighted_load(counts, &second), first_load)
+            && is_less_loaded(
+                weighted_load(counts, &second, slow_start),
+                first_load,
+            )
         {
             second
         } else {
@@ -1656,18 +1984,25 @@ impl Upstream {
         failed: &[String],
     ) -> Option<Backend> {
         let backends = lb.backends();
+        let slow_start = self.slow_start.as_deref();
         // Snapshot per-backend loads once so `level` and `select_with` do not
         // repeatedly hash and lock DashMap shards for every candidate check.
         let loads: smallvec::SmallVec<[(&BackendAddr, (u64, u64)); 16]> = set
             .iter()
-            .map(|b| (&b.addr, weighted_load(counts, b)))
+            .map(|b| (&b.addr, weighted_load(counts, b, slow_start)))
             .collect();
         let load_of = |backend: &Backend| {
             loads
                 .iter()
                 .find(|(addr, _)| *addr == &backend.addr)
                 .map(|(_, load)| *load)
-                .unwrap_or((0, backend.weight.max(1) as u64))
+                .unwrap_or_else(|| {
+                    (
+                        0,
+                        (backend.weight.max(1) as u64 * SLOW_START_FULL_BPS)
+                            .max(1),
+                    )
+                })
         };
         // One of those that `allow` lets through and that carry the least.
         let pick = |allow: &dyn Fn(&Backend) -> bool| {
@@ -1685,6 +2020,15 @@ impl Upstream {
             let level = |backend: &Backend| {
                 allow(backend) && !is_less_loaded(least, load_of(backend))
             };
+            if self.slow_start.is_some()
+                && let Some(backend) =
+                    lb.select_with(b"", set.len() + 1, |backend, _| {
+                        level(backend)
+                            && self.allow_slow_start_admission(backend)
+                    })
+            {
+                return Some(backend);
+            }
             lb.select_with(b"", set.len() + 1, |backend, _| level(backend))
                 .or_else(|| set.iter().find(|backend| level(backend)).cloned())
                 .or_else(|| set.iter().find(|backend| allow(backend)).cloned())
@@ -2238,11 +2582,23 @@ impl UpstreamInstance for Upstream {
         debug!(target: LOG_TARGET, address, status = status.to_string(), "on_response");
         let is_request_failure = backend_stats.on_response(address, status);
         if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
+            let prev_state = self
+                .slow_start
+                .as_ref()
+                .map(|_| circuit_breaker_states.get_state_code(address));
             circuit_breaker_states.update_state_after_request(
                 address,
                 is_request_failure,
                 backend_stats,
             );
+            if let (Some(slow_start), Some(prev)) =
+                (&self.slow_start, prev_state)
+                && prev != 0
+                && circuit_breaker_states.get_state_code(address) == 0
+                && let Some(addr) = parse_backend_addr(address)
+            {
+                slow_start.note_recovered(&addr);
+            }
         }
     }
 }
@@ -3873,6 +4229,7 @@ mod tests {
             None,
             &Arc::new(FirstRound::new()),
             None,
+            None,
         )
         .unwrap();
         let (update_frequency, health_check_frequency) =
@@ -3894,6 +4251,7 @@ mod tests {
             },
             None,
             &Arc::new(FirstRound::new()),
+            None,
             None,
         )
         .unwrap();
@@ -4695,6 +5053,485 @@ mod tests {
                 .select_tcp_peer(None, &[first.addr_str.to_string()], false)
                 .unwrap();
             assert_ne!(first.addr_str, retried.addr_str);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_ramp_curve() {
+        use super::{SLOW_START_FULL_BPS, SlowStart};
+
+        let ss = SlowStart::new(Duration::from_millis(200));
+        let b1: super::BackendAddr = "127.0.0.1:9101"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+        let b2: super::BackendAddr = "127.0.0.1:9102"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .into();
+
+        // Unknown / initial healthy backends are warm at 100%.
+        assert_eq!(SLOW_START_FULL_BPS, ss.ramp_bps(&b1));
+        ss.record_initial_healthy(&b1);
+        assert_eq!(SLOW_START_FULL_BPS, ss.ramp_bps(&b1));
+
+        // Failure + pass after first round triggers warmup from ~10%.
+        ss.mark_down(&b1);
+        ss.on_check_pass(&b1);
+        let initial_bps = ss.ramp_bps(&b1);
+        assert!(
+            (1_000..=3_000).contains(&initial_bps),
+            "expected ~10% initially, got {initial_bps}"
+        );
+
+        // Brand-new backend seen after first round also triggers warmup.
+        ss.on_check_pass(&b2);
+        let b2_bps = ss.ramp_bps(&b2);
+        assert!(
+            (1_000..=3_000).contains(&b2_bps),
+            "expected ~10% for new backend, got {b2_bps}"
+        );
+
+        // Once slow_start duration elapses, ramp reaches 100% and resets to 0.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(SLOW_START_FULL_BPS, ss.ramp_bps(&b1));
+        assert_eq!(
+            0,
+            ss.states
+                .get(&b1)
+                .unwrap()
+                .recovered_at_ms
+                .load(Ordering::Relaxed)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_startup_backends_warm() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(2);
+        let up = Upstream::new(
+            "ss-startup",
+            &UpstreamConf {
+                addrs: addrs.clone(),
+                slow_start: Some(Duration::from_secs(30)),
+                health_check: Some(
+                    "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.run_health_check().await.unwrap();
+
+        let ss = up.slow_start.as_ref().unwrap();
+        for addr in &addrs {
+            let parsed: super::BackendAddr =
+                addr.parse::<std::net::SocketAddr>().unwrap().into();
+            assert_eq!(super::SLOW_START_FULL_BPS, ss.ramp_bps(&parsed));
+        }
+
+        let mut counts = HashMap::new();
+        for _ in 0..20 {
+            let peer = peer_after(&up, &session, &[]).await.unwrap();
+            *counts.entry(peer).or_insert(0usize) += 1;
+        }
+        assert_eq!(Some(&10), counts.get(&addrs[0]), "{counts:?}");
+        assert_eq!(Some(&10), counts.get(&addrs[1]), "{counts:?}");
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_recovered_and_new_backend_round_robin_and_sticky()
+    {
+        let session = request_session().await;
+        let alive = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr_warm = alive.local_addr().unwrap().to_string();
+        let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr_recover = dead_listener.local_addr().unwrap().to_string();
+        drop(dead_listener);
+
+        let up = Upstream::new(
+            "ss-rr",
+            &UpstreamConf {
+                addrs: vec![addr_warm.clone(), addr_recover.clone()],
+                slow_start: Some(Duration::from_secs(30)),
+                health_check: Some(
+                    "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        // Round 1: addr_warm is healthy & warm, addr_recover is down.
+        up.run_health_check().await.unwrap();
+        assert_eq!(addr_warm, peer_after(&up, &session, &[]).await.unwrap());
+
+        // Bring addr_recover online and run Round 2.
+        let _recovered_listener =
+            std::net::TcpListener::bind(&addr_recover).unwrap();
+        up.run_health_check().await.unwrap();
+
+        let ss = up.slow_start.as_ref().unwrap();
+        let warm_key: super::BackendAddr =
+            addr_warm.parse::<std::net::SocketAddr>().unwrap().into();
+        let rec_key: super::BackendAddr =
+            addr_recover.parse::<std::net::SocketAddr>().unwrap().into();
+        assert_eq!(super::SLOW_START_FULL_BPS, ss.ramp_bps(&warm_key));
+        assert!(ss.ramp_bps(&rec_key) < 2_000);
+
+        let mut warm_hits = 0usize;
+        let mut rec_hits = 0usize;
+        for _ in 0..40 {
+            let chosen = peer_after(&up, &session, &[]).await.unwrap();
+            if chosen == addr_warm {
+                warm_hits += 1;
+            } else if chosen == addr_recover {
+                rec_hits += 1;
+            }
+        }
+        assert!(
+            warm_hits >= 30 && (1..=10).contains(&rec_hits),
+            "expected ~10% on recovered backend, got warm={warm_hits}, rec={rec_hits}"
+        );
+
+        // L4 TCP RoundRobin also throttles the warming backend.
+        let mut tcp_warm = 0usize;
+        let mut tcp_rec = 0usize;
+        for _ in 0..40 {
+            let peer = up.select_tcp_peer(None, &[], false).unwrap();
+            if peer.addr_str.as_ref() == addr_warm {
+                tcp_warm += 1;
+            } else {
+                tcp_rec += 1;
+            }
+        }
+        assert!(
+            tcp_warm >= 30 && (1..=10).contains(&tcp_rec),
+            "expected ~10% TCP on recovered backend, got warm={tcp_warm}, rec={tcp_rec}"
+        );
+
+        // Brand-new backend seen after first_round starts warming automatically.
+        let new_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr_new = new_listener.local_addr().unwrap().to_string();
+        let new_key: super::BackendAddr =
+            addr_new.parse::<std::net::SocketAddr>().unwrap().into();
+        let mut dyn_backends = std::collections::BTreeSet::new();
+        dyn_backends.insert(pingora::lb::Backend::new(&addr_warm).unwrap());
+        dyn_backends.insert(pingora::lb::Backend::new(&addr_new).unwrap());
+        let first_round = Arc::new(FirstRound::new());
+        let dyn_ss = Arc::new(super::SlowStart::new(Duration::from_secs(30)));
+        // Round 1 only checks addr_warm.
+        dyn_ss.record_initial_healthy(&warm_key);
+        first_round.finish();
+        // Round 2 checks addr_new for the first time after first_round.
+        dyn_ss.on_check_pass(&new_key);
+        assert_eq!(super::SLOW_START_FULL_BPS, dyn_ss.ramp_bps(&warm_key));
+        assert!(dyn_ss.ramp_bps(&new_key) < 2_000);
+
+        // Sticky: existing valid cookie stays pinned to warming backend; new
+        // clients without cookie mostly go to warm backend.
+        let sticky_up = Upstream::new(
+            "ss-sticky",
+            &UpstreamConf {
+                addrs: vec![addr_warm.clone(), addr_recover.clone()],
+                algo: Some("sticky:route".to_string()),
+                slow_start: Some(Duration::from_secs(30)),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        sticky_up.run_health_check().await.unwrap();
+        sticky_up
+            .slow_start
+            .as_ref()
+            .unwrap()
+            .note_recovered(&rec_key);
+
+        let rec_backend = pingora::lb::Backend::new(&addr_recover).unwrap();
+        let rec_cookie =
+            format!("route={:016x}", super::backend_id(&rec_backend));
+        let sticky_req = format!(
+            "GET / HTTP/1.1\r\nHost: github.com\r\nCookie: {rec_cookie}\r\n\r\n"
+        );
+        for _ in 0..10 {
+            let mock_io = Builder::new().read(sticky_req.as_bytes()).build();
+            let mut s = Session::new_h1(Box::new(mock_io));
+            s.read_request().await.unwrap();
+            let mut set_cookie = None;
+            let peer = sticky_up
+                .new_http_peer_for(
+                    &s,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed: &[],
+                        inflight: None,
+                        sticky_cookie: Some(&mut set_cookie),
+                        location: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(addr_recover, peer.address().to_string());
+            assert_eq!(None, set_cookie);
+        }
+
+        let mut new_warm = 0usize;
+        let mut new_rec = 0usize;
+        for _ in 0..40 {
+            let mut set_cookie = None;
+            let peer = sticky_up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed: &[],
+                        inflight: None,
+                        sticky_cookie: Some(&mut set_cookie),
+                        location: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(set_cookie.is_some());
+            if peer.address().to_string() == addr_warm {
+                new_warm += 1;
+            } else {
+                new_rec += 1;
+            }
+        }
+        assert!(
+            new_warm >= 30 && new_rec <= 10,
+            "sticky new clients should favor warm backend: warm={new_warm}, rec={new_rec}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_least_conn_weight_one() {
+        let session = request_session().await;
+        let alive = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr_warm = alive.local_addr().unwrap().to_string();
+        let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr_recover = dead_listener.local_addr().unwrap().to_string();
+        drop(dead_listener);
+
+        let up = Upstream::new(
+            "ss-lc",
+            &UpstreamConf {
+                addrs: vec![addr_warm.clone(), addr_recover.clone()],
+                algo: Some("least_conn".to_string()),
+                slow_start: Some(Duration::from_secs(30)),
+                health_check: Some(
+                    "tcp://127.0.0.1?connection_timeout=1s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.run_health_check().await.unwrap();
+        let _recovered_listener =
+            std::net::TcpListener::bind(&addr_recover).unwrap();
+        up.run_health_check().await.unwrap();
+
+        // Concurrent held requests: weight=1 warming backend scales at ~10% capacity.
+        let mut held = Vec::new();
+        let mut warm_held = 0usize;
+        let mut rec_held = 0usize;
+        for _ in 0..22 {
+            let mut slot = None;
+            let peer = up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed: &[],
+                        inflight: Some(&mut slot),
+                        sticky_cookie: None,
+                        location: None,
+                    },
+                )
+                .await
+                .unwrap();
+            if peer.address().to_string() == addr_warm {
+                warm_held += 1;
+            } else {
+                rec_held += 1;
+            }
+            held.push(slot);
+        }
+        assert!(
+            warm_held >= 18 && (1..=4).contains(&rec_held),
+            "held least_conn should scale weight=1 by 10x: warm={warm_held}, rec={rec_held}"
+        );
+        drop(held);
+
+        // Serial requests (inflight == 0): level tie-breaker also ramps smoothly.
+        let mut warm_serial = 0usize;
+        let mut rec_serial = 0usize;
+        for _ in 0..40 {
+            let mut slot = None;
+            let peer = up
+                .new_http_peer_for(
+                    &session,
+                    PeerAttempt {
+                        client_ip: &mut None,
+                        count_processing: false,
+                        failed: &[],
+                        inflight: Some(&mut slot),
+                        sticky_cookie: None,
+                        location: None,
+                    },
+                )
+                .await
+                .unwrap();
+            if peer.address().to_string() == addr_warm {
+                warm_serial += 1;
+            } else {
+                rec_serial += 1;
+            }
+        }
+        assert!(
+            warm_serial >= 30 && rec_serial <= 10,
+            "serial least_conn should throttle warming backend: warm={warm_serial}, rec={rec_serial}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_single_healthy_warming_backend_never_503s() {
+        let session = request_session().await;
+        for algo in ["round_robin", "least_conn"] {
+            for fail_open in [None, Some(true)] {
+                let l1 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr_dead = l1.local_addr().unwrap().to_string();
+                let second_dead =
+                    std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr_warming =
+                    second_dead.local_addr().unwrap().to_string();
+                drop(second_dead);
+                let up = Upstream::new(
+                    "ss-single-healthy",
+                    &UpstreamConf {
+                        addrs: vec![addr_dead.clone(), addr_warming.clone()],
+                        algo: Some(algo.to_string()),
+                        fail_open,
+                        slow_start: Some(Duration::from_secs(30)),
+                        health_check: Some(
+                            "tcp://127.0.0.1?connection_timeout=1s&failure=1"
+                                .to_string(),
+                        ),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+                // Round 1: addr_dead is up, addr_warming is down.
+                up.run_health_check().await.unwrap();
+
+                // Flip: addr_dead goes down, addr_warming comes up (warming!).
+                drop(l1);
+                let _l2 = std::net::TcpListener::bind(&addr_warming).unwrap();
+                up.run_health_check().await.unwrap();
+
+                for i in 0..30 {
+                    let chosen =
+                        peer_after(&up, &session, &[]).await.unwrap_or_else(|| {
+                            panic!(
+                                "slow_start must never 503 on single healthy backend ({algo}, fail_open={fail_open:?}, req={i})"
+                            )
+                        });
+                    assert_eq!(
+                        addr_warming, chosen,
+                        "must not fail_open onto unhealthy backend ({algo}, fail_open={fail_open:?})"
+                    );
+                    let tcp = up.select_tcp_peer(None, &[], false).unwrap();
+                    assert_eq!(addr_warming, tcp.addr_str.as_ref());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_slow_start_circuit_breaker_and_consistent_hash() {
+        let session = request_session().await;
+        let (_listeners, addrs) = listening(2);
+
+        // Circuit breaker transition OPEN -> HALF_OPEN -> CLOSED triggers slow start.
+        let up = Upstream::new(
+            "ss-cb",
+            &UpstreamConf {
+                addrs: addrs.clone(),
+                slow_start: Some(Duration::from_secs(30)),
+                circuit_break_max_consecutive_failures: Some(2),
+                circuit_break_open_duration: Some(Duration::from_millis(20)),
+                circuit_break_half_open_consecutive_success_threshold: Some(1),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        up.on_response(&addrs[1], http::StatusCode::INTERNAL_SERVER_ERROR);
+        up.on_response(&addrs[1], http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(Some(&1), up.stats().circuit_states.get(&addrs[1]));
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let cb_states = up.circuit_breaker_states.as_ref().unwrap();
+        let backend_1 = pingora::lb::Backend::new(&addrs[1]).unwrap();
+        assert!(up.accept_backend(&backend_1, true));
+        assert_eq!(Some(&2), up.stats().circuit_states.get(&addrs[1]));
+
+        up.on_response(&addrs[1], http::StatusCode::OK);
+        assert_eq!(0, cb_states.get_state_code(&addrs[1]));
+        let bps_1 = up.slow_start.as_ref().unwrap().ramp_bps(&backend_1.addr);
+        assert!(
+            bps_1 < 2_000,
+            "expected slow start after CB close, got {bps_1}"
+        );
+
+        let mut hits_0 = 0usize;
+        let mut hits_1 = 0usize;
+        for _ in 0..40 {
+            let chosen = peer_after(&up, &session, &[]).await.unwrap();
+            if chosen == addrs[0] {
+                hits_0 += 1;
+            } else {
+                hits_1 += 1;
+            }
+        }
+        assert!(
+            hits_0 >= 30 && hits_1 <= 10,
+            "CB recovery should throttle backend 1: b0={hits_0}, b1={hits_1}"
+        );
+
+        // Consistent hash must NOT be throttled by slow_start.
+        let hashed = Upstream::new(
+            "ss-hash",
+            &UpstreamConf {
+                addrs: addrs.clone(),
+                algo: Some("hash:ip".to_string()),
+                slow_start: Some(Duration::from_secs(30)),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let first = hashed
+            .select_tcp_peer(Some("192.0.2.42"), &[], false)
+            .unwrap();
+        hashed
+            .slow_start
+            .as_ref()
+            .unwrap()
+            .note_recovered(&first.addr);
+        for _ in 0..10 {
+            let next = hashed
+                .select_tcp_peer(Some("192.0.2.42"), &[], false)
+                .unwrap();
+            assert_eq!(first.addr_str, next.addr_str);
         }
     }
 }

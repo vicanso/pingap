@@ -544,6 +544,10 @@ pub struct Location {
     /// Maximum window for retries
     pub max_retry_window: Option<Duration>,
 
+    /// Deduplicated upstream HTTP status codes (400..=599) eligible for retry
+    /// on idempotent requests before response headers are sent downstream.
+    retry_status_codes: Box<[u16]>,
+
     /// What the requests of this location wait for the upstream, where it
     /// is not what the upstream says for everyone: see
     /// [`Location::apply_timeouts`].
@@ -571,6 +575,38 @@ fn format_headers(
     } else {
         Ok(None)
     }
+}
+
+/// Parses a comma-separated list of HTTP error status codes (`400..=599`) into
+/// a deduplicated slice preserving first-seen order.
+fn parse_retry_status_codes(value: Option<&str>) -> Result<Box<[u16]>> {
+    let Some(raw) = value else {
+        return Ok(Box::new([]));
+    };
+    let mut codes = Vec::new();
+    for token in raw.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+        let code = token
+            .parse::<u16>()
+            .ok()
+            .filter(|&c| {
+                (400..=599).contains(&c)
+                    && http::StatusCode::from_u16(c).is_ok()
+            })
+            .ok_or_else(|| Error::Invalid {
+                message: format!(
+                    "retry_status_codes {token:?} is invalid, expected HTTP status codes in 400..=599"
+                ),
+            })?;
+        if !codes.contains(&code) {
+            codes.push(code);
+        }
+    }
+    if codes.is_empty() {
+        return Err(Error::Invalid {
+            message: "retry_status_codes must not be empty".to_string(),
+        });
+    }
+    Ok(codes.into_boxed_slice())
 }
 
 /// Get the content length from http request header.
@@ -671,6 +707,9 @@ impl Location {
             }
         }
 
+        let retry_status_codes =
+            parse_retry_status_codes(conf.retry_status_codes.as_deref())?;
+
         let location = Location {
             name: name.into(),
             key,
@@ -710,6 +749,7 @@ impl Location {
             //     .unwrap_or_default(),
             max_retries: conf.max_retries,
             max_retry_window: conf.max_retry_window,
+            retry_status_codes,
             connection_timeout: conf.connection_timeout,
             read_timeout: conf.read_timeout,
             write_timeout: conf.write_timeout,
@@ -772,6 +812,20 @@ impl Location {
     #[inline]
     pub fn support_grpc_web(&self) -> bool {
         self.grpc_web
+    }
+
+    /// Returns the deduplicated HTTP status codes (`400..=599`) configured for
+    /// retrying idempotent requests on this location.
+    #[inline]
+    pub fn retry_status_codes(&self) -> &[u16] {
+        &self.retry_status_codes
+    }
+
+    /// Returns whether an upstream response status code is eligible for retry
+    /// on this location.
+    #[inline]
+    pub fn should_retry_status(&self, status: u16) -> bool {
+        self.retry_status_codes.contains(&status)
     }
 
     /// Validates that the request's Content-Length header does not exceed the configured maximum
@@ -915,6 +969,9 @@ impl LocationInstance for Location {
     }
     fn fallback_upstream(&self) -> &str {
         &self.fallback_upstream
+    }
+    fn should_retry_status(&self, status: u16) -> bool {
+        Location::should_retry_status(self, status)
     }
     fn on_response(&self) {
         self.counters.processing.fetch_sub(1, Ordering::Relaxed);
@@ -2033,5 +2090,43 @@ mod tests {
         let stats = lo.stats();
         assert_eq!(2, stats.accepted);
         assert_eq!(1, stats.processing);
+    }
+
+    #[test]
+    fn test_retry_status_codes() {
+        let default_lo = Location::new("lo", &LocationConf::default()).unwrap();
+        assert!(default_lo.retry_status_codes().is_empty());
+        assert!(!default_lo.should_retry_status(502));
+
+        let configured = Location::new(
+            "lo",
+            &LocationConf {
+                retry_status_codes: Some(
+                    " 502 , 503, 502, 504 , 429 ".to_string(),
+                ),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(&[502, 503, 504, 429], configured.retry_status_codes());
+        assert!(configured.should_retry_status(502));
+        assert!(configured.should_retry_status(503));
+        assert!(configured.should_retry_status(504));
+        assert!(configured.should_retry_status(429));
+        assert!(!configured.should_retry_status(500));
+        assert!(!configured.should_retry_status(200));
+
+        for bad in ["", " , ", "200", "399", "600", "502,abc"] {
+            let err = Location::new(
+                "lo",
+                &LocationConf {
+                    retry_status_codes: Some(bad.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("retry_status_codes"), "{bad:?}: {err}");
+        }
     }
 }

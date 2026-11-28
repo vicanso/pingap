@@ -510,6 +510,7 @@ impl CertificateConf {
                 "acme_key_type({key_type}) should be ecdsa or rsa"
             ));
         }
+
         Ok(())
     }
 }
@@ -605,6 +606,13 @@ pub struct UpstreamConf {
     /// healthy (by the health check, or held back by the circuit
     /// breaker), instead of answering 503.
     pub fail_open: Option<bool>,
+
+    /// Linearly ramp a backend's weight from 10% to 100% over this duration
+    /// after it recovers from a health-check failure or open circuit breaker,
+    /// or is newly discovered after startup. Default `none` (full weight).
+    #[serde(default)]
+    #[serde(with = "pingap_util::duration_serde")]
+    pub slow_start: Option<Duration>,
 
     /// Server Name Indication for TLS connections
     pub sni: Option<String>,
@@ -860,6 +868,12 @@ impl Validate for UpstreamConf {
             return Err(Error::Invalid {
                 message: "circuit break max failure percent should be 0 to 100"
                     .to_string(),
+            });
+        }
+
+        if self.slow_start.is_some_and(|d| d.is_zero()) {
+            return Err(Error::Invalid {
+                message: "slow_start must be greater than zero".to_string(),
             });
         }
 
@@ -1205,6 +1219,7 @@ impl UpstreamConf {
                 });
             }
         }
+
         Ok(())
     }
 }
@@ -1212,6 +1227,7 @@ impl UpstreamConf {
 impl Validate for LocationConf {
     fn validate(&self) -> Result<()> {
         self.validate_with_upstream(None)?;
+
         Ok(())
     }
 }
@@ -1284,6 +1300,10 @@ pub struct LocationConf {
     #[serde(default)]
     #[serde(with = "pingap_util::duration_serde")]
     pub max_retry_window: Option<Duration>,
+
+    /// Comma-separated upstream HTTP status codes (400..=599) on which an
+    /// idempotent request is retried before response headers are sent downstream.
+    pub retry_status_codes: Option<String>,
 
     /// Timeout for establishing a connection to the upstream, for the
     /// requests of this location, in place of the upstream's own.
@@ -1405,6 +1425,35 @@ impl LocationConf {
                 Regex::new(arr[0]).map_err(|e| Error::Regex { source: e })?;
         }
 
+        self.validate_retry_status_codes()?;
+
+        Ok(())
+    }
+
+    fn validate_retry_status_codes(&self) -> Result<()> {
+        let Some(codes) = self.retry_status_codes.as_deref() else {
+            return Ok(());
+        };
+        let mut count = 0usize;
+        for token in codes.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            count += 1;
+            let valid = token
+                .parse::<u16>()
+                .ok()
+                .is_some_and(|code| (400..=599).contains(&code));
+            if !valid {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "retry_status_codes {token:?} is invalid, expected HTTP status codes in 400..=599"
+                    ),
+                });
+            }
+        }
+        if count == 0 {
+            return Err(Error::Invalid {
+                message: "retry_status_codes must not be empty".to_string(),
+            });
+        }
         Ok(())
     }
 
@@ -1644,6 +1693,7 @@ fn validate_access_log(access_log: &str) -> Result<()> {
 impl Validate for ServerConf {
     fn validate(&self) -> Result<()> {
         self.validate_with_locations(&[])?;
+
         Ok(())
     }
 }
@@ -1799,6 +1849,7 @@ impl ServerConf {
                 });
             }
         }
+
         Ok(())
     }
 }
@@ -2316,6 +2367,7 @@ impl Validate for BasicConf {
         {
             pingap_core::parse_ntfy_url(webhook).map_err(invalid)?;
         }
+
         Ok(())
     }
 }
@@ -4380,6 +4432,57 @@ write_timeout = "1m"
                     .to_string()
             );
         }
+
+        // retry_status_codes: defaults to None, accepts 400..=599, rejects invalid/empty.
+        assert_eq!(None, LocationConf::default().retry_status_codes);
+        for ok_codes in ["502,503,504,429", " 400 , 599 ", "502, , 503"] {
+            let loc: LocationConf = toml::from_str(&format!(
+                "upstream = \"upstream1\"\nretry_status_codes = \"{ok_codes}\"\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                true,
+                loc.validate_with_upstream(Some(&upstream_names)).is_ok(),
+                "{ok_codes}"
+            );
+        }
+        for bad_codes in ["", "   ", ",,,", "200", "399", "600", "502,abc"] {
+            let loc: LocationConf = toml::from_str(&format!(
+                "upstream = \"upstream1\"\nretry_status_codes = \"{bad_codes}\"\n"
+            ))
+            .unwrap();
+            let err = loc
+                .validate_with_upstream(Some(&upstream_names))
+                .expect_err(bad_codes)
+                .to_string();
+            assert!(err.contains("retry_status_codes"), "{bad_codes}: {err}");
+        }
+    }
+
+    #[test]
+    fn test_upstream_slow_start_conf() {
+        assert_eq!(None, UpstreamConf::default().slow_start);
+
+        let conf: UpstreamConf = toml::from_str(
+            "addrs = [\"127.0.0.1:8080\"]\nslow_start = \"30s\"\n",
+        )
+        .unwrap();
+        assert_eq!(Some(Duration::from_secs(30)), conf.slow_start);
+        assert_eq!(true, conf.validate().is_ok());
+
+        let saved = toml::to_string(&conf).unwrap();
+        let restored: UpstreamConf = toml::from_str(&saved).unwrap();
+        assert_eq!(Some(Duration::from_secs(30)), restored.slow_start);
+
+        let zero = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            slow_start: Some(Duration::ZERO),
+            ..Default::default()
+        };
+        assert_eq!(
+            "Invalid error slow_start must be greater than zero",
+            zero.validate().expect_err("").to_string()
+        );
     }
 
     #[test]

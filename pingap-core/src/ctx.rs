@@ -577,6 +577,11 @@ pub trait LocationInstance: Send + Sync {
         _options: &mut pingora::upstreams::peer::PeerOptions,
     ) {
     }
+    /// Returns whether an upstream response HTTP status code is eligible for
+    /// retrying on this location (`retry_status_codes`).
+    fn should_retry_status(&self, _status: u16) -> bool {
+        false
+    }
 }
 
 /// Returns a shared empty `Arc<str>` cached per thread so [`UpstreamInfo::default`]
@@ -640,6 +645,9 @@ pub struct UpstreamInfo {
     /// to be set on the response when the client does not have it yet,
     /// or has it for another backend.
     pub sticky_cookie: Option<String>,
+    /// Whether an upstream HTTP response status triggered a retry under
+    /// `retry_status_codes`.
+    pub status_retried: bool,
 }
 
 impl Default for UpstreamInfo {
@@ -664,6 +672,7 @@ impl Default for UpstreamInfo {
             failed_addresses: Vec::new(),
             backend_inflight: None,
             sticky_cookie: None,
+            status_retried: false,
         }
     }
 }
@@ -744,6 +753,9 @@ pub struct RequestState {
     /// The budget to report to the client, from the limit that has the
     /// least left of those that were asked to report theirs.
     pub rate_limit: Option<RateLimitQuota>,
+    /// Whether the request is currently retrying after an upstream response
+    /// status listed in `retry_status_codes`.
+    pub retrying_status: bool,
 }
 
 /// Components of the cache key that stand for something this request
@@ -802,6 +814,124 @@ impl CacheQueryRule {
     }
 }
 
+/// Bitflags controlling when stale cached responses may be served (Nginx
+/// `proxy_cache_use_stale` semantics).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CacheUseStale(u16);
+
+impl CacheUseStale {
+    /// Serve stale response on upstream connection or read/write errors.
+    pub const ERROR: Self = Self(1 << 0);
+    /// Serve stale response when the upstream request times out.
+    pub const TIMEOUT: Self = Self(1 << 1);
+    /// Serve stale response while another request is revalidating the entry.
+    pub const UPDATING: Self = Self(1 << 2);
+    /// Serve stale response when the upstream answers `403 Forbidden`.
+    pub const HTTP_403: Self = Self(1 << 3);
+    /// Serve stale response when the upstream answers `404 Not Found`.
+    pub const HTTP_404: Self = Self(1 << 4);
+    /// Serve stale response when the upstream answers `429 Too Many Requests`.
+    pub const HTTP_429: Self = Self(1 << 5);
+    /// Serve stale response when the upstream answers `500 Internal Server Error`.
+    pub const HTTP_500: Self = Self(1 << 6);
+    /// Serve stale response when the upstream answers `502 Bad Gateway`.
+    pub const HTTP_502: Self = Self(1 << 7);
+    /// Serve stale response when the upstream answers `503 Service Unavailable`.
+    pub const HTTP_503: Self = Self(1 << 8);
+    /// Serve stale response when the upstream answers `504 Gateway Timeout`.
+    pub const HTTP_504: Self = Self(1 << 9);
+
+    fn parse_single_token(token: &str) -> Result<Self, String> {
+        match token.to_ascii_lowercase().as_str() {
+            "error" => Ok(Self::ERROR),
+            "timeout" => Ok(Self::TIMEOUT),
+            "updating" => Ok(Self::UPDATING),
+            "http_403" | "403" => Ok(Self::HTTP_403),
+            "http_404" | "404" => Ok(Self::HTTP_404),
+            "http_429" | "429" => Ok(Self::HTTP_429),
+            "http_500" | "500" => Ok(Self::HTTP_500),
+            "http_502" | "502" => Ok(Self::HTTP_502),
+            "http_503" | "503" => Ok(Self::HTTP_503),
+            "http_504" | "504" => Ok(Self::HTTP_504),
+            _ => Err(format!("invalid use_stale option: {token:?}")),
+        }
+    }
+
+    /// Parses comma- or whitespace-separated `use_stale` tokens
+    /// (case-insensitive), returning `Ok(None)` when no tokens are present.
+    pub fn parse_tokens<'a, I>(tokens: I) -> Result<Option<Self>, String>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut flags = Self(0);
+        for item in tokens {
+            for token in item
+                .split(|c: char| c == ',' || c.is_ascii_whitespace())
+                .filter(|t| !t.is_empty())
+            {
+                flags.0 |= Self::parse_single_token(token)?.0;
+            }
+        }
+        Ok((flags.0 != 0).then_some(flags))
+    }
+
+    /// Whether stale responses may be served while updating.
+    #[inline]
+    pub const fn allows_updating(self) -> bool {
+        (self.0 & Self::UPDATING.0) != 0
+    }
+
+    /// Whether stale responses may be served on upstream errors.
+    #[inline]
+    pub const fn allows_error(self) -> bool {
+        (self.0 & Self::ERROR.0) != 0
+    }
+
+    /// Whether stale responses may be served on upstream timeouts.
+    #[inline]
+    pub const fn allows_timeout(self) -> bool {
+        (self.0 & Self::TIMEOUT.0) != 0
+    }
+
+    /// Whether stale responses may be served for upstream HTTP `status`.
+    #[inline]
+    pub const fn allows_status(self, status: u16) -> bool {
+        let flag = match status {
+            403 => Self::HTTP_403.0,
+            404 => Self::HTTP_404.0,
+            429 => Self::HTTP_429.0,
+            500 => Self::HTTP_500.0,
+            502 => Self::HTTP_502.0,
+            503 => Self::HTTP_503.0,
+            504 => Self::HTTP_504.0,
+            _ => return false,
+        };
+        (self.0 & flag) != 0
+    }
+
+    /// Returns whether all flags in `other` are enabled in `self`.
+    #[inline]
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+}
+
+impl std::ops::BitOr for CacheUseStale {
+    type Output = Self;
+
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for CacheUseStale {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
 /// All cache-related configuration and statistics for a request.
 #[derive(Default)]
 pub struct CacheInfo {
@@ -843,6 +973,16 @@ pub struct CacheInfo {
     /// (`Cache-Control: no-cache`), and the plugin lets clients do that:
     /// what is cached is revalidated before it is served.
     pub revalidate: bool,
+    /// Maximum duration past expiry a stale response may be served on upstream
+    /// error (`stale_if_error`).
+    pub stale_if_error: Option<Duration>,
+    /// Maximum duration past expiry a stale response may be served while
+    /// revalidating in the background (`stale_while_revalidate`).
+    pub stale_while_revalidate: Option<Duration>,
+    /// Conditions under which stale cached responses may be served.
+    pub use_stale: Option<CacheUseStale>,
+    /// Whether the request has not reached `min_uses` yet, blocking storage.
+    pub min_uses_blocked: bool,
     /// The number of cache read operations performed.
     pub reading_count: Option<u32>,
     /// The number of cache write operations performed.
@@ -2209,7 +2349,7 @@ impl Ctx {
 /// client sent, and written as it came `a.com/static` followed by the path
 /// `/app.js` made the key of `a.com` and `/static/app.js`: one request
 /// could store its response under the key of another url.
-fn push_key_host(key: &mut String, host: &str) {
+pub fn push_cache_key_host(key: &mut String, host: &str) {
     for byte in host.bytes() {
         match byte {
             b'a'..=b'z'
@@ -2303,7 +2443,7 @@ pub fn get_cache_key(
     // Then "METHOD:host/path?query".
     key_buf.push_str(method);
     key_buf.push(':');
-    push_key_host(&mut key_buf, host);
+    push_cache_key_host(&mut key_buf, host);
     key_buf.push_str(path);
     if let Some(query) = query {
         key_buf.push('?');
@@ -3391,5 +3531,65 @@ mod tests {
         ctx.append_log_value(&mut buf, "service_time");
         assert_eq!(b"42", buf.as_ref());
         assert!(ctx.generate_server_timing().contains("total;dur=42"));
+    }
+
+    #[test]
+    fn test_cache_use_stale_parse_and_checks() {
+        assert_eq!(Ok(None), CacheUseStale::parse_tokens(std::iter::empty()));
+        assert_eq!(Ok(None), CacheUseStale::parse_tokens(["", " , \t "]));
+
+        let parsed = CacheUseStale::parse_tokens([
+            "Error",
+            "TIMEOUT",
+            "updating, 403 http_404",
+            "429",
+            "HTTP_500",
+            "502",
+            "http_503",
+            "504",
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert!(parsed.allows_error());
+        assert!(parsed.allows_timeout());
+        assert!(parsed.allows_updating());
+        for code in [403, 404, 429, 500, 502, 503, 504] {
+            assert!(parsed.allows_status(code), "status {code} should match");
+        }
+        for code in [200, 301, 400, 401, 501, 505] {
+            assert!(
+                !parsed.allows_status(code),
+                "status {code} should not match"
+            );
+        }
+
+        let subset = CacheUseStale::parse_tokens(["error", "http_502"])
+            .unwrap()
+            .unwrap();
+        assert!(subset.allows_error());
+        assert!(!subset.allows_timeout());
+        assert!(!subset.allows_updating());
+        assert!(subset.allows_status(502));
+        assert!(!subset.allows_status(503));
+        assert!(
+            subset.contains(CacheUseStale::ERROR | CacheUseStale::HTTP_502)
+        );
+
+        for bad in ["off", "http_400", "505", "error unknown"] {
+            assert!(
+                CacheUseStale::parse_tokens([bad]).is_err(),
+                "{bad} must fail"
+            );
+        }
+
+        let ctx = Ctx::default();
+        assert!(!ctx.state.retrying_status);
+        assert!(!ctx.upstream.status_retried);
+        let cache = CacheInfo::default();
+        assert_eq!(None, cache.stale_if_error);
+        assert_eq!(None, cache.stale_while_revalidate);
+        assert_eq!(None, cache.use_stale);
+        assert!(!cache.min_uses_blocked);
     }
 }

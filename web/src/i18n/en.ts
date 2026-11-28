@@ -791,6 +791,10 @@ export default {
     maxRetriesPlaceholder: "Input the max retries to upstream",
     maxRetryWindow: "Max Retry Window",
     maxRetryWindowPlaceholder: "Input the max retry window to upstream",
+    retryStatusCodes: "Retry Status Codes",
+    retryStatusCodesPlaceholder: "Input status codes to retry(e.g. 502,503,504)",
+    retryStatusCodesTips:
+      "Comma-separated 4xx/5xx upstream status codes (e.g. 502,503,504,429) that trigger a retry on idempotent requests before response headers are sent downstream. Uses max_retries (defaults to 1 when unset) and max_retry_window; never falls back to fallback_upstream.",
     connectionTimeout: "Connection Timeout",
     connectionTimeoutPlaceholder: "Time to connect to the upstream, e.g. 3s",
     readTimeout: "Read Timeout",
@@ -854,6 +858,10 @@ export default {
     failOpen: "Fail Open",
     failOpenTips:
       "When no backend is healthy (by the health check, or held back by the circuit breaker), send the request to one of them all the same instead of answering 503.",
+    slowStart: "Slow Start",
+    slowStartPlaceholder: "Warm-up duration for recovered backends(e.g. 30s)",
+    slowStartTips:
+      "Linearly ramps a backend's weight from 10% to 100% over this duration after health check recovery, circuit breaker recovery, or post-startup discovery (round_robin, least_conn, and new sticky sessions). Startup backends start warm.",
     healthCheck: "Health Check",
     healthCheckPlaceholder:
       "Input upstream health check url, supports http(s), tcp, grpc and ws(s)",
@@ -1170,6 +1178,14 @@ export default {
     cacheLockRetries: "Lock Retries",
     cacheLockRetriesPlaceholder:
       "How many times a request that waited on the lock re-checks the cache before fetching itself (default 2)",
+    cacheLockAge: "Lock Age",
+    cacheLockAgePlaceholder: "Lock expiration duration(e.g. 5s)",
+    cacheLockAgeTips:
+      "Maximum lifetime of a cache lock before another request can take over (overrides Lock as the lock duration; must be greater than 0s).",
+    cacheLockTimeout: "Lock Wait Timeout",
+    cacheLockTimeoutPlaceholder: "Max time waiting on cache lock(e.g. 2s)",
+    cacheLockTimeoutTips:
+      "Maximum time a waiting request waits for the lock holder before failing or timing out (must be greater than 0s).",
     cacheMaxFileSize: "Max File Size",
     cacheMaxFileSizePlaceholder:
       "Input the cache max file size of http response(e.g. 1mb)",
@@ -1199,6 +1215,23 @@ export default {
     cacheClusterPurge: "Cluster PURGE Sync",
     cacheClusterPurgeTips:
       "When running against an etcd config store, broadcast successful PURGE operations to peer instances (enabled by default).",
+    cacheMinUses: "Min Uses",
+    cacheMinUsesPlaceholder: "Requests before caching(1-1000)",
+    cacheMinUsesTips:
+      "Minimum number of requests for a URI before its response is stored in cache (1 to 1000), protecting against one-hit cache pollution.",
+    cacheStaleIfError: "Stale If Error",
+    cacheStaleIfErrorPlaceholder: "Fallback stale window on error(e.g. 1m)",
+    cacheStaleIfErrorTips:
+      "Serve stale cached content for up to this duration when upstream errors occur (used alongside or when origin omits stale-if-error).",
+    cacheStaleWhileRevalidate: "Stale While Revalidate",
+    cacheStaleWhileRevalidatePlaceholder: "Background refresh window(e.g. 30s)",
+    cacheStaleWhileRevalidateTips:
+      "Serve stale cached content for up to this duration while refreshing in the background (requires non-zero Lock).",
+    cacheUseStale: "Use Stale On",
+    cacheUseStalePlaceholder:
+      "e.g. error, timeout, updating, http_502, http_503, http_504",
+    cacheUseStaleTips:
+      "Conditions under which stale cached responses may be served: error, timeout, updating, http_403, http_404, http_429, http_500, http_502, http_503, http_504 (or bare status codes like 502).",
     cacheStatusTtl: "TTL By Status",
     cacheStatusTtlPlaceholder: "Status, e.g. 404 : TTL, e.g. 10s",
     cacheStatusTtlTips:

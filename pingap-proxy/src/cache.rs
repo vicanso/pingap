@@ -17,7 +17,7 @@
 //! These are free functions (they never touched `Server`'s state).
 
 use http::StatusCode;
-use pingap_core::Ctx;
+use pingap_core::{CacheUseStale, Ctx};
 use pingora::cache::cache_control::{
     CacheControl, DirectiveKey, DirectiveValue, InterpretCacheControl,
 };
@@ -31,6 +31,66 @@ use std::time::{Duration, SystemTime};
 
 #[cfg(feature = "tracing")]
 use crate::tracing::update_otel_cache_attrs;
+
+/// How long a response that names no lifetime of its own stays fresh: one
+/// second, and only for the statuses RFC 9110 section 15.1 lists as
+/// heuristically cacheable. Anything else - a 5xx, a 302, a 401 - is only
+/// stored when the origin asks for it, so one client's error is not
+/// replayed to the next.
+pub(crate) fn default_fresh_duration(status: StatusCode) -> Option<Duration> {
+    match status.as_u16() {
+        200 | 203 | 204 | 206 | 300 | 301 | 308 | 404 | 405 | 410 | 414
+        | 501 => Some(Duration::from_secs(1)),
+        _ => None,
+    }
+}
+
+/// Builds `CacheMetaDefaults` using `default_fresh_duration` and optional
+/// fallback `stale-while-revalidate` / `stale-if-error` durations (matching
+/// Pingora's defaults of `0` and `1` second when unset).
+pub(crate) fn meta_defaults(
+    stale_while_revalidate: Option<Duration>,
+    stale_if_error: Option<Duration>,
+) -> CacheMetaDefaults {
+    let stale_while_revalidate_sec = stale_while_revalidate
+        .map_or(0, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+    let stale_if_error_sec = stale_if_error
+        .map_or(1, |d| u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+    CacheMetaDefaults::new(
+        default_fresh_duration,
+        stale_while_revalidate_sec,
+        stale_if_error_sec,
+    )
+}
+
+/// Returns whether a stale cached response may be served for `error` (or
+/// while updating in the background when `error` is `None`) under `use_stale`.
+pub(crate) fn error_matches_use_stale(
+    use_stale: Option<CacheUseStale>,
+    error: Option<&pingora::Error>,
+    is_h2_writer: bool,
+) -> bool {
+    match error {
+        None => !is_h2_writer && use_stale.is_none_or(|u| u.allows_updating()),
+        Some(err) => {
+            if err.esource() != &pingora::ErrorSource::Upstream {
+                return false;
+            }
+            let Some(mask) = use_stale else {
+                return true;
+            };
+            match err.etype() {
+                pingora::ErrorType::HTTPStatus(code) => {
+                    mask.allows_status(*code)
+                },
+                pingora::ErrorType::ConnectTimedout
+                | pingora::ErrorType::ReadTimedout
+                | pingora::ErrorType::WriteTimedout => mask.allows_timeout(),
+                _ => mask.allows_error(),
+            }
+        },
+    }
+}
 
 /// Applies the cache-control policy to `c`, capping the freshness at `max_ttl`
 /// and rejecting responses that must not be cached.
@@ -435,5 +495,167 @@ mod tests {
         let default = stored_for(&[], Some(hour)).unwrap();
         assert_eq!(true, default <= Duration::from_secs(1), "{default:?}");
         assert_eq!(true, stored_for(&[], None).is_some());
+    }
+
+    #[test]
+    fn test_meta_defaults() {
+        use super::meta_defaults;
+
+        let defaults = meta_defaults(None, None);
+        assert_eq!(0, defaults.serve_stale_while_revalidate_sec());
+        assert_eq!(1, defaults.serve_stale_if_error_sec());
+        assert_eq!(
+            Some(Duration::from_secs(1)),
+            defaults.fresh_sec(http::StatusCode::OK)
+        );
+        assert_eq!(
+            None,
+            defaults.fresh_sec(http::StatusCode::INTERNAL_SERVER_ERROR)
+        );
+
+        let configured = meta_defaults(
+            Some(Duration::from_secs(30)),
+            Some(Duration::from_secs(120)),
+        );
+        assert_eq!(30, configured.serve_stale_while_revalidate_sec());
+        assert_eq!(120, configured.serve_stale_if_error_sec());
+
+        let zeroed = meta_defaults(Some(Duration::ZERO), Some(Duration::ZERO));
+        assert_eq!(0, zeroed.serve_stale_while_revalidate_sec());
+        assert_eq!(0, zeroed.serve_stale_if_error_sec());
+
+        let saturated = meta_defaults(
+            Some(Duration::from_secs(u64::MAX)),
+            Some(Duration::from_secs(u64::MAX)),
+        );
+        assert_eq!(u32::MAX, saturated.serve_stale_while_revalidate_sec());
+        assert_eq!(u32::MAX, saturated.serve_stale_if_error_sec());
+
+        let resp = ResponseHeader::build_no_case(200, None).unwrap();
+        let RespCacheable::Cacheable(meta) =
+            resp_cacheable(None, resp, false, &configured)
+        else {
+            panic!("200 without Cache-Control should be cacheable");
+        };
+        assert_eq!(30, meta.stale_while_revalidate_sec());
+        assert_eq!(120, meta.stale_if_error_sec());
+
+        let mut explicit_resp =
+            ResponseHeader::build_no_case(200, None).unwrap();
+        explicit_resp
+            .append_header(
+                "Cache-Control",
+                "max-age=60, stale-while-revalidate=5, stale-if-error=10",
+            )
+            .unwrap();
+        let cc = CacheControl::from_resp_headers(&explicit_resp);
+        let RespCacheable::Cacheable(explicit_meta) =
+            resp_cacheable(cc.as_ref(), explicit_resp, false, &configured)
+        else {
+            panic!("explicit Cache-Control should be cacheable");
+        };
+        assert_eq!(5, explicit_meta.stale_while_revalidate_sec());
+        assert_eq!(10, explicit_meta.stale_if_error_sec());
+    }
+
+    #[test]
+    fn test_error_matches_use_stale() {
+        use super::error_matches_use_stale;
+        use pingap_core::CacheUseStale;
+        use pingora::{Error, ErrorSource, ErrorType};
+
+        let upstream_status = |code: u16| {
+            Error::create(
+                ErrorType::HTTPStatus(code),
+                ErrorSource::Upstream,
+                None,
+                None,
+            )
+        };
+
+        // Updating (`error == None`): unset allows non-h2-writer; configured requires `updating`.
+        assert!(error_matches_use_stale(None, None, false));
+        assert!(!error_matches_use_stale(None, None, true));
+        assert!(error_matches_use_stale(
+            Some(CacheUseStale::UPDATING),
+            None,
+            false
+        ));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::UPDATING),
+            None,
+            true
+        ));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::ERROR | CacheUseStale::HTTP_503),
+            None,
+            false
+        ));
+
+        // Downstream/internal errors never serve stale.
+        let down_err = Error::new_down(ErrorType::ConnectionClosed);
+        assert!(!error_matches_use_stale(None, Some(&down_err), false));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::ERROR),
+            Some(&down_err),
+            false
+        ));
+
+        // Unset `use_stale`: any upstream error serves stale (backward compat).
+        let connect_err = Error::new_up(ErrorType::ConnectRefused);
+        let read_to = Error::new_up(ErrorType::ReadTimedout);
+        let s503 = upstream_status(503);
+        let s429 = upstream_status(429);
+        assert!(error_matches_use_stale(None, Some(&connect_err), false));
+        assert!(error_matches_use_stale(None, Some(&read_to), false));
+        assert!(error_matches_use_stale(None, Some(&s503), false));
+
+        // Configured `use_stale`: matches each category strictly.
+        let mask = CacheUseStale::ERROR
+            | CacheUseStale::TIMEOUT
+            | CacheUseStale::HTTP_503
+            | CacheUseStale::HTTP_429;
+        assert!(error_matches_use_stale(
+            Some(mask),
+            Some(&connect_err),
+            false
+        ));
+        assert!(error_matches_use_stale(
+            Some(CacheUseStale::TIMEOUT),
+            Some(&Error::new_up(ErrorType::ConnectTimedout)),
+            false
+        ));
+        assert!(error_matches_use_stale(
+            Some(CacheUseStale::TIMEOUT),
+            Some(&Error::new_up(ErrorType::ReadTimedout)),
+            false
+        ));
+        assert!(error_matches_use_stale(
+            Some(CacheUseStale::TIMEOUT),
+            Some(&Error::new_up(ErrorType::WriteTimedout)),
+            false
+        ));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::ERROR),
+            Some(&read_to),
+            false
+        ));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::TIMEOUT),
+            Some(&connect_err),
+            false
+        ));
+        assert!(error_matches_use_stale(Some(mask), Some(&s503), false));
+        assert!(error_matches_use_stale(Some(mask), Some(&s429), false));
+        assert!(!error_matches_use_stale(
+            Some(mask),
+            Some(&upstream_status(502)),
+            false
+        ));
+        assert!(!error_matches_use_stale(
+            Some(CacheUseStale::ERROR | CacheUseStale::TIMEOUT),
+            Some(&s503),
+            false
+        ));
     }
 }

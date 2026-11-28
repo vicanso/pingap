@@ -25,7 +25,7 @@
 # logs of the processes it ran.
 set -u
 
-CASES="samples proxy compression reload webhook abnormal_exit foreground proxy_protocol stream daemon restart restart_guard upgrade systemd"
+CASES="samples proxy compression retry_cache reload webhook abnormal_exit foreground proxy_protocol stream daemon restart restart_guard upgrade systemd"
 
 BIN_ARG=${1:-target/release/pingap}
 if [ ! -x "$BIN_ARG" ]; then
@@ -395,6 +395,326 @@ CONF
   expect "/upmode/empty.txt is sent without a Content-Encoding" 0 \
     "$(curl -s -m 8 -H 'Accept-Encoding: br' -D - -o /dev/null \
       "http://127.0.0.1:$proxy/upmode/empty.txt" | grep -ci '^content-encoding:')"
+}
+
+# ---------------------------------------------------------------------------
+# retry_cache: status-code retries without fallback spillover, use_stale on
+# error/503/429 with stale_if_error, min_uses threshold, and prefix / tag PURGE.
+case_retry_cache() {
+  local proxy=$((PORT_BASE + 170)) up1=$((PORT_BASE + 171)) up2=$((PORT_BASE + 172))
+  local fb=$((PORT_BASE + 173)) origin=$((PORT_BASE + 174)) err_origin=$((PORT_BASE + 175))
+  local err_pid i status_code cache_status body_out purged_count total_post
+
+  cat >"$DIR/rc_origin.py" <<'PY'
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(sys.argv[1])
+LOG = sys.argv[2]
+MODE = sys.argv[3]
+
+LOCK = threading.Lock()
+STATUS = 200
+COUNTS = {}
+
+
+def log_req(method, path, code):
+    with LOCK:
+        with open(LOG, "a") as f:
+            f.write(f"{method} {path} {code}\n")
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format, *args):
+        pass
+
+    def _send(self, code, body, extra_headers=None):
+        data = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(data)))
+        if extra_headers:
+            for k, v in extra_headers:
+                self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _drain_body(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length > 0:
+            self.rfile.read(length)
+
+    def do_GET(self):
+        self._handle("GET")
+
+    def do_POST(self):
+        global STATUS
+        self._drain_body()
+        if MODE == "cache" and self.path.startswith("/__mode/"):
+            with LOCK:
+                STATUS = int(self.path.split("/__mode/", 1)[1])
+            self._send(200, f"mode={STATUS}\n")
+            return
+        self._handle("POST")
+
+    def _handle(self, method):
+        if MODE == "fail_503":
+            log_req(method, self.path, 503)
+            self._send(503, "fail-503\n")
+            return
+        if MODE == "retry_ok":
+            if self.path.startswith("/retry/"):
+                log_req(method, self.path, 200)
+                self._send(200, "from-ok\n")
+            else:
+                log_req(method, self.path, 503)
+                self._send(503, "up2-503\n")
+            return
+        if MODE == "fallback":
+            log_req(method, self.path, 200)
+            self._send(200, "from-fallback\n")
+            return
+        if MODE == "cache_err":
+            log_req(method, self.path, 200)
+            self._send(200, "err-cached\n")
+            return
+
+        with LOCK:
+            code = STATUS
+            n = COUNTS.get(self.path, 0) + 1
+            COUNTS[self.path] = n
+        log_req(method, self.path, code)
+        if code == 200:
+            headers = []
+            if self.path in ("/items/1", "/other/1"):
+                headers.append(("Cache-Tag", "group-a, all"))
+            elif self.path == "/items/2":
+                headers.append(("Cache-Tag", "group-b"))
+            elif self.path == "/other/2":
+                headers.append(("Cache-Tag", "group-c"))
+            self._send(200, f"origin:{self.path}:n={n}\n", headers)
+        else:
+            self._send(code, f"err:{code}\n")
+
+
+class ReuseServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+ReuseServer(("127.0.0.1", PORT), Handler).serve_forever()
+PY
+
+  run_bg "$DIR/up1.out" python3 "$DIR/rc_origin.py" $up1 "$DIR/up1.log" fail_503
+  run_bg "$DIR/up2.out" python3 "$DIR/rc_origin.py" $up2 "$DIR/up2.log" retry_ok
+  run_bg "$DIR/fb.out" python3 "$DIR/rc_origin.py" $fb "$DIR/fb.log" fallback
+  run_bg "$DIR/origin.out" python3 "$DIR/rc_origin.py" $origin "$DIR/origin.log" cache
+  run_bg "$DIR/err_origin.out" python3 "$DIR/rc_origin.py" $err_origin "$DIR/err_origin.log" cache_err
+  err_pid=$LAST_PID
+
+  wait_port $up1 || fail "up1 listens on $up1"
+  wait_port $up2 || fail "up2 listens on $up2"
+  wait_port $fb || fail "fb listens on $fb"
+  wait_port $origin || fail "origin listens on $origin"
+  wait_port $err_origin || fail "err_origin listens on $err_origin"
+
+  : >"$DIR/up1.log"
+  : >"$DIR/up2.log"
+  : >"$DIR/fb.log"
+  : >"$DIR/origin.log"
+  : >"$DIR/err_origin.log"
+
+  basic_conf "$DIR/c"
+  cat >"$DIR/c/upstreams.toml" <<CONF
+[upstreams.retry_pair]
+addrs = ["127.0.0.1:$up1", "127.0.0.1:$up2"]
+algo = "round_robin"
+
+[upstreams.fb_up]
+addrs = ["127.0.0.1:$fb"]
+
+[upstreams.origin_up]
+addrs = ["127.0.0.1:$origin"]
+
+[upstreams.err_up]
+addrs = ["127.0.0.1:$err_origin"]
+CONF
+  cat >"$DIR/c/locations.toml" <<CONF
+[locations.retry_loc]
+path = "/retry"
+upstream = "retry_pair"
+fallback_upstream = "fb_up"
+retry_status_codes = "502,503"
+max_retries = 1
+
+[locations.post_loc]
+path = "/post-503"
+upstream = "retry_pair"
+fallback_upstream = "fb_up"
+retry_status_codes = "502,503"
+max_retries = 1
+
+[locations.stale_loc]
+path = "/stale/"
+upstream = "origin_up"
+rewrite = "^/stale/(.*)$ /\$1"
+plugins = ["cache_stale"]
+
+[locations.stale_err_loc]
+path = "/stale-err/"
+upstream = "err_up"
+rewrite = "^/stale-err/(.*)$ /\$1"
+plugins = ["cache_stale"]
+
+[locations.min_loc]
+path = "/min/"
+upstream = "origin_up"
+rewrite = "^/min/(.*)$ /\$1"
+plugins = ["cache_min"]
+
+[locations.purge_loc]
+path = "/purge/"
+upstream = "origin_up"
+rewrite = "^/purge/(.*)$ /\$1"
+plugins = ["cache_purge"]
+CONF
+  cat >"$DIR/c/servers.toml" <<CONF
+[servers.main]
+addr = "127.0.0.1:$proxy"
+locations = ["retry_loc", "post_loc", "stale_loc", "stale_err_loc", "min_loc", "purge_loc"]
+CONF
+  cat >"$DIR/c/plugins.toml" <<CONF
+[plugins.cache_stale]
+category = "cache"
+directory = "$DIR/cache-stale"
+default_ttl = "1s"
+stale_if_error = "60s"
+use_stale = ["error", "http_503", "http_429"]
+
+[plugins.cache_min]
+category = "cache"
+directory = "$DIR/cache-min"
+default_ttl = "30s"
+min_uses = 2
+predictor = true
+
+[plugins.cache_purge]
+category = "cache"
+directory = "$DIR/cache-purge"
+default_ttl = "60s"
+purge_ip_list = ["127.0.0.1"]
+CONF
+
+  pingap "$DIR/pingap.log" -c "$DIR/c"
+  wait_port $proxy || fail "pingap listens on $proxy"
+
+  rc_get() {
+    local path=$1
+    status_code=$(curl -s -m 8 -D "$DIR/rc.h" -o "$DIR/rc.b" -w '%{http_code}' "http://127.0.0.1:$proxy$path")
+    cache_status=$(grep -i '^x-cache-status:' "$DIR/rc.h" | tr -d '\r' | awk '{print $2}')
+    body_out=$(tr -d '\r\n' <"$DIR/rc.b")
+  }
+
+  # 1. Status-code retry: GET 503 -> 200 failover across backends; exhausted retry
+  #    and POST stay 503; never spills over to fallback_upstream.
+  for i in 1 2 3 4; do
+    rc_get "/retry/ping"
+    expect "GET /retry/ping #$i returns 200 from healthy backend" "200 from-ok" "$status_code $body_out"
+  done
+  expect_match "at least one GET /retry/ping hit up1 and retried from 503" '^[1-9]' \
+    "$(grep -c 'GET /retry/ping 503' "$DIR/up1.log")"
+  expect "GET /retry/ping never spilled over to fallback_upstream" 0 \
+    "$(wc -l <"$DIR/fb.log" | tr -d ' ')"
+
+  rc_get "/retry-exhausted"
+  expect "exhausted status retry returns 503 instead of fallback" 503 "$status_code"
+  expect "exhausted status retry still never uses fallback_upstream" 0 \
+    "$(wc -l <"$DIR/fb.log" | tr -d ' ')"
+
+  status_code=$(curl -s -m 8 -o /dev/null -w '%{http_code}' -X POST -d 'hello' "http://127.0.0.1:$proxy/post-503")
+  expect "POST is non-idempotent and stays 503" 503 "$status_code"
+  total_post=$(($(grep -c 'POST /post-503' "$DIR/up1.log") + $(grep -c 'POST /post-503' "$DIR/up2.log")))
+  expect "POST /post-503 sent to upstream once (no retry)" 1 "$total_post"
+
+  # 2. use_stale + stale_if_error + default_ttl: warm -> sleep past 1s TTL ->
+  #    origin 503, 429, and connection error all serve stale 200; 404 does not.
+  rc_get "/stale/a"
+  expect "stale warmup returns 200 miss" "200 miss origin:/a:n=1" "$status_code $cache_status $body_out"
+  rc_get "/stale/a"
+  expect "warm entry returns 200 hit" "200 hit origin:/a:n=1" "$status_code $cache_status $body_out"
+  rc_get "/stale-err/b"
+  expect "stale-err warmup returns 200 miss" "200 miss err-cached" "$status_code $cache_status $body_out"
+
+  sleep 2
+  curl -s -m 5 -X POST "http://127.0.0.1:$origin/__mode/503" >/dev/null
+  rc_get "/stale/a"
+  expect "expired + origin 503 serves stale 200" "200 stale origin:/a:n=1" "$status_code $cache_status $body_out"
+
+  curl -s -m 5 -X POST "http://127.0.0.1:$origin/__mode/429" >/dev/null
+  rc_get "/stale/a"
+  expect "expired + origin 429 serves stale 200" "200 stale origin:/a:n=1" "$status_code $cache_status $body_out"
+
+  curl -s -m 5 -X POST "http://127.0.0.1:$origin/__mode/404" >/dev/null
+  rc_get "/stale/a"
+  expect "expired + unconfigured 404 is not served stale" 404 "$status_code"
+  curl -s -m 5 -X POST "http://127.0.0.1:$origin/__mode/200" >/dev/null
+
+  stop "$err_pid"
+  rc_get "/stale-err/b"
+  expect "expired + connection refused (error) serves stale 200" "200 stale err-cached" \
+    "$status_code $cache_status $body_out"
+
+  # 3. min_uses = 2: 1st GET does not store, 2nd GET stores, 3rd GET hits.
+  rc_get "/min/hot"
+  expect "min_uses #1 misses without storing" "200 origin:/hot:n=1" "$status_code $body_out"
+  rc_get "/min/hot"
+  expect "min_uses #2 misses and stores" "200 miss origin:/hot:n=2" "$status_code $cache_status $body_out"
+  rc_get "/min/hot"
+  expect "min_uses #3 serves from cache" "200 hit origin:/hot:n=2" "$status_code $cache_status $body_out"
+
+  # 4. Prefix PURGE /items/* and Cache-Tag PURGE evict only matching entries.
+  for p in /purge/items/1 /purge/items/2 /purge/other/1 /purge/other/2; do
+    rc_get "$p"
+    expect "warm $p miss" "200 miss" "$status_code $cache_status"
+    rc_get "$p"
+    expect "warm $p hit" "200 hit" "$status_code $cache_status"
+  done
+
+  status_code=$(curl -s -m 8 -X PURGE -D "$DIR/purge_prefix.h" -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$proxy/purge/items/*")
+  purged_count=$(grep -i '^x-purged-count:' "$DIR/purge_prefix.h" | tr -d '\r' | awk '{print $2}')
+  expect "prefix PURGE /items/* returns 204 count=2" "204 2" "$status_code $purged_count"
+
+  rc_get "/purge/items/1"
+  expect "prefix PURGE evicted /items/1" "200 miss" "$status_code $cache_status"
+  rc_get "/purge/items/2"
+  expect "prefix PURGE evicted /items/2" "200 miss" "$status_code $cache_status"
+  rc_get "/purge/other/1"
+  expect "prefix PURGE spared /other/1" "200 hit" "$status_code $cache_status"
+  rc_get "/purge/other/2"
+  expect "prefix PURGE spared /other/2" "200 hit" "$status_code $cache_status"
+
+  # Re-verify /items/1 and /items/2 are warm hits after re-fetching above, then purge by Cache-Tag.
+  rc_get "/purge/items/1"
+  expect "/items/1 re-cached before tag purge" "200 hit" "$status_code $cache_status"
+  rc_get "/purge/items/2"
+  expect "/items/2 re-cached before tag purge" "200 hit" "$status_code $cache_status"
+
+  status_code=$(curl -s -m 8 -X PURGE -H "Cache-Tag: group-a" -D "$DIR/purge_tag.h" -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$proxy/purge/")
+  purged_count=$(grep -i '^x-purged-count:' "$DIR/purge_tag.h" | tr -d '\r' | awk '{print $2}')
+  expect "Cache-Tag: group-a PURGE returns 204 count=2" "204 2" "$status_code $purged_count"
+
+  rc_get "/purge/items/1"
+  expect "tag PURGE evicted /items/1 (group-a)" "200 miss" "$status_code $cache_status"
+  rc_get "/purge/other/1"
+  expect "tag PURGE evicted /other/1 (group-a)" "200 miss" "$status_code $cache_status"
+  rc_get "/purge/items/2"
+  expect "tag PURGE spared /items/2 (group-b)" "200 hit" "$status_code $cache_status"
+  rc_get "/purge/other/2"
+  expect "tag PURGE spared /other/2 (group-c)" "200 hit" "$status_code $cache_status"
 }
 
 # ---------------------------------------------------------------------------

@@ -1480,24 +1480,12 @@ impl FileCache {
 
     #[inline]
     fn get_file_path(&self, key: &str, namespace: &str) -> PathBuf {
-        let mut path = Path::new(&self.directory).to_path_buf();
-        if !namespace.is_empty() {
-            path.push(namespace);
-        };
-        if self.levels.is_empty() {
-            path.push(key);
-            return path;
-        }
-        let mut current_len = key.len().saturating_sub(1);
-        for level in self.levels.iter() {
-            let level = *level as usize;
-            if current_len > level {
-                path.push(&key[current_len - level..current_len]);
-                current_len -= level;
-            }
-        }
-        path.push(key);
-        path
+        cache_file_path(
+            Path::new(&self.directory),
+            &self.levels,
+            key,
+            namespace,
+        )
     }
 
     /// Runs `f` on the hot layer, when there is one. The lock is only ever
@@ -1934,6 +1922,139 @@ impl StreamingMissWriter for FileStreamingMissWriter {
         }
         Ok(())
     }
+}
+
+fn cache_file_path(
+    root: &Path,
+    levels: &[u32],
+    key: &str,
+    namespace: &str,
+) -> PathBuf {
+    let mut path = root.to_path_buf();
+    if !namespace.is_empty() {
+        path.push(namespace);
+    }
+    if levels.is_empty() {
+        path.push(key);
+        return path;
+    }
+    let mut current_len = key.len().saturating_sub(1);
+    for level in levels {
+        let level = *level as usize;
+        if current_len > level {
+            path.push(&key[current_len - level..current_len]);
+            current_len -= level;
+        }
+    }
+    path.push(key);
+    path
+}
+
+fn read_cache_meta_header_sync(
+    file: &Path,
+) -> Option<pingora::cache::CacheMeta> {
+    use std::io::Read;
+    let mut src = std::fs::File::open(file).ok()?;
+    let file_len = src.metadata().ok()?.len();
+    let (meta0_len, meta1_len, _) =
+        match read_cache_header_sync(&mut src, file_len) {
+            Ok(Ok(parsed)) => parsed,
+            _ => return None,
+        };
+    let mut meta0 = vec![0u8; meta0_len];
+    let mut meta1 = vec![0u8; meta1_len];
+    src.read_exact(&mut meta0).ok()?;
+    src.read_exact(&mut meta1).ok()?;
+    pingora::cache::CacheMeta::deserialize(&meta0, &meta1).ok()
+}
+
+fn meta_matches_any_tag(
+    meta: &pingora::cache::CacheMeta,
+    wanted: &[String],
+) -> bool {
+    meta.headers()
+        .get_all("cache-tag")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(|c: char| c == ',' || c.is_ascii_whitespace()))
+        .filter(|t| !t.is_empty())
+        .any(|tag| wanted.iter().any(|w| w == tag))
+}
+
+fn infer_file_namespace(
+    root: &Path,
+    levels: &[u32],
+    file: &Path,
+    key: &str,
+    scope: Option<&str>,
+) -> Option<String> {
+    if let Some(ns) = scope {
+        return (cache_file_path(root, levels, key, ns) == file)
+            .then(|| ns.to_string());
+    }
+    let rel = file.strip_prefix(root).ok()?;
+    let mut parts = Vec::with_capacity(levels.len() + 2);
+    for comp in rel.components() {
+        let std::path::Component::Normal(name) = comp else {
+            return None;
+        };
+        parts.push(name.to_str()?);
+    }
+    if parts.len() == levels.len() + 1 {
+        return (cache_file_path(root, levels, key, "") == file)
+            .then(String::new);
+    }
+    if parts.len() == levels.len() + 2 {
+        let ns = parts[0];
+        return (cache_file_path(root, levels, key, ns) == file)
+            .then(|| ns.to_string());
+    }
+    None
+}
+
+fn find_keys_by_tags_sync(
+    root: &Path,
+    levels: &[u32],
+    namespace: Option<&str>,
+    tags: &[String],
+) -> Vec<(String, String)> {
+    let walk_root = match namespace {
+        Some(ns) if !ns.is_empty() => root.join(ns),
+        _ => root.to_path_buf(),
+    };
+    if !walk_root.exists() {
+        return Vec::new();
+    }
+    let walker = match namespace {
+        Some("") => {
+            let depth = levels.len() + 1;
+            WalkDir::new(&walk_root).min_depth(depth).max_depth(depth)
+        },
+        _ => WalkDir::new(&walk_root),
+    };
+    let mut matches = Vec::new();
+    for entry in walker.into_iter().filter_map(|item| item.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(key) = entry.file_name().to_str() else {
+            continue;
+        };
+        if !is_cache_key(key) {
+            continue;
+        }
+        let Some(ns) =
+            infer_file_namespace(root, levels, entry.path(), key, namespace)
+        else {
+            continue;
+        };
+        if let Some(meta) = read_cache_meta_header_sync(entry.path())
+            && meta_matches_any_tag(&meta, tags)
+        {
+            matches.push((key.to_string(), ns));
+        }
+    }
+    matches
 }
 
 #[async_trait]
@@ -2532,6 +2653,41 @@ impl HttpCacheStorage for FileCache {
             fail,
             description,
         }))
+    }
+
+    async fn find_keys_by_tags(
+        &self,
+        namespace: Option<&str>,
+        tags: &[String],
+    ) -> Result<Vec<(String, String)>> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let Some(ns) = namespace
+            && (ns.contains('/') || ns.contains('\\') || ns.contains(".."))
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "find keys by tags requires a plain namespace, got {ns:?}"
+                ),
+            });
+        }
+        let root = PathBuf::from(&self.directory);
+        let levels = self.levels.clone();
+        let ns_owned = namespace.map(str::to_string);
+        let tags_owned = tags.to_vec();
+        tokio::task::spawn_blocking(move || {
+            find_keys_by_tags_sync(
+                &root,
+                &levels,
+                ns_owned.as_deref(),
+                &tags_owned,
+            )
+        })
+        .await
+        .map_err(|e| Error::Invalid {
+            message: format!("file cache tag scan task failed: {e}"),
+        })
     }
 }
 
@@ -3806,11 +3962,9 @@ mod tests {
                 > three_days_ago + Duration::from_secs(3600)
         );
 
-        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: Some(reader.directory.clone()),
-            cache: reader.clone(),
-            max_size: 0,
-        }));
+        let http_cache: &'static HttpCache = Box::leak(Box::new(
+            HttpCache::new(Some(reader.directory.clone()), reader.clone(), 0),
+        ));
         let span = pingora::cache::trace::Span::inactive().handle();
 
         // 1. HEAD lookup does not read body bytes.
@@ -3871,11 +4025,11 @@ mod tests {
         hot_reader.remove_hot(&medium_key.combined());
         assert_eq!(true, hot_reader.get_hot(&medium_key.combined()).is_none());
 
-        let hot_http: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: Some(hot_reader.directory.clone()),
-            cache: hot_reader.clone(),
-            max_size: 0,
-        }));
+        let hot_http: &'static HttpCache = Box::leak(Box::new(HttpCache::new(
+            Some(hot_reader.directory.clone()),
+            hot_reader.clone(),
+            0,
+        )));
         let (_, mut mem_hit) =
             hot_http.lookup(&medium_key, &span).await.unwrap().unwrap();
         assert_eq!(
@@ -4030,11 +4184,12 @@ mod tests {
             dir.path().to_str().unwrap()
         );
         let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
-        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: Some(file_cache.directory.clone()),
-            cache: file_cache.clone(),
-            max_size: 0,
-        }));
+        let http_cache: &'static HttpCache =
+            Box::leak(Box::new(HttpCache::new(
+                Some(file_cache.directory.clone()),
+                file_cache.clone(),
+                0,
+            )));
         let span = pingora::cache::trace::Span::inactive().handle();
         let now = SystemTime::now();
 
@@ -4208,11 +4363,12 @@ mod tests {
             dir.path().to_str().unwrap()
         );
         let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
-        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: Some(file_cache.directory.clone()),
-            cache: file_cache.clone(),
-            max_size: 0,
-        }));
+        let http_cache: &'static HttpCache =
+            Box::leak(Box::new(HttpCache::new(
+                Some(file_cache.directory.clone()),
+                file_cache.clone(),
+                0,
+            )));
         let span = pingora::cache::trace::Span::inactive().handle();
         let now = SystemTime::now();
 
@@ -4259,11 +4415,12 @@ mod tests {
             dir.path().to_str().unwrap()
         );
         let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
-        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: Some(file_cache.directory.clone()),
-            cache: file_cache.clone(),
-            max_size: 0,
-        }));
+        let http_cache: &'static HttpCache =
+            Box::leak(Box::new(HttpCache::new(
+                Some(file_cache.directory.clone()),
+                file_cache.clone(),
+                0,
+            )));
         let span = pingora::cache::trace::Span::inactive().handle();
         let now = SystemTime::now();
 
@@ -4325,5 +4482,82 @@ mod tests {
         );
         assert_eq!(true, file_cache.get_file_path(&keep_key, "ns").exists());
         assert_eq!(kept_size, file_cache.current_size.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn test_file_cache_find_keys_by_tags_cold_header_only() {
+        use super::super::http_cache::HttpCache;
+        use pingora::cache::key::CacheHashKey;
+        use pingora::cache::{CacheKey, CacheMeta};
+
+        let dir = tempdir().unwrap();
+        let cfg =
+            format!("{}?cache_max=0&levels=1:2", dir.path().to_str().unwrap());
+        let file_cache = Arc::new(FileCache::new(&cfg).unwrap());
+        let now = SystemTime::now();
+
+        let seed_disk = async |primary: &str, ns: &str, tags: &str| {
+            let key = CacheKey::new(primary, ns);
+            let mut resp =
+                pingora::http::ResponseHeader::build(200, None).unwrap();
+            if !tags.is_empty() {
+                resp.insert_header("cache-tag", tags).unwrap();
+            }
+            let meta =
+                CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+            let (m0, m1) = meta.serialize().unwrap();
+            let obj = CacheObject {
+                meta: (Bytes::from(m0), Bytes::from(m1)),
+                body: Bytes::from(vec![7u8; 100_000]),
+            };
+            file_cache
+                .put(&key.combined(), ns.as_bytes(), obj)
+                .await
+                .unwrap();
+            key
+        };
+
+        let k_a1 = seed_disk("ns-aGET:a.com/1", "ns-a", "news, featured").await;
+        let _k_a2 = seed_disk("ns-aGET:a.com/2", "ns-a", "sports").await;
+        let k_b1 = seed_disk("ns-bGET:b.com/1", "ns-b", "news").await;
+        let k_empty = seed_disk("GET:c.com/1", "", "news").await;
+
+        // Place a truncated file in ns-a to verify corrupt files are skipped safely.
+        let corrupt_path = file_cache.get_file_path(&key("corrupt"), "ns-a");
+        std::fs::create_dir_all(corrupt_path.parent().unwrap()).unwrap();
+        std::fs::write(&corrupt_path, b"short").unwrap();
+
+        // Simulate cold restart with fresh FileCache + fresh HttpCache (empty meta_index).
+        let cold = Arc::new(FileCache::new(&cfg).unwrap());
+        let found_a = cold
+            .find_keys_by_tags(Some("ns-a"), &["news".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(vec![(k_a1.combined(), "ns-a".to_string())], found_a);
+
+        let found_empty = cold
+            .find_keys_by_tags(Some(""), &["news".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(vec![(k_empty.combined(), "".to_string())], found_empty);
+
+        let found_all = cold
+            .find_keys_by_tags(None, &["news".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(3, found_all.len());
+
+        // `HttpCache::purge_by_tags` on a fresh instance still finds and removes cold entries on disk.
+        let http_cache =
+            HttpCache::new(Some(cold.directory.clone()), cold.clone(), 0);
+        let purged = http_cache
+            .purge_by_tags(Some("ns-a"), &["news".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(1, purged.len());
+        assert_eq!(k_a1.combined(), purged[0].key);
+        assert!(cold.get(&k_a1.combined(), b"ns-a").await.unwrap().is_none());
+        assert!(cold.get(&k_b1.combined(), b"ns-b").await.unwrap().is_some());
+        assert!(cold.get(&k_empty.combined(), b"").await.unwrap().is_some());
     }
 }

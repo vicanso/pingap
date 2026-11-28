@@ -292,6 +292,16 @@ export default function Upstreams() {
       options: newBooleanOptions(),
     },
     {
+      name: "slow_start",
+      section: sec.balancing,
+      label: upstreamI18n("slowStart"),
+      placeholder: upstreamI18n("slowStartPlaceholder"),
+      tips: upstreamI18n("slowStartTips"),
+      defaultValue: upstreamConfig.slow_start,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "health_check",
       section: sec.balancing,
       label: upstreamI18n("healthCheck"),
@@ -738,6 +748,7 @@ export default function Upstreams() {
   const schema = z.object({
     addrs: z.array(z.string()),
     update_frequency: newZodDuration().optional(),
+    slow_start: newZodDuration().optional(),
     connection_timeout: newZodDuration().optional(),
     total_connection_timeout: newZodDuration().optional(),
     read_timeout: newZodDuration().optional(),

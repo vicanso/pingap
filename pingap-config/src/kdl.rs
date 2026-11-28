@@ -1234,4 +1234,33 @@ proxy_protocol = true
         let rt: toml::Value = toml::from_str(&toml_roundtrip).unwrap();
         assert_eq!(orig, rt);
     }
+
+    #[test]
+    fn test_retry_status_codes_and_slow_start_kdl_roundtrip() {
+        let toml_input = r#"
+[upstreams.backend]
+addrs = ["127.0.0.1:8080"]
+slow_start = "30s"
+
+[locations.api]
+upstream = "backend"
+path = "/api"
+max_retries = 2
+retry_status_codes = "502,503,504,429"
+"#;
+        let kdl_str = convert_toml_to_kdl(toml_input).unwrap();
+        let toml_roundtrip = convert_kdl_to_toml(&kdl_str).unwrap();
+        let config =
+            crate::convert_pingap_config(toml_roundtrip.as_bytes(), false)
+                .unwrap();
+        config.validate().unwrap();
+        assert_eq!(
+            Some(std::time::Duration::from_secs(30)),
+            config.upstreams["backend"].slow_start
+        );
+        assert_eq!(
+            Some("502,503,504,429".to_string()),
+            config.locations["api"].retry_status_codes
+        );
+    }
 }

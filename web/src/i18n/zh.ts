@@ -740,6 +740,10 @@ export default {
     maxRetriesPlaceholder: "输入最大重试次数到上游",
     maxRetryWindow: "最大重试窗口",
     maxRetryWindowPlaceholder: "输入最大重试窗口到上游",
+    retryStatusCodes: "重试状态码",
+    retryStatusCodesPlaceholder: "输入触发重试的状态码(如 502,503,504)",
+    retryStatusCodesTips:
+      "逗号分隔的 4xx/5xx 上游状态码（如 502,503,504,429），仅对幂等请求且尚未向下游发送响应头时触发重试。受 max_retries（未配置时默认 1）与 max_retry_window 约束；上游已返回响应时不会转到备用上游。",
     connectionTimeout: "连接超时",
     connectionTimeoutPlaceholder: "连接上游的超时，例如 3s",
     readTimeout: "读超时",
@@ -798,6 +802,10 @@ export default {
     failOpen: "全部不健康时仍转发",
     failOpenTips:
       "没有任何后端健康（健康检查不通过，或被熔断器挡住）时，仍然把请求发给其中一个，而不是返回 503。",
+    slowStart: "慢启动预热",
+    slowStartPlaceholder: "后端恢复后的预热时长(如 30s)",
+    slowStartTips:
+      "后端在健康检查恢复、熔断恢复或启动后新发现上线时，权重在此时长内从 10% 线性爬坡到 100%（支持 round_robin、least_conn 及新 sticky 会话）。启动时已有后端默认处于全权重预热完成状态。",
     healthCheck: "健康检查",
     healthCheckPlaceholder: "输入健康检查的url，支持http(s)、tcp、grpc与ws(s)",
     connectionTimeout: "连接超时",
@@ -1086,6 +1094,14 @@ export default {
     cacheLockRetries: "锁重试次数",
     cacheLockRetriesPlaceholder:
       "等锁的请求在自行回源前重新查缓存的次数(默认2)",
+    cacheLockAge: "锁有效期",
+    cacheLockAgePlaceholder: "锁最长持有时间(如 5s)",
+    cacheLockAgeTips:
+      "缓存锁的最长持有时间，超时后其他请求可接管回源（配置后替代 Lock 作为锁时长，必须大于 0s）。",
+    cacheLockTimeout: "锁等待超时",
+    cacheLockTimeoutPlaceholder: "等待缓存锁的最大时长(如 2s)",
+    cacheLockTimeoutTips:
+      "并发未命中请求等待持锁请求完成的最长等待时间（必须大于 0s）。",
     cacheMaxFileSize: "最大响应缓存大小",
     cacheMaxFileSizePlaceholder: "输入最大的响应缓存大小(如1mb)",
     cacheNamespace: "命名空间",
@@ -1114,6 +1130,24 @@ export default {
     cacheClusterPurge: "集群 PURGE 同步",
     cacheClusterPurgeTips:
       "使用 etcd 配置存储时，将成功的 PURGE 操作广播给同集群其他实例同步清理（默认开启）。",
+    cacheMinUses: "最小缓存命中次数",
+    cacheMinUsesPlaceholder: "写入缓存前的最小请求数(1-1000)",
+    cacheMinUsesTips:
+      "同一 URI 在被写入缓存前至少需要收到的请求次数（1 到 1000），避免一次性冷门请求污染缓存。",
+    cacheStaleIfError: "出错时过期兜底时长",
+    cacheStaleIfErrorPlaceholder: "上游出错时返回过期缓存的时间窗(如 1m)",
+    cacheStaleIfErrorTips:
+      "上游出错时允许返回已过期缓存的时间窗（可作为插件级默认兜底，配合源站 stale-if-error 使用）。",
+    cacheStaleWhileRevalidate: "后台刷新过期兜底时长",
+    cacheStaleWhileRevalidatePlaceholder:
+      "后台异步刷新期间返回过期缓存的时间窗(如 30s)",
+    cacheStaleWhileRevalidateTips:
+      "缓存过期后在此时长内先返回旧内容同时在后台向源站重新验证（需要非零 Lock）。",
+    cacheUseStale: "允许使用过期缓存的条件",
+    cacheUseStalePlaceholder:
+      "如 error、timeout、updating、http_502、http_503、http_504",
+    cacheUseStaleTips:
+      "允许使用过期缓存应答的场景：error、timeout、updating、http_403、http_404、http_429、http_500、http_502、http_503、http_504（也支持直接写状态码如 502）。",
     cacheStatusTtl: "按状态码的缓存时间",
     cacheStatusTtlPlaceholder: "状态码，如 404 : 时长，如 10s",
     cacheStatusTtlTips:

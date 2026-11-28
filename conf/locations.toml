@@ -98,6 +98,11 @@ upstream = "charts"
 # Default `none`
 # max_retry_window = "5s"
 
+# Comma-separated upstream HTTP status codes (400..=599) on which an
+# idempotent request is retried before response headers are sent downstream.
+# Default `none`
+# retry_status_codes = "502,503,504"
+
 # Another upstream for the requests the upstream cannot take: it has no
 # backend to give (none healthy, circuits open), or the connection failed
 # and no retry is left. Tried once; a response the upstream sent is never

@@ -13,10 +13,13 @@
 // limitations under the License.
 
 use super::LOG_TARGET;
+use super::purge::CachePurgeEntry;
 use super::{Error, PAGE_SIZE, Result};
 use crate::get_file_backends;
+use ahash::{AHashMap, AHashSet, RandomState};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use parking_lot::RwLock;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingora::cache::key::CacheHashKey;
@@ -319,6 +322,17 @@ pub trait HttpCacheStorage: Sync + Send {
     ) -> Result<Option<Box<dyn StreamingMissWriter>>> {
         Ok(None)
     }
+
+    /// Finds cached `(key, namespace)` entries matching any tag in `tags`,
+    /// scoped to `namespace` when `Some`. Used by cold disk storage so
+    /// pre-restart entries on disk can be purged by `Cache-Tag`.
+    async fn find_keys_by_tags(
+        &self,
+        _namespace: Option<&str>,
+        _tags: &[String],
+    ) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Sweeps every file backend's inactive files, once every 60 ticks. A
@@ -367,19 +381,417 @@ pub fn new_storage_clear_service() -> Option<Box<dyn BackgroundTask>> {
     Some(Box::new(StorageClearTask {}))
 }
 
+const META_INDEX_SHARDS: usize = 16;
+const META_INDEX_SHARD_CAP: usize = 8192;
+
+/// Splits `raw` on commas and ASCII whitespace, trimming and appending unique
+/// non-empty tag tokens to `tags`.
+pub fn push_cache_tag_tokens(raw: &str, tags: &mut Vec<String>) {
+    for token in raw
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter(|s| !s.is_empty())
+    {
+        if !tags.iter().any(|existing| existing == token) {
+            tags.push(token.to_string());
+        }
+    }
+}
+
+/// Parses deduplicated `Cache-Tag` / `X-Cache-Tag` tokens from header values.
+pub fn parse_cache_tag_headers<'a, I>(values: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a http::HeaderValue>,
+{
+    let mut tags = Vec::new();
+    for value in values {
+        if let Ok(raw) = value.to_str() {
+            push_cache_tag_tokens(raw, &mut tags);
+        }
+    }
+    tags
+}
+
+fn parse_cache_tags(meta: &CacheMeta) -> Vec<String> {
+    parse_cache_tag_headers(meta.headers().get_all("cache-tag"))
+}
+
+fn is_method_token(seg: &str) -> bool {
+    !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+fn is_host_prefix_without_nested_method(tail: &str) -> bool {
+    let before_slash = tail.split('/').next().unwrap_or(tail);
+    let mut in_brackets = false;
+    for byte in before_slash.bytes() {
+        match byte {
+            b'[' => in_brackets = true,
+            b']' => in_brackets = false,
+            b':' if !in_brackets => return false,
+            _ => {},
+        }
+    }
+    true
+}
+
+fn matches_prefix(
+    entry_namespace: &str,
+    entry_primary: &str,
+    target_namespace: &str,
+    host_and_prefix: &str,
+) -> bool {
+    if entry_namespace != target_namespace || host_and_prefix.is_empty() {
+        return false;
+    }
+    let rest = entry_primary
+        .strip_prefix(target_namespace)
+        .unwrap_or(entry_primary);
+    let mut cursor = rest;
+    while let Some((seg, tail)) = cursor.split_once(':') {
+        if is_method_token(seg) && is_host_prefix_without_nested_method(tail) {
+            return tail.starts_with(host_and_prefix);
+        }
+        cursor = tail;
+    }
+    false
+}
+
+#[derive(Clone, Debug)]
+struct MetaIndexEntry {
+    namespace: String,
+    primary: String,
+    combined_key: String,
+    tags: Vec<String>,
+    seq: u64,
+}
+
+#[derive(Default)]
+struct MetaIndexShardInner {
+    entries: AHashMap<String, Vec<MetaIndexEntry>>,
+    total: usize,
+    next_seq: u64,
+}
+
+impl MetaIndexShardInner {
+    fn evict_oldest_half(&mut self, max_per_shard: usize) {
+        let evict_count = (max_per_shard / 2).max(1);
+        if self.total < evict_count {
+            return;
+        }
+        let mut seqs: Vec<u64> = self
+            .entries
+            .values()
+            .flat_map(|list| list.iter().map(|entry| entry.seq))
+            .collect();
+        if seqs.len() < evict_count {
+            return;
+        }
+        let (_, pivot, _) = seqs.select_nth_unstable(evict_count - 1);
+        let cutoff = *pivot;
+        let mut kept = 0usize;
+        self.entries.retain(|_, list| {
+            list.retain(|entry| entry.seq > cutoff);
+            kept += list.len();
+            !list.is_empty()
+        });
+        self.total = kept;
+    }
+
+    fn upsert(
+        &mut self,
+        namespace: &str,
+        primary: &str,
+        combined_key: &str,
+        tags: Vec<String>,
+        max_per_shard: usize,
+    ) {
+        self.next_seq = self.next_seq.saturating_add(1);
+        let seq = self.next_seq;
+        if let Some(list) = self.entries.get_mut(combined_key)
+            && let Some(existing) =
+                list.iter_mut().find(|entry| entry.namespace == namespace)
+        {
+            if !primary.is_empty() {
+                existing.primary = primary.to_string();
+            }
+            existing.tags = tags;
+            existing.seq = seq;
+            return;
+        }
+        if self.total >= max_per_shard {
+            self.evict_oldest_half(max_per_shard);
+        }
+        self.entries
+            .entry(combined_key.to_string())
+            .or_default()
+            .push(MetaIndexEntry {
+                namespace: namespace.to_string(),
+                primary: primary.to_string(),
+                combined_key: combined_key.to_string(),
+                tags,
+                seq,
+            });
+        self.total += 1;
+    }
+
+    fn remove(&mut self, namespace: &str, combined_key: &str) {
+        let Some(list) = self.entries.get_mut(combined_key) else {
+            return;
+        };
+        let before = list.len();
+        list.retain(|entry| entry.namespace != namespace);
+        let removed = before.saturating_sub(list.len());
+        self.total = self.total.saturating_sub(removed);
+        if list.is_empty() {
+            self.entries.remove(combined_key);
+        }
+    }
+
+    fn remove_namespace(&mut self, namespace: &str) {
+        let mut removed = 0usize;
+        self.entries.retain(|_, list| {
+            let before = list.len();
+            list.retain(|entry| entry.namespace != namespace);
+            removed += before.saturating_sub(list.len());
+            !list.is_empty()
+        });
+        self.total = self.total.saturating_sub(removed);
+    }
+}
+
+#[repr(align(128))]
+#[derive(Default)]
+struct MetaIndexShard {
+    inner: RwLock<MetaIndexShardInner>,
+}
+
+/// Bounded 16-shard metadata index mapping cache keys to their primary strings
+/// and `Cache-Tag` tokens for prefix and tag purges.
+pub(crate) struct CacheMetaIndex {
+    shards: [MetaIndexShard; META_INDEX_SHARDS],
+    hasher: RandomState,
+    max_per_shard: usize,
+}
+
+impl Default for CacheMetaIndex {
+    fn default() -> Self {
+        Self::with_shard_cap(META_INDEX_SHARD_CAP)
+    }
+}
+
+impl CacheMetaIndex {
+    pub(crate) fn with_shard_cap(max_per_shard: usize) -> Self {
+        Self {
+            shards: std::array::from_fn(|_| MetaIndexShard::default()),
+            hasher: RandomState::new(),
+            max_per_shard: max_per_shard.max(1),
+        }
+    }
+
+    #[inline]
+    fn shard(&self, combined_key: &str) -> &MetaIndexShard {
+        let idx =
+            (self.hasher.hash_one(combined_key) as usize) % META_INDEX_SHARDS;
+        &self.shards[idx]
+    }
+
+    pub(crate) fn contains(&self, namespace: &str, combined_key: &str) -> bool {
+        let guard = self.shard(combined_key).inner.read();
+        guard.entries.get(combined_key).is_some_and(|list| {
+            list.iter().any(|entry| entry.namespace == namespace)
+        })
+    }
+
+    pub(crate) fn upsert(
+        &self,
+        namespace: &str,
+        primary: &str,
+        combined_key: &str,
+        tags: Vec<String>,
+    ) {
+        let mut guard = self.shard(combined_key).inner.write();
+        guard.upsert(
+            namespace,
+            primary,
+            combined_key,
+            tags,
+            self.max_per_shard,
+        );
+    }
+
+    pub(crate) fn remove(&self, namespace: &str, combined_key: &str) {
+        let mut guard = self.shard(combined_key).inner.write();
+        guard.remove(namespace, combined_key);
+    }
+
+    pub(crate) fn remove_namespace(&self, namespace: &str) {
+        for shard in &self.shards {
+            shard.inner.write().remove_namespace(namespace);
+        }
+    }
+
+    pub(crate) fn find_by_prefix(
+        &self,
+        namespace: &str,
+        host_and_prefix: &str,
+    ) -> Vec<CachePurgeEntry> {
+        let mut matches = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.inner.read();
+            for list in guard.entries.values() {
+                for entry in list {
+                    if matches_prefix(
+                        &entry.namespace,
+                        &entry.primary,
+                        namespace,
+                        host_and_prefix,
+                    ) {
+                        matches.push(CachePurgeEntry {
+                            key: entry.combined_key.clone(),
+                            namespace: entry.namespace.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        matches
+    }
+
+    pub(crate) fn find_by_tags(
+        &self,
+        namespace: Option<&str>,
+        tags: &[String],
+    ) -> Vec<CachePurgeEntry> {
+        let mut matches = Vec::new();
+        for shard in &self.shards {
+            let guard = shard.inner.read();
+            for list in guard.entries.values() {
+                for entry in list {
+                    if namespace.is_some_and(|ns| entry.namespace != ns) {
+                        continue;
+                    }
+                    if entry
+                        .tags
+                        .iter()
+                        .any(|t| tags.iter().any(|wanted| wanted == t))
+                    {
+                        matches.push(CachePurgeEntry {
+                            key: entry.combined_key.clone(),
+                            namespace: entry.namespace.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        matches
+    }
+}
+
 pub struct HttpCache {
     pub directory: Option<String>,
     pub cache: Arc<dyn HttpCacheStorage>,
     pub max_size: u64,
+    pub(crate) meta_index: Arc<CacheMetaIndex>,
 }
 
 impl HttpCache {
+    pub fn new(
+        directory: Option<String>,
+        cache: Arc<dyn HttpCacheStorage>,
+        max_size: u64,
+    ) -> Self {
+        Self {
+            directory,
+            cache,
+            max_size,
+            meta_index: Arc::new(CacheMetaIndex::default()),
+        }
+    }
+
     #[inline]
     pub fn stats(&self) -> Option<HttpCacheStats> {
         self.cache.stats()
     }
     pub fn max_size(&self) -> u64 {
         self.max_size
+    }
+
+    /// Removes `key` in `namespace` from both the storage backend and the
+    /// metadata index.
+    pub async fn remove(
+        &self,
+        key: &str,
+        namespace: &str,
+    ) -> Result<Option<CacheObject>> {
+        let removed = self.cache.remove(key, namespace.as_bytes()).await?;
+        self.meta_index.remove(namespace, key);
+        Ok(removed)
+    }
+
+    /// Purges all entries in `namespace` from storage and clears matching
+    /// entries from the metadata index.
+    pub async fn purge_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Option<HttpCacheClearStats>> {
+        let stats = self.cache.purge_namespace(namespace).await?;
+        if stats.is_some() {
+            self.meta_index.remove_namespace(namespace);
+        }
+        Ok(stats)
+    }
+
+    async fn purge_candidates(
+        &self,
+        candidates: Vec<CachePurgeEntry>,
+    ) -> Result<Vec<CachePurgeEntry>> {
+        let mut seen = AHashSet::with_capacity(candidates.len());
+        let mut purged = Vec::new();
+        let is_file_backend = self.directory.is_some();
+        for entry in candidates {
+            if !seen.insert((entry.namespace.clone(), entry.key.clone())) {
+                continue;
+            }
+            let removed = self
+                .cache
+                .remove(&entry.key, entry.namespace.as_bytes())
+                .await?;
+            self.meta_index.remove(&entry.namespace, &entry.key);
+            if removed.is_some() || is_file_backend {
+                purged.push(entry);
+            }
+        }
+        Ok(purged)
+    }
+
+    /// Purges cached entries in `namespace` whose primary key matches
+    /// `<METHOD>:<host><prefix>`.
+    pub async fn purge_by_prefix(
+        &self,
+        namespace: &str,
+        host_and_prefix: &str,
+    ) -> Result<Vec<CachePurgeEntry>> {
+        let candidates =
+            self.meta_index.find_by_prefix(namespace, host_and_prefix);
+        self.purge_candidates(candidates).await
+    }
+
+    /// Purges cached entries matching any tag in `tags` (scoped to `namespace`
+    /// when `Some`), searching both the in-memory index and cold disk storage.
+    pub async fn purge_by_tags(
+        &self,
+        namespace: Option<&str>,
+        tags: &[String],
+    ) -> Result<Vec<CachePurgeEntry>> {
+        if tags.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut candidates = self.meta_index.find_by_tags(namespace, tags);
+        let disk_matches =
+            self.cache.find_keys_by_tags(namespace, tags).await?;
+        for (key, ns) in disk_matches {
+            candidates.push(CachePurgeEntry { key, namespace: ns });
+        }
+        self.purge_candidates(candidates).await
     }
 }
 
@@ -653,6 +1065,10 @@ pub struct ObjectMissHandler {
     primary_key: String,
     /// Namespace for storing the final object
     namespace: Vec<u8>,
+    /// Parsed `Cache-Tag` tokens for indexing once stored
+    tags: Vec<String>,
+    /// Shared metadata index on the parent `HttpCache`
+    meta_index: Option<Arc<CacheMetaIndex>>,
     /// Reference to the storage backend
     cache: Arc<dyn HttpCacheStorage>,
 }
@@ -755,6 +1171,15 @@ impl HandleMiss for ObjectMissHandler {
                 )
                 .await?;
         }
+        if let Some(index) = &self.meta_index {
+            let ns = std::str::from_utf8(&self.namespace).unwrap_or_default();
+            index.upsert(
+                ns,
+                &self.primary_key,
+                &self.key,
+                std::mem::take(&mut self.tags),
+            );
+        }
 
         Ok(MissFinishType::Created(size))
     }
@@ -767,12 +1192,22 @@ impl Storage for HttpCache {
         key: &CacheKey,
         _trace: &SpanHandle,
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
-        let namespace = key.user_tag().as_bytes();
+        let namespace_str = key.user_tag();
+        let namespace = namespace_str.as_bytes();
         let hash = key.combined();
         if let Some((binary_meta, body)) =
             self.cache.lookup_hit(&hash, namespace).await?
         {
             let meta = CacheMeta::deserialize(&binary_meta.0, &binary_meta.1)?;
+            if !self.meta_index.contains(namespace_str, &hash) {
+                let primary = key.primary_key_str().unwrap_or_default();
+                self.meta_index.upsert(
+                    namespace_str,
+                    primary,
+                    &hash,
+                    parse_cache_tags(&meta),
+                );
+            }
             let hit_handler: HitHandler = match body {
                 HitBody::Memory(body) => {
                     let size = body.len();
@@ -845,6 +1280,8 @@ impl Storage for HttpCache {
             key: hash,
             primary_key: key.primary_key_str().unwrap_or_default().to_string(),
             namespace,
+            tags: parse_cache_tags(meta),
+            meta_index: Some(self.meta_index.clone()),
             cache: self.cache.clone(),
             body: BytesMut::with_capacity(capacity),
             body_bytes: 0,
@@ -865,13 +1302,15 @@ impl Storage for HttpCache {
         // the variance key is usually empty.
         let key = target.key();
         let hash = key.combined();
+        let namespace = key.user_tag();
         // The namespace rides in user_tag, which a CompactCacheKey keeps, so
         // the purge reaches the same partition the entry was written to.
         let cache_removed =
-            match self.cache.remove(&hash, key.user_tag().as_bytes()).await {
+            match self.cache.remove(&hash, namespace.as_bytes()).await {
                 Ok(result) => result.is_some(),
                 Err(_) => false,
             };
+        self.meta_index.remove(namespace, &hash);
         // These storages have no per-entry identity beyond the key itself,
         // so an active purge has no CacheEntryId to report.
         Ok(if cache_removed {
@@ -887,7 +1326,8 @@ impl Storage for HttpCache {
         meta: &CacheMeta,
         _trace: &SpanHandle,
     ) -> pingora::Result<bool> {
-        let namespace = key.user_tag().as_bytes();
+        let namespace_str = key.user_tag();
+        let namespace = namespace_str.as_bytes();
         let hash = key.combined();
         let (meta0, meta1) = meta.serialize()?;
         if self
@@ -895,6 +1335,12 @@ impl Storage for HttpCache {
             .update_meta(&hash, namespace, (meta0.into(), meta1.into()))
             .await?
         {
+            self.meta_index.upsert(
+                namespace_str,
+                key.primary_key_str().unwrap_or_default(),
+                &hash,
+                parse_cache_tags(meta),
+            );
             Ok(true)
         } else {
             Err(Error::Invalid {
@@ -1125,6 +1571,8 @@ mod tests {
             key: key.to_string(),
             primary_key: "".to_string(),
             namespace: b"".to_vec(),
+            tags: Vec::new(),
+            meta_index: None,
             cache: cache.clone(),
         };
         let mut handle: MissHandler = Box::new(obj);
@@ -1176,11 +1624,8 @@ mod tests {
     #[tokio::test]
     async fn test_http_cache_update_meta() {
         let storage = Arc::new(TinyUfoCache::new(CacheMode::Normal, 100));
-        let http_cache: &'static HttpCache = Box::leak(Box::new(HttpCache {
-            directory: None,
-            cache: storage,
-            max_size: 4096 * 100,
-        }));
+        let http_cache: &'static HttpCache =
+            Box::leak(Box::new(HttpCache::new(None, storage, 4096 * 100)));
         let key = CacheKey::new("ns", "/update-meta");
         let span = pingora::cache::trace::Span::inactive().handle();
 
@@ -1299,6 +1744,228 @@ mod tests {
         assert_eq!(
             true,
             should_spill_payload(Some(1024 * 1024), 200, 2 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn test_parse_cache_tag_headers() {
+        let v1 = http::HeaderValue::from_static("news, blog  featured\tnews");
+        let v2 = http::HeaderValue::from_static("  , blog, post-1 ");
+        assert_eq!(
+            vec![
+                "news".to_string(),
+                "blog".to_string(),
+                "featured".to_string(),
+                "post-1".to_string()
+            ],
+            parse_cache_tag_headers([&v1, &v2])
+        );
+    }
+
+    #[test]
+    fn test_cache_meta_index_prefix_and_bounded_eviction() {
+        assert!(matches_prefix(
+            "ns",
+            "nsGET:a.com/blog/post",
+            "ns",
+            "a.com/blog/"
+        ));
+        assert!(matches_prefix(
+            "ns",
+            "nsgzip:HEAD:a.com/blog/post?x=1",
+            "ns",
+            "a.com/blog/"
+        ));
+        assert!(matches_prefix(
+            "ns",
+            "nsUS:GET:[::1]/blog/post",
+            "ns",
+            "[::1]/blog/"
+        ));
+        // Host isolation and query false-match guards.
+        assert!(!matches_prefix(
+            "ns",
+            "nsGET:sub.a.com/blog/post",
+            "ns",
+            "a.com/blog/"
+        ));
+        assert!(!matches_prefix(
+            "ns",
+            "nsGET:a.com/other?next=GET:a.com/blog/post",
+            "ns",
+            "a.com/blog/"
+        ));
+        assert!(!matches_prefix(
+            "ns2",
+            "ns2GET:a.com/blog/post",
+            "ns",
+            "a.com/blog/"
+        ));
+
+        let index = CacheMetaIndex::with_shard_cap(4);
+        // Pick keys that land on the same shard to verify half-eviction deterministically.
+        let shard0_keys: Vec<String> = (0..1000)
+            .map(|i| format!("k-{i:04}"))
+            .filter(|k| {
+                (index.hasher.hash_one(k.as_str()) as usize)
+                    .is_multiple_of(META_INDEX_SHARDS)
+            })
+            .take(5)
+            .collect();
+        assert_eq!(5, shard0_keys.len());
+        for (i, k) in shard0_keys.iter().enumerate() {
+            index.upsert(
+                "ns",
+                &format!("nsGET:a.com/p/{i}"),
+                k,
+                vec![format!("tag-{i}")],
+            );
+        }
+        // Oldest 2 (k[0], k[1]) were evicted when inserting k[4]; newer ones remain.
+        assert!(!index.contains("ns", &shard0_keys[0]));
+        assert!(!index.contains("ns", &shard0_keys[1]));
+        assert!(index.contains("ns", &shard0_keys[2]));
+        assert!(index.contains("ns", &shard0_keys[3]));
+        assert!(index.contains("ns", &shard0_keys[4]));
+    }
+
+    #[tokio::test]
+    async fn test_http_cache_purge_by_prefix_and_tags() {
+        let storage = Arc::new(TinyUfoCache::new(CacheMode::Normal, 200));
+        let http_cache: &'static HttpCache =
+            Box::leak(Box::new(HttpCache::new(None, storage, 4096 * 200)));
+        let span = pingora::cache::trace::Span::inactive().handle();
+        let now = SystemTime::now();
+
+        let seed = async |primary: &str, ns: &str, tag_header: Option<&str>| {
+            let key = CacheKey::new(primary, ns);
+            let mut resp =
+                pingora::http::ResponseHeader::build(200, None).unwrap();
+            if let Some(tag) = tag_header {
+                resp.insert_header("cache-tag", tag).unwrap();
+            }
+            let meta =
+                CacheMeta::new(now + Duration::from_secs(60), now, 0, 0, resp);
+            let mut miss = http_cache
+                .get_miss_handler(&key, &meta, &span)
+                .await
+                .unwrap();
+            miss.write_body(Bytes::from_static(b"payload"), true)
+                .await
+                .unwrap();
+            miss.finish().await.unwrap();
+            key
+        };
+
+        let k_blog_1 =
+            seed("nsGET:a.com/blog/1", "ns", Some("news, home")).await;
+        let k_blog_gz =
+            seed("nsgzip:GET:a.com/blog/2", "ns", Some("news")).await;
+        let k_other_host = seed("nsGET:b.com/blog/1", "ns", Some("news")).await;
+        let k_other_path =
+            seed("nsGET:a.com/static/app.js", "ns", Some("assets")).await;
+        let k_other_ns =
+            seed("otherGET:a.com/blog/1", "other", Some("news")).await;
+
+        // Prefix purge isolates both namespace and host.
+        let purged = http_cache
+            .purge_by_prefix("ns", "a.com/blog/")
+            .await
+            .unwrap();
+        assert_eq!(2, purged.len());
+        assert!(http_cache.lookup(&k_blog_1, &span).await.unwrap().is_none());
+        assert!(
+            http_cache
+                .lookup(&k_blog_gz, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            http_cache
+                .lookup(&k_other_host, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            http_cache
+                .lookup(&k_other_path, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            http_cache
+                .lookup(&k_other_ns, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // Update meta refreshes tags in the index.
+        let mut updated_resp =
+            pingora::http::ResponseHeader::build(200, None).unwrap();
+        updated_resp
+            .insert_header("cache-tag", "assets, refreshed")
+            .unwrap();
+        let updated_meta = CacheMeta::new(
+            now + Duration::from_secs(60),
+            now,
+            0,
+            0,
+            updated_resp,
+        );
+        assert!(
+            http_cache
+                .update_meta(&k_other_path, &updated_meta, &span)
+                .await
+                .unwrap()
+        );
+
+        // Tag purge scoped to namespace "ns" skips "other".
+        let tagged = http_cache
+            .purge_by_tags(
+                Some("ns"),
+                &["news".to_string(), "refreshed".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(2, tagged.len());
+        assert!(
+            http_cache
+                .lookup(&k_other_host, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            http_cache
+                .lookup(&k_other_path, &span)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            http_cache
+                .lookup(&k_other_ns, &span)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // Unscoped tag purge clears remaining "other" entry.
+        let remaining = http_cache
+            .purge_by_tags(None, &["news".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(1, remaining.len());
+        assert!(
+            http_cache
+                .lookup(&k_other_ns, &span)
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 }

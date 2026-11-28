@@ -42,6 +42,11 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # 503. Default `false`
 # fail_open = true
 
+# Linearly ramp traffic weight (from 10% to 100%) over this duration when a
+# backend recovers from a failed health check or open circuit breaker, or is
+# newly discovered after startup. Default `none` (immediate full weight)
+# slow_start = "30s"
+
 # Server Name Indication (SNI) for HTTPS upstream connections. 
 # Specify the hostname to be used in the TLS handshake when connecting to upstream HTTPS servers.
 # Example: "example.com"

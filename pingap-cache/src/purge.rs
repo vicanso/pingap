@@ -118,8 +118,7 @@ pub async fn apply_purge_event(event: &CachePurgeEvent) -> Result<usize> {
             let is_file_backend = backend.directory.is_some();
             for entry in entries {
                 if backend
-                    .cache
-                    .remove(&entry.key, entry.namespace.as_bytes())
+                    .remove(&entry.key, &entry.namespace)
                     .await?
                     .is_some()
                     || is_file_backend
@@ -130,7 +129,7 @@ pub async fn apply_purge_event(event: &CachePurgeEvent) -> Result<usize> {
             Ok(removed)
         },
         CachePurgeAction::Namespace { namespace } => {
-            let stats = backend.cache.purge_namespace(namespace).await?;
+            let stats = backend.purge_namespace(namespace).await?;
             Ok(stats.map_or(0, |s| s.success.max(0) as usize))
         },
     }

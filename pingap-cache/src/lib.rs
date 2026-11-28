@@ -54,19 +54,19 @@ impl From<Error> for pingora::BError {
 }
 
 fn new_tiny_ufo_cache(mode: CacheMode, size: usize) -> HttpCache {
-    HttpCache {
-        directory: None,
-        cache: Arc::new(tiny::TinyUfoCache::new(mode, size / PAGE_SIZE)),
-        max_size: size as u64,
-    }
+    HttpCache::new(
+        None,
+        Arc::new(tiny::TinyUfoCache::new(mode, size / PAGE_SIZE)),
+        size as u64,
+    )
 }
 fn new_file_cache(dir: &str) -> Result<HttpCache> {
     let cache = FileCache::new(dir)?;
-    Ok(HttpCache {
-        directory: Some(cache.directory.clone()),
-        cache: Arc::new(cache),
-        max_size: 0,
-    })
+    Ok(HttpCache::new(
+        Some(cache.directory.clone()),
+        Arc::new(cache),
+        0,
+    ))
 }
 
 thread_local! {
@@ -415,6 +415,7 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
 
 pub use http_cache::{
     CacheObject, HttpCache, is_hit_read_to_the_end, new_storage_clear_service,
+    parse_cache_tag_headers, push_cache_tag_tokens,
 };
 pub use purge::{
     CachePurgeAction, CachePurgeBroadcaster, CachePurgeEntry, CachePurgeEvent,

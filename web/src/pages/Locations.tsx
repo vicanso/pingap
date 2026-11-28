@@ -253,6 +253,16 @@ export default function Locations() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "retry_status_codes",
+      section: sec.upstream,
+      label: locationI18n("retryStatusCodes"),
+      placeholder: locationI18n("retryStatusCodesPlaceholder"),
+      tips: locationI18n("retryStatusCodesTips"),
+      defaultValue: locationConfig.retry_status_codes,
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "connection_timeout",
       section: sec.upstream,
       label: locationI18n("connectionTimeout"),
@@ -412,6 +422,7 @@ export default function Locations() {
   const schema = z.object({
     client_max_body_size: newZodBytes().optional(),
     max_retry_window: newZodDuration().optional(),
+    retry_status_codes: z.string().optional(),
     connection_timeout: newZodDuration().optional(),
     read_timeout: newZodDuration().optional(),
     write_timeout: newZodDuration().optional(),

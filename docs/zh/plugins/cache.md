@@ -17,6 +17,8 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `max_ttl` | duration | — | 条目寿命上限，封顶上游 `Cache-Control`。 |
 | `max_file_size` | bytesize | `1mb` | 大于此尺寸的响应不缓存。 |
 | `lock` | duration | `1s` | 防惊群的缓存锁窗口。任意非零时长都有效；`0s` 关闭锁定。 |
+| `lock_age` | duration | `lock` | 缓存锁的最长有效时间，超时后其他请求可接管回源（须大于 `0s`）；配置后替代 `lock` 作为锁时长（关闭锁仍使用 `lock = "0s"`）。 |
+| `lock_timeout` | duration | — | 等待缓存锁的请求在放弃前最多等待的时长（须大于 `0s`）。 |
 | `lock_retries` | int | `2` | 等锁的请求在放弃、自行回源之前重新查询缓存的次数。 |
 | `eviction` | bool | `false` | `true` 附加 16 分片 LRU 淘汰管理器（仅内存后端有效；`memory://` 即使在 `eviction = false` 时也已通过 TinyUFO S3-FIFO 无锁执行 `max_size` 预算限制）。 |
 | `predictor` | bool | `false` | `true` 启用可缓存性预测。 |
@@ -31,6 +33,10 @@ HTTP 响应缓存，后端可为内存 [TinyUFO](https://github.com/cloudflare/p
 | `query_allow` | string[] | — | 只有这些查询参数计入缓存键，按名称排序。 |
 | `respect_client_no_cache` | bool | `false` | 为 `true` 时，客户端可以用 `Cache-Control: no-cache` 或 `max-age=0` 让缓存的内容先向源站重新验证。 |
 | `cluster_purge` | bool | `true` | 使用 `etcd://` 配置存储时，将成功的 `PURGE` 操作广播给集群内其他实例同步清理对应条目或命名空间。 |
+| `stale_if_error` | duration | — | 插件级出错兜底时间窗：上游出错时在此时长内返回已过期缓存（配合源站 `Cache-Control: stale-if-error` 或在源站未声明时生效）。 |
+| `stale_while_revalidate` | duration | — | 插件级后台刷新时间窗：过期后在此时长内先返回旧内容同时在后台向源站重新验证（需要非零 `lock`）。 |
+| `use_stale` | string[] | — | 允许使用过期缓存应答的条件列表：`error`、`timeout`、`updating`、`http_403`、`http_404`、`http_429`、`http_500`、`http_502`、`http_503`、`http_504`（也接受简写状态码如 `502`）。 |
+| `min_uses` | int | — | 同一 URI 至少请求多少次（`1` 到 `1000`）之后才允许写入缓存，防止一次性请求污染缓存。 |
 
 ### 后端选择
 
@@ -73,13 +79,21 @@ curl -X PURGE http://127.0.0.1:6188/assets/app.js
 # 204 No Content       -> 已移除（幂等：无缓存时同样返回 204）
 # 403 Forbidden        -> IP 不在 purge_ip_list 中
 
-# 整个 namespace（仅文件后端且配置了 namespace）
+# 按当前请求 Host 下的路径前缀清理（同时支持内存与文件后端）
+curl -X PURGE http://127.0.0.1:6188/blog/*
+# 204 No Content       -> 已移除匹配前缀的条目；响应头带 x-purged-count: <n>
+
+# 按 Cache-Tag / X-Cache-Tag 清理（同时支持内存与文件后端）
+curl -X PURGE -H "Cache-Tag: posts, homepage" http://127.0.0.1:6188/
+# 204 No Content       -> 已移除命中标签的条目；响应头带 x-purged-count: <n>
+
+# 整个 namespace（仅文件后端且配置了 namespace，且请求未带 Cache-Tag 头时）
 curl -X PURGE http://127.0.0.1:6188/*
 # 200 "purged: 12, fail: 0"
 # 501 Not Implemented  -> 未配置 namespace，或内存缓存后端
 ```
 
-`PURGE /*` 清空该插件缓存的全部内容：namespace 在文件后端以目录形式存在，是精确 URL 之外唯一无需索引即可清除的粒度（存储文件名是完整键的哈希，URL 前缀在磁盘上没有对应结构）。清除会连同内存热层一起清空，而且是整个热层（热层无法按 namespace 查找）：只在内存里的条目也会被清掉，其他 namespace 的条目之后从磁盘重新读入。当使用 `etcd://` 配置存储且开启 `cluster_purge`（默认开启）时，成功的 `PURGE` 请求（单个 URL 与 `PURGE /*`）会通过 `<etcd_path>-events/cache_purge` 广播给同集群的其他实例同步清理；使用文件配置或显式配置 `cluster_purge = false` 时仅清理当前节点。
+精确 URL `PURGE` 会清除对应请求的 `GET` 与 `HEAD` 条目（及编码/图片变体）。前缀清理 `PURGE /prefix/*`（长度大于 `/*` 且以 `*` 结尾的路径）会通过有界缓存元数据索引匹配当前 `(namespace, host + prefix)` 下的所有条目，同时从内存和磁盘移除并返回 `204 No Content` 与 `x-purged-count` 响应头。按标签清理（`PURGE` 请求携带 `Cache-Tag` 或 `X-Cache-Tag` 请求头，支持逗号或空白分隔多个标签）会依据源站响应中的 `Cache-Tag` 头清理所有匹配的缓存条目——既查内存元数据索引，也对磁盘文件做仅读头部的冷扫描（不加载响应正文）以覆盖重启前已落盘的旧条目——同样返回 `204 No Content` 与 `x-purged-count`。`PURGE /*`（且未携带 `Cache-Tag` / `X-Cache-Tag` 头）会清空磁盘上该插件 namespace 目录下的全部缓存，并连同内存热层一起清空（而且是整个热层，因为热层无法按 namespace 查找：只在内存里的条目也会被清掉，其他 namespace 的条目之后从磁盘重新读入）。当使用 `etcd://` 配置存储且开启 `cluster_purge`（默认开启）时，成功的 `PURGE` 请求（单个 URL、前缀、标签与 `PURGE /*`）会通过 `<etcd_path>-events/cache_purge` 广播给同集群的其他实例同步清理；使用文件配置或显式配置 `cluster_purge = false` 时仅清理当前节点。
 
 ## 自定缓存时间
 
@@ -143,12 +157,13 @@ bypass_headers = ["X-Preview"]
   - 带 `Set-Cookie` 头的响应：否则所有从缓存取到它的客户端都会收到同一个 cookie。确实要缓存这类响应时，用 `upstream` 模式的 [`response_headers`](response_headers.md) 插件在存储前去掉这个头。
   - 请求带 `Authorization` 头时的响应，除非源站用 `public`、`s-maxage` 或 `must-revalidate` 标明可以共享。开启了 `hide_credentials` 的 [`basic_auth`](basic_auth.md) 或 [`hmac_auth`](hmac_auth.md) 插件会在这项检查之前移除该请求头，因此它保护的站点照常缓存。
 - 缓存键由 `namespace`、所列 `headers` 的值、请求方法、域名、路径和查询串组成。域名取小写且不含端口，协议不在键里，所以 `http://Example.com:8080/x` 与 `https://example.com/x` 是同一个条目，HTTP/1.1 与 HTTP/2 一致；`other.com/x` 则是另一个条目。
-- `PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。它清理的是请求所发往的域名：在插件可达的任意监听上发送，并带上要清理的站点的 `Host`。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
+- `PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。它清理的是请求所发往的域名：在插件可达的任意监听上发送，并带上要清理的站点的 `Host`。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。前缀清理（`PURGE /prefix/*`）与标签清理（携带 `Cache-Tag` / `X-Cache-Tag` 请求头的 `PURGE`）会跨内存与磁盘清除所有匹配条目（返回 `204 No Content` 与 `x-purged-count`），其中标签清理还会扫描磁盘冷条目元数据头。
 - 其他插件会把“响应是为谁生成的”加进键里：`upstream` 模式的 `compression` 加的是编码（`zstd`、`br`、`gzip` 或者没有），`image_optim` 加的是客户端接受的图片格式。`PURGE` 会把每一种的条目都清掉，不论它自己的 `Accept-Encoding` 和 `Accept` 是什么；以前只清和自己请求头对应的那一个，对普通的 `curl -X PURGE` 来说就是没有浏览器会请求的未压缩条目。
 - 会遵循源站的 `Vary` 响应头：它列出的请求头的每种取值组合在同一个键下存为独立变体，`Vary: *` 则视为不可缓存。`vary_headers` 限制哪些头可以这样做，因为 `Vary: Cookie` 或 `Vary: User-Agent` 意味着每个客户端一个变体。`PURGE` 只清主槽位，其后的变体变得不可达，由淘汰或 inactive 扫描回收。
-- `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
-- 遵循源站的 `Cache-Control: stale-while-revalidate=<seconds>`；未包含该 directive 的条目不会在重新验证时返回过期内容。新鲜期过后，在该时间窗内 pingap 立即返回旧内容，并由持有锁的一个请求在后台向源站刷新；超出时间窗则等待或执行普通重新验证。SWR 需要非零 `lock`，`lock = "0s"` 会禁用它。`max_ttl` 只限制新鲜期，不限制 SWR 时间窗。后台重新验证会走完整请求管线，产生访问日志、更新指标，并再次执行 request 步骤插件。
-- 遵循源站的 `Cache-Control: stale-if-error=<seconds>`：当上游出现连接/读取错误或返回 `5xx` 状态码（且尚未向客户端发送响应）时，在 `stale-if-error` 时间窗内返回已过期的缓存内容。若源站未声明 `stale-if-error`（且未通过 `must-revalidate`、`proxy-revalidate` 或 `s-maxage` 禁止使用过期副本），Pingap 会应用默认 `1s` 的 `stale-if-error` 兜底窗口（`META_DEFAULTS`）。非上游错误（如客户端断开连接或代理内部错误）不会触发过期兜底；返回过期内容时会清除 `sticky` 会话 Cookie，避免客户端继续粘连到故障后端。`max_ttl` 只限制新鲜期，不限制 `stale-if-error` 时间窗。
+- `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。`lock_age` 可覆盖锁的有效期，超时后允许其他请求接管回源；`lock_timeout` 限制等锁请求的最长等待时长；`lock_retries` 控制放弃前重新查缓存的次数。
+- `min_uses`（`1` 到 `1000`）按 `(namespace, host, path, query)` 统计请求次数，只有达到该次数的 URI 才写入缓存，避免只请求一次的冷门资源占用缓存空间。
+- 遵循源站的 `Cache-Control: stale-while-revalidate=<seconds>` 或插件配置的 `stale_while_revalidate`；两者都未设置时，条目不会在重新验证期间返回过期内容。新鲜期过后，在该时间窗内 pingap 立即返回旧内容，并由持有锁的一个请求在后台向源站刷新；超出时间窗则等待或执行普通重新验证。SWR 需要非零 `lock`，`lock = "0s"` 会禁用它。`max_ttl` 只限制新鲜期，不限制 SWR 时间窗。后台重新验证会走完整请求管线，产生访问日志、更新指标，并再次执行 request 步骤插件。
+- 遵循源站的 `Cache-Control: stale-if-error=<seconds>` 或插件配置的 `stale_if_error`：当上游出现连接/读取错误或返回 `5xx` 状态码（且尚未向客户端发送响应）时，在 `stale-if-error` 时间窗内返回已过期的缓存内容。若源站未声明 `stale-if-error`（且未通过 `must-revalidate`、`proxy-revalidate` 或 `s-maxage` 禁止使用过期副本），Pingap 会应用插件配置的 `stale_if_error` 或默认 `1s` 的兜底窗口（`META_DEFAULTS`）。`use_stale` 用于细粒度控制允许返回过期缓存的条件（`error`、`timeout`、`updating`、`http_403`、`http_404`、`http_429`、`http_500`、`http_502`、`http_503`、`http_504`，也支持直接写状态码如 `502`）。非上游错误（如客户端断开连接或代理内部错误）不会触发过期兜底；返回过期内容时会清除 `sticky` 会话 Cookie，避免客户端继续粘连到故障后端。`max_ttl` 只限制新鲜期，不限制 `stale-if-error` 时间窗。
 - 缓存读/写计数写入请求上下文，访问日志中可用 `{:cache_lookup_time}` / `{:cache_lock_time}`。
 
 ## 使用说明

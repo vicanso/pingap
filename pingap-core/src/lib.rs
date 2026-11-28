@@ -206,6 +206,15 @@ mod tests {
         assert!(err.to_string().contains("Unknown Error"));
     }
 
+    #[test]
+    fn test_cache_use_stale_reexport() {
+        let stale = CacheUseStale::parse_tokens(["error", "503"])
+            .unwrap()
+            .unwrap();
+        assert!(stale.allows_error());
+        assert!(stale.allows_status(503));
+    }
+
     #[tokio::test]
     async fn test_new_test_session() {
         let session = new_test_session(

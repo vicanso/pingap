@@ -19,6 +19,8 @@ IP-restricted `PURGE` method.
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
 | `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
+| `lock_age` | duration | `lock` | Maximum lifetime of a cache lock before another request can take over (`> 0s`). Overrides `lock` as the lock window when set (`lock = "0s"` disables locking). |
+| `lock_timeout` | duration | — | Maximum time a waiting request waits on an active cache lock (`> 0s`) before giving up. |
 | `lock_retries` | int | `2` | How many times a request that waited on the lock re-checks the cache before it gives up and fetches from upstream itself. |
 | `eviction` | bool | `false` | `true` attaches a 16-shard LRU eviction manager (memory backend only; `memory://` already enforces its `max_size` budget lock-free via TinyUFO S3-FIFO even with `eviction = false`). |
 | `predictor` | bool | `false` | `true` enables the cacheability predictor. |
@@ -33,6 +35,10 @@ IP-restricted `PURGE` method.
 | `query_allow` | string[] | — | The only query parameters that are a part of the cache key, in order by name. |
 | `respect_client_no_cache` | bool | `false` | `true` lets a client have what is cached revalidated with the origin, with `Cache-Control: no-cache` or `max-age=0`. |
 | `cluster_purge` | bool | `true` | When running against an `etcd://` configuration store, broadcast successful `PURGE` operations to peer instances so they remove the same entries or namespace locally. |
+| `stale_if_error` | duration | — | Plugin-level stale-if-error window allowing stale cached content to be served on upstream errors within this duration (used alongside or when the origin omits `Cache-Control: stale-if-error`). |
+| `stale_while_revalidate` | duration | — | Plugin-level stale-while-revalidate window allowing stale cached content to be served while a background request refreshes it (requires non-zero `lock`). |
+| `use_stale` | string[] | — | Conditions under which stale cached responses may be served: `error`, `timeout`, `updating`, `http_403`, `http_404`, `http_429`, `http_500`, `http_502`, `http_503`, `http_504` (bare status codes such as `502` are also accepted). |
+| `min_uses` | int | — | Minimum number of requests (`1` to `1000`) for a URI before its response is stored in cache, protecting against one-hit entries filling the cache. |
 
 ### Backend selection
 
@@ -77,25 +83,21 @@ curl -X PURGE http://127.0.0.1:6188/assets/app.js
 # 204 No Content       -> removed (idempotent: also 204 when nothing was cached)
 # 403 Forbidden        -> your IP is not in purge_ip_list
 
-# the whole namespace (file backend with a configured namespace only)
+# by path prefix for the request Host (memory and file backends)
+curl -X PURGE http://127.0.0.1:6188/blog/*
+# 204 No Content       -> matching entries removed; x-purged-count: <n>
+
+# by Cache-Tag / X-Cache-Tag header (memory and file backends)
+curl -X PURGE -H "Cache-Tag: posts, homepage" http://127.0.0.1:6188/
+# 204 No Content       -> matching tagged entries removed; x-purged-count: <n>
+
+# the whole namespace (file backend with a configured namespace only, without Cache-Tag header)
 curl -X PURGE http://127.0.0.1:6188/*
 # 200 "purged: 12, fail: 0"
 # 501 Not Implemented  -> no namespace configured, or memory cache backend
 ```
 
-`PURGE /*` empties everything this plugin cached: the namespace survives as a
-directory in the file backend, so it is the one granularity beyond an exact url
-that can be purged without an index (storage file names are hashes of the full
-key — a url prefix does not map to anything on disk). The purge empties the
-in-memory hot layer along with the files — the whole layer, since it cannot be
-searched by namespace: objects that were in memory only are gone too, and the
-other namespaces read theirs back from disk. When pingap runs against an
-`etcd://` configuration store and `cluster_purge` is enabled (the default),
-successful `PURGE` requests (both single URL and `PURGE /*`) are broadcast as
-short-lived events under `<etcd_path>-events/cache_purge` so peer instances
-evict the same entries or namespace automatically; otherwise a purge cleans only
-the instance that received it (`cluster_purge = false` keeps that behaviour on
-etcd too).
+Exact URL `PURGE` removes the `GET` and `HEAD` entries (plus coding/image variants) for the requested URL. Prefix `PURGE /prefix/*` (any path longer than `/*` ending in `*`) purges every entry under `(namespace, host + prefix)` tracked in the bounded cache metadata index across both memory and disk, returning `204 No Content` with `x-purged-count`. Tag-based `PURGE` (carrying `Cache-Tag` or `X-Cache-Tag`, comma- or whitespace-separated tokens) matches response `Cache-Tag` headers across both the in-memory metadata index and cold on-disk entries (scanning only cache file headers, never loading bodies) and returns `204 No Content` with `x-purged-count`. `PURGE /*` (when no `Cache-Tag` / `X-Cache-Tag` header is present) empties everything this plugin cached in the namespace directory on disk as well as the in-memory hot layer (the whole hot layer, since it cannot be searched by namespace: objects that were in memory only are gone too, and other namespaces read theirs back from disk). When pingap runs against an `etcd://` configuration store and `cluster_purge` is enabled (the default), successful `PURGE` requests (single URL, prefix, tag, and `PURGE /*`) are broadcast as short-lived events under `<etcd_path>-events/cache_purge` so peer instances evict the same entries or namespace automatically; otherwise a purge cleans only the instance that received it (`cluster_purge = false` keeps that behaviour on etcd too).
 
 ## Lifetimes of your own
 
@@ -266,7 +268,10 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   entries created by either method. It purges the host it is sent to: send the
   `Host` of the site whose entry is to go, on any listener the plugin is
   reachable through. If `headers` are configured, send them on the `PURGE`
-  request too — they are part of the key.
+  request too — they are part of the key. Prefix `PURGE /prefix/*` and
+  `Cache-Tag` / `X-Cache-Tag` `PURGE` purge all matching entries across memory
+  and disk (returning `204 No Content` with `x-purged-count`), with tag purges
+  also scanning cold on-disk entry headers.
 - Other plugins add to the key what a response was made for: `compression` in
   `upstream` mode the coding (`zstd`, `br`, `gzip` or none), `image_optim` the
   image formats the client accepts. A `PURGE` removes the entry of each of
@@ -280,26 +285,36 @@ So a `PURGE` sent through a load balancer or CDN needs that proxy listed in
   per client. `PURGE` removes the primary slot; the variants behind it become
   unreachable and are reclaimed by eviction or the inactive sweep.
 - `lock` makes concurrent misses for the same key wait for the first one instead
-  of all hitting the origin.
-- `Cache-Control: stale-while-revalidate=<seconds>` from origin is honoured;
-  entries without this directive are not served stale during revalidation.
-  After freshness expires, pingap serves stale content inside that window while
-  one lock holder revalidates against origin in background. Responses outside
-  the window wait for or perform normal revalidation. SWR requires a non-zero
-  `lock`; `lock = "0s"` disables it. `max_ttl` caps freshness only, not the
-  SWR window. Background revalidation passes through the normal request
-  pipeline, creates an access-log entry, updates metrics, and runs request-step
-  plugins again.
-- `Cache-Control: stale-if-error=<seconds>` from origin is honoured on upstream
+  of all hitting the origin. `lock_age` overrides how long a lock stays valid before
+  another request may take over, `lock_timeout` caps how long a waiting request
+  waits on the lock, and `lock_retries` controls how many times it re-checks
+  the cache before giving up.
+- `min_uses` (`1` to `1000`) counts requests per `(namespace, host, path, query)`
+  and skips storing responses in the cache until a URI has been requested at
+  least `min_uses` times, avoiding cache churn from one-hit requests.
+- `Cache-Control: stale-while-revalidate=<seconds>` from origin — or the plugin's
+  `stale_while_revalidate` option — allows stale content to be served inside
+  that window after freshness expires while one lock holder revalidates against
+  origin in background (entries without either directive/option are not served
+  stale during revalidation). Responses outside the window wait for or perform
+  normal revalidation. SWR requires a non-zero `lock`; `lock = "0s"` disables
+  it. `max_ttl` caps freshness only, not the SWR window. Background revalidation
+  passes through the normal request pipeline, creates an access-log entry,
+  updates metrics, and runs request-step plugins again.
+- `Cache-Control: stale-if-error=<seconds>` from origin — or the plugin's
+  `stale_if_error` option — allows stale content to be served on upstream
   connect/read errors and `5xx` upstream responses (provided the response has
   not already started streaming to the client). When the origin omits
   `stale-if-error` (and does not forbid stale serving via `must-revalidate`,
-  `proxy-revalidate`, or `s-maxage`), Pingap applies a `1s` default
-  `stale-if-error` fallback window (`META_DEFAULTS`). Non-upstream errors
-  (such as downstream disconnects or internal errors) do not trigger stale
-  serving, and any `sticky` upstream cookie is cleared when serving stale so
-  clients are not pinned to a failing backend. `max_ttl` caps freshness only,
-  not the `stale-if-error` window.
+  `proxy-revalidate`, or `s-maxage`), Pingap applies the plugin's `stale_if_error`
+  or a `1s` default fallback window (`META_DEFAULTS`). `use_stale` further
+  controls which conditions permit stale responses (`error`, `timeout`,
+  `updating`, `http_403`, `http_404`, `http_429`, `http_500`, `http_502`,
+  `http_503`, `http_504`; bare status codes such as `502` are accepted).
+  Non-upstream errors (such as downstream disconnects or internal errors) do not
+  trigger stale serving, and any `sticky` upstream cookie is cleared when
+  serving stale so clients are not pinned to a failing backend. `max_ttl` caps
+  freshness only, not the `stale-if-error` window.
 - Cache read/write counts are recorded into the request context and are available
   in access logs as `{:cache_lookup_time}` / `{:cache_lock_time}`.
 

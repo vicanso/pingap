@@ -1961,4 +1961,32 @@ sni_routes = { "api.example.com" = "tls_api", "*.app.example.com" = "tls_api" }
                 .cloned()
         );
     }
+
+    #[test]
+    fn test_retry_status_codes_and_slow_start_hcl_roundtrip() {
+        let toml_input = r#"
+[upstreams.backend]
+addrs = ["127.0.0.1:8080"]
+slow_start = "30s"
+
+[locations.api]
+upstream = "backend"
+path = "/api"
+max_retries = 2
+retry_status_codes = "502,503,504,429"
+"#;
+        let hcl = convert_toml_to_hcl(toml_input).unwrap();
+        let toml_back = convert_hcl_to_toml(&hcl).unwrap();
+        let config =
+            convert_pingap_config(toml_back.as_bytes(), false).unwrap();
+        config.validate().unwrap();
+        assert_eq!(
+            Some(std::time::Duration::from_secs(30)),
+            config.upstreams["backend"].slow_start
+        );
+        assert_eq!(
+            Some("502,503,504,429".to_string()),
+            config.locations["api"].retry_status_codes
+        );
+    }
 }
