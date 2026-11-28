@@ -137,6 +137,15 @@ export default function Plugins() {
   if (currentPlugin === newPlugin) {
     items.unshift(
       {
+        name: "_name_",
+        section: sec.basic,
+        label: pluginI18n("name"),
+        placeholder: pluginI18n("namePlaceholder"),
+        defaultValue: draftName,
+        span: 6,
+        category: ExFormItemCategory.TEXT,
+      },
+      {
         name: "category",
         section: sec.basic,
         label: pluginI18n("category"),
@@ -145,15 +154,6 @@ export default function Plugins() {
         category: ExFormItemCategory.PLUGIN_CATEGORY,
         span: 6,
         options: newStringOptions(basicInfo.supported_plugins, false),
-      },
-      {
-        name: "_name_",
-        section: sec.basic,
-        label: pluginI18n("name"),
-        placeholder: pluginI18n("namePlaceholder"),
-        defaultValue: draftName,
-        span: 6,
-        category: ExFormItemCategory.TEXT,
       },
     );
   } else {
@@ -193,9 +193,13 @@ export default function Plugins() {
   // Per-category fields live in plugin-fields.ts; every builder is pure, so
   // the page only needs to look one up and append what it returns.
   const buildFields = PLUGIN_FIELDS[category as PluginCategory];
-  if (buildFields) {
+  const optionFields = buildFields ? buildFields(pluginConfig, pluginI18n) : [];
+  const fieldLabels = new Map<string, string>(
+    optionFields.map((field) => [field.name, field.label]),
+  );
+  if (optionFields.length > 0) {
     items.push(
-      ...buildFields(pluginConfig, pluginI18n).map((field) => ({
+      ...optionFields.map((field) => ({
         ...field,
         section: field.section ?? sec.options,
       })),
@@ -290,7 +294,7 @@ export default function Plugins() {
               })
               .slice(0, 3)
               .map(([key, value]) => ({
-                label: key,
+                label: fieldLabels.get(key) || key,
                 value: String(value),
                 mono: typeof value === "string",
               })),

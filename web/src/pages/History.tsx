@@ -125,6 +125,7 @@ export default function HistoryPage(props: {
     try {
       const result = await captureDryRun(() => props.onRestore(item.data));
       setPendingItem(item);
+      setOpen(false);
       if (result) {
         setDiffResult(result);
         setDiffOpen(true);
@@ -186,7 +187,7 @@ export default function HistoryPage(props: {
           </Button>
         </ItemHeader>
         <ItemContent>
-          <pre className="max-h-48 max-w-full overflow-auto break-words whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
+          <pre className="max-h-48 max-w-full overflow-auto overscroll-contain break-words whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
             {jsonText}
           </pre>
         </ItemContent>
@@ -243,7 +244,7 @@ export default function HistoryPage(props: {
               <SheetDescription>{historyI18n("description")}</SheetDescription>
             </SheetHeader>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
             <div className="grid auto-rows-min gap-4 pb-4">
               {fetching && <Loading className="mt-2" />}
               {!fetching && items.length === 0 && (

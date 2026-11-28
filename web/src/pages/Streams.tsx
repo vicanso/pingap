@@ -137,6 +137,7 @@ export default function Streams() {
           {
             key: "sni_routes",
             label: streamI18n("sniRoutes"),
+            className: "max-w-[200px] truncate",
             render: (value) => {
               const rules = Object.entries(value?.sni_routes || {}).map(
                 ([host, up]) => `${host}=${up}`,
@@ -149,6 +150,7 @@ export default function Streams() {
                 {
                   key: "threads",
                   label: streamI18n("threads"),
+                  className: "figure text-right",
                   render: (value: Stream | undefined) => (
                     <EntityText value={value?.threads} />
                   ),
@@ -156,35 +158,19 @@ export default function Streams() {
               ]
             : []),
           {
-            key: "active_connections",
-            label: streamI18n("activeConns"),
+            key: "conns",
+            label: streamI18n("connsSummary"),
             className: "figure text-right",
             render: (_value, name) => {
               if (!trafficInitialized) {
                 return <EntityText />;
               }
               const metrics = trafficData?.streams?.[name];
-              return (
-                <EntityText
-                  value={(metrics?.active_connections ?? 0).toLocaleString()}
-                />
-              );
-            },
-          },
-          {
-            key: "connections_total",
-            label: streamI18n("totalConns"),
-            className: "figure text-right",
-            render: (_value, name) => {
-              if (!trafficInitialized) {
-                return <EntityText />;
-              }
-              const metrics = trafficData?.streams?.[name];
-              return (
-                <EntityText
-                  value={(metrics?.connections_total ?? 0).toLocaleString()}
-                />
-              );
+              const active = (
+                metrics?.active_connections ?? 0
+              ).toLocaleString();
+              const total = (metrics?.connections_total ?? 0).toLocaleString();
+              return <EntityText value={`${active} / ${total}`} />;
             },
           },
           {
@@ -250,7 +236,7 @@ export default function Streams() {
       placeholder: streamI18n("addrPlaceholder"),
       tips: streamI18n("addrTips"),
       defaultValue: streamConfig.addr,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -260,7 +246,7 @@ export default function Streams() {
       placeholder: streamI18n("upstreamPlaceholder"),
       tips: streamI18n("upstreamTips"),
       defaultValue: streamConfig.upstream || "",
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.SELECT,
       options: newStringOptions(upstreams, false, true),
     },
@@ -479,7 +465,7 @@ export default function Streams() {
       placeholder: streamI18n("threadsPlaceholder"),
       tips: streamI18n("threadsTips"),
       defaultValue: streamConfig.threads,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -488,7 +474,7 @@ export default function Streams() {
       label: streamI18n("reusePort"),
       placeholder: "",
       defaultValue: streamConfig.reuse_port,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -498,7 +484,7 @@ export default function Streams() {
       label: streamI18n("tcpFastOpen"),
       placeholder: streamI18n("tcpFastOpenPlaceholder"),
       defaultValue: streamConfig.tcp_fastopen,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.NUMBER,
     },
     {

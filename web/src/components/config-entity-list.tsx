@@ -66,7 +66,7 @@ export function EntityText({ value }: { value?: string | number | null }) {
   if (value === undefined || value === null || value === "") {
     return <span className="text-muted-foreground">—</span>;
   }
-  return <>{value}</>;
+  return <span title={String(value)}>{value}</span>;
 }
 
 /**
@@ -114,7 +114,7 @@ export function ConfigEntityList<T>({
       // the header button appears once there is already something to browse.
       actions={
         names.length > 0 && !readOnly ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {extraActions}
             <Button asChild className="cursor-pointer">
               <Link to={entityUrl(newValue)}>
@@ -150,6 +150,10 @@ export function ConfigEntityList<T>({
               <div className="relative w-full max-w-sm">
                 <Input
                   type="text"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="search"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                   placeholder={i18n("listFilterPlaceholder")}
@@ -180,55 +184,97 @@ export function ConfigEntityList<T>({
             </div>
           ) : (
             <div className="overflow-hidden rounded-lg border border-border bg-card">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>{nameLabel}</TableHead>
-                    {columns.map((column) => (
-                      <TableHead key={column.key} className={column.className}>
-                        {column.label}
-                      </TableHead>
-                    ))}
-                    <TableHead className="w-8" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredNames.map((name) => (
-                    <TableRow
-                      key={name}
-                      className="group cursor-pointer transition-colors hover:bg-accent/60"
-                      onClick={() => navigate(entityUrl(name))}
-                    >
-                      <TableCell className="py-3 font-medium">
-                        {/* Link (not just the row handler) so the row is keyboard reachable. */}
-                        <Link
-                          to={entityUrl(name)}
-                          className="outline-none hover:text-primary hover:underline focus-visible:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {name}
-                        </Link>
-                      </TableCell>
+              <div className="divide-y divide-border sm:hidden">
+                {filteredNames.map((name) => (
+                  <div
+                    key={name}
+                    className="cursor-pointer px-4 py-3 transition-colors hover:bg-accent/60"
+                    onClick={() => navigate(entityUrl(name))}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <Link
+                        to={entityUrl(name)}
+                        title={name}
+                        onClick={(e) => e.stopPropagation()}
+                        className="min-w-0 flex-1 truncate font-medium text-card-foreground outline-none hover:text-primary hover:underline focus-visible:underline"
+                      >
+                        {name}
+                      </Link>
+                      <ChevronRight className="size-4 shrink-0 text-muted-foreground/75" />
+                    </div>
+                    {columns.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
+                        {columns.map((column) => (
+                          <div
+                            key={column.key}
+                            className="flex max-w-full min-w-0 items-center gap-1"
+                          >
+                            <span className="shrink-0">{column.label}:</span>
+                            <div className="machine min-w-0 truncate text-secondary-foreground">
+                              {column.render(values[name], name)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>{nameLabel}</TableHead>
                       {columns.map((column) => (
-                        <TableCell
+                        <TableHead
                           key={column.key}
-                          className={cn(
-                            // Machine track: every cell but the name holds a
-                            // value pingap reported or a value from the config.
-                            "machine max-w-[320px] truncate py-3 text-[13px] text-secondary-foreground",
-                            column.className,
-                          )}
+                          className={column.className}
                         >
-                          {column.render(values[name], name)}
-                        </TableCell>
+                          {column.label}
+                        </TableHead>
                       ))}
-                      <TableCell className="w-8 py-3 pr-3 text-right">
-                        <ChevronRight className="inline size-4 text-muted-foreground/75 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-                      </TableCell>
+                      <TableHead className="w-8" />
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredNames.map((name) => (
+                      <TableRow
+                        key={name}
+                        className="group cursor-pointer transition-colors hover:bg-accent/60"
+                        onClick={() => navigate(entityUrl(name))}
+                      >
+                        <TableCell className="max-w-[180px] py-3 font-medium sm:max-w-[260px]">
+                          {/* Link (not just the row handler) so the row is keyboard reachable. */}
+                          <Link
+                            to={entityUrl(name)}
+                            title={name}
+                            className="block truncate outline-none hover:text-primary hover:underline focus-visible:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {name}
+                          </Link>
+                        </TableCell>
+                        {columns.map((column) => (
+                          <TableCell
+                            key={column.key}
+                            className={cn(
+                              // Machine track: every cell but the name holds a
+                              // value pingap reported or a value from the config.
+                              "machine max-w-[320px] truncate py-3 text-[13px] text-secondary-foreground",
+                              column.className,
+                            )}
+                          >
+                            {column.render(values[name], name)}
+                          </TableCell>
+                        ))}
+                        <TableCell className="w-8 py-3 pr-3 text-right">
+                          <ChevronRight className="inline size-4 text-muted-foreground/75 transition-colors group-hover:text-foreground" />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </div>

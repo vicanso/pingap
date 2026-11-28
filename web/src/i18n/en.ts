@@ -78,6 +78,7 @@ export default {
     moveUp: "Move up",
     moveDown: "Move down",
     reset: "Reset",
+    filterOptions: "Filter options…",
   },
   configPage: {
     importConfirmTitle: "Import and overwrite current config?",
@@ -93,7 +94,7 @@ export default {
     convertPreview: "Convert & Preview",
     converting: "Converting…",
     convertedTomlPreview: "Converted Pingap TOML (editable before import)",
-    previewPlaceholder: "Click \"Convert & Preview\" to generate TOML…",
+    previewPlaceholder: 'Click "Convert & Preview" to generate TOML…',
     convertFail: "Convert Config Fail",
     convertWarnings: "{{count}} conversion notice(s) — review before applying:",
     kdl: "KDL",
@@ -146,7 +147,7 @@ export default {
     description:
       "Create an upstream, location, optional TLS certificate, recommended plugins, and server binding in one atomic step.",
     domainsLabel: "Domains",
-    domainsPlaceholder: "app.example.com, www.example.com (optional)",
+    domainsPlaceholder: "app.example.com (optional)",
     nameLabel: "Site Name",
     namePlaceholder: "e.g. app",
     upstreamsLabel: "Upstream Addresses",
@@ -212,13 +213,16 @@ export default {
     prefixPlaceholder: "e.g. internal-acl",
     allowIpsLabel: "Allowed IP / CIDR List (comma or newline separated)",
     allowIpsPlaceholder: "127.0.0.1, 10.0.0.0/8, 192.168.1.0/24",
-    basicAuthLabel: "Basic Auth Accounts (optional, one per line: user:password or base64)",
+    basicAuthLabel:
+      "Basic Auth Accounts (optional, one per line: user:password or base64)",
     basicAuthPlaceholder: "alice:s3cret\nbob:p4ssw0rd",
     basicAuthHint:
       "Plain user:password lines are base64-encoded in browser memory before saving.",
-    enableUriBlockLabel: "Enable scanner & traversal protection (uri_block presets)",
+    enableUriBlockLabel:
+      "Enable scanner & traversal protection (uri_block presets)",
     uriBlockDryRunLabel: "Observe only (dry_run) before blocking",
-    enableSecurityHeadersLabel: "Include security headers preset (nosniff, X-Frame-Options, Referrer-Policy, HSTS)",
+    enableSecurityHeadersLabel:
+      "Include security headers preset (nosniff, X-Frame-Options, Referrer-Policy, HSTS)",
     overwritePluginsLabel: "Overwrite existing plugins with the same names",
     rateMaxLabel: "Requests per Minute (max)",
     corsOriginLabel: "CORS Allow Origin",
@@ -230,7 +234,8 @@ export default {
     locationsLabel: "Mount to Locations (optional)",
     selectAll: "Select all",
     clearAll: "Clear",
-    noLocations: "No locations configured yet — plugins/template will still be saved.",
+    noLocations:
+      "No locations configured yet — plugins/template will still be saved.",
     positionLabel: "Chain Position",
     positionPrepend: "Prepend (run before existing plugins)",
     positionAppend: "Append (run after existing plugins)",
@@ -249,11 +254,12 @@ export default {
       "Pick ordered existing plugins to store as a reusable Access List or policy template.",
     selectPluginsLabel: "Plugins in order",
     saveTemplateOnlySubmit: "Save Template",
-    saveTemplateSuccess: "Template \"{{name}}\" saved.",
-    deleteTemplateSuccess: "Template \"{{name}}\" deleted.",
+    saveTemplateSuccess: 'Template "{{name}}" saved.',
+    deleteTemplateSuccess: 'Template "{{name}}" deleted.',
     deleteTemplateFail: "Delete Template Failed",
     templatePluginsRequired: "Select at least one plugin.",
-    prefixRequired: "Please enter a plugin name prefix or enable saving a template.",
+    prefixRequired:
+      "Please enter a plugin name prefix or enable saving a template.",
     templateNameRequired: "Please enter a template name.",
     accessListEmpty:
       "Configure at least one IP/CIDR, Basic Auth account, uri_block, or Security Headers.",
@@ -361,12 +367,14 @@ export default {
     to: "→",
     locationSubTitle: "Sort by weight",
     server: "Server",
+    stream: "Stream (L4)",
     location: "Location",
     upstream: "Upstream",
     plugin: "Plugin",
     certificate: "Certificate",
     storage: "Storage",
     serverUnit: "servers",
+    streamUnit: "streams",
     locationUnit: "locations",
     upstreamUnit: "upstreams",
     pluginUnit: "plugins",
@@ -381,6 +389,7 @@ export default {
     stagePool: "Pool",
     stageOrigin: "Origin",
     stageListenUnit: "servers",
+    stageListenWithStreams: "{{servers}} HTTP · {{streams}} L4",
     stageRouteUnit: "locations",
     stagePoolUnit: "upstreams",
     stageOriginUnit: "backends up",
@@ -393,8 +402,10 @@ export default {
     backendsDown: "{{count}} unreachable",
     attention: "Needs attention",
     allClear: "Every upstream is healthy and every certificate is in date.",
+    allClearEmpty: "No upstreams or certificates configured yet.",
     traffic: "Traffic",
     trafficWindow: "The last 15 minutes, by 10 seconds",
+    trafficRecentWindow: "1m avg",
     noTraffic: "No requests in the last 15 minutes.",
     trafficRate: "Req/s",
     traffic5xx: "5xx",
@@ -812,7 +823,8 @@ export default {
     tlsClientCrlTips:
       "Revocation list(s) checked during stream mTLS verification on both OpenSSL and rustls builds. Needs Client CA.",
     connectTimeout: "Connect Timeout",
-    connectTimeoutPlaceholder: "Override upstream TCP connect timeout (e.g. 5s)",
+    connectTimeoutPlaceholder:
+      "Override upstream TCP connect timeout (e.g. 5s)",
     idleTimeout: "Idle Timeout",
     idleTimeoutPlaceholder:
       "Close idle bidirectional stream after inactivity (e.g. 5m)",
@@ -822,7 +834,8 @@ export default {
     sniReadTimeoutTips:
       "Applied when SNI routes are configured; timed-out empty connections are closed, while non-TLS bytes fall back to Default Upstream.",
     maxConnections: "Max Connections",
-    maxConnectionsPlaceholder: "Max concurrent connections (unlimited when unset)",
+    maxConnectionsPlaceholder:
+      "Max concurrent connections (unlimited when unset)",
     allowIps: "Allow IP / CIDR",
     allowIpsPlaceholder: "Input allowed IP or CIDR(e.g. 10.0.0.0/8)",
     denyIps: "Deny IP / CIDR",
@@ -847,6 +860,7 @@ export default {
     remark: "Remark",
     activeConns: "Active Conns",
     totalConns: "Total Conns",
+    connsSummary: "Active / Total",
     trafficTransferred: "Transferred (Rx / Tx)",
   },
   location: {
@@ -902,7 +916,8 @@ export default {
     maxRetryWindow: "Max Retry Window",
     maxRetryWindowPlaceholder: "Input the max retry window to upstream",
     retryStatusCodes: "Retry Status Codes",
-    retryStatusCodesPlaceholder: "Input status codes to retry(e.g. 502,503,504)",
+    retryStatusCodesPlaceholder:
+      "Input status codes to retry(e.g. 502,503,504)",
     retryStatusCodesTips:
       "Comma-separated 4xx/5xx upstream status codes (e.g. 502,503,504,429) that trigger a retry on idempotent requests before response headers are sent downstream. Uses max_retries (defaults to 1 when unset) and max_retry_window; never falls back to fallback_upstream.",
     connectionTimeout: "Connection Timeout",
@@ -1090,7 +1105,7 @@ export default {
     tlsKeyPlaceholder: "Input the pem format key of tls",
     tlsChain: "Tls Chain",
     tlsChainPlaceholder: "Input the pem format chain of tls",
-    domains: "Acme Domains",
+    domains: "Domains",
     domainsPlaceholder:
       "Input the domains of acme, multiple domains separated by comma",
     acme: "Acme",
@@ -1513,7 +1528,7 @@ export default {
     limitMaxKeys: "Exact Max Keys",
     limitMaxKeysPlaceholder: "Max tracked keys in exact mode (default: 100000)",
     limitMaxKeysTips:
-      "Upper bound on tracked distinct keys when mode = \"exact\". Defaults to 100000.",
+      'Upper bound on tracked distinct keys when mode = "exact". Defaults to 100000.',
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
     limitHeaders: "Quota Headers",

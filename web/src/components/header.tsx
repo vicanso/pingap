@@ -53,7 +53,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import useBasicState from "@/states/basic";
@@ -61,8 +60,10 @@ import { useShallow } from "zustand/react/shallow";
 export function MainHeader({
   className,
   onOpenCommandPalette,
+  devSlot,
 }: React.HTMLAttributes<HTMLDivElement> & {
   onOpenCommandPalette?: () => void;
+  devSlot?: React.ReactNode;
 }) {
   const { t } = useTranslation();
 
@@ -84,6 +85,7 @@ export function MainHeader({
   );
   const [base64Input, setBase64Input] = React.useState("");
   const [base64Data, setBase64Data] = React.useState("");
+  const [restartDialogOpen, setRestartDialogOpen] = React.useState(false);
 
   const [restart, basicInfo, initialized] = useBasicState(
     useShallow((state) => [state.restart, state.data, state.initialized]),
@@ -213,7 +215,9 @@ export function MainHeader({
     <div className="figure flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
       {/* Still: a state, not an alarm that pulses on every page. */}
       <span className="inline-flex size-1.5 shrink-0 rounded-full bg-ok" />
-      <span className="font-medium text-foreground">{t("header.live")}</span>
+      <span className="shrink-0 whitespace-nowrap font-medium text-foreground">
+        {t("header.live")}
+      </span>
       <span className="hidden text-border sm:inline">/</span>
       <span className="hidden sm:inline">{uptime}</span>
       <span className="hidden text-border md:inline">/</span>
@@ -255,114 +259,118 @@ export function MainHeader({
   };
 
   const settingsMenu = (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className={iconBtnClass}
-              aria-label={t("header.settings")}
+    <>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={iconBtnClass}
+                aria-label={t("header.settings")}
+              >
+                <Cog className="size-4" strokeWidth={1.8} />
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t("header.settings")}</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => {
+                setTheme("system");
+              }}
             >
-              <Cog className="size-4" strokeWidth={1.8} />
-            </Button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{t("header.settings")}</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent align="end">
-        <DropdownMenuGroup>
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => {
-              setTheme("system");
-            }}
-          >
-            {theme == "system" && <Check className={iconClassName} />}
-            {theme != "system" && <SunMoon className={iconClassName} />}
-            <span>{t("themeSystem")}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => {
-              setTheme("dark");
-            }}
-          >
-            {theme == "dark" && <Check className={iconClassName} />}
-            {theme != "dark" && <Moon className={iconClassName} />}
-            <span>{t("themeDark")}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => {
-              setTheme("light");
-            }}
-          >
-            {theme == "light" && <Check className={iconClassName} />}
-            {theme != "light" && <Sun className={iconClassName} />}
-            <span>{t("themeLight")}</span>
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        {/* Language joins Settings on small screens to free the top bar. */}
-        <DropdownMenuSeparator className="sm:hidden" />
-        <DropdownMenuGroup className="sm:hidden">
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => i18n.changeLanguage(zhLang)}
-          >
-            {isZh && <Check className={iconClassName} />}
-            <span>中文</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => i18n.changeLanguage(enLang)}
-          >
-            {!isZh && <Check className={iconClassName} />}
-            <span>EN</span>
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        {!basicInfo.read_only && <DropdownMenuSeparator />}
-        {!basicInfo.read_only && (
-          <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full cursor-pointer items-center text-sm"
+              {theme == "system" && <Check className={iconClassName} />}
+              {theme != "system" && <SunMoon className={iconClassName} />}
+              <span>{t("themeSystem")}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => {
+                setTheme("dark");
+              }}
+            >
+              {theme == "dark" && <Check className={iconClassName} />}
+              {theme != "dark" && <Moon className={iconClassName} />}
+              <span>{t("themeDark")}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => {
+                setTheme("light");
+              }}
+            >
+              {theme == "light" && <Check className={iconClassName} />}
+              {theme != "light" && <Sun className={iconClassName} />}
+              <span>{t("themeLight")}</span>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          {/* Language joins Settings on small screens to free the top bar. */}
+          <DropdownMenuSeparator className="sm:hidden" />
+          <DropdownMenuGroup className="sm:hidden">
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => i18n.changeLanguage(zhLang)}
+            >
+              {isZh && <Check className={iconClassName} />}
+              <span>中文</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => i18n.changeLanguage(enLang)}
+            >
+              {!isZh && <Check className={iconClassName} />}
+              <span>EN</span>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          {!basicInfo.read_only && <DropdownMenuSeparator />}
+          {!basicInfo.read_only && (
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onSelect={() => setRestartDialogOpen(true)}
+            >
+              <PowerOff className={iconClassName} />
+              <span>{t("restart")}</span>
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {!basicInfo.read_only && (
+        <AlertDialog
+          open={restartDialogOpen}
+          onOpenChange={setRestartDialogOpen}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {noRestart ? t("restartUnsupportedTitle") : t("restartTitle")}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {noRestart || t("restartDescription")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="cursor-pointer">
+                {noRestart ? t("confirm") : t("cancel")}
+              </AlertDialogCancel>
+              {!noRestart && (
+                <AlertDialogAction
+                  className="cursor-pointer"
+                  onClick={confirmRestart}
                 >
-                  <PowerOff className={iconClassName} />
-                  <span>{t("restart")}</span>
-                </button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {noRestart
-                      ? t("restartUnsupportedTitle")
-                      : t("restartTitle")}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {noRestart || t("restartDescription")}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>
-                    {noRestart ? t("confirm") : t("cancel")}
-                  </AlertDialogCancel>
-                  {!noRestart && (
-                    <AlertDialogAction onClick={confirmRestart}>
-                      {t("confirm")}
-                    </AlertDialogAction>
-                  )}
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+                  {t("confirm")}
+                </AlertDialogAction>
+              )}
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </>
   );
 
   const aesTab = (
@@ -404,6 +412,9 @@ export function MainHeader({
             </Label>
             <Input
               id="aes-secret"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="machine"
               value={aesData.key}
               onChange={(e) => {
@@ -421,6 +432,9 @@ export function MainHeader({
             </Label>
             <Input
               id="aes-input"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="machine"
               value={aesData.data}
               onChange={(e) => {
@@ -523,6 +537,9 @@ export function MainHeader({
             </Label>
             <Input
               id="b64-input"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               className="machine"
               value={base64Input}
               onChange={(e) => {
@@ -571,7 +588,7 @@ export function MainHeader({
     <TooltipProvider delayDuration={200}>
       <header
         className={cn(
-          "flex h-12 shrink-0 items-center gap-1.5 bg-background px-3 transition-[width,height] ease-linear sm:gap-2 sm:px-5",
+          "flex h-[calc(3rem+env(safe-area-inset-top))] min-h-12 shrink-0 items-center gap-1.5 bg-background pt-[env(safe-area-inset-top)] pr-[max(0.75rem,env(safe-area-inset-right))] pl-[max(0.75rem,env(safe-area-inset-left))] sm:gap-2 sm:pr-[max(1.25rem,env(safe-area-inset-right))] sm:pl-[max(1.25rem,env(safe-area-inset-left))]",
           className,
         )}
       >
@@ -581,20 +598,33 @@ export function MainHeader({
         <div className="flex-1" />
         <div className="flex items-center gap-1 sm:gap-2">
           {onOpenCommandPalette && (
-            <button
-              type="button"
-              onClick={onOpenCommandPalette}
-              className="hidden h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-card/70 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground md:inline-flex"
-            >
-              <Search className="size-3.5 shrink-0" />
-              <span>{t("header.search")}</span>
-              <kbd className="machine rounded border border-border bg-muted px-1 py-0.5 text-[10px] leading-none">
-                ⌘K
-              </kbd>
-            </button>
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(iconBtnClass, "md:hidden")}
+                aria-label={t("header.search")}
+                onClick={onOpenCommandPalette}
+              >
+                <Search className="size-4" strokeWidth={1.8} />
+              </Button>
+              <button
+                type="button"
+                onClick={onOpenCommandPalette}
+                className="hidden h-8 cursor-pointer items-center gap-2 rounded-md border border-border bg-card/70 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground md:inline-flex"
+              >
+                <Search className="size-3.5 shrink-0" />
+                <span>{t("header.search")}</span>
+                <kbd className="machine rounded border border-border bg-muted px-1 py-0.5 text-[10px] leading-none">
+                  ⌘K
+                </kbd>
+              </button>
+            </>
           )}
           {/* Language pill is wide; on phones it moves into Settings. */}
           <div className="hidden sm:block">{languageSwitch}</div>
+          {devSlot}
           <Popover>
             <Tooltip>
               <TooltipTrigger asChild>

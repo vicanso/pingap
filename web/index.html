@@ -3,7 +3,23 @@
     <head>
         <meta charset="UTF-8" />
         <link rel="icon" type="image/png" href="./pingap.png" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+        />
+        <meta name="color-scheme" content="light dark" />
+        <meta
+            id="theme-color-light"
+            name="theme-color"
+            media="(prefers-color-scheme: light)"
+            content="#eceff4"
+        />
+        <meta
+            id="theme-color-dark"
+            name="theme-color"
+            media="(prefers-color-scheme: dark)"
+            content="#0a0d12"
+        />
         <title>Pingap: a reverse proxy like nginx</title>
         <!--
           Apply the persisted theme before first paint so there is no flash of
@@ -12,24 +28,35 @@
         -->
         <style>
             html.dark {
-                background-color: hsl(204, 33%, 6%);
+                background-color: hsl(222, 26%, 5.5%);
+                color-scheme: dark;
             }
             html:not(.dark) {
-                background-color: hsl(202, 20%, 95%);
+                background-color: hsl(212, 26%, 94%);
+                color-scheme: light;
             }
         </style>
         <script>
             (function () {
                 try {
-                    var theme =
+                    var stored =
                         localStorage.getItem("vite-ui-theme") || "system";
-                    if (theme === "system") {
-                        theme = window.matchMedia("(prefers-color-scheme: dark)")
-                            .matches
+                    var resolved = stored;
+                    if (resolved === "system") {
+                        resolved = window.matchMedia(
+                            "(prefers-color-scheme: dark)",
+                        ).matches
                             ? "dark"
                             : "light";
                     }
-                    document.documentElement.classList.add(theme);
+                    document.documentElement.classList.add(resolved);
+                    if (stored !== "system") {
+                        var hex = resolved === "dark" ? "#0a0d12" : "#eceff4";
+                        var l = document.getElementById("theme-color-light");
+                        var d = document.getElementById("theme-color-dark");
+                        if (l) l.setAttribute("content", hex);
+                        if (d) d.setAttribute("content", hex);
+                    }
                 } catch (e) {}
             })();
         </script>

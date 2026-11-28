@@ -100,7 +100,7 @@ export default function Storages() {
       placeholder: storageI18n("categoryPlaceholder"),
       defaultValue: storageConfig.category,
       category: ExFormItemCategory.SELECT,
-      span: 3,
+      span: 2,
       options: newStringOptions(["config", "secret", "plugin_preset"], true),
     },
     {
@@ -109,7 +109,16 @@ export default function Storages() {
       placeholder: storageI18n("secretPlaceholder"),
       defaultValue: storageConfig.secret,
       category: ExFormItemCategory.TEXT,
-      span: 3,
+      span: 2,
+    },
+    {
+      name: "created_at",
+      label: storageI18n("createdAt"),
+      placeholder: storageI18n("createdAtPlaceholder"),
+      tips: storageI18n("createdAtTips"),
+      defaultValue: storageConfig.created_at,
+      category: ExFormItemCategory.NUMBER,
+      span: 2,
     },
     {
       name: "value",
@@ -120,15 +129,6 @@ export default function Storages() {
       span: 6,
       notTrim: true,
       category: ExFormItemCategory.TEXTAREA,
-    },
-    {
-      name: "created_at",
-      label: storageI18n("createdAt"),
-      placeholder: storageI18n("createdAtPlaceholder"),
-      tips: storageI18n("createdAtTips"),
-      defaultValue: storageConfig.created_at,
-      category: ExFormItemCategory.NUMBER,
-      span: 3,
     },
     {
       name: "remark",

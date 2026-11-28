@@ -158,6 +158,7 @@ export default function Upstreams() {
                 {
                   key: "healthyStatus",
                   label: upstreamI18n("healthyStatus"),
+                  className: "figure text-right",
                   render: (_value: Upstream | undefined, name: string) => {
                     const status = basicInfo.upstream_healthy_status[name];
                     if (!status) {
@@ -316,7 +317,7 @@ export default function Upstreams() {
       label: upstreamI18n("connectionTimeout"),
       placeholder: upstreamI18n("connectionTimeoutPlaceholder"),
       defaultValue: upstreamConfig.connection_timeout,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -325,7 +326,7 @@ export default function Upstreams() {
       label: upstreamI18n("totalConnectionTimeout"),
       placeholder: upstreamI18n("totalConnectionTimeoutPlaceholder"),
       defaultValue: upstreamConfig.total_connection_timeout,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -334,7 +335,7 @@ export default function Upstreams() {
       label: upstreamI18n("readTimeout"),
       placeholder: upstreamI18n("readTimeoutPlaceholder"),
       defaultValue: upstreamConfig.read_timeout,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -343,7 +344,7 @@ export default function Upstreams() {
       label: upstreamI18n("writeTimeout"),
       placeholder: upstreamI18n("writeTimeoutPlaceholder"),
       defaultValue: upstreamConfig.write_timeout,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -352,7 +353,7 @@ export default function Upstreams() {
       label: upstreamI18n("idleTimeout"),
       placeholder: upstreamI18n("idleTimeoutPlaceholder"),
       defaultValue: upstreamConfig.idle_timeout,
-      span: 2,
+      span: 6,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -361,8 +362,8 @@ export default function Upstreams() {
       label: upstreamI18n("alpn"),
       placeholder: "",
       defaultValue: upstreamConfig.alpn,
-      span: 2,
-      category: ExFormItemCategory.RADIOS,
+      span: 3,
+      category: ExFormItemCategory.SELECT,
       options: [
         {
           label: "http1",
@@ -381,7 +382,7 @@ export default function Upstreams() {
         },
         {
           label: "None",
-          option: "",
+          option: "none",
           value: null,
         },
       ],
@@ -392,7 +393,7 @@ export default function Upstreams() {
       label: upstreamI18n("maxH2Streams"),
       placeholder: upstreamI18n("maxH2StreamsPlaceholder"),
       defaultValue: upstreamConfig.max_h2_streams,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -401,7 +402,7 @@ export default function Upstreams() {
       label: upstreamI18n("h2StreamWindowSize"),
       placeholder: upstreamI18n("h2StreamWindowSizePlaceholder"),
       defaultValue: upstreamConfig.h2_stream_window_size,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -410,7 +411,7 @@ export default function Upstreams() {
       label: upstreamI18n("h2ConnectionWindowSize"),
       placeholder: upstreamI18n("h2ConnectionWindowSizePlaceholder"),
       defaultValue: upstreamConfig.h2_connection_window_size,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     // Request-header policy towards the upstream. Unset means pingora's
@@ -422,8 +423,8 @@ export default function Upstreams() {
       label: upstreamI18n("h1Upgrade"),
       placeholder: "",
       defaultValue: upstreamConfig.h1_upgrade,
-      span: 2,
-      category: ExFormItemCategory.RADIOS,
+      span: 3,
+      category: ExFormItemCategory.SELECT,
       options: [
         {
           label: upstreamI18n("h1UpgradeWebSocketOnly"),
@@ -442,7 +443,7 @@ export default function Upstreams() {
         },
         {
           label: "None",
-          option: "",
+          option: "none",
           value: null,
         },
       ],
@@ -453,7 +454,7 @@ export default function Upstreams() {
       label: upstreamI18n("stripHopByHop"),
       placeholder: "",
       defaultValue: upstreamConfig.strip_hop_by_hop,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -463,7 +464,7 @@ export default function Upstreams() {
       label: upstreamI18n("stripConnectionNominated"),
       placeholder: "",
       defaultValue: upstreamConfig.strip_connection_nominated,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -473,7 +474,7 @@ export default function Upstreams() {
       label: upstreamI18n("rejectMalformedConnectionNominations"),
       placeholder: "",
       defaultValue: upstreamConfig.reject_malformed_connection_nominations,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -484,7 +485,7 @@ export default function Upstreams() {
       placeholder: upstreamI18n("sniPlaceholder"),
       tips: upstreamI18n("sniTips"),
       defaultValue: upstreamConfig.sni,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -493,7 +494,7 @@ export default function Upstreams() {
       label: upstreamI18n("verifyCert"),
       placeholder: "",
       defaultValue: upstreamConfig.verify_cert,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -549,7 +550,7 @@ export default function Upstreams() {
       label: upstreamI18n("ipv4Only"),
       placeholder: "",
       defaultValue: upstreamConfig.ipv4_only,
-      span: 2,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -559,7 +560,7 @@ export default function Upstreams() {
       label: upstreamI18n("enableTracer"),
       placeholder: "",
       defaultValue: upstreamConfig.enable_tracer,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -569,7 +570,7 @@ export default function Upstreams() {
       label: upstreamI18n("enableBackendStats"),
       placeholder: "",
       defaultValue: upstreamConfig.enable_backend_stats,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -579,7 +580,7 @@ export default function Upstreams() {
       label: upstreamI18n("backendFailureStatusCode"),
       placeholder: upstreamI18n("backendFailureStatusCodePlaceholder"),
       defaultValue: upstreamConfig.backend_failure_status_code,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -588,7 +589,7 @@ export default function Upstreams() {
       label: upstreamI18n("backendStatsInterval"),
       placeholder: upstreamI18n("backendStatsIntervalPlaceholder"),
       defaultValue: upstreamConfig.backend_stats_interval,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -599,7 +600,7 @@ export default function Upstreams() {
         "circuitBreakMaxConsecutiveFailuresPlaceholder",
       ),
       defaultValue: upstreamConfig.circuit_break_max_consecutive_failures,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -608,7 +609,7 @@ export default function Upstreams() {
       label: upstreamI18n("circuitBreakMaxFailurePercent"),
       placeholder: upstreamI18n("circuitBreakMaxFailurePercentPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_max_failure_percent,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -617,7 +618,7 @@ export default function Upstreams() {
       label: upstreamI18n("circuitBreakMinRequestsThreshold"),
       placeholder: upstreamI18n("circuitBreakMinRequestsThresholdPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_min_requests_threshold,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -629,7 +630,7 @@ export default function Upstreams() {
       ),
       defaultValue:
         upstreamConfig.circuit_break_half_open_consecutive_success_threshold,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -638,7 +639,7 @@ export default function Upstreams() {
       label: upstreamI18n("circuitBreakOpenDuration"),
       placeholder: upstreamI18n("circuitBreakOpenDurationPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_open_duration,
-      span: 2,
+      span: 6,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -647,7 +648,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",
       defaultValue: upstreamConfig.tcp_fast_open,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -657,7 +658,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpUserTimeout"),
       placeholder: upstreamI18n("tcpUserTimeoutPlaceholder"),
       defaultValue: upstreamConfig.tcp_user_timeout,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -666,7 +667,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpRecvBuf"),
       placeholder: upstreamI18n("tcpRecvBufPlaceholder"),
       defaultValue: upstreamConfig.tcp_recv_buf,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -675,7 +676,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpIdle"),
       placeholder: upstreamI18n("tcpIdlePlaceholder"),
       defaultValue: upstreamConfig.tcp_idle,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -684,7 +685,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpInterval"),
       placeholder: upstreamI18n("tcpIntervalPlaceholder"),
       defaultValue: upstreamConfig.tcp_interval,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -693,7 +694,7 @@ export default function Upstreams() {
       label: upstreamI18n("tcpProbeCount"),
       placeholder: upstreamI18n("tcpProbeCountPlaceholder"),
       defaultValue: upstreamConfig.tcp_probe_count,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -703,7 +704,7 @@ export default function Upstreams() {
       placeholder: "",
       // "" is the Unset option: a missing key stays missing when saved
       defaultValue: upstreamConfig.send_proxy_protocol || "",
-      span: 2,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newStringOptions(["v1", "v2"], false, true),
       tips: upstreamI18n("sendProxyProtocolTips"),

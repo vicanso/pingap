@@ -548,540 +548,552 @@ export function PluginPresetDialog({
           {triggerLabel || presetI18n("trigger")}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="shrink-0 px-5 pt-5 pb-3 pr-10 text-left sm:px-6">
           <DialogTitle className="flex items-center gap-2">
-            <Layers className="size-4 text-primary" />
-            {presetI18n("title")}
+            <Layers className="size-4 shrink-0 text-primary" />
+            <span className="min-w-0 break-words">{presetI18n("title")}</span>
           </DialogTitle>
           <DialogDescription>{presetI18n("description")}</DialogDescription>
         </DialogHeader>
 
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "builtin" | "saved")}
-        >
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="builtin" className="cursor-pointer">
-              {presetI18n("tabBuiltin")}
-            </TabsTrigger>
-            <TabsTrigger value="saved" className="cursor-pointer">
-              {presetI18n("tabSaved")} ({savedTemplates.length})
-            </TabsTrigger>
-          </TabsList>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5 sm:px-6">
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as "builtin" | "saved")}
+          >
+            <TabsList className="grid h-auto w-full grid-cols-1 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-2 sm:group-data-[orientation=horizontal]/tabs:h-9">
+              <TabsTrigger value="builtin" className="cursor-pointer">
+                {presetI18n("tabBuiltin")}
+              </TabsTrigger>
+              <TabsTrigger value="saved" className="cursor-pointer">
+                {presetI18n("tabSaved")} ({savedTemplates.length})
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="builtin" className="mt-4">
-            <form onSubmit={handleApplyBuiltin} className="space-y-4">
-              <div className="space-y-2">
-                <Label>{presetI18n("builtinSelectLabel")}</Label>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {(
-                    [
+            <TabsContent value="builtin" className="mt-4">
+              <form onSubmit={handleApplyBuiltin} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>{presetI18n("builtinSelectLabel")}</Label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(
                       [
-                        "access_list",
-                        presetI18n("recipeAccessList"),
-                        presetI18n("recipeAccessListDesc"),
-                      ],
-                      [
-                        "hardening",
-                        presetI18n("recipeHardening"),
-                        presetI18n("recipeHardeningDesc"),
-                      ],
-                      [
-                        "api_guard",
-                        presetI18n("recipeApiGuard"),
-                        presetI18n("recipeApiGuardDesc"),
-                      ],
-                      [
-                        "static_perf",
-                        presetI18n("recipeStaticPerf"),
-                        presetI18n("recipeStaticPerfDesc"),
-                      ],
-                    ] as const
-                  ).map(([key, title, desc]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => handleRecipeChange(key)}
-                      className={`cursor-pointer rounded-md border p-2.5 text-left transition-colors ${
-                        recipe === key
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:bg-accent/50"
-                      }`}
-                    >
-                      <p className="text-sm font-medium">{title}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {desc}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="preset-prefix">
-                    {presetI18n("prefixLabel")}
-                  </Label>
-                  <Input
-                    id="preset-prefix"
-                    value={prefix}
-                    onChange={(e) => {
-                      setPrefixTouched(true);
-                      setPrefix(e.target.value);
-                    }}
-                    placeholder={presetI18n("prefixPlaceholder")}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>{presetI18n("positionLabel")}</Label>
-                  <Select
-                    value={position}
-                    onValueChange={(v) =>
-                      setPosition(v as "prepend" | "append")
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="prepend">
-                        {presetI18n("positionPrepend")}
-                      </SelectItem>
-                      <SelectItem value="append">
-                        {presetI18n("positionAppend")}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {recipe === "access_list" && (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="preset-ips">
-                      {presetI18n("allowIpsLabel")}
-                    </Label>
-                    <Textarea
-                      id="preset-ips"
-                      rows={2}
-                      value={allowIpsInput}
-                      onChange={(e) => setAllowIpsInput(e.target.value)}
-                      placeholder={presetI18n("allowIpsPlaceholder")}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="preset-auth">
-                      {presetI18n("basicAuthLabel")}
-                    </Label>
-                    <Textarea
-                      id="preset-auth"
-                      rows={2}
-                      value={basicAuthInput}
-                      onChange={(e) => setBasicAuthInput(e.target.value)}
-                      placeholder={presetI18n("basicAuthPlaceholder")}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      {presetI18n("basicAuthHint")}
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="preset-sec-hdr" className="font-normal">
-                      {presetI18n("enableSecurityHeadersLabel")}
-                    </Label>
-                    <Switch
-                      id="preset-sec-hdr"
-                      checked={enableSecurityHeaders}
-                      onCheckedChange={setEnableSecurityHeaders}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="preset-uri-blk" className="font-normal">
-                      {presetI18n("enableUriBlockLabel")}
-                    </Label>
-                    <Switch
-                      id="preset-uri-blk"
-                      checked={enableUriBlock}
-                      onCheckedChange={setEnableUriBlock}
-                    />
+                        [
+                          "access_list",
+                          presetI18n("recipeAccessList"),
+                          presetI18n("recipeAccessListDesc"),
+                        ],
+                        [
+                          "hardening",
+                          presetI18n("recipeHardening"),
+                          presetI18n("recipeHardeningDesc"),
+                        ],
+                        [
+                          "api_guard",
+                          presetI18n("recipeApiGuard"),
+                          presetI18n("recipeApiGuardDesc"),
+                        ],
+                        [
+                          "static_perf",
+                          presetI18n("recipeStaticPerf"),
+                          presetI18n("recipeStaticPerfDesc"),
+                        ],
+                      ] as const
+                    ).map(([key, title, desc]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => handleRecipeChange(key)}
+                        className={`min-w-0 cursor-pointer rounded-md border p-2.5 text-left transition-colors ${
+                          recipe === key
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:bg-accent/50"
+                        }`}
+                      >
+                        <p className="min-w-0 break-words text-sm font-medium">
+                          {title}
+                        </p>
+                        <p className="mt-0.5 min-w-0 break-words text-xs text-muted-foreground">
+                          {desc}
+                        </p>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              )}
 
-              {(recipe === "hardening" || recipe === "api_guard") && (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="preset-rate">
-                      {presetI18n("rateMaxLabel")}
+                    <Label htmlFor="preset-prefix">
+                      {presetI18n("prefixLabel")}
                     </Label>
                     <Input
-                      id="preset-rate"
-                      type="number"
-                      min={1}
-                      value={rateMax}
-                      onChange={(e) => setRateMax(e.target.value)}
+                      id="preset-prefix"
+                      value={prefix}
+                      onChange={(e) => {
+                        setPrefixTouched(true);
+                        setPrefix(e.target.value);
+                      }}
+                      placeholder={presetI18n("prefixPlaceholder")}
                     />
                   </div>
-                  {recipe === "api_guard" && (
+                  <div className="space-y-1.5">
+                    <Label>{presetI18n("positionLabel")}</Label>
+                    <Select
+                      value={position}
+                      onValueChange={(v) =>
+                        setPosition(v as "prepend" | "append")
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="prepend">
+                          {presetI18n("positionPrepend")}
+                        </SelectItem>
+                        <SelectItem value="append">
+                          {presetI18n("positionAppend")}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {recipe === "access_list" && (
+                  <div className="space-y-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="preset-cors">
-                        {presetI18n("corsOriginLabel")}
+                      <Label htmlFor="preset-ips">
+                        {presetI18n("allowIpsLabel")}
                       </Label>
-                      <Input
-                        id="preset-cors"
-                        value={corsOrigin}
-                        onChange={(e) => setCorsOrigin(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {((recipe === "access_list" && enableUriBlock) ||
-                recipe === "hardening") && (
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="preset-dry-run" className="font-normal">
-                    {presetI18n("uriBlockDryRunLabel")}
-                  </Label>
-                  <Switch
-                    id="preset-dry-run"
-                    checked={uriBlockDryRun}
-                    onCheckedChange={setUriBlockDryRun}
-                  />
-                </div>
-              )}
-
-              <div className="flex items-center justify-between gap-3">
-                <Label htmlFor="preset-overwrite" className="font-normal">
-                  {presetI18n("overwritePluginsLabel")}
-                </Label>
-                <Switch
-                  id="preset-overwrite"
-                  checked={overwritePlugins}
-                  onCheckedChange={setOverwritePlugins}
-                />
-              </div>
-
-              <Separator />
-
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="preset-save-tpl" className="font-medium">
-                    {presetI18n("saveAsTemplateLabel")}
-                  </Label>
-                  <Switch
-                    id="preset-save-tpl"
-                    checked={saveAsTemplate}
-                    onCheckedChange={setSaveAsTemplate}
-                  />
-                </div>
-                {saveAsTemplate && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="preset-tpl-name">
-                        {presetI18n("templateNameLabel")}
-                      </Label>
-                      <Input
-                        id="preset-tpl-name"
-                        value={templateName}
-                        onChange={(e) => setTemplateName(e.target.value)}
-                        placeholder={presetI18n("templateNamePlaceholder")}
+                      <Textarea
+                        id="preset-ips"
+                        rows={2}
+                        value={allowIpsInput}
+                        onChange={(e) => setAllowIpsInput(e.target.value)}
+                        placeholder={presetI18n("allowIpsPlaceholder")}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="preset-tpl-desc">
-                        {presetI18n("templateDescLabel")}
+                      <Label htmlFor="preset-auth">
+                        {presetI18n("basicAuthLabel")}
                       </Label>
-                      <Input
-                        id="preset-tpl-desc"
-                        value={templateDesc}
-                        onChange={(e) => setTemplateDesc(e.target.value)}
-                        placeholder={presetI18n("templateDescPlaceholder")}
+                      <Textarea
+                        id="preset-auth"
+                        rows={2}
+                        value={basicAuthInput}
+                        onChange={(e) => setBasicAuthInput(e.target.value)}
+                        placeholder={presetI18n("basicAuthPlaceholder")}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {presetI18n("basicAuthHint")}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="preset-sec-hdr" className="font-normal">
+                        {presetI18n("enableSecurityHeadersLabel")}
+                      </Label>
+                      <Switch
+                        id="preset-sec-hdr"
+                        checked={enableSecurityHeaders}
+                        onCheckedChange={setEnableSecurityHeaders}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="preset-uri-blk" className="font-normal">
+                        {presetI18n("enableUriBlockLabel")}
+                      </Label>
+                      <Switch
+                        id="preset-uri-blk"
+                        checked={enableUriBlock}
+                        onCheckedChange={setEnableUriBlock}
                       />
                     </div>
                   </div>
                 )}
-              </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>{presetI18n("locationsLabel")}</Label>
-                  {locationNames.length > 0 && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <button
-                        type="button"
-                        className="cursor-pointer text-primary hover:underline"
-                        onClick={() => setSelectedLocations(locationNames)}
-                      >
-                        {presetI18n("selectAll")}
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-pointer text-muted-foreground hover:underline"
-                        onClick={() => setSelectedLocations([])}
-                      >
-                        {presetI18n("clearAll")}
-                      </button>
+                {(recipe === "hardening" || recipe === "api_guard") && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="preset-rate">
+                        {presetI18n("rateMaxLabel")}
+                      </Label>
+                      <Input
+                        id="preset-rate"
+                        type="number"
+                        min={1}
+                        value={rateMax}
+                        onChange={(e) => setRateMax(e.target.value)}
+                      />
+                    </div>
+                    {recipe === "api_guard" && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="preset-cors">
+                          {presetI18n("corsOriginLabel")}
+                        </Label>
+                        <Input
+                          id="preset-cors"
+                          value={corsOrigin}
+                          onChange={(e) => setCorsOrigin(e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {((recipe === "access_list" && enableUriBlock) ||
+                  recipe === "hardening") && (
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="preset-dry-run" className="font-normal">
+                      {presetI18n("uriBlockDryRunLabel")}
+                    </Label>
+                    <Switch
+                      id="preset-dry-run"
+                      checked={uriBlockDryRun}
+                      onCheckedChange={setUriBlockDryRun}
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="preset-overwrite" className="font-normal">
+                    {presetI18n("overwritePluginsLabel")}
+                  </Label>
+                  <Switch
+                    id="preset-overwrite"
+                    checked={overwritePlugins}
+                    onCheckedChange={setOverwritePlugins}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="preset-save-tpl" className="font-medium">
+                      {presetI18n("saveAsTemplateLabel")}
+                    </Label>
+                    <Switch
+                      id="preset-save-tpl"
+                      checked={saveAsTemplate}
+                      onCheckedChange={setSaveAsTemplate}
+                    />
+                  </div>
+                  {saveAsTemplate && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="preset-tpl-name">
+                          {presetI18n("templateNameLabel")}
+                        </Label>
+                        <Input
+                          id="preset-tpl-name"
+                          value={templateName}
+                          onChange={(e) => setTemplateName(e.target.value)}
+                          placeholder={presetI18n("templateNamePlaceholder")}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="preset-tpl-desc">
+                          {presetI18n("templateDescLabel")}
+                        </Label>
+                        <Input
+                          id="preset-tpl-desc"
+                          value={templateDesc}
+                          onChange={(e) => setTemplateDesc(e.target.value)}
+                          placeholder={presetI18n("templateDescPlaceholder")}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
-                {locationNames.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    {presetI18n("noLocations")}
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{presetI18n("locationsLabel")}</Label>
+                    {locationNames.length > 0 && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          className="cursor-pointer text-primary hover:underline"
+                          onClick={() => setSelectedLocations(locationNames)}
+                        >
+                          {presetI18n("selectAll")}
+                        </button>
+                        <button
+                          type="button"
+                          className="cursor-pointer text-muted-foreground hover:underline"
+                          onClick={() => setSelectedLocations([])}
+                        >
+                          {presetI18n("clearAll")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {locationNames.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      {presetI18n("noLocations")}
+                    </p>
+                  ) : (
+                    <div className="grid max-h-32 grid-cols-2 gap-1.5 overflow-y-auto overscroll-contain rounded-md border border-border p-2 sm:grid-cols-3">
+                      {locationNames.map((loc) => (
+                        <label
+                          key={loc}
+                          className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/50"
+                        >
+                          <Checkbox
+                            checked={selectedLocations.includes(loc)}
+                            onCheckedChange={(checked) =>
+                              toggleLocation(
+                                selectedLocations,
+                                setSelectedLocations,
+                                loc,
+                                checked === true,
+                              )
+                            }
+                          />
+                          <span className="machine truncate">{loc}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5">
+                  <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    {presetI18n("previewPluginsLabel")}
                   </p>
-                ) : (
-                  <div className="grid max-h-32 grid-cols-2 gap-1.5 overflow-y-auto rounded-md border border-border p-2 sm:grid-cols-3">
-                    {locationNames.map((loc) => (
+                  <div className="flex flex-wrap gap-1.5">
+                    {builtPlugins.map((item) => (
+                      <Badge
+                        key={item.name}
+                        variant="secondary"
+                        className="machine max-w-full font-normal"
+                      >
+                        <span className="truncate">
+                          {item.name} ({String(item.config.category)})
+                        </span>
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setOpen(false)}
+                    disabled={submitting}
+                  >
+                    {commonI18n("cancel")}
+                  </Button>
+                  <Button type="submit" disabled={submitting}>
+                    {submitting && (
+                      <LoaderCircle className="size-4 animate-spin" />
+                    )}
+                    {presetI18n("applySubmit")}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="saved" className="mt-4 space-y-4">
+              {savedTemplates.length === 0 ? (
+                <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  {presetI18n("savedEmpty")}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="max-h-48 space-y-2 overflow-y-auto overscroll-contain">
+                    {savedTemplates.map((tpl) => {
+                      const active = selectedTemplate?.name === tpl.name;
+                      return (
+                        <div
+                          key={tpl.name}
+                          className={`flex items-start justify-between gap-3 rounded-md border p-2.5 transition-colors ${
+                            active
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:bg-accent/40"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 cursor-pointer text-left"
+                            onClick={() => setSelectedTemplateName(tpl.name)}
+                          >
+                            <p className="min-w-0 break-words text-sm font-medium">
+                              {tpl.name}
+                            </p>
+                            {tpl.description && (
+                              <p className="mt-0.5 min-w-0 break-words text-xs text-muted-foreground">
+                                {tpl.description}
+                              </p>
+                            )}
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {tpl.plugin_names.map((p) => (
+                                <Badge
+                                  key={p}
+                                  variant="secondary"
+                                  className="machine max-w-full text-[11px] font-normal"
+                                >
+                                  <span className="truncate">{p}</span>
+                                </Badge>
+                              ))}
+                            </div>
+                          </button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={submitting}
+                            className="size-7 shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+                            onClick={() => handleDeleteTemplate(tpl.name)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {selectedTemplate && (
+                    <div className="space-y-3 rounded-md border border-border p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="min-w-0 break-words text-sm font-medium">
+                          {presetI18n("mountTitle")}: {selectedTemplate.name}
+                        </p>
+                        <Select
+                          value={mountPosition}
+                          onValueChange={(v) =>
+                            setMountPosition(v as "prepend" | "append")
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-full text-xs sm:h-8 sm:w-64 sm:shrink-0 sm:data-[size=default]:h-8">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="prepend">
+                              {presetI18n("positionPrepend")}
+                            </SelectItem>
+                            <SelectItem value="append">
+                              {presetI18n("positionAppend")}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {locationNames.length > 0 && (
+                        <div className="grid max-h-28 grid-cols-2 gap-1.5 overflow-y-auto overscroll-contain rounded border border-border p-2 sm:grid-cols-3">
+                          {locationNames.map((loc) => (
+                            <label
+                              key={loc}
+                              className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/50"
+                            >
+                              <Checkbox
+                                checked={mountLocations.includes(loc)}
+                                onCheckedChange={(checked) =>
+                                  toggleLocation(
+                                    mountLocations,
+                                    setMountLocations,
+                                    loc,
+                                    checked === true,
+                                  )
+                                }
+                              />
+                              <span className="machine truncate">{loc}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <Button
+                          type="button"
+                          disabled={submitting || mountLocations.length === 0}
+                          onClick={handleMountSaved}
+                        >
+                          {submitting && (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          )}
+                          {presetI18n("mountSubmit")}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Separator />
+
+              <form onSubmit={handleSaveFromExisting} className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium">
+                    {presetI18n("createFromExistingTitle")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {presetI18n("createFromExistingHint")}
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="existing-tpl-name">
+                      {presetI18n("templateNameLabel")}
+                    </Label>
+                    <Input
+                      id="existing-tpl-name"
+                      value={newTplName}
+                      onChange={(e) => setNewTplName(e.target.value)}
+                      placeholder={presetI18n("templateNamePlaceholder")}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="existing-tpl-desc">
+                      {presetI18n("templateDescLabel")}
+                    </Label>
+                    <Input
+                      id="existing-tpl-desc"
+                      value={newTplDesc}
+                      onChange={(e) => setNewTplDesc(e.target.value)}
+                      placeholder={presetI18n("templateDescPlaceholder")}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{presetI18n("selectPluginsLabel")}</Label>
+                  <div className="grid max-h-32 grid-cols-2 gap-1.5 overflow-y-auto overscroll-contain rounded-md border border-border p-2 sm:grid-cols-3">
+                    {existingPluginNames.map((name) => (
                       <label
-                        key={loc}
+                        key={name}
                         className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/50"
                       >
                         <Checkbox
-                          checked={selectedLocations.includes(loc)}
+                          checked={newTplPlugins.includes(name)}
                           onCheckedChange={(checked) =>
                             toggleLocation(
-                              selectedLocations,
-                              setSelectedLocations,
-                              loc,
+                              newTplPlugins,
+                              setNewTplPlugins,
+                              name,
                               checked === true,
                             )
                           }
                         />
-                        <span className="machine truncate">{loc}</span>
+                        <span className="machine truncate">{name}</span>
                       </label>
                     ))}
                   </div>
-                )}
-              </div>
-
-              <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5">
-                <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-                  {presetI18n("previewPluginsLabel")}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {builtPlugins.map((item) => (
-                    <Badge
-                      key={item.name}
-                      variant="secondary"
-                      className="machine font-normal"
-                    >
-                      {item.name} ({String(item.config.category)})
-                    </Badge>
-                  ))}
                 </div>
-              </div>
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setOpen(false)}
-                  disabled={submitting}
-                >
-                  {commonI18n("cancel")}
-                </Button>
-                <Button type="submit" disabled={submitting}>
-                  {submitting && (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  )}
-                  {presetI18n("applySubmit")}
-                </Button>
-              </DialogFooter>
-            </form>
-          </TabsContent>
-
-          <TabsContent value="saved" className="mt-4 space-y-4">
-            {savedTemplates.length === 0 ? (
-              <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                {presetI18n("savedEmpty")}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="max-h-48 space-y-2 overflow-y-auto">
-                  {savedTemplates.map((tpl) => {
-                    const active = selectedTemplate?.name === tpl.name;
-                    return (
-                      <div
-                        key={tpl.name}
-                        className={`flex items-start justify-between gap-3 rounded-md border p-2.5 transition-colors ${
-                          active
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:bg-accent/40"
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 cursor-pointer text-left"
-                          onClick={() => setSelectedTemplateName(tpl.name)}
-                        >
-                          <p className="text-sm font-medium">{tpl.name}</p>
-                          {tpl.description && (
-                            <p className="text-xs text-muted-foreground">
-                              {tpl.description}
-                            </p>
-                          )}
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            {tpl.plugin_names.map((p) => (
-                              <Badge
-                                key={p}
-                                variant="secondary"
-                                className="machine text-[11px] font-normal"
-                              >
-                                {p}
-                              </Badge>
-                            ))}
-                          </div>
-                        </button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          disabled={submitting}
-                          className="size-7 shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDeleteTemplate(tpl.name)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {selectedTemplate && (
-                  <div className="space-y-3 rounded-md border border-border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium">
-                        {presetI18n("mountTitle")}: {selectedTemplate.name}
-                      </p>
-                      <Select
-                        value={mountPosition}
-                        onValueChange={(v) =>
-                          setMountPosition(v as "prepend" | "append")
-                        }
-                      >
-                        <SelectTrigger className="w-56">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="prepend">
-                            {presetI18n("positionPrepend")}
-                          </SelectItem>
-                          <SelectItem value="append">
-                            {presetI18n("positionAppend")}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {locationNames.length > 0 && (
-                      <div className="grid max-h-28 grid-cols-2 gap-1.5 overflow-y-auto rounded border border-border p-2 sm:grid-cols-3">
-                        {locationNames.map((loc) => (
-                          <label
-                            key={loc}
-                            className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/50"
-                          >
-                            <Checkbox
-                              checked={mountLocations.includes(loc)}
-                              onCheckedChange={(checked) =>
-                                toggleLocation(
-                                  mountLocations,
-                                  setMountLocations,
-                                  loc,
-                                  checked === true,
-                                )
-                              }
-                            />
-                            <span className="machine truncate">{loc}</span>
-                          </label>
-                        ))}
-                      </div>
+                <DialogFooter>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    disabled={submitting}
+                  >
+                    {submitting && (
+                      <LoaderCircle className="size-4 animate-spin" />
                     )}
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        disabled={submitting || mountLocations.length === 0}
-                        onClick={handleMountSaved}
-                      >
-                        {submitting && (
-                          <LoaderCircle className="size-4 animate-spin" />
-                        )}
-                        {presetI18n("mountSubmit")}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <Separator />
-
-            <form onSubmit={handleSaveFromExisting} className="space-y-3">
-              <div>
-                <p className="text-sm font-medium">
-                  {presetI18n("createFromExistingTitle")}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {presetI18n("createFromExistingHint")}
-                </p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="existing-tpl-name">
-                    {presetI18n("templateNameLabel")}
-                  </Label>
-                  <Input
-                    id="existing-tpl-name"
-                    value={newTplName}
-                    onChange={(e) => setNewTplName(e.target.value)}
-                    placeholder={presetI18n("templateNamePlaceholder")}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="existing-tpl-desc">
-                    {presetI18n("templateDescLabel")}
-                  </Label>
-                  <Input
-                    id="existing-tpl-desc"
-                    value={newTplDesc}
-                    onChange={(e) => setNewTplDesc(e.target.value)}
-                    placeholder={presetI18n("templateDescPlaceholder")}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>{presetI18n("selectPluginsLabel")}</Label>
-                <div className="grid max-h-32 grid-cols-2 gap-1.5 overflow-y-auto rounded-md border border-border p-2 sm:grid-cols-3">
-                  {existingPluginNames.map((name) => (
-                    <label
-                      key={name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/50"
-                    >
-                      <Checkbox
-                        checked={newTplPlugins.includes(name)}
-                        onCheckedChange={(checked) =>
-                          toggleLocation(
-                            newTplPlugins,
-                            setNewTplPlugins,
-                            name,
-                            checked === true,
-                          )
-                        }
-                      />
-                      <span className="machine truncate">{name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              <DialogFooter>
-                <Button type="submit" variant="secondary" disabled={submitting}>
-                  {submitting && (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  )}
-                  {presetI18n("saveTemplateOnlySubmit")}
-                </Button>
-              </DialogFooter>
-            </form>
-          </TabsContent>
-        </Tabs>
+                    {presetI18n("saveTemplateOnlySubmit")}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </div>
       </DialogContent>
     </Dialog>
   );

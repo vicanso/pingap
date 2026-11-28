@@ -7,6 +7,7 @@ import { sortIntoSections } from "@/components/ex-form-sections";
 import { z } from "zod";
 import {
   ExFormItemCategory,
+  type ExFormOption,
   newBooleanOptions,
   newStringOptions,
 } from "@/constants";
@@ -114,6 +115,7 @@ export default function Locations() {
           {
             key: "weight",
             label: locationI18n("weight"),
+            className: "figure text-right",
             render: (value) => (
               <EntityText
                 value={value ? getLocationWeight(value) : undefined}
@@ -148,22 +150,21 @@ export default function Locations() {
     setSearchParams(searchParams);
   };
 
-  const plugins = newStringOptions(
-    (basicInfo.supported_plugins || []).sort(),
-    false,
-  );
-
   const currentPlugins = config.plugins || {};
-  Object.keys(currentPlugins)
+  const plugins: ExFormOption[] = Object.keys(currentPlugins)
     .sort()
-    .forEach((name) => {
+    .map((name) => {
       const item = currentPlugins[name];
-      plugins.push({
-        label: `${name}(${item.category || ""})`,
+      return {
+        label: `${name} (${item.category || ""})`,
         option: name,
         value: name,
-      });
+      };
     });
+
+  plugins.push(
+    ...newStringOptions([...(basicInfo.supported_plugins || [])].sort(), false),
+  );
 
   const locationConfig = getLocationConfig(currentLocation, config.locations);
 
@@ -358,7 +359,7 @@ export default function Locations() {
       placeholder: locationI18n("matchCookiesPlaceholder"),
       tips: locationI18n("matchConditionTips"),
       defaultValue: locationConfig.match_cookies,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.TEXTS,
     },
     {

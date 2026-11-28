@@ -1,9 +1,10 @@
 import * as React from "react";
-import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface SortCheckboxsProps extends React.HTMLAttributes<HTMLDivElement> {
   defaultValue?: string[];
@@ -21,12 +22,25 @@ export const SortCheckboxs = React.forwardRef<
 >(({ defaultValue = [], options, className, onValueChange, ...props }, ref) => {
   const { t } = useTranslation();
   const [selectedItems, setSelectedItems] = React.useState(defaultValue);
+  const [filter, setFilter] = React.useState("");
 
   const labelByValue = React.useMemo(() => {
     const map = new Map<string, string>();
     options.forEach((opt) => map.set(opt.value, opt.label));
     return map;
   }, [options]);
+
+  const keyword = filter.trim().toLowerCase();
+  const visibleOptions = React.useMemo(() => {
+    if (!keyword) {
+      return options;
+    }
+    return options.filter(
+      (opt) =>
+        opt.label.toLowerCase().includes(keyword) ||
+        opt.value.toLowerCase().includes(keyword),
+    );
+  }, [options, keyword]);
 
   const handleSelect = (value: string, checked: boolean) => {
     const next = checked
@@ -53,7 +67,7 @@ export const SortCheckboxs = React.forwardRef<
 
   return (
     <div
-      className={cn("grid gap-3 sm:grid-cols-2", className)}
+      className={cn("grid items-start gap-3 sm:grid-cols-2", className)}
       ref={ref}
       {...props}
     >
@@ -63,27 +77,61 @@ export const SortCheckboxs = React.forwardRef<
             {t("formControls.availableOptions")}
           </span>
         </div>
-        <div className="max-h-60 space-y-0.5 overflow-y-auto p-1.5">
-          {options.map((item) => {
-            const id = `sort-opt-${item.value}`;
-            const checked = selectedItems.includes(item.value);
-            return (
-              <label
-                key={item.value}
-                htmlFor={id}
-                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors hover:bg-accent/50"
+        {options.length > 8 && (
+          <div className="relative border-b border-border px-2 py-1.5">
+            <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder={t("formControls.filterOptions", {
+                defaultValue: "Filter options…",
+              })}
+              className="h-8 pl-7 pr-7 text-base sm:text-xs"
+            />
+            {filter && (
+              <button
+                type="button"
+                onClick={() => setFilter("")}
+                aria-label={t("multiSelect.clear")}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 cursor-pointer rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
               >
-                <Checkbox
-                  id={id}
-                  checked={checked}
-                  onCheckedChange={(state) =>
-                    handleSelect(item.value, state === true)
-                  }
-                />
-                <span className="truncate font-medium">{item.label}</span>
-              </label>
-            );
-          })}
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+        <div className="max-h-64 space-y-0.5 overflow-y-auto overscroll-contain p-1.5">
+          {visibleOptions.length === 0 ? (
+            <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+              {t("listFilterEmpty")}
+            </p>
+          ) : (
+            visibleOptions.map((item) => {
+              const id = `sort-opt-${item.value}`;
+              const checked = selectedItems.includes(item.value);
+              return (
+                <label
+                  key={item.value}
+                  htmlFor={id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors hover:bg-accent/50"
+                >
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={(state) =>
+                      handleSelect(item.value, state === true)
+                    }
+                  />
+                  <span className="truncate font-medium">{item.label}</span>
+                </label>
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -101,7 +149,7 @@ export const SortCheckboxs = React.forwardRef<
             {t("formControls.emptySelected")}
           </p>
         ) : (
-          <div className="max-h-60 divide-y divide-border/50 overflow-y-auto">
+          <div className="max-h-64 divide-y divide-border/50 overflow-y-auto overscroll-contain">
             {selectedItems.map((value, index) => (
               <div
                 key={value}

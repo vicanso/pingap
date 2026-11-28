@@ -62,6 +62,13 @@ type NavGroup = "path" | "policy" | "system";
 
 type BadgeTone = "neutral" | "warn" | "down";
 
+interface NavChildItem {
+  title: string;
+  path: string;
+  variant: "default" | "ghost";
+  tone?: "down" | "warn";
+}
+
 interface NavLink {
   title: string;
   label?: string;
@@ -71,7 +78,7 @@ interface NavLink {
   path: string;
   variant: "default" | "ghost";
   group: NavGroup;
-  children?: NavLink[];
+  children?: NavChildItem[];
 }
 
 function badgeToneClasses(tone?: BadgeTone) {
@@ -313,21 +320,30 @@ function CollapsedNavFlyout({
             </span>
           )}
         </Link>
-        <div className="max-h-72 space-y-0.5 overflow-y-auto border-t border-border pt-1">
+        <div className="max-h-72 space-y-0.5 overflow-y-auto overscroll-contain border-t border-border pt-1">
           {item.children!.map((child) => {
             const selected = currentName === child.title;
             return (
               <Link
                 key={child.title}
                 to={child.path}
+                title={child.title}
                 className={cn(
-                  "block truncate rounded-md px-2 py-1.5 text-sm outline-none",
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none",
                   "hover:bg-accent hover:text-accent-foreground",
                   selected && "bg-accent font-medium text-accent-foreground",
                 )}
                 onClick={() => setOpen(false)}
               >
-                {child.title}
+                <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                {child.tone && (
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      child.tone === "down" ? "bg-down" : "bg-warn",
+                    )}
+                  />
+                )}
               </Link>
             );
           })}
@@ -383,6 +399,9 @@ export function MainSidebar({
     }
     return "ghost";
   };
+
+  const urlParams = new URLSearchParams(location.search);
+  const currentName = urlParams.get("name");
 
   const servers = Object.keys(config.servers || {}).sort();
   const streams = Object.keys(config.streams || {}).sort();
@@ -460,22 +479,44 @@ export function MainSidebar({
 
   // Expanded: only expand children for the active route (or when searching).
   // Collapsed: always build full lists so hover flyouts have content.
-  const generateChildren = (baseUrl: string, items: string[]) => {
+  const generateChildren = (
+    baseUrl: string,
+    items: string[],
+  ): NavChildItem[] => {
     if (expanded && !activeKeyword && !pathname.startsWith(baseUrl)) {
-      return [] as NavLink[];
+      return [];
     }
-    const arr: NavLink[] = [];
+    const arr: NavChildItem[] = [];
     items.forEach((item) => {
       if (activeKeyword && !item.toLowerCase().includes(activeKeyword)) {
         return;
       }
-      const path = `${baseUrl}?name=${item}`;
+      const path = `${baseUrl}?name=${encodeURIComponent(item)}`;
+      let tone: "down" | "warn" | undefined;
+      if (baseUrl === UPSTREAMS) {
+        const status = basicInfo.upstream_healthy_status?.[item];
+        if (status) {
+          tone =
+            status.healthy === 0
+              ? "down"
+              : status.healthy < status.total
+                ? "warn"
+                : undefined;
+        }
+      } else if (baseUrl === CERTIFICATES) {
+        const notAfter = certificateInfos[item]?.not_after;
+        if (notAfter) {
+          const days = daysUntil(notAfter);
+          tone = days <= 7 ? "down" : days <= 30 ? "warn" : undefined;
+        }
+      }
       arr.push({
         title: item,
-        variant: getVariant(path),
-        label: "",
+        variant:
+          pathname === baseUrl && currentName === item ? "default" : "ghost",
         path,
-      } as NavLink);
+        tone,
+      });
     });
     return arr;
   };
@@ -571,14 +612,12 @@ export function MainSidebar({
     { key: "system", label: navI18n("groupSystem") },
   ];
 
-  const urlParams = new URLSearchParams(location.search);
-  const currentName = urlParams.get("name");
   const matchCount = items.reduce(
     (total, item) => total + (item.children?.length ?? 0),
     0,
   );
 
-  const renderMenuSub = (subItems: NavLink[] | undefined) => {
+  const renderMenuSub = (subItems: NavChildItem[] | undefined) => {
     if (!subItems || subItems.length == 0) {
       return <></>;
     }
@@ -592,13 +631,22 @@ export function MainSidebar({
               <SidebarMenuSubButton isActive={isSelected} asChild>
                 <Link
                   to={item.path}
+                  title={item.title}
                   className="w-full"
                   onClick={closeMobileNav}
                   aria-current={isSelected ? "page" : undefined}
                 >
-                  <span className="truncate">
+                  <span className="min-w-0 flex-1 truncate">
                     <HighlightMatch text={item.title} keyword={activeKeyword} />
                   </span>
+                  {item.tone && (
+                    <span
+                      className={cn(
+                        "size-1.5 shrink-0 rounded-full",
+                        item.tone === "down" ? "bg-down" : "bg-warn",
+                      )}
+                    />
+                  )}
                 </Link>
               </SidebarMenuSubButton>
             </SidebarMenuSubItem>
@@ -615,8 +663,15 @@ export function MainSidebar({
           <div className="relative m-2 mt-0">
             <Input
               type="text"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
               placeholder={navI18n("searchPlaceholder")}
-              className="h-9 border-border bg-card/60 pr-12 pl-8 focus-visible:bg-card"
+              className={cn(
+                "h-9 border-border bg-card/60 pl-8 focus-visible:bg-card",
+                isMobile ? "pr-8" : "pr-12",
+              )}
               value={keyword}
               onChange={(e) => {
                 setKeyword(e.target.value);
@@ -633,6 +688,7 @@ export function MainSidebar({
                 <X className="size-3.5" />
               </button>
             ) : (
+              !isMobile &&
               onOpenCommandPalette && (
                 <button
                   type="button"

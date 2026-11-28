@@ -55,8 +55,8 @@ export default function Login() {
   // without the app shell, so the 96px gap that used to line the card up under
   // the header is now the padding itself and the card lands in the same place.
   return (
-    <div className="min-h-svh overflow-auto bg-background">
-      <div className="mx-auto w-full max-w-[400px] px-4 pt-24 pb-10">
+    <div className="min-h-svh overflow-auto overscroll-contain bg-background">
+      <div className="mx-auto w-full max-w-[400px] pt-[max(6rem,calc(2rem+env(safe-area-inset-top)))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(2.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))]">
         <div className="mb-5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <span className="flex size-8 items-center justify-center rounded-md border border-border bg-card">
@@ -148,6 +148,10 @@ export default function Login() {
                 <Input
                   id="account"
                   autoFocus
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="next"
                   autoComplete="username"
                   className="h-10"
                   onChange={(e) => {
@@ -161,6 +165,10 @@ export default function Login() {
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="go"
                     autoComplete="current-password"
                     className="h-10 pr-9"
                     onChange={(e) => {

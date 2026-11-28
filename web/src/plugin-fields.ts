@@ -29,13 +29,14 @@ export type PluginFieldsBuilder = (
 const dryRunField = (
   conf: Record<string, unknown>,
   t: Translate,
+  span = 3,
 ): ExFormItem => ({
   name: "dry_run",
   label: t("dryRun"),
   placeholder: "",
   tips: t("dryRunTips"),
   defaultValue: conf.dry_run as boolean,
-  span: 3,
+  span,
   category: ExFormItemCategory.RADIOS,
   options: newBooleanOptions(),
 });
@@ -313,7 +314,7 @@ export const PLUGIN_FIELDS: Partial<
       label: t("redirectPrefix"),
       placeholder: t("redirectPrefixPlaceholder"),
       defaultValue: conf.prefix as string,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -321,7 +322,7 @@ export const PLUGIN_FIELDS: Partial<
       label: t("redirectStatus"),
       placeholder: t("redirectStatusPlaceholder"),
       defaultValue: conf.status as number,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -334,6 +335,15 @@ export const PLUGIN_FIELDS: Partial<
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "http_to_https",
+      label: t("redirectHttps"),
+      placeholder: "",
+      defaultValue: conf.http_to_https as boolean,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "rules",
       label: t("redirectRules"),
       placeholder: t("redirectRulesPlaceholder"),
@@ -341,15 +351,6 @@ export const PLUGIN_FIELDS: Partial<
       defaultValue: conf.rules as string[],
       span: 6,
       category: ExFormItemCategory.TEXTS,
-    },
-    {
-      name: "http_to_https",
-      label: t("redirectHttps"),
-      placeholder: "",
-      defaultValue: conf.http_to_https as boolean,
-      span: 2,
-      category: ExFormItemCategory.RADIOS,
-      options: newBooleanOptions(),
     },
   ],
   [PluginCategory.CACHE]: (conf, t) => [
@@ -450,7 +451,7 @@ export const PLUGIN_FIELDS: Partial<
       label: t("checkCacheControl"),
       placeholder: "",
       defaultValue: conf.check_cache_control as boolean,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -790,7 +791,7 @@ export const PLUGIN_FIELDS: Partial<
       label: t("basicAuthHideCredentials"),
       placeholder: t("basicAuthHideCredentialsPlaceholder"),
       defaultValue: conf.hide_credentials as boolean,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -1031,7 +1032,7 @@ export const PLUGIN_FIELDS: Partial<
       placeholder: "",
       defaultValue: (conf.tag as string) || "",
       span: 3,
-      category: ExFormItemCategory.RADIOS,
+      category: ExFormItemCategory.SELECT,
       // pascal case would make "Ja4" and "IpJa4" of the last two
       options: newStringOptions(
         ["cookie", "header", "query", "ip", "ja4", "ip_ja4"],
@@ -1151,7 +1152,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
-    dryRunField(conf, t),
+    dryRunField(conf, t, 6),
   ],
   [PluginCategory.GEO_RESTRICTION]: (conf, t) => [
     {
@@ -1205,7 +1206,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
-    dryRunField(conf, t),
+    dryRunField(conf, t, 6),
   ],
   [PluginCategory.REFERER_RESTRICTION]: (conf, t) => [
     {
@@ -1233,7 +1234,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
-    dryRunField(conf, t),
+    dryRunField(conf, t, 6),
   ],
   [PluginCategory.UA_RESTRICTION]: (conf, t) => [
     {
@@ -1261,7 +1262,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
-    dryRunField(conf, t),
+    dryRunField(conf, t, 6),
   ],
   [PluginCategory.JA4_RESTRICTION]: (conf, t) => [
     {
@@ -1661,7 +1662,7 @@ export const PLUGIN_FIELDS: Partial<
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
-    dryRunField(conf, t),
+    dryRunField(conf, t, 6),
   ],
   [PluginCategory.SUB_FILTER]: (conf, t) => [
     {
@@ -1880,7 +1881,7 @@ export const PLUGIN_FIELDS: Partial<
       placeholder: "",
       tips: t("mirrorCompareTips"),
       defaultValue: conf.compare as boolean,
-      span: 2,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },

@@ -133,57 +133,118 @@ export function TrafficPanel() {
   );
 
   const streamsTable = streamEntries.length > 0 && (
-    <div className="overflow-x-auto border-t border-border">
-      <table className="w-full text-[12.5px]">
-        <thead>
-          <tr className="text-left text-[12px] text-muted-foreground">
-            <th className="px-4 py-2 font-normal sm:px-5">
-              {homeI18n("trafficStreams")}
-            </th>
-            <th className="px-3 py-2 text-right font-normal">
-              {homeI18n("trafficStreamActive")}
-            </th>
-            <th className="px-3 py-2 text-right font-normal">
-              {homeI18n("trafficStreamTotal")}
-            </th>
-            <th className="px-3 py-2 text-right font-normal">
-              {homeI18n("trafficStreamRx")}
-            </th>
-            <th className="px-4 py-2 text-right font-normal sm:px-5">
-              {homeI18n("trafficStreamTx")}
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border-subtle">
+    <div className="border-t border-border">
+      <div className="sm:hidden">
+        <div className="border-b border-border-subtle bg-surface-subtle/50 px-4 py-2 text-[12px] font-normal text-muted-foreground">
+          {homeI18n("trafficStreams")}
+        </div>
+        <div className="divide-y divide-border-subtle">
           {streamEntries.map((stream) => (
-            <tr
+            <div
               key={stream.name}
-              className="transition-colors hover:bg-accent/40"
+              className="flex min-w-0 flex-col gap-1 px-4 py-2.5"
             >
-              <td className="px-4 py-2.5 sm:px-5">
+              <div className="flex min-w-0 items-baseline justify-between gap-3">
                 <Link
                   to={`${STREAMS}?name=${encodeURIComponent(stream.name)}`}
-                  className="machine font-medium text-card-foreground hover:text-primary hover:underline"
+                  title={stream.name}
+                  className="machine min-w-0 flex-1 truncate text-[13px] font-medium text-card-foreground hover:text-primary hover:underline"
                 >
                   {stream.name}
                 </Link>
-              </td>
-              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
-                {stream.active_connections.toLocaleString()}
-              </td>
-              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
-                {stream.connections_total.toLocaleString()}
-              </td>
-              <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
-                {formatBytes(stream.rx_bytes)}
-              </td>
-              <td className="figure px-4 py-2.5 text-right text-secondary-foreground sm:px-5">
-                {formatBytes(stream.tx_bytes)}
-              </td>
-            </tr>
+                <span className="figure shrink-0 text-[13px] font-medium text-card-foreground">
+                  {stream.active_connections.toLocaleString()}{" "}
+                  <span className="text-[11.5px] font-normal text-muted-foreground">
+                    {homeI18n("trafficStreamActive")}
+                  </span>
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground">
+                <span>
+                  {homeI18n("trafficStreamTotal")}{" "}
+                  <span className="figure text-secondary-foreground">
+                    {stream.connections_total.toLocaleString()}
+                  </span>
+                </span>
+                <span className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                  <span>
+                    Rx{" "}
+                    <span className="figure text-secondary-foreground">
+                      {formatBytes(stream.rx_bytes)}
+                    </span>
+                  </span>
+                  <span>
+                    Tx{" "}
+                    <span className="figure text-secondary-foreground">
+                      {formatBytes(stream.tx_bytes)}
+                    </span>
+                  </span>
+                </span>
+              </div>
+            </div>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full table-fixed text-[12.5px]">
+          <colgroup>
+            <col className="w-[36%]" />
+            <col className="w-[16%]" />
+            <col className="w-[16%]" />
+            <col className="w-[16%]" />
+            <col className="w-[16%]" />
+          </colgroup>
+          <thead>
+            <tr className="text-left text-[12px] text-muted-foreground">
+              <th className="px-4 py-2 font-normal sm:px-5">
+                {homeI18n("trafficStreams")}
+              </th>
+              <th className="px-3 py-2 text-right font-normal">
+                {homeI18n("trafficStreamActive")}
+              </th>
+              <th className="px-3 py-2 text-right font-normal">
+                {homeI18n("trafficStreamTotal")}
+              </th>
+              <th className="px-3 py-2 text-right font-normal">
+                {homeI18n("trafficStreamRx")}
+              </th>
+              <th className="px-4 py-2 text-right font-normal sm:px-5">
+                {homeI18n("trafficStreamTx")}
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle">
+            {streamEntries.map((stream) => (
+              <tr
+                key={stream.name}
+                className="transition-colors hover:bg-accent/40"
+              >
+                <td className="px-4 py-2.5 sm:px-5">
+                  <Link
+                    to={`${STREAMS}?name=${encodeURIComponent(stream.name)}`}
+                    title={stream.name}
+                    className="machine block w-full truncate font-medium text-card-foreground hover:text-primary hover:underline"
+                  >
+                    {stream.name}
+                  </Link>
+                </td>
+                <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                  {stream.active_connections.toLocaleString()}
+                </td>
+                <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                  {stream.connections_total.toLocaleString()}
+                </td>
+                <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                  {formatBytes(stream.rx_bytes)}
+                </td>
+                <td className="figure px-4 py-2.5 text-right text-secondary-foreground sm:px-5">
+                  {formatBytes(stream.tx_bytes)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 
@@ -200,7 +261,15 @@ export function TrafficPanel() {
   }
 
   const recentRequests = sum(recent(traffic.requests));
+  const recent4xx = sum(recent(traffic.status_4xx));
+  const recent5xx = sum(recent(traffic.status_5xx));
   const recentTimed = sum(recent(traffic.latency_count));
+  const recentLatencyAvg = recentTimed
+    ? weighted(recent(traffic.latency_avg), recent(traffic.latency_count))
+    : 0;
+  const recentLatencyP95 = recentTimed
+    ? Math.max(...recent(traffic.latency_p95))
+    : 0;
   const meters = [
     {
       label: homeI18n("trafficRate"),
@@ -208,29 +277,20 @@ export function TrafficPanel() {
     },
     {
       label: homeI18n("traffic5xx"),
-      value: formatShare(sum(recent(traffic.status_5xx)), recentRequests),
-      tone: sum(recent(traffic.status_5xx)) > 0 ? "down" : undefined,
+      value: formatShare(recent5xx, recentRequests),
+      tone: recent5xx > 0 ? "down" : undefined,
     },
     {
       label: homeI18n("traffic4xx"),
-      value: formatShare(sum(recent(traffic.status_4xx)), recentRequests),
+      value: formatShare(recent4xx, recentRequests),
     },
     {
       label: homeI18n("trafficLatencyAvg"),
-      value: recentTimed
-        ? formatMs(
-            weighted(
-              recent(traffic.latency_avg),
-              recent(traffic.latency_count),
-            ),
-          )
-        : "—",
+      value: recentTimed ? formatMs(recentLatencyAvg) : "—",
     },
     {
       label: homeI18n("trafficLatencyP95"),
-      value: recentTimed
-        ? formatMs(Math.max(...recent(traffic.latency_p95)))
-        : "—",
+      value: recentTimed ? formatMs(recentLatencyP95) : "—",
     },
   ];
 
@@ -256,9 +316,15 @@ export function TrafficPanel() {
   return (
     <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
       {header}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-b border-border px-4 py-3 sm:grid-cols-3 sm:px-5 lg:grid-cols-5">
-        {meters.map((meter) => (
-          <div key={meter.label} className="flex flex-col gap-0.5">
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-b border-border px-4 py-3 sm:grid-cols-5 sm:px-5">
+        {meters.map((meter, idx) => (
+          <div
+            key={meter.label}
+            className={cn(
+              "flex min-w-0 flex-col gap-0.5",
+              idx === 0 && "col-span-2 sm:col-span-1",
+            )}
+          >
             <span className="text-[12px] text-muted-foreground">
               {meter.label}
             </span>
@@ -278,6 +344,12 @@ export function TrafficPanel() {
           title={homeI18n("trafficRequests")}
           times={times}
           format={formatRate}
+          defaultValues={[
+            recentRequests / seconds,
+            recent4xx / seconds,
+            recent5xx / seconds,
+          ]}
+          defaultTimeLabel={homeI18n("trafficRecentWindow")}
           series={[
             {
               key: "all",
@@ -304,6 +376,8 @@ export function TrafficPanel() {
           title={homeI18n("trafficLatency")}
           times={times}
           format={formatMs}
+          defaultValues={[recentLatencyAvg, recentLatencyP95]}
+          defaultTimeLabel={homeI18n("trafficRecentWindow")}
           series={[
             {
               key: "avg",
@@ -322,65 +396,133 @@ export function TrafficPanel() {
         />
       </div>
       {upstreams.length > 0 && (
-        <div className="overflow-x-auto border-t border-border">
-          <table className="w-full text-[12.5px]">
-            <thead>
-              <tr className="text-left text-[12px] text-muted-foreground">
-                <th className="px-4 py-2 font-normal sm:px-5">
-                  {homeI18n("trafficUpstream")}
-                </th>
-                <th className="px-3 py-2 text-right font-normal">
-                  {homeI18n("trafficRate")}
-                </th>
-                <th className="px-3 py-2 text-right font-normal">
-                  {homeI18n("trafficErrors")}
-                </th>
-                <th className="px-3 py-2 text-right font-normal">
-                  {homeI18n("trafficWait")}
-                </th>
-                <th className="px-4 py-2 text-right font-normal sm:px-5">
-                  {homeI18n("trafficTrend")}
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-subtle">
+        <div className="border-t border-border">
+          <div className="sm:hidden">
+            <div className="border-b border-border-subtle bg-surface-subtle/50 px-4 py-2 text-[12px] font-normal text-muted-foreground">
+              {homeI18n("trafficUpstream")}
+            </div>
+            <div className="divide-y divide-border-subtle">
               {upstreams.map((upstream) => (
-                <tr
+                <div
                   key={upstream.name}
-                  className="transition-colors hover:bg-accent/40"
+                  className="flex min-w-0 flex-col gap-1 px-4 py-2.5"
                 >
-                  <td className="px-4 py-2.5 sm:px-5">
+                  <div className="flex min-w-0 items-baseline justify-between gap-3">
                     <Link
                       to={`${UPSTREAMS}?name=${encodeURIComponent(upstream.name)}`}
-                      className="font-medium text-card-foreground hover:text-primary hover:underline"
+                      title={upstream.name}
+                      className="min-w-0 flex-1 truncate text-[13px] font-medium text-card-foreground hover:text-primary hover:underline"
                     >
                       {upstream.name}
                     </Link>
-                  </td>
-                  <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
-                    {formatRate(upstream.rate)}
-                  </td>
-                  <td
-                    className={cn(
-                      "figure px-3 py-2.5 text-right text-secondary-foreground",
-                      upstream.errors > 0 && "font-medium text-down",
-                    )}
-                  >
-                    {formatShare(upstream.errors, upstream.requests)}
-                  </td>
-                  <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
-                    {upstream.timed ? formatMs(upstream.latency) : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 sm:px-5">
+                    <span className="figure shrink-0 text-[13px] font-medium text-card-foreground">
+                      {formatRate(upstream.rate)}{" "}
+                      <span className="text-[11.5px] font-normal text-muted-foreground">
+                        {homeI18n("trafficRate")}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 items-center justify-between gap-3 text-[12px] text-muted-foreground">
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <span>
+                        {homeI18n("trafficErrors")}{" "}
+                        <span
+                          className={cn(
+                            "figure",
+                            upstream.errors > 0
+                              ? "font-medium text-down"
+                              : "text-secondary-foreground",
+                          )}
+                        >
+                          {formatShare(upstream.errors, upstream.requests)}
+                        </span>
+                      </span>
+                      <span>
+                        {homeI18n("trafficWait")}{" "}
+                        <span className="figure text-secondary-foreground">
+                          {upstream.timed ? formatMs(upstream.latency) : "—"}
+                        </span>
+                      </span>
+                    </div>
                     <Sparkline
                       values={upstream.trend}
-                      className="ml-auto text-chart-1"
+                      width={64}
+                      height={18}
+                      className="shrink-0 text-chart-1"
                     />
-                  </td>
-                </tr>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </div>
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full table-fixed text-[12.5px]">
+              <colgroup>
+                <col className="w-[36%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+              </colgroup>
+              <thead>
+                <tr className="text-left text-[12px] text-muted-foreground">
+                  <th className="px-4 py-2 font-normal sm:px-5">
+                    {homeI18n("trafficUpstream")}
+                  </th>
+                  <th className="px-3 py-2 text-right font-normal">
+                    {homeI18n("trafficRate")}
+                  </th>
+                  <th className="px-3 py-2 text-right font-normal">
+                    {homeI18n("trafficErrors")}
+                  </th>
+                  <th className="px-3 py-2 text-right font-normal">
+                    {homeI18n("trafficWait")}
+                  </th>
+                  <th className="px-4 py-2 text-right font-normal sm:px-5">
+                    {homeI18n("trafficTrend")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {upstreams.map((upstream) => (
+                  <tr
+                    key={upstream.name}
+                    className="transition-colors hover:bg-accent/40"
+                  >
+                    <td className="px-4 py-2.5 sm:px-5">
+                      <Link
+                        to={`${UPSTREAMS}?name=${encodeURIComponent(upstream.name)}`}
+                        title={upstream.name}
+                        className="block w-full truncate font-medium text-card-foreground hover:text-primary hover:underline"
+                      >
+                        {upstream.name}
+                      </Link>
+                    </td>
+                    <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                      {formatRate(upstream.rate)}
+                    </td>
+                    <td
+                      className={cn(
+                        "figure px-3 py-2.5 text-right text-secondary-foreground",
+                        upstream.errors > 0 && "font-medium text-down",
+                      )}
+                    >
+                      {formatShare(upstream.errors, upstream.requests)}
+                    </td>
+                    <td className="figure px-3 py-2.5 text-right text-secondary-foreground">
+                      {upstream.timed ? formatMs(upstream.latency) : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 sm:px-5">
+                      <Sparkline
+                        values={upstream.trend}
+                        className="ml-auto text-chart-1"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {streamsTable}

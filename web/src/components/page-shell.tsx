@@ -48,14 +48,16 @@ export function PageShell({
     <div
       className={cn(
         "flex min-h-0 flex-1 flex-col",
-        fill ? "overflow-hidden" : "overflow-auto",
+        fill ? "overflow-hidden" : "overflow-auto overscroll-contain",
       )}
     >
       <div
         className={cn(
-          "mx-auto flex w-full flex-col px-4 py-5 md:px-6 md:py-6",
+          "mx-auto flex w-full flex-col py-5 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:px-6 md:py-6",
           width === "narrow" ? "max-w-[1100px]" : "max-w-[1400px]",
-          fill ? "min-h-0 flex-1 overflow-hidden" : "pb-10",
+          fill
+            ? "min-h-0 flex-1 overflow-hidden pb-[max(1.25rem,env(safe-area-inset-bottom))]"
+            : "pb-[max(2.5rem,calc(1.5rem+env(safe-area-inset-bottom)))]",
           className,
         )}
       >
@@ -74,13 +76,13 @@ export function PageShell({
           )}
           <div className="mr-auto min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-[22px] leading-7 font-semibold tracking-[-0.01em]">
+              <h1 className="min-w-0 text-[22px] leading-7 font-semibold tracking-[-0.01em] break-words">
                 {title}
               </h1>
               {badge}
             </div>
             {description && (
-              <p className="mt-1 max-w-2xl text-[14px] leading-5 text-muted-foreground">
+              <p className="mt-1 max-w-2xl text-[14px] leading-5 break-words text-muted-foreground">
                 {description}
               </p>
             )}

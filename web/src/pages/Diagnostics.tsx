@@ -162,18 +162,15 @@ export default function Diagnostics() {
     setSimulating(true);
     try {
       const headers = parseHeaderLines(headersText);
-      const res = await request.post<RouteMatchResponse>(
-        "/debug/route-match",
-        {
-          server: selectedServer || undefined,
-          method,
-          host: host.trim() || undefined,
-          path: path.trim() || "/",
-          query: query.trim() || undefined,
-          cookie: cookie.trim() || undefined,
-          headers: Object.keys(headers).length > 0 ? headers : undefined,
-        },
-      );
+      const res = await request.post<RouteMatchResponse>("/debug/route-match", {
+        server: selectedServer || undefined,
+        method,
+        host: host.trim() || undefined,
+        path: path.trim() || "/",
+        query: query.trim() || undefined,
+        cookie: cookie.trim() || undefined,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
+      });
       setSimResult(res.data);
     } catch (err) {
       toast(diagI18n("simulateFail"), {
@@ -249,12 +246,9 @@ export default function Diagnostics() {
   }, [autoRefresh, fetchEvents]);
 
   return (
-    <PageShell
-      title={diagI18n("title")}
-      description={diagI18n("description")}
-    >
+    <PageShell title={diagI18n("title")} description={diagI18n("description")}>
       <Tabs defaultValue="route-match" className="space-y-4">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
+        <TabsList className="grid h-auto w-full max-w-md grid-cols-1 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-2 sm:group-data-[orientation=horizontal]/tabs:h-9">
           <TabsTrigger value="route-match" className="cursor-pointer">
             {diagI18n("tabRouteMatch")}
           </TabsTrigger>
@@ -312,6 +306,9 @@ export default function Diagnostics() {
                   <div className="space-y-1.5">
                     <Label>{diagI18n("hostLabel")}</Label>
                     <Input
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={host}
                       onChange={(e) => setHost(e.target.value)}
                       placeholder="api.example.com"
@@ -320,6 +317,9 @@ export default function Diagnostics() {
                   <div className="space-y-1.5">
                     <Label>{diagI18n("pathLabel")}</Label>
                     <Input
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={path}
                       onChange={(e) => setPath(e.target.value)}
                       placeholder="/v1/chat/completions"
@@ -331,6 +331,9 @@ export default function Diagnostics() {
                   <div className="space-y-1.5">
                     <Label>{diagI18n("queryLabel")}</Label>
                     <Input
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder="version=2&debug=1"
@@ -339,6 +342,9 @@ export default function Diagnostics() {
                   <div className="space-y-1.5">
                     <Label>{diagI18n("cookieLabel")}</Label>
                     <Input
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={cookie}
                       onChange={(e) => setCookie(e.target.value)}
                       placeholder="canary=1; session=abc"
@@ -350,7 +356,10 @@ export default function Diagnostics() {
                   <Label>{diagI18n("headersLabel")}</Label>
                   <Textarea
                     rows={3}
-                    className="font-mono text-xs"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="font-mono text-base sm:text-xs"
                     value={headersText}
                     onChange={(e) => setHeadersText(e.target.value)}
                     placeholder={"x-canary: yes\nauthorization: Bearer token"}
@@ -390,7 +399,11 @@ export default function Diagnostics() {
                           })
                         : diagI18n("noRouteMatched")}
                     </CardTitle>
-                    <Badge variant="outline" className="font-mono text-xs">
+                    <Badge
+                      variant="outline"
+                      title={simResult.normalized_path}
+                      className="max-w-full truncate font-mono text-xs"
+                    >
                       {diagI18n("normalizedPath")}: {simResult.normalized_path}
                     </Badge>
                   </div>
@@ -401,7 +414,7 @@ export default function Diagnostics() {
                       <div className="text-xs text-muted-foreground">
                         {diagI18n("upstreamLabel")}
                       </div>
-                      <div className="font-mono font-medium">
+                      <div className="font-mono font-medium break-all">
                         {simResult.matched.upstream || "—"}
                       </div>
                     </div>
@@ -409,7 +422,7 @@ export default function Diagnostics() {
                       <div className="text-xs text-muted-foreground">
                         {diagI18n("fallbackUpstreamLabel")}
                       </div>
-                      <div className="font-mono font-medium">
+                      <div className="font-mono font-medium break-all">
                         {simResult.matched.fallback_upstream || "—"}
                       </div>
                     </div>
@@ -460,7 +473,9 @@ export default function Diagnostics() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{diagI18n("colLocation")}</TableHead>
-                        <TableHead>{diagI18n("colWeight")}</TableHead>
+                        <TableHead className="figure text-right">
+                          {diagI18n("colWeight")}
+                        </TableHead>
                         <TableHead>{diagI18n("colUpstream")}</TableHead>
                         <TableHead>{diagI18n("colHostPath")}</TableHead>
                         <TableHead>{diagI18n("colConditions")}</TableHead>
@@ -480,13 +495,19 @@ export default function Diagnostics() {
                       ) : (
                         simResult.candidates.map((item) => (
                           <TableRow key={item.name}>
-                            <TableCell className="font-mono font-medium">
+                            <TableCell
+                              className="max-w-[220px] truncate font-mono font-medium"
+                              title={item.name}
+                            >
                               {item.name}
                             </TableCell>
-                            <TableCell className="font-mono">
+                            <TableCell className="figure text-right font-mono">
                               {item.weight}
                             </TableCell>
-                            <TableCell className="font-mono text-xs">
+                            <TableCell
+                              className="max-w-[220px] truncate font-mono text-xs"
+                              title={item.upstream || undefined}
+                            >
                               {item.upstream || "—"}
                             </TableCell>
                             <TableCell>
@@ -513,9 +534,7 @@ export default function Diagnostics() {
                             </TableCell>
                             <TableCell>
                               <Badge
-                                variant={
-                                  item.matched ? "default" : "outline"
-                                }
+                                variant={item.matched ? "default" : "outline"}
                               >
                                 {item.reason}
                               </Badge>
@@ -541,7 +560,7 @@ export default function Diagnostics() {
                 </CardTitle>
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <div className="flex flex-wrap items-center gap-1 rounded-md border border-border p-0.5">
                   {(["all", "5xx", "dry_run", "reload_fail"] as const).map(
                     (kind) => (
                       <Button
@@ -586,63 +605,129 @@ export default function Diagnostics() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{diagI18n("colTime")}</TableHead>
-                    <TableHead>{diagI18n("colKind")}</TableHead>
-                    <TableHead>{diagI18n("colStatus")}</TableHead>
-                    <TableHead>{diagI18n("colTarget")}</TableHead>
-                    <TableHead>{diagI18n("colRequest")}</TableHead>
-                    <TableHead>{diagI18n("colClientIp")}</TableHead>
-                    <TableHead>{diagI18n("colMessage")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {events.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="py-8 text-center text-sm text-muted-foreground"
-                      >
-                        {diagI18n("noEvents")}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    events.map((ev) => (
-                      <TableRow key={ev.id}>
-                        <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                          {formatEventTime(ev.ts)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={eventBadgeVariant(ev.kind)}>
-                            {ev.kind}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {ev.status ?? "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {[ev.server, ev.location, ev.category]
+              {events.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  {diagI18n("noEvents")}
+                </div>
+              ) : (
+                <>
+                  <div className="divide-y divide-border md:hidden">
+                    {events.map((ev) => {
+                      const target = [ev.server, ev.location, ev.category]
+                        .filter(Boolean)
+                        .join(" / ");
+                      const requestText = [ev.method, ev.host, ev.uri]
+                        .filter(Boolean)
+                        .join(" ");
+                      return (
+                        <div
+                          key={ev.id}
+                          className="space-y-1.5 px-4 py-3 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={eventBadgeVariant(ev.kind)}>
+                                {ev.kind}
+                              </Badge>
+                              {ev.status != null && (
+                                <span className="figure font-mono font-medium">
+                                  {ev.status}
+                                </span>
+                              )}
+                            </div>
+                            <span className="figure font-mono text-[11px] text-muted-foreground">
+                              {formatEventTime(ev.ts)}
+                            </span>
+                          </div>
+                          {target && (
+                            <div className="font-mono break-all text-secondary-foreground">
+                              {target}
+                            </div>
+                          )}
+                          {(requestText || ev.client_ip) && (
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+                              {requestText && (
+                                <span className="min-w-0 break-all">
+                                  {requestText}
+                                </span>
+                              )}
+                              {ev.client_ip && (
+                                <span className="shrink-0">{ev.client_ip}</span>
+                              )}
+                            </div>
+                          )}
+                          <p className="break-words text-foreground">
+                            {ev.message || "—"}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden overflow-x-auto md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{diagI18n("colTime")}</TableHead>
+                          <TableHead>{diagI18n("colKind")}</TableHead>
+                          <TableHead className="figure text-right">
+                            {diagI18n("colStatus")}
+                          </TableHead>
+                          <TableHead>{diagI18n("colTarget")}</TableHead>
+                          <TableHead>{diagI18n("colRequest")}</TableHead>
+                          <TableHead>{diagI18n("colClientIp")}</TableHead>
+                          <TableHead>{diagI18n("colMessage")}</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {events.map((ev) => {
+                          const target = [ev.server, ev.location, ev.category]
                             .filter(Boolean)
-                            .join(" / ") || "—"}
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate font-mono text-xs">
-                          {[ev.method, ev.host, ev.uri]
+                            .join(" / ");
+                          const requestText = [ev.method, ev.host, ev.uri]
                             .filter(Boolean)
-                            .join(" ") || "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {ev.client_ip || "—"}
-                        </TableCell>
-                        <TableCell className="max-w-sm text-xs break-words">
-                          {ev.message || "—"}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                            .join(" ");
+                          return (
+                            <TableRow key={ev.id}>
+                              <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+                                {formatEventTime(ev.ts)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={eventBadgeVariant(ev.kind)}>
+                                  {ev.kind}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="figure text-right font-mono text-xs">
+                                {ev.status ?? "—"}
+                              </TableCell>
+                              <TableCell
+                                className="max-w-[220px] truncate font-mono text-xs"
+                                title={target || undefined}
+                              >
+                                {target || "—"}
+                              </TableCell>
+                              <TableCell
+                                className="max-w-[200px] truncate font-mono text-xs"
+                                title={requestText || undefined}
+                              >
+                                {requestText || "—"}
+                              </TableCell>
+                              <TableCell
+                                className="max-w-[140px] truncate font-mono text-xs"
+                                title={ev.client_ip || undefined}
+                              >
+                                {ev.client_ip || "—"}
+                              </TableCell>
+                              <TableCell className="min-w-[240px] max-w-[460px] whitespace-normal break-words text-xs">
+                                {ev.message || "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -9,6 +9,7 @@ import {
   PLUGINS,
   SERVERS,
   STORAGES,
+  STREAMS,
   UPSTREAMS,
 } from "@/routers";
 import { LoadingPage } from "@/components/loading";
@@ -130,12 +131,24 @@ export default function Home() {
     listify(config.servers, (name, value) => {
       serverSummary.push({
         name,
-        link: `${SERVERS}?name=${name}`,
+        link: `${SERVERS}?name=${encodeURIComponent(name)}`,
         value: value.addr,
       });
     });
   }
   serverSummary.sort((a, b) => a.name.localeCompare(b.name));
+
+  const streamSummary: Summary[] = [];
+  if (config.streams) {
+    listify(config.streams, (name, value) => {
+      streamSummary.push({
+        name,
+        link: `${STREAMS}?name=${encodeURIComponent(name)}`,
+        value: value?.addr || "—",
+      });
+    });
+  }
+  streamSummary.sort((a, b) => a.name.localeCompare(b.name));
 
   const locationSummary: Summary[] = [];
   const locationSummaryWeight: Record<string, number> = {};
@@ -145,7 +158,7 @@ export default function Home() {
       const match = [value.host, value.path || "/"].filter(Boolean).join(" ");
       locationSummary.push({
         name,
-        link: `${LOCATIONS}?name=${name}`,
+        link: `${LOCATIONS}?name=${encodeURIComponent(name)}`,
         value: match,
       });
     });
@@ -171,7 +184,7 @@ export default function Home() {
       upstreamSummary.push({
         name,
         nameClass,
-        link: `${UPSTREAMS}?name=${name}`,
+        link: `${UPSTREAMS}?name=${encodeURIComponent(name)}`,
         value: value.addrs.map((addr) => addr.split(" ")[0]).join(" "),
       });
     });
@@ -183,7 +196,7 @@ export default function Home() {
     listify(config.plugins, (name, value) => {
       pluginSummary.push({
         name,
-        link: `${PLUGINS}?name=${name}`,
+        link: `${PLUGINS}?name=${encodeURIComponent(name)}`,
         value: value.category as string,
       });
     });
@@ -216,7 +229,7 @@ export default function Home() {
       const state = hasExpiry ? certificateState(info.not_after) : undefined;
       certificateSummary.push({
         name,
-        link: `${CERTIFICATES}?name=${name}`,
+        link: `${CERTIFICATES}?name=${encodeURIComponent(name)}`,
         value: hasExpiry
           ? homeI18n("expiresOn", { date: formatDate(info.not_after) })
           : value.domains || info?.domains?.join(", ") || "",
@@ -232,7 +245,7 @@ export default function Home() {
     listify(config.storages, (name, value) => {
       storageSummary.push({
         name,
-        link: `${STORAGES}?name=${name}`,
+        link: `${STORAGES}?name=${encodeURIComponent(name)}`,
         value: value.category,
       });
     });
@@ -270,12 +283,16 @@ export default function Home() {
   // fact anyone checks when a request is not arriving.
   const ports = Array.from(
     new Set(
-      serverSummary.flatMap((server) =>
-        server.value
+      [...serverSummary, ...streamSummary].flatMap((listener) =>
+        listener.value
           .split(",")
           .map((addr) => addr.trim())
-          .filter(Boolean)
-          .map((addr) => `:${addr.slice(addr.lastIndexOf(":") + 1)}`),
+          .filter((addr) => addr && addr !== "—")
+          .map((addr) =>
+            addr.startsWith("unix:")
+              ? "unix"
+              : `:${addr.slice(addr.lastIndexOf(":") + 1)}`,
+          ),
       ),
     ),
   );
@@ -302,10 +319,19 @@ export default function Home() {
     {
       key: "listen",
       label: homeI18n("stageListen"),
-      value: serverSummary.length.toString(),
-      unit: homeI18n("stageListenUnit"),
+      value: (serverSummary.length + streamSummary.length).toString(),
+      unit:
+        streamSummary.length > 0
+          ? homeI18n("stageListenWithStreams", {
+              servers: serverSummary.length,
+              streams: streamSummary.length,
+            })
+          : homeI18n("stageListenUnit"),
       detail: ports.length ? ports.join(" ") : homeI18n("stageEmpty"),
-      to: SERVERS,
+      to:
+        serverSummary.length === 0 && streamSummary.length > 0
+          ? STREAMS
+          : SERVERS,
     },
     {
       key: "route",
@@ -397,7 +423,7 @@ export default function Home() {
               healthy: status.healthy,
               total: status.total,
             }),
-      to: `${UPSTREAMS}?name=${name}`,
+      to: `${UPSTREAMS}?name=${encodeURIComponent(name)}`,
     });
   });
   Object.keys(certificateInfos).forEach((name) => {
@@ -414,7 +440,7 @@ export default function Home() {
       tone: state.tone,
       name,
       message: state.message,
-      to: `${CERTIFICATES}?name=${name}`,
+      to: `${CERTIFICATES}?name=${encodeURIComponent(name)}`,
     });
   });
   // The run before this one did not end: it crashed, panicked or was
@@ -442,6 +468,8 @@ export default function Home() {
     });
   }
   alerts.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "down" ? -1 : 1));
+  const hasMonitoredEntities =
+    upstreamSummary.length > 0 || certificateSummary.length > 0;
 
   const entityCards: EntityCard[] = [
     {
@@ -451,6 +479,17 @@ export default function Home() {
       unit: homeI18n("serverUnit"),
       summary: serverSummary,
     },
+    ...(streamSummary.length > 0
+      ? [
+          {
+            title: homeI18n("stream"),
+            path: STREAMS,
+            count: streamSummary.length,
+            unit: homeI18n("streamUnit"),
+            summary: streamSummary,
+          },
+        ]
+      : []),
     {
       title: homeI18n("location"),
       path: LOCATIONS,
@@ -523,11 +562,17 @@ export default function Home() {
     { name: "rustc", value: dash(basicInfo.rustc_version) },
     {
       name: "machineCpu",
-      value: `${basicInfo.cpus} / ${basicInfo.physical_cpus}`,
+      value:
+        basicInfo.cpus > 0
+          ? `${basicInfo.cpus} / ${basicInfo.physical_cpus}`
+          : "—",
     },
     {
       name: "machineMemory",
-      value: `${basicInfo.used_memory} / ${basicInfo.total_memory}`,
+      value:
+        basicInfo.used_memory && basicInfo.total_memory
+          ? `${basicInfo.used_memory} / ${basicInfo.total_memory}`
+          : "—",
     },
     { name: "tcpCount", value: basicInfo.tcp_count.toLocaleString() },
     { name: "tcp6Count", value: basicInfo.tcp6_count.toLocaleString() },
@@ -560,8 +605,6 @@ export default function Home() {
     }
     return true;
   });
-  const runtimeSmFillers = runtimeVisible.length % 2 === 1 ? 1 : 0;
-  const runtimeLgFillers = (3 - (runtimeVisible.length % 3)) % 3;
 
   // Uptime is already in the top bar on every page, so this line carries the
   // two facts that are not shown anywhere else at a glance: which build is
@@ -581,11 +624,11 @@ export default function Home() {
         (buildTags.length > 0 || !basicInfo.read_only) && (
           <div className="flex flex-wrap items-center gap-2">
             {buildTags.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="hidden flex-wrap items-center gap-1.5 sm:flex">
                 {buildTags.map((tag) => (
                   <span
                     key={tag}
-                    className="machine inline-flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-[11.5px] font-medium text-secondary-foreground"
+                    className="machine hidden items-center rounded-md border border-border bg-card px-2 py-0.5 text-[11.5px] font-medium text-secondary-foreground sm:inline-flex"
                   >
                     {tag}
                   </span>
@@ -611,10 +654,23 @@ export default function Home() {
           <h2 className="region-label">{homeI18n("attention")}</h2>
         </div>
         {alerts.length === 0 ? (
-          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-secondary-foreground sm:px-5">
-            <CheckCircle2 className="size-4 shrink-0 text-ok" strokeWidth={2} />
-            {homeI18n("allClear")}
-          </p>
+          hasMonitoredEntities ? (
+            <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-secondary-foreground sm:px-5">
+              <CheckCircle2
+                className="size-4 shrink-0 text-ok"
+                strokeWidth={2}
+              />
+              {homeI18n("allClear")}
+            </p>
+          ) : (
+            <p className="flex items-center gap-2.5 px-4 py-3.5 text-[14px] text-muted-foreground sm:px-5">
+              <span
+                aria-hidden="true"
+                className="size-2 shrink-0 rounded-full bg-muted-foreground/50"
+              />
+              {homeI18n("allClearEmpty")}
+            </p>
+          )
         ) : (
           <ul className="divide-y divide-border-subtle">
             {alerts.map((alert) => (
@@ -632,12 +688,20 @@ export default function Home() {
                       alert.tone === "down" ? "bg-down" : "bg-warn",
                     )}
                   />
-                  <span className="shrink-0 text-[14px] font-medium text-card-foreground">
+                  <span
+                    className="max-w-[40%] shrink-0 truncate text-[14px] font-medium text-card-foreground sm:max-w-[260px]"
+                    title={alert.name}
+                  >
                     {alert.name}
                   </span>
                   <span
-                    className="truncate text-[14px] text-secondary-foreground"
-                    title={alert.title}
+                    className={cn(
+                      "min-w-0 flex-1 text-[14px] text-secondary-foreground",
+                      alert.key === "abnormal-exit"
+                        ? "break-words"
+                        : "truncate",
+                    )}
+                    title={alert.title || alert.message}
                   >
                     {alert.message}
                   </span>
@@ -651,11 +715,11 @@ export default function Home() {
 
       <TrafficPanel />
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-4 grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
         {entityCards.map((item) => (
           <div
             key={item.title}
-            className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/45"
+            className="flex flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/45"
           >
             <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-subtle px-4 py-2.5">
               <Link
@@ -667,7 +731,7 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <span className="figure text-[13px] text-muted-foreground">
                   <span className="font-medium text-foreground">
-                    {item.count}
+                    {item.count.toLocaleString()}
                   </span>{" "}
                   {item.unit}
                 </span>
@@ -692,9 +756,10 @@ export default function Home() {
                     >
                       <span
                         className={cn(
-                          "shrink-0 font-medium text-foreground",
+                          "max-w-[50%] shrink-0 truncate font-medium text-foreground",
                           entry.nameClass,
                         )}
+                        title={entry.name}
                       >
                         {entry.name}
                       </span>
@@ -707,7 +772,7 @@ export default function Home() {
                               ? "font-medium text-warn"
                               : "text-secondary-foreground",
                         )}
-                        title={entry.valueTitle}
+                        title={entry.valueTitle || entry.value}
                       >
                         {entry.valueTone && (
                           <span
@@ -749,44 +814,50 @@ export default function Home() {
         ))}
       </div>
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
-          <h2 className="region-label">{homeI18n("runtime")}</h2>
-        </div>
-        <div className="grid gap-px bg-border-subtle text-[13px] sm:grid-cols-2 lg:grid-cols-3">
-          {runtimeVisible.map((item) => (
-            <div
-              key={item.name}
-              className="flex items-center justify-between gap-3 bg-card px-4 py-2 sm:px-5"
-            >
-              <span className="shrink-0 text-muted-foreground">
-                {homeI18n(item.name)}
-              </span>
-              <span
-                className={cn(
-                  "figure min-w-0 truncate text-right font-medium text-card-foreground",
-                  item.value === "—" && "font-normal text-muted-foreground",
-                )}
-              >
-                {item.value}
-              </span>
-            </div>
-          ))}
-          {runtimeSmFillers > 0 && (
-            <div
-              aria-hidden="true"
-              className="hidden bg-card sm:block lg:hidden"
-            />
-          )}
-          {Array.from({ length: runtimeLgFillers }).map((_, idx) => (
-            <div
-              key={`runtime-lg-filler-${idx}`}
-              aria-hidden="true"
-              className="hidden bg-card lg:block"
-            />
-          ))}
-        </div>
-      </section>
+      {runtimeVisible.length > 0 && (
+        <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
+          <div className="border-b border-border bg-surface-subtle px-4 py-2.5 sm:px-5">
+            <h2 className="region-label">{homeI18n("runtime")}</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-px bg-border-subtle text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+            {runtimeVisible.map((item, idx) => {
+              const isLast = idx === runtimeVisible.length - 1;
+              const spanClass = isLast
+                ? cn(
+                    runtimeVisible.length % 2 === 1 && "sm:col-span-2",
+                    runtimeVisible.length % 3 === 1
+                      ? "lg:col-span-3"
+                      : runtimeVisible.length % 3 === 2
+                        ? "lg:col-span-2"
+                        : "lg:col-span-1",
+                  )
+                : undefined;
+              return (
+                <div
+                  key={item.name}
+                  className={cn(
+                    "flex min-w-0 items-center justify-between gap-3 bg-card px-4 py-2 sm:px-5",
+                    spanClass,
+                  )}
+                >
+                  <span className="shrink-0 text-muted-foreground">
+                    {homeI18n(item.name)}
+                  </span>
+                  <span
+                    className={cn(
+                      "figure min-w-0 truncate text-right font-medium text-card-foreground",
+                      item.value === "—" && "font-normal text-muted-foreground",
+                    )}
+                    title={item.value !== "—" ? item.value : undefined}
+                  >
+                    {item.value}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </PageShell>
   );
 }

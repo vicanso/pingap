@@ -209,6 +209,7 @@ export function ExForm({
   const [updatedValues, setUpdatedValues] = React.useState(
     {} as Record<string, unknown>,
   );
+  const updatedValuesRef = React.useRef<Record<string, unknown>>({});
   const [updatedCount, setUpdatedCount] = React.useState(0);
   const [resetNonce, setResetNonce] = React.useState(0);
   const defaultValues: Record<string, unknown> = {};
@@ -236,19 +237,19 @@ export function ExForm({
     defaultValues[item.name] = defaultValue;
   });
   const setUpdated = (key: string, value: unknown) => {
-    // Functional update: rapid edits (typing) must not race on a stale
-    // `updatedValues` closure or the dirty count / leave-guard goes wrong.
-    setUpdatedValues((prev) => {
-      const values = { ...prev };
-      if (Object.is(originalValues[key], value)) {
-        delete values[key];
-      } else {
-        values[key] = value;
-      }
-      setUpdatedCount(Object.keys(values).length);
-      onValueChange?.(values);
-      return values;
-    });
+    // Compute from a ref so rapid edits never race on a stale closure, while
+    // keeping sibling state setters and `onValueChange` outside any state
+    // updater (React 19 forbids cross-component updates during render).
+    const nextValues = { ...updatedValuesRef.current };
+    if (Object.is(originalValues[key], value)) {
+      delete nextValues[key];
+    } else {
+      nextValues[key] = value;
+    }
+    updatedValuesRef.current = nextValues;
+    setUpdatedValues(nextValues);
+    setUpdatedCount(Object.keys(nextValues).length);
+    onValueChange?.(nextValues);
   };
   const form = useForm({
     // @ts-expect-error - zodResolver has complex type constraints that are difficult to satisfy with dynamic schemas
@@ -298,6 +299,8 @@ export function ExForm({
     leavingOnPurpose.current = true;
     try {
       await onSave(data);
+      updatedValuesRef.current = {};
+      setUpdatedValues({});
       setUpdatedCount(0);
       toast(t("saveSuccessTitle"), {
         description: t("saveSuccessDescription"),
@@ -496,6 +499,13 @@ export function ExForm({
                 );
               }
               case ExFormItemCategory.SELECT: {
+                const rawValue =
+                  field.value !== undefined ? field.value : item.defaultValue;
+                const selectedOption =
+                  getOption(
+                    rawValue as string | number | boolean | null | undefined,
+                    item.options,
+                  ) || "";
                 const options = item.options?.map((opt) => {
                   return (
                     <SelectItem
@@ -511,7 +521,8 @@ export function ExForm({
                     <FieldLabel label={item.label} tips={item.tips} />
                     <FormControl>
                       <Select
-                        defaultValue={(item.defaultValue || "") as string}
+                        disabled={item.readOnly || false}
+                        value={selectedOption}
                         onValueChange={(option) => {
                           const value = getOptionValue(option, item.options);
                           form.setValue(item.name, value);
@@ -676,7 +687,7 @@ export function ExForm({
                 return (
                   <FormItem>
                     <FieldLabel label={item.label} tips={item.tips} />
-                    <div className="machine flex min-h-9 items-center rounded-md border border-border bg-muted/40 px-3 py-1.5 text-[13px] text-foreground">
+                    <div className="machine flex min-h-9 min-w-0 items-center rounded-md border border-border bg-muted/40 px-3 py-1.5 text-[13px] break-all text-foreground">
                       {text}
                     </div>
                   </FormItem>
@@ -743,7 +754,7 @@ export function ExForm({
         type="button"
         variant="ghost"
         size="sm"
-        className="cursor-pointer text-muted-foreground hover:text-foreground"
+        className="cursor-pointer text-xs text-muted-foreground hover:text-foreground sm:text-sm"
         title={tips}
         onClick={(e) => {
           if (expanded) {
@@ -811,15 +822,15 @@ export function ExForm({
           {(onSave || onRemove || showButton) && (
             <div
               className={cn(
-                "sticky bottom-2 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/90 px-4 py-2.5 backdrop-blur-md sm:gap-3",
+                "sticky bottom-2 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/90 px-3 py-2.5 backdrop-blur-md sm:gap-3 sm:px-4 sm:py-3",
                 // Keep the bar clear of the home indicator on notched phones.
-                "pb-[max(0.625rem,env(safe-area-inset-bottom))]",
+                "pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:pb-[max(0.75rem,env(safe-area-inset-bottom))]",
                 updatedCount > 0 &&
                   "border-primary/45 shadow-sm ring-1 ring-primary/20",
               )}
             >
               {updatedCount > 0 && !readOnly && (
-                <div className="machine inline-flex items-center rounded-full border border-primary/30 bg-primary/12 px-2.5 py-0.5 text-[11.5px] font-medium text-primary">
+                <div className="machine hidden items-center rounded-full border border-primary/30 bg-primary/12 px-2.5 py-0.5 text-[11.5px] font-medium text-primary sm:inline-flex">
                   {updatedCount} {t("modified") || "modified"}
                 </div>
               )}
@@ -832,17 +843,18 @@ export function ExForm({
                 <Button
                   type="button"
                   variant="outline"
-                  className="cursor-pointer"
+                  className="h-8 cursor-pointer px-2.5 text-xs has-[>svg]:px-2.5 sm:h-9 sm:px-4 sm:text-sm sm:has-[>svg]:px-3"
                   disabled={processing || previewing}
                   onClick={() => {
                     form.reset(defaultValues);
+                    updatedValuesRef.current = {};
                     setUpdatedValues({});
                     setUpdatedCount(0);
                     setResetNonce((prev) => prev + 1);
                     onValueChange?.({});
                   }}
                 >
-                  <RotateCcw className="mr-1.5 size-3.5" />
+                  <RotateCcw className="mr-1 size-3 sm:mr-1.5 sm:size-3.5" />
                   {t("formControls.reset")}
                 </Button>
               )}
@@ -850,23 +862,23 @@ export function ExForm({
                 <Button
                   type="button"
                   variant="outline"
-                  className="cursor-pointer"
+                  className="h-8 cursor-pointer px-2.5 text-xs has-[>svg]:px-2.5 sm:h-9 sm:px-4 sm:text-sm sm:has-[>svg]:px-3"
                   disabled={processing || previewing}
                   onClick={() => {
                     void handlePreviewDiff();
                   }}
                 >
                   {previewing ? (
-                    <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
+                    <LoaderCircle className="mr-1 size-3 animate-spin sm:mr-1.5 sm:size-3.5" />
                   ) : (
-                    <GitCompare className="mr-1.5 size-3.5" />
+                    <GitCompare className="mr-1 size-3 sm:mr-1.5 sm:size-3.5" />
                   )}
                   {t("diffDialog.previewButton")}
                 </Button>
               )}
               {onSave && !readOnly && (
                 <Button
-                  className="min-w-[120px] cursor-pointer"
+                  className="h-8 cursor-pointer px-2.5 text-xs has-[>svg]:px-2.5 sm:h-9 sm:min-w-[120px] sm:px-4 sm:text-sm sm:has-[>svg]:px-3"
                   type="submit"
                   disabled={
                     (updatedCount === 0 && !allowSave) ||
@@ -875,7 +887,7 @@ export function ExForm({
                   }
                 >
                   {processing && (
-                    <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                    <LoaderCircle className="mr-1.5 inline h-3.5 w-3.5 animate-spin sm:mr-2 sm:h-4 sm:w-4" />
                   )}
                   {t("save")}
                   {updatedCount > 0 && (
@@ -891,10 +903,10 @@ export function ExForm({
                     <Button
                       variant="outline"
                       type="button"
-                      className="min-w-[100px] cursor-pointer text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      className="h-8 cursor-pointer px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive has-[>svg]:px-2.5 sm:h-9 sm:min-w-[100px] sm:px-4 sm:text-sm sm:has-[>svg]:px-3"
                     >
                       {processing && (
-                        <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                        <LoaderCircle className="mr-1.5 inline h-3.5 w-3.5 animate-spin sm:mr-2 sm:h-4 sm:w-4" />
                       )}
                       {t("remove")}
                     </Button>

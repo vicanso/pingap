@@ -399,10 +399,7 @@ interface ConfigState {
     data: string,
     format?: "toml" | "hcl" | "kdl",
   ) => Promise<ConfigDiffResult>;
-  importToml: (
-    data: string,
-    format?: "toml" | "hcl" | "kdl",
-  ) => Promise<void>;
+  importToml: (data: string, format?: "toml" | "hcl" | "kdl") => Promise<void>;
   getSnapshots: () => Promise<ConfigSnapshotItem[]>;
   createSnapshot: (remark?: string) => Promise<ConfigSnapshotItem>;
   createQuickSite: (payload: QuickSitePayload) => Promise<QuickSiteResult>;
@@ -470,7 +467,10 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       );
       throw new DryRunCaptured(diffResult);
     }
-    await request.post(`/configs/${encodedCategory}/${encodedName}`, updateData);
+    await request.post(
+      `/configs/${encodedCategory}/${encodedName}`,
+      updateData,
+    );
     await get().fetch();
     set({
       version: random(),
@@ -490,10 +490,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       dryRunActive = false;
     }
   },
-  previewImportDiff: async (
-    data: string,
-    format?: "toml" | "hcl" | "kdl",
-  ) => {
+  previewImportDiff: async (data: string, format?: "toml" | "hcl" | "kdl") => {
     const url = format ? `/configs/diff?format=${format}` : "/configs/diff";
     const { data: diffResult } = await request.post<ConfigDiffResult>(
       url,
@@ -550,7 +547,9 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     return data;
   },
   remove: async (category: string, name: string) => {
-    await request.delete(`/configs/${category}/${name}`);
+    await request.delete(
+      `/configs/${encodeURIComponent(category)}/${encodeURIComponent(name)}`,
+    );
     await get().fetch();
     set({
       version: random(),
@@ -560,9 +559,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     const storages = get().data.storages || {};
     const keys = Object.keys(storages);
     if (!category) {
-      return keys.filter(
-        (key) => storages[key]?.category !== "plugin_preset",
-      );
+      return keys.filter((key) => storages[key]?.category !== "plugin_preset");
     }
     const includes: string[] = [];
     keys.forEach((key) => {
@@ -583,7 +580,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   },
   getHistory: async (category: string, name: string) => {
     const { data } = await request.get<{ history: History[] }>(
-      `/config-history/${category}/${name}`,
+      `/config-history/${encodeURIComponent(category)}/${encodeURIComponent(name)}`,
     );
     return data.history;
   },

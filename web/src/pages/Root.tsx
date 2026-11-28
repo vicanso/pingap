@@ -22,8 +22,12 @@ import { useAsync } from "react-async-hook";
 import HTTPError from "@/helpers/http-error";
 import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useIsCompact } from "@/hooks/use-mobile";
+
+const DevBreakUiBar = import.meta.env.DEV
+  ? lazy(() => import("@/dev/break-ui-bar"))
+  : null;
 
 /** Brand row lives under SidebarProvider so it can close the mobile sheet. */
 function BrandHeader({
@@ -90,7 +94,7 @@ function BrandHeader({
           >
             <span
               className={cn(
-                "truncate text-base font-semibold tracking-tight",
+                "shrink-0 text-base font-semibold tracking-tight",
                 onDashboard ? "text-sidebar-primary" : "text-foreground",
               )}
             >
@@ -100,7 +104,10 @@ function BrandHeader({
               <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
             )}
             {version && (
-              <span className="machine truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <span
+                className="machine min-w-0 max-w-[104px] truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                title={version}
+              >
                 {version}
               </span>
             )}
@@ -175,7 +182,16 @@ export default function Root() {
       </Sidebar>
 
       <SidebarInset className="min-h-0 overflow-hidden bg-background">
-        <MainHeader onOpenCommandPalette={() => setCommandOpen(true)} />
+        <MainHeader
+          onOpenCommandPalette={() => setCommandOpen(true)}
+          devSlot={
+            DevBreakUiBar ? (
+              <Suspense fallback={null}>
+                <DevBreakUiBar />
+              </Suspense>
+            ) : undefined
+          }
+        />
         {/* The sheet: inset 8px from the window's right and bottom edges,
             a 1px edge, 16px corners, no shadow. On a phone or a tablet the
             frame goes and the sheet is the screen. */}

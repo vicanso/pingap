@@ -326,7 +326,7 @@ export default function Certificates() {
       // certificate that never chose a provider.
       defaultValue: certificateConfig.dns_provider || "",
       span: 3,
-      category: ExFormItemCategory.RADIOS,
+      category: ExFormItemCategory.SELECT,
       options: newStringOptions(
         ["manual", "ali", "cf", "huawei", "tencent", "webhook"],
         true,
@@ -440,7 +440,7 @@ export default function Certificates() {
       placeholder: "",
       tips: certificateI18n("ocspStaplingTips"),
       defaultValue: certificateConfig.ocsp_stapling,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },

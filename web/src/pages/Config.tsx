@@ -47,12 +47,7 @@ import { Loading } from "@/components/loading";
 
 type ImportSourceFormat = "toml" | "hcl" | "kdl" | "nginx" | "caddy";
 type ConfigTabValue =
-  | "original"
-  | "full"
-  | "hcl"
-  | "kdl"
-  | "snapshots"
-  | "import";
+  "original" | "full" | "hcl" | "kdl" | "snapshots" | "import";
 
 function downloadTextFile(
   filename: string,
@@ -151,7 +146,7 @@ function CodePanel({
         </div>
       </div>
       <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
-        <pre className="h-full min-h-[min(60vh,480px)] overflow-auto p-4 font-mono text-[13px] leading-relaxed whitespace-pre-wrap sm:text-sm">
+        <pre className="h-full min-h-[min(50dvh,420px)] overflow-auto overscroll-contain p-4 font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap sm:text-sm">
           {content || <span className="text-muted-foreground">—</span>}
         </pre>
       </CardContent>
@@ -544,10 +539,10 @@ export default function Config() {
   const tabCount = 4 + (different ? 1 : 0) + (readOnly ? 0 : 1);
   const tabClass =
     tabCount === 6
-      ? "grid-cols-3 h-auto sm:h-10 sm:grid-cols-6"
+      ? "sm:grid-cols-6"
       : tabCount === 5
-        ? "grid-cols-3 h-auto sm:h-10 sm:grid-cols-5"
-        : "grid-cols-2 h-auto sm:h-10 sm:grid-cols-4";
+        ? "sm:grid-cols-5"
+        : "sm:grid-cols-4";
 
   const nativeFormatPlaceholder =
     importFormat === "hcl"
@@ -591,7 +586,12 @@ export default function Config() {
         }}
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <TabsList className={cn("mb-3 grid w-full shrink-0", tabClass)}>
+        <TabsList
+          className={cn(
+            "mb-3 grid h-auto w-full max-w-3xl shrink-0 grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto sm:group-data-[orientation=horizontal]/tabs:h-10",
+            tabClass,
+          )}
+        >
           <TabsTrigger value="original" className="cursor-pointer">
             {t("original")}
           </TabsTrigger>
@@ -662,7 +662,7 @@ export default function Config() {
                 {!readOnly && (
                   <>
                     <Input
-                      className="h-8 max-w-sm flex-1 bg-background text-xs sm:text-sm"
+                      className="h-9 w-full min-w-[200px] bg-background text-base sm:h-8 sm:w-64 sm:text-sm md:w-80"
                       placeholder={t("configPage.snapshotRemarkPlaceholder")}
                       value={snapshotRemark}
                       onChange={(e) => setSnapshotRemark(e.target.value)}
@@ -710,7 +710,7 @@ export default function Config() {
                   {t("diagnostics.refresh")}
                 </Button>
               </div>
-              <CardContent className="min-h-0 flex-1 overflow-y-auto p-4">
+              <CardContent className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
                 {loadingSnapshots && snapshots.length === 0 ? (
                   <Loading className="mt-4" />
                 ) : snapshots.length === 0 ? (
@@ -730,15 +730,18 @@ export default function Config() {
                           key={snap.id}
                           className="rounded-lg border border-border bg-card p-4"
                         >
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="min-w-0 space-y-1">
+                          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1 space-y-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="figure text-sm font-medium">
                                   {new Date(
                                     snap.created_at * 1000,
                                   ).toLocaleString()}
                                 </span>
-                                <Badge variant="outline" className="font-normal">
+                                <Badge
+                                  variant="outline"
+                                  className="font-normal"
+                                >
                                   {snapshotSourceLabel(snap.source)}
                                 </Badge>
                                 <span className="machine rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
@@ -750,19 +753,16 @@ export default function Config() {
                                   })}
                                 </span>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span className="machine">{snap.id}</span>
-                                {snap.remark && (
-                                  <>
-                                    <span>·</span>
-                                    <span className="text-foreground/80">
-                                      {snap.remark}
-                                    </span>
-                                  </>
-                                )}
+                              <div className="machine min-w-0 break-all text-xs text-muted-foreground">
+                                {snap.id}
                               </div>
+                              {snap.remark && (
+                                <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                                  {snap.remark}
+                                </p>
+                              )}
                             </div>
-                            <div className="flex flex-wrap items-center gap-1.5">
+                            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -852,7 +852,7 @@ export default function Config() {
                             </div>
                           </div>
                           {isExpanded && (
-                            <pre className="machine mt-3 max-h-64 overflow-auto rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed whitespace-pre-wrap">
+                            <pre className="machine mt-3 max-h-64 overflow-auto overscroll-contain rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed whitespace-pre-wrap">
                               {snap.toml}
                             </pre>
                           )}
@@ -912,13 +912,16 @@ export default function Config() {
                   </Select>
                 </div>
               </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 pb-5">
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-5 pb-5 lg:overflow-hidden">
                 {importFormat === "toml" ||
                 importFormat === "hcl" ||
                 importFormat === "kdl" ? (
                   <Textarea
                     autoFocus
-                    className="min-h-0 flex-1 resize-none font-mono text-sm"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="min-h-[160px] flex-1 resize-none font-mono text-base sm:text-sm lg:min-h-0"
                     placeholder={nativeFormatPlaceholder}
                     value={importText}
                     onChange={(e) => {
@@ -926,9 +929,9 @@ export default function Config() {
                     }}
                   />
                 ) : (
-                  <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
+                  <div className="grid shrink-0 grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:grid-cols-2">
                     <div className="flex min-h-0 flex-col gap-2">
-                      <div className="flex items-center justify-between">
+                      <div className="flex min-h-7 items-center justify-between gap-2">
                         <Label className="text-xs font-medium text-muted-foreground">
                           {importFormat === "nginx"
                             ? "nginx.conf"
@@ -954,7 +957,10 @@ export default function Config() {
                       </div>
                       <Textarea
                         autoFocus
-                        className="min-h-0 flex-1 resize-none font-mono text-xs sm:text-sm"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        className="min-h-[160px] flex-1 resize-none font-mono text-base sm:text-sm lg:min-h-0"
                         placeholder={
                           importFormat === "nginx"
                             ? t("configPage.nginxPlaceholder")
@@ -965,11 +971,16 @@ export default function Config() {
                       />
                     </div>
                     <div className="flex min-h-0 flex-col gap-2">
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        {t("configPage.convertedTomlPreview")}
-                      </Label>
+                      <div className="flex min-h-7 items-center">
+                        <Label className="text-xs font-medium text-muted-foreground">
+                          {t("configPage.convertedTomlPreview")}
+                        </Label>
+                      </div>
                       <Textarea
-                        className="min-h-0 flex-1 resize-none font-mono text-xs sm:text-sm"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        className="min-h-[160px] flex-1 resize-none font-mono text-base sm:text-sm lg:min-h-0"
                         placeholder={t("configPage.previewPlaceholder")}
                         value={importText}
                         onChange={(e) => setImportText(e.target.value)}
@@ -978,7 +989,7 @@ export default function Config() {
                   </div>
                 )}
                 {convertWarnings.length > 0 && (
-                  <div className="max-h-28 shrink-0 overflow-y-auto rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                  <div className="max-h-28 shrink-0 overflow-y-auto overscroll-contain rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                     <div className="mb-1 flex items-center gap-1.5 font-medium">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                       {t("configPage.convertWarnings", {
@@ -994,7 +1005,7 @@ export default function Config() {
                 )}
                 <Button
                   type="button"
-                  className="w-full shrink-0 cursor-pointer gap-2 sm:w-auto"
+                  className="w-full shrink-0 cursor-pointer gap-2 sm:w-auto sm:self-start"
                   disabled={previewingImport || importing || !importText.trim()}
                   onClick={() => {
                     void handlePreviewImportDiff();

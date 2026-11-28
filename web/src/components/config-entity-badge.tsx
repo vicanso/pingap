@@ -24,9 +24,10 @@ export function EntityBadge({ name, isNew }: EntityBadgeProps) {
   return (
     <Badge
       variant="secondary"
-      className="machine rounded-full px-2 py-0 text-[11px] font-normal"
+      title={name}
+      className="machine max-w-[min(260px,68vw)] justify-start rounded-full px-2 py-0 text-[11px] font-normal sm:max-w-[360px]"
     >
-      {name}
+      <span className="min-w-0 truncate">{name}</span>
     </Badge>
   );
 }

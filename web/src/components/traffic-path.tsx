@@ -36,16 +36,21 @@ function HealthStrip({ health }: { health: PathHealth }) {
   if (health.total === 0) {
     return null;
   }
+  const pct = (health.up / health.total) * 100;
+  const label = `${health.up}/${health.total}`;
+  const ratioBar = (
+    <div
+      title={label}
+      className="h-2.5 w-16 shrink-0 overflow-hidden rounded-[2px] bg-down/40"
+    >
+      <div className="h-full bg-ok" style={{ width: `${pct}%` }} />
+    </div>
+  );
   if (health.total > MAX_TICKS) {
-    const pct = (health.up / health.total) * 100;
-    return (
-      <div className="h-2.5 w-16 shrink-0 overflow-hidden rounded-[2px] bg-down/40">
-        <div className="h-full bg-ok" style={{ width: `${pct}%` }} />
-      </div>
-    );
+    return ratioBar;
   }
-  return (
-    <div className="flex h-2.5 shrink-0 items-stretch gap-[3px]">
+  const ticksRow = (
+    <div title={label} className="flex h-2.5 shrink-0 items-stretch gap-[3px]">
       {health.ticks.map((up, index) => (
         <span
           key={index}
@@ -54,22 +59,51 @@ function HealthStrip({ health }: { health: PathHealth }) {
       ))}
     </div>
   );
+  // >12 ticks (>96px) crowds a 2-column phone cell at 320px; collapse to the
+  // ratio bar below `sm` and restore per-backend ticks on wider viewports.
+  if (health.total > 12) {
+    return (
+      <>
+        <div
+          title={label}
+          className="h-2.5 w-14 shrink-0 overflow-hidden rounded-[2px] bg-down/40 sm:hidden"
+        >
+          <div className="h-full bg-ok" style={{ width: `${pct}%` }} />
+        </div>
+        <div
+          title={label}
+          className="hidden h-2.5 shrink-0 items-stretch gap-[3px] sm:flex"
+        >
+          {health.ticks.map((up, index) => (
+            <span
+              key={index}
+              className={cn("w-[5px] rounded-[1px]", up ? "bg-ok" : "bg-down")}
+            />
+          ))}
+        </div>
+      </>
+    );
+  }
+  return ticksRow;
 }
 
 function Stage({ stage, health }: { stage: PathStage; health?: PathHealth }) {
   return (
     <Link
       to={stage.to}
-      className="group -mx-1 flex flex-col gap-1.5 rounded-md px-3 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring lg:mx-0 lg:flex-1 lg:px-4"
+      className="group -mx-1 flex min-w-0 flex-col gap-1.5 rounded-md px-2.5 py-2 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring sm:px-3 lg:mx-0 lg:flex-1 lg:px-4"
     >
       <span className="region-label group-hover:text-foreground">
         {stage.label}
       </span>
-      <span className="flex items-baseline gap-1.5">
+      <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
         <span className="figure text-[28px] leading-none font-normal">
           {stage.value}
         </span>
-        <span className="truncate text-[13px] text-muted-foreground">
+        <span
+          className="min-w-0 text-[11.5px] leading-tight text-muted-foreground sm:text-[12.5px]"
+          title={stage.unit}
+        >
           {stage.unit}
         </span>
       </span>
@@ -78,13 +112,14 @@ function Stage({ stage, health }: { stage: PathStage; health?: PathHealth }) {
         then has exactly three rows, so the four numbers share a baseline and
         the connectors between them land level.
       */}
-      <span className="flex min-w-0 items-center gap-2">
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 sm:flex-nowrap">
         {health && <HealthStrip health={health} />}
         <span
           className={cn(
-            "truncate text-[13px]",
+            "min-w-0 break-words text-[11.5px] leading-snug sm:truncate sm:text-[12px]",
             toneClass[stage.detailTone ?? "muted"],
           )}
+          title={stage.detail}
         >
           {stage.detail}
         </span>

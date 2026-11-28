@@ -314,7 +314,13 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       title={t("header.search")}
       description={cmdI18n("placeholder")}
     >
-      <CommandInput placeholder={cmdI18n("placeholder")} />
+      <CommandInput
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        enterKeyHint="search"
+        placeholder={cmdI18n("placeholder")}
+      />
       <CommandList className="max-h-[380px]">
         <CommandEmpty>{cmdI18n("empty")}</CommandEmpty>
         <CommandGroup heading={cmdI18n("pagesGroup")}>
@@ -354,7 +360,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                     onSelect={() => go(entity.to)}
                   >
                     <Icon className="size-4 shrink-0" />
-                    <span className="truncate font-medium">{entity.name}</span>
+                    <span
+                      className="min-w-0 flex-1 truncate font-medium"
+                      title={entity.name}
+                    >
+                      {entity.name}
+                    </span>
                     {entity.tone && (
                       <span
                         className={cn(
@@ -364,7 +375,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                       />
                     )}
                     {entity.detail && (
-                      <span className="machine ml-auto max-w-[45%] truncate text-xs text-muted-foreground">
+                      <span
+                        className="machine ml-2 max-w-[42%] shrink-0 truncate text-xs text-muted-foreground"
+                        title={entity.detail}
+                      >
                         {entity.detail}
                       </span>
                     )}

@@ -137,15 +137,19 @@ export function PluginCategoryPicker({
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-xs">
+        <div className="relative w-full sm:max-w-sm">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="text"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="search"
             value={query}
             disabled={disabled}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={pluginI18n("categorySearchPlaceholder")}
-            className="h-8 pl-8 pr-7 text-[13px]"
+            className="h-8 pl-8 pr-7 text-base sm:text-[13px]"
           />
           {query && (
             <button
@@ -194,7 +198,7 @@ export function PluginCategoryPicker({
           {pluginI18n("categoryEmpty")}
         </div>
       ) : (
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid max-h-72 gap-2 overflow-y-auto overscroll-contain p-0.5 pr-1 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((item) => {
             const selected = item.slug === value;
             return (

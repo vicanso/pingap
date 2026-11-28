@@ -128,7 +128,7 @@ export function ConfigDiffDialog({
                     <div className="mb-1 font-medium text-amber-800/90 dark:text-amber-200/90">
                       {t("diffDialog.restartItemsLabel")}:
                     </div>
-                    <ul className="machine max-h-28 space-y-0.5 overflow-y-auto rounded border border-amber-500/25 bg-card/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground">
+                    <ul className="machine max-h-28 space-y-0.5 overflow-y-auto overscroll-contain rounded border border-amber-500/25 bg-card/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-foreground">
                       {restartItems.map((item, idx) => (
                         <li key={idx} className="break-all">
                           {item}
@@ -157,7 +157,7 @@ export function ConfigDiffDialog({
                 {t("diffDialog.noDiff")}
               </div>
             ) : (
-              <pre className="machine min-h-[160px] max-h-[42vh] overflow-auto rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed whitespace-pre-wrap">
+              <pre className="machine min-h-[64px] max-h-[42vh] overflow-auto overscroll-contain rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed whitespace-pre-wrap">
                 {diffLines.map((line, idx) =>
                   line === "" ? (
                     <div key={idx} className="h-2" />

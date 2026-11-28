@@ -104,6 +104,7 @@ export default function Servers() {
                 {
                   key: "threads",
                   label: serverI18n("threads"),
+                  className: "figure text-right",
                   render: (value: Server | undefined) => (
                     <EntityText value={value?.threads} />
                   ),
@@ -176,7 +177,7 @@ export default function Servers() {
       label: serverI18n("globalCertificates"),
       placeholder: "",
       defaultValue: serverConfig.global_certificates,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -187,7 +188,7 @@ export default function Servers() {
       placeholder: "",
       tips: serverI18n("strictSniTips"),
       defaultValue: serverConfig.strict_sni,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -198,7 +199,7 @@ export default function Servers() {
       placeholder: "",
       tips: serverI18n("ja4Tips"),
       defaultValue: serverConfig.ja4,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -296,7 +297,7 @@ export default function Servers() {
       label: serverI18n("enabledServerTiming"),
       placeholder: "",
       defaultValue: serverConfig.enable_server_timing,
-      span: 3,
+      span: 6,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -510,7 +511,7 @@ export default function Servers() {
       label: serverI18n("tcpIdle"),
       placeholder: serverI18n("tcpIdlePlaceholder"),
       defaultValue: serverConfig.tcp_idle,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -519,7 +520,7 @@ export default function Servers() {
       label: serverI18n("tcpInterval"),
       placeholder: serverI18n("tcpIntervalPlaceholder"),
       defaultValue: serverConfig.tcp_interval,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -528,7 +529,7 @@ export default function Servers() {
       label: serverI18n("tcpProbeCount"),
       placeholder: serverI18n("tcpProbeCountPlaceholder"),
       defaultValue: serverConfig.tcp_probe_count,
-      span: 3,
+      span: 2,
       category: ExFormItemCategory.NUMBER,
     },
   ];

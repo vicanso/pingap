@@ -376,6 +376,148 @@ else = 1
         assert_eq!(true, missing.is_empty(), "{missing:#?}");
     }
 
+    /// Guardrails for `web/` codified in `DESIGN.md`: pinch-zoom stays open,
+    /// no `transition-all`, no unencoded `?name=${...}` interpolations, no
+    /// `<AlertDialog` nested inside `<DropdownMenu`, and dev stress fixtures
+    /// never leak outside `import.meta.env.DEV` in `Root.tsx`.
+    #[test]
+    fn test_web_admin_design_guardrails() {
+        /// Flags `<AlertDialog` rendered while inside an open `<DropdownMenu`
+        /// root block so Radix menu popups cannot stay mounted above modals.
+        fn check_dropdown_alert_nesting(
+            rel: &str,
+            content: &str,
+            violations: &mut Vec<String>,
+        ) {
+            if !rel.ends_with(".tsx") {
+                return;
+            }
+            let mut dropdown_depth = 0usize;
+            for (idx, line) in content.lines().enumerate() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let line_no = idx + 1;
+                let mut cursor = line;
+                while let Some(pos) = cursor.find('<') {
+                    cursor = &cursor[pos + 1..];
+                    if let Some(after) = cursor.strip_prefix("DropdownMenu") {
+                        let is_root = after.is_empty()
+                            || after.chars().next().is_some_and(|ch| {
+                                ch == '>' || ch.is_ascii_whitespace()
+                            });
+                        if is_root {
+                            dropdown_depth += 1;
+                        }
+                    } else if cursor.starts_with("/DropdownMenu>") {
+                        dropdown_depth = dropdown_depth.saturating_sub(1);
+                    } else if dropdown_depth > 0
+                        && cursor.starts_with("AlertDialog")
+                    {
+                        violations.push(format!(
+                            "web/src/{rel}:{line_no}: `<AlertDialog` must not be nested inside `<DropdownMenu>`"
+                        ));
+                    }
+                }
+            }
+        }
+
+        let web_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web");
+        let Ok(index_html) =
+            std::fs::read_to_string(web_dir.join("index.html"))
+        else {
+            // Packaged crate without the web workspace: nothing to check.
+            return;
+        };
+
+        let mut violations = vec![];
+        for banned in ["user-scalable=no", "maximum-scale=1"] {
+            if index_html.contains(banned) {
+                violations.push(format!("web/index.html: banned `{banned}`"));
+            }
+        }
+
+        fn collect_source_files(
+            dir: &std::path::Path,
+            out: &mut Vec<std::path::PathBuf>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_source_files(&path, out);
+                    continue;
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+                if matches!(ext, "ts" | "tsx" | "css") {
+                    out.push(path);
+                }
+            }
+        }
+
+        let src_dir = web_dir.join("src");
+        let mut files = vec![];
+        collect_source_files(&src_dir, &mut files);
+        files.sort();
+
+        for path in files {
+            let rel = path
+                .strip_prefix(&src_dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            check_dropdown_alert_nesting(&rel, &content, &mut violations);
+
+            for (idx, line) in content.lines().enumerate() {
+                let line_no = idx + 1;
+                if line.contains("transition-all")
+                    || line.contains("transition: all")
+                {
+                    violations.push(format!(
+                        "web/src/{rel}:{line_no}: `transition-all` banned by DESIGN.md"
+                    ));
+                }
+                let mut rest = line;
+                while let Some(pos) = rest.find("?name=${") {
+                    let after = &rest[pos + "?name=${".len()..];
+                    if !after.starts_with("encodeURIComponent(") {
+                        violations.push(format!(
+                            "web/src/{rel}:{line_no}: unencoded `?name=${{...}}`"
+                        ));
+                    }
+                    rest = after;
+                }
+                if (line.contains("@/dev/") || line.contains("../dev/"))
+                    && !rel.starts_with("dev/")
+                    && rel != "pages/Root.tsx"
+                {
+                    violations.push(format!(
+                        "web/src/{rel}:{line_no}: dev fixture import outside Root.tsx"
+                    ));
+                }
+            }
+
+            if rel == "pages/Root.tsx"
+                && content.contains("@/dev/")
+                && !content.contains("import.meta.env.DEV")
+            {
+                violations.push(
+                    "web/src/pages/Root.tsx: `@/dev/` must be gated behind `import.meta.env.DEV`"
+                        .to_string(),
+                );
+            }
+        }
+
+        assert_eq!(true, violations.is_empty(), "{violations:#?}");
+    }
+
     /// Every key the samples document is one pingap knows: a field that
     /// stops being listed (it is skipped when it serializes, say) would
     /// show here as unknown.
